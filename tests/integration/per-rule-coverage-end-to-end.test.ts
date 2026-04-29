@@ -947,6 +947,121 @@ describe("per-rule coverage end-to-end", () => {
     expect(altTextRow).toBeDefined();
     expect(altTextRow!.coverageConfidenceReason).not.toBe("scss-unresolved-variables");
   });
+
+  // Per-rule per-file (NOT corpus-wide) parse-error degradation —
+  // doctrine source: docs/kb/architecture/ai-first-consumer.md
+  // "Parser-failure invalidates per-file confidence." Before this fix,
+  // a single parse-error file in a 429-file corpus blanket-degraded
+  // EVERY HTML rule's aggregate `coverageConfidence` to `"low"` with
+  // `coverageConfidenceReason: "file-parse-error"`, regardless of which
+  // file each rule actually ran on. The fix moves the degradation to
+  // per-rule-per-file (`perRuleCoverage[r].byFile[].confidence`) and
+  // folds the aggregate scalar from those entries: as long as the rule
+  // has at least MIN_FILES_FOR_HIGH_CONFIDENCE cleanly-evaluated files,
+  // the aggregate stays `"high"` and only the bounded files ride on
+  // `byFile`.
+  it("a single parse-error file in a multi-file corpus does NOT degrade rules whose evidence came from clean files (Q9 per-file-not-corpus-wide invariant)", () => {
+    // 5 cleanly-parsing HTML files + 1 parse-error file. The
+    // parse-error file is a truncated open-tag the HTML parser records
+    // an error on but produces no findings from (no recoverable
+    // content) — so it lands in `parseErrorFiles[]`, not
+    // `partialParseFiles[]`. Every HTML rule's gate matches all 6
+    // files; cleanEvaluated == 5 ≥ MIN floor → the aggregate
+    // `coverageConfidence` MUST stay `"high"` and `byFile` MUST carry a
+    // single entry naming the broken file.
+    const cleanHtml = (i: number) =>
+      `<!doctype html><html lang="en"><head><title>p${i}</title></head><body><main><h1>p${i}</h1></main></body></html>`;
+    // The parser records an error here (truncated `<header` open-tag)
+    // and no rule fires meaningfully — the file lands in
+    // `parseErrorFiles[]` (not `partialParseFiles[]`).
+    const brokenHtml = "<header";
+    const files: ParsedFile[] = [];
+    for (let i = 0; i < 5; i++) {
+      files.push(htmlFile(`site/page-${i}.html`, cleanHtml(i)));
+    }
+    files.push(htmlFile("site/broken.html", brokenHtml));
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    // Pick a small set of HTML-targeted rules whose gate matches every
+    // .html file but whose evidence model is NOT page-level (so the
+    // fragment-input adjuster doesn't independently downgrade them when
+    // the broken file lands in `fragmentFiles[]`). `media/alt-text-
+    // missing` operates on each `<img>` in isolation and stays out of
+    // `FRAGMENT_DOWNGRADE_RULE_IDS`. The selected rule is the one this
+    // Q9 fix targets: under pre-Q9 logic its aggregate confidence
+    // dropped to "low" because of the lone broken file; under Q9 the
+    // aggregate stays "high" and `byFile` carries the broken-file
+    // entry alone.
+    const targetRuleId = "media/alt-text-missing";
+    const row = adjustedRows.find((r) => r.ruleId === targetRuleId);
+    expect(row).toBeDefined();
+    // Q9 invariant: aggregate stays "high" because cleanEvaluated
+    // (5) ≥ MIN floor. Pre-Q9 the aggregate dropped to "low" with
+    // `coverageConfidenceReason: "file-parse-error"`.
+    expect(row!.coverageConfidence).toBe("high");
+    expect(row!.coverageConfidenceReason).toBeUndefined();
+    // Per-file detail rides on `byFile` — exactly one entry naming
+    // the broken file, with a structured file-scoped reason.
+    expect(row!.byFile).toBeDefined();
+    const brokenEntries = row!.byFile!.filter((e) => e.path === "site/broken.html");
+    expect(brokenEntries.length).toBe(1);
+    expect(brokenEntries[0]!.confidence).toBe("low");
+    // Reason is either `file-parse-error` (no findings → invisible)
+    // or `partial-parse` (recovered AST emitted findings) — depends
+    // on whether any rule fired on the truncated input. Either is
+    // honest; both are file-scoped.
+    expect(
+      brokenEntries[0]!.reason === "file-parse-error" ||
+        brokenEntries[0]!.reason === "partial-parse",
+    ).toBe(true);
+
+    // Cross-surface: the rule with aggregate `"high"` + non-empty
+    // `byFile` MUST land in `confidentlyClean` (the corpus-level
+    // signal is honest — clean evidence dominates), NOT in
+    // `lowConfidenceClean`. The per-file caveat lives only on
+    // `byFile`. Without Q9 the same rule would have landed in
+    // `lowConfidenceClean` because the aggregate scalar dropped.
+    const ruleCoverage = response["ruleCoverage"] as
+      | { confidentlyClean: readonly string[]; lowConfidenceClean: readonly string[] }
+      | undefined;
+    if (ruleCoverage !== undefined && row!.findingsEmitted === 0) {
+      expect(ruleCoverage.confidentlyClean).toContain(targetRuleId);
+      expect(ruleCoverage.lowConfidenceClean).not.toContain(targetRuleId);
+    }
+  });
 });
 
 /**
@@ -997,17 +1112,53 @@ function assembleParityFixture() {
   });
 }
 
-/** Set of rule IDs whose adjusted coverage row is degraded below `"high"`. */
+/**
+ * Set of rule IDs whose adjusted coverage row carries SOME degradation
+ * signal — either an aggregate `coverageConfidence !== "high"` or a
+ * non-empty `byFile` list (Q9 per-file-not-corpus-wide degradation).
+ * The former reflects rules whose corpus-level evidence horizon was
+ * bounded; the latter reflects rules whose aggregate scalar stayed
+ * high but whose per-file confidence was bounded on a specific file
+ * — both shapes the per-finding propagation helper consumes via
+ * `buildPerRuleLimitationMap`.
+ */
 function collectDegradedRuleIds(rows: readonly PerRuleCoverage[]): ReadonlySet<string> {
-  return new Set(rows.filter((r) => r.coverageConfidence !== "high").map((r) => r.ruleId));
+  return new Set(
+    rows
+      .filter(
+        (r) => r.coverageConfidence !== "high" || (r.byFile !== undefined && r.byFile.length > 0),
+      )
+      .map((r) => r.ruleId),
+  );
 }
 
-/** Set of rule IDs whose adjusted row carries the named substrate-level reason. */
+/**
+ * Set of rule IDs whose adjusted row carries the named substrate-level
+ * reason — either at the aggregate `coverageConfidenceReason` field
+ * (the rule's corpus-level evidence dropped to "low"/"medium" with the
+ * named reason) or in any `byFile[].reason` entry (the rule's
+ * aggregate stayed "high" but per-file degradation rides under
+ * `byFile`). Both shapes are how the same substrate signal can reach
+ * the agent under Q9's per-file-not-corpus-wide doctrine.
+ */
 function collectRulesWithReason(
   rows: readonly PerRuleCoverage[],
   reason: PerRuleCoverage["coverageConfidenceReason"],
 ): ReadonlySet<string> {
-  return new Set(rows.filter((r) => r.coverageConfidenceReason === reason).map((r) => r.ruleId));
+  return new Set(
+    rows
+      .filter((r) => {
+        if (r.coverageConfidenceReason === reason) return true;
+        if (
+          (reason === "file-parse-error" || reason === "partial-parse") &&
+          r.byFile !== undefined
+        ) {
+          return r.byFile.some((e) => e.reason === reason);
+        }
+        return false;
+      })
+      .map((r) => r.ruleId),
+  );
 }
 
 /**

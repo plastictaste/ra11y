@@ -61,10 +61,25 @@ export interface FindingBucket {
 
 /**
  * Builds the rule-ID → reason-code map from per-rule coverage rows.
- * Only rules whose `coverageConfidence !== "high"` AND that carry a
- * non-empty reason source contribute an entry. Substrate-level codes
- * (`coverageConfidenceReason`) win over rule-family codes (`reason`)
- * when both are present — substrate is the stronger signal.
+ * Two routes contribute an entry:
+ *
+ *   1. Aggregate-degraded rules — `coverageConfidence !== "high"` AND
+ *      a non-empty reason source. Substrate-level codes
+ *      (`coverageConfidenceReason`) win over rule-family codes
+ *      (`reason`) when both are present.
+ *   2. Aggregate-clean rules with per-file degradation — `byFile` is
+ *      non-empty. The aggregate scalar stays `"high"` because the
+ *      rule has clean evidence horizon at the corpus level (Q9
+ *      doctrine), but per-finding emissions on the bounded files
+ *      still need the file-scoped substrate code propagated. The map
+ *      entry uses the most-severe `byFile.reason` as the code source
+ *      — `file-parse-error` wins over `partial-parse` (the same
+ *      precedence the aggregate adjuster uses when both apply on the
+ *      same row). The downstream
+ *      {@link FILE_SCOPED_PARSE_STATE_CODES} gate then attaches the
+ *      code only to findings whose path is in the parse-state sets,
+ *      so clean-file findings on the same rule stay unannotated —
+ *      matching the per-file-not-corpus-wide invariant.
  *
  * Substrate codes are snake_cased on the way out so callers don't have
  * to mix kebab and snake conventions when emitting on the
@@ -75,9 +90,17 @@ export function buildPerRuleLimitationMap(
 ): ReadonlyMap<string, string> {
   const out = new Map<string, string>();
   for (const row of rows) {
-    if (row.coverageConfidence === "high") continue;
-    const code = resolveReasonCode(row);
-    if (code === undefined) continue;
+    if (row.coverageConfidence !== "high") {
+      const code = resolveReasonCode(row);
+      if (code !== undefined) out.set(row.ruleId, code);
+      continue;
+    }
+    // Aggregate stays high — but the rule may carry per-file
+    // degradation in `byFile` that still needs propagating. Use the
+    // most-severe per-file reason: file-parse-error > partial-parse.
+    if (row.byFile === undefined || row.byFile.length === 0) continue;
+    const hasParseError = row.byFile.some((e) => e.reason === "file-parse-error");
+    const code = hasParseError ? "file_parse_error" : "partial_parse";
     out.set(row.ruleId, code);
   }
   return out;

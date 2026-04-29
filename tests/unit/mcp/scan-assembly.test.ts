@@ -116,21 +116,24 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
     expect(findings).toBeGreaterThan(0);
   });
 
-  it("emits coverageConfidenceReason on per-rule rows when the only scanned file failed to parse", async () => {
+  it("ships per-file degradation entries on per-rule rows when the only scanned file failed to parse", async () => {
     // a file that failed
     // to parse used to surface as a `coverageConfidence: "high"` row
     // for HTML-targeted rules — the canonical silent-miss "rule never
-    // saw the file" disguised as "rule ran clean." The adjustment
-    // stamps a structured `coverageConfidenceReason` on every affected
-    // row so the agent can branch on it.
+    // saw the file" disguised as "rule ran clean." Per Q9, the
+    // per-file degradation rides on `byFile` (one entry per file the
+    // rule's gate matched and that landed in parse-error /
+    // partial-parse). When the rule has no clean evidence to fold
+    // from (single-file scan whose only file is degraded), the
+    // aggregate also drops to "low" with the corresponding reason.
     //
-    // Whether the row reads `file-parse-error` (no findings → file
-    // invisible to all rules) or `partial-parse` (recovered slice
+    // Whether the file lands in `parseErrorFiles` (no findings → file
+    // invisible to all rules) or `partialParseFiles` (recovered slice
     // produced findings) depends on what fires on this synthetic
     // input — both branches are valid here; the per-branch shapes are
     // pinned by the unit tests on `applyParseErrorAdjustment` below.
     // The integration assertion is "at least one row carried the
-    // structured downgrade signal," which is the load-bearing
+    // per-file degradation signal," which is the load-bearing
     // invariant the silent-miss reopens if the wiring regresses.
     const parsed = parseHtml("<html><body><h1>Title</h1></body></html>");
     const erroredFile: ParsedFile = {
@@ -157,33 +160,42 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       session.config.rules,
       undefined,
       undefined,
-      // verboseMeta: true — this assertion inspects per-row
-      // coverageConfidenceReason values, which only ride inline under
-      // verbose mode. Default
-      // verbosity surfaces only the compact perRuleCoverageSummary.
+      // verboseMeta: true — this assertion inspects per-row byFile
+      // values, which only ride inline under verbose mode.
       true,
     );
     const perRuleCoverage = formatted.meta["perRuleCoverage"] as readonly PerRuleCoverage[];
     expect(perRuleCoverage).toBeDefined();
-    const downgradedRows = perRuleCoverage.filter(
-      (r) =>
-        r.coverageConfidenceReason === "file-parse-error" ||
-        r.coverageConfidenceReason === "partial-parse",
+    // At least one HTML-targeted rule must carry a byFile entry
+    // naming the broken file with a structured reason.
+    const rowsWithByFile = perRuleCoverage.filter(
+      (r) => r.byFile !== undefined && r.byFile.length > 0,
     );
-    expect(downgradedRows.length).toBeGreaterThan(0);
-    for (const row of downgradedRows) {
-      expect(row.coverageConfidence).toBe("low");
+    expect(rowsWithByFile.length).toBeGreaterThan(0);
+    for (const row of rowsWithByFile) {
+      const entries = row.byFile!.filter((e) => e.path === "/fixtures/broken.html");
+      expect(entries.length).toBeGreaterThan(0);
+      for (const entry of entries) {
+        expect(entry.confidence).toBe("low");
+        expect(entry.reason === "file-parse-error" || entry.reason === "partial-parse").toBe(true);
+      }
     }
-    // Cross-surface consistency: any row with a parse-error reason
-    // must appear in `ruleCoverage.lowConfidenceClean` (not
-    // `confidentlyClean`) when it has zero findings — the meta and
-    // the top-level derivative agree because both pivot on the same
-    // adjusted rows.
+    // Cross-surface consistency: rules whose AGGREGATE dropped to low
+    // (no clean evidence to fold from — happens for rules whose
+    // gate matched the file but emitted no findings, so it landed in
+    // parse-error rather than partial-parse) must appear in
+    // `ruleCoverage.lowConfidenceClean`. Rules whose aggregate stays
+    // high (file in partial-parse, the recovered AST counted as
+    // clean evidence) appear in `confidentlyClean` — the per-file
+    // caveat lives only on `byFile`, matching Q9 doctrine.
+    const aggregateDowngraded = perRuleCoverage.filter(
+      (r) => r.coverageConfidenceReason !== undefined && r.coverageConfidence === "low",
+    );
     const ruleCoverage = formatted["ruleCoverage"] as
       | { confidentlyClean: readonly string[]; lowConfidenceClean: readonly string[] }
       | undefined;
     if (ruleCoverage !== undefined) {
-      for (const row of downgradedRows) {
+      for (const row of aggregateDowngraded) {
         if (row.findingsEmitted === 0) {
           expect(ruleCoverage.lowConfidenceClean).toContain(row.ruleId);
           expect(ruleCoverage.confidentlyClean).not.toContain(row.ruleId);
@@ -192,13 +204,17 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
     }
   });
 
-  it("emits coverageConfidenceReason: 'partial-parse' when an errored file still produced findings", async () => {
+  it("ships byFile entries naming the partial-parse path on per-rule rows when an errored file still produced findings", async () => {
     // partial-parse
-    // branch. A file with parse-errors that still emits findings (the
-    // recovered AST was rich enough for at least one rule to fire)
-    // routes into `partialParseFiles`. Coverage drops to `"low"` with
-    // `coverageConfidenceReason: "partial-parse"`, but `filesEvaluated`
-    // stays counted — rules genuinely fired on the recovered slice.
+    // branch (Q9 update). A file with parse-errors that still emits
+    // findings (the recovered AST was rich enough for at least one
+    // rule to fire) routes into `partialParseFiles`. Per Q9 doctrine,
+    // the per-rule per-file degradation rides on `byFile`; the
+    // aggregate `coverageConfidence` only drops when the rule has no
+    // clean evidence to fold from. Here the partial-parse file
+    // contributes to `filesEvaluated` (rule ran on recovered AST), so
+    // cleanEvaluated ≥ MIN and aggregate stays "high" — but `byFile`
+    // names the bounded file so the agent reads the per-file caveat.
     //
     // Use a file with a missing `alt` attribute so `media/alt-text-
     // missing` fires reliably; force `ast.errors` non-empty so the
@@ -235,15 +251,21 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       true,
     );
     const perRuleCoverage = formatted.meta["perRuleCoverage"] as readonly PerRuleCoverage[];
-    const partialRows = perRuleCoverage.filter(
-      (r) => r.coverageConfidenceReason === "partial-parse",
+    // Rules with byFile entries naming the partial-parse path —
+    // these are HTML-targeted rules whose gate matched.
+    const rowsWithByFile = perRuleCoverage.filter(
+      (r) => r.byFile !== undefined && r.byFile.length > 0,
     );
-    expect(partialRows.length).toBeGreaterThan(0);
-    for (const row of partialRows) {
-      expect(row.coverageConfidence).toBe("low");
-      // `filesEvaluated` stays at the original count — partial-parse
-      // doesn't subtract the file.
-      expect(row.filesEvaluated).toBeGreaterThan(0);
+    expect(rowsWithByFile.length).toBeGreaterThan(0);
+    for (const row of rowsWithByFile) {
+      // byFile names the partial-parse file with the substrate reason.
+      expect(row.byFile).toBeDefined();
+      const partialEntries = row.byFile!.filter((e) => e.reason === "partial-parse");
+      expect(partialEntries.length).toBeGreaterThan(0);
+      for (const entry of partialEntries) {
+        expect(entry.path).toBe("/fixtures/partial.html");
+        expect(entry.confidence).toBe("low");
+      }
     }
   });
 });
@@ -481,7 +503,12 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     expect(out).toBe(rows);
   });
 
-  it("downgrades a row to 'low' with file-parse-error reason and subtracts the parse-error file from filesEvaluated", () => {
+  it("keeps aggregate at 'high' when at least one cleanly-parsed file survives, and ships the parse-error file under byFile (Q9 per-file-not-corpus-wide invariant)", () => {
+    // Q9 doctrine: a single parse-error file in a corpus must NOT
+    // blanket-degrade the aggregate. With 1 clean file + 1 broken, the
+    // rule still has the floor's worth of clean evidence, so aggregate
+    // `coverageConfidence` stays `"high"` and the per-file degradation
+    // rides on `byFile` for the broken file alone.
     const rows: readonly PerRuleCoverage[] = [
       {
         ruleId: "html/example",
@@ -498,15 +525,55 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     expect(out).toHaveLength(1);
     const [row] = out;
     expect(row?.ruleId).toBe("html/example");
+    // Parse-error file subtracted from `filesEvaluated`.
     expect(row?.filesEvaluated).toBe(1);
     // `filesEligible` is intentionally unchanged — the gate did match;
     // the gap is at evaluation, not eligibility.
     expect(row?.filesEligible).toBe(2);
-    expect(row?.coverageConfidence).toBe("low");
-    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    // Aggregate stays high — clean evidence dominates the corpus.
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.coverageConfidenceReason).toBeUndefined();
+    // Per-file degradation rides under `byFile` for the broken file
+    // alone — the agent reads which one of the rule's eligible files
+    // had its evidence horizon bounded.
+    expect(row?.byFile).toEqual([
+      { path: "/broken.html", confidence: "low", reason: "file-parse-error" },
+    ]);
   });
 
-  it("downgrades to 'partial-parse' when an errored file produced findings (filesEvaluated unchanged)", () => {
+  it("drops aggregate to 'low' when the only evaluated file failed to parse (no clean evidence to fold from)", () => {
+    // Single-file scan where the only eligible file is the parse-error
+    // file — `cleanEvaluated` is 0, below the MIN floor, so aggregate
+    // honestly drops to `"low"` with the file-parse-error reason. This
+    // is the pre-Q9 behavior on the fully-degraded edge case; Q9 only
+    // changes the scope of degradation, not the strength when there is
+    // no clean evidence to hold the aggregate up.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "html/example",
+        filesEvaluated: 1,
+        filesEligible: 1,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "high",
+      },
+    ];
+    const files = [syntheticHtml("/broken.html", true)];
+    const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set());
+    const [row] = out;
+    expect(row?.coverageConfidence).toBe("low");
+    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    expect(row?.filesEvaluated).toBe(0);
+    expect(row?.byFile).toEqual([
+      { path: "/broken.html", confidence: "low", reason: "file-parse-error" },
+    ]);
+  });
+
+  it("keeps aggregate 'high' on partial-parse files when clean siblings exist; per-file caveat rides on byFile", () => {
+    // Partial-parse files DO contribute to `filesEvaluated` (the rule
+    // ran on the recovered AST and emitted findings). With at least
+    // one clean file alongside, the aggregate stays high; the
+    // partial-parse caveat rides on `byFile` for the affected file.
     const rows: readonly PerRuleCoverage[] = [
       {
         ruleId: "html/example",
@@ -521,10 +588,41 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     // The errored file produced findings → routes into partial-parse.
     const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set(["/partial.html"]));
     const [row] = out;
-    expect(row?.coverageConfidence).toBe("low");
-    expect(row?.coverageConfidenceReason).toBe("partial-parse");
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.coverageConfidenceReason).toBeUndefined();
     // Evaluated count holds — the rule DID run on the recovered AST.
     expect(row?.filesEvaluated).toBe(2);
+    expect(row?.byFile).toEqual([
+      { path: "/partial.html", confidence: "low", reason: "partial-parse" },
+    ]);
+  });
+
+  it("keeps aggregate 'high' for a single partial-parse file because the recovered AST counts as clean evidence (rule fired)", () => {
+    // Partial-parse files contribute to `filesEvaluated` (the rule
+    // ran on the recovered AST and emitted findings). The aggregate
+    // fold treats the recovered slice as clean evidence for the
+    // corpus-level scalar — only the per-file confidence is bounded,
+    // and that bound rides on `byFile`. This is the per-file-not-
+    // corpus-wide invariant: a single partial-parse file is the per-
+    // file caveat the agent reads from `byFile`, not a corpus-level
+    // signal.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "html/example",
+        filesEvaluated: 1,
+        filesEligible: 1,
+        findingsEmitted: 1,
+        fired: true,
+        coverageConfidence: "high",
+      },
+    ];
+    const files = [syntheticHtml("/partial.html", true)];
+    const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set(["/partial.html"]));
+    const [row] = out;
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.byFile).toEqual([
+      { path: "/partial.html", confidence: "low", reason: "partial-parse" },
+    ]);
   });
 
   it("ignores parse-error files that don't match the rule's extension gate", () => {
@@ -548,10 +646,12 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     expect(row?.filesEvaluated).toBe(1);
   });
 
-  it("downgrades project-scoped rules (no extension gate) when any parse-error file is present", () => {
+  it("project-scoped rules pick up byFile entries for parse-error files (clean siblings hold aggregate at high)", () => {
     // Project-scoped rules walk every parsed file in one shot — a
-    // parse-error file is invisible to them too, so the same downgrade
-    // applies regardless of extension.
+    // parse-error file is invisible to them too. With one clean
+    // sibling, the aggregate stays high; the parse-error file rides
+    // on `byFile` so the agent reads which file the project-scoped
+    // rule could not see.
     const rows: readonly PerRuleCoverage[] = [
       {
         ruleId: "project/example",
@@ -565,15 +665,20 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     const files = [syntheticHtml("/clean.html", false), syntheticHtml("/broken.html", true)];
     const out = applyParseErrorAdjustment(rows, files, [projectRule], new Set());
     const [row] = out;
-    expect(row?.coverageConfidence).toBe("low");
-    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.coverageConfidenceReason).toBeUndefined();
     expect(row?.filesEvaluated).toBe(1);
+    expect(row?.byFile).toEqual([
+      { path: "/broken.html", confidence: "low", reason: "file-parse-error" },
+    ]);
   });
 
   it("preserves additive telemetry fields (concentration, classPatternConcentration) across the rewrite", () => {
     // The adjustment must not strip optional fields the engine
     // stamped on the row — `concentration` / `classPatternConcentration`
-    // are zero-information-loss telemetry and survive the downgrade.
+    // are zero-information-loss telemetry and survive the rewrite,
+    // even when only `byFile` is added (aggregate stays high under
+    // Q9's per-file-not-corpus-wide invariant).
     const rows: readonly PerRuleCoverage[] = [
       {
         ruleId: "html/example",
@@ -589,7 +694,12 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set());
     const [row] = out;
     expect(row?.concentration).toEqual({ file: "/dense.html", count: 12 });
-    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    // 4 clean files survive — aggregate stays high; per-file caveat
+    // rides on byFile.
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.byFile).toEqual([
+      { path: "/broken.html", confidence: "low", reason: "file-parse-error" },
+    ]);
   });
 
   it("floors filesEvaluated at 0 when parse-error matches exceed the original count", () => {
@@ -612,13 +722,15 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     expect(row?.filesEvaluated).toBe(0);
   });
 
-  it("stamps file-parse-error when both parse-error and partial-parse files match — file-parse-error wins", () => {
+  it("ships byFile entries for both parse-error and partial-parse files when both match a rule's gate (clean siblings hold aggregate)", () => {
     // Both parse-error and partial-parse files matched the rule's
-    // gate. The structured reason picks `file-parse-error` because
-    // that's the more severe signal: at least one file the rule
-    // counted as "evaluated" had no AST at all. The partial-parse
-    // contribution still gets reflected in the dropped confidence
-    // (which would have happened on either branch).
+    // gate alongside one clean file. The aggregate stays at "high"
+    // because cleanEvaluated == 2 ≥ MIN floor (filesEvaluated 3 -
+    // parseErrorMatches 1 = 2). Per-file detail rides on `byFile` —
+    // one entry per degraded file, each with its own structured
+    // reason. file-parse-error and partial-parse coexist on the same
+    // row's byFile list so an agent reading the per-file picture sees
+    // exactly which files contributed which substrate signal.
     const rows: readonly PerRuleCoverage[] = [
       {
         ruleId: "html/example",
@@ -636,10 +748,41 @@ describe("applyParseErrorAdjustment — unit-level coverage of the post-processo
     ];
     const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set(["/partial.html"]));
     const [row] = out;
-    expect(row?.coverageConfidence).toBe("low");
-    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    expect(row?.coverageConfidence).toBe("high");
+    expect(row?.coverageConfidenceReason).toBeUndefined();
     // Subtracts only the parse-error file (1), not the partial-parse one.
     expect(row?.filesEvaluated).toBe(2);
+    expect(row?.byFile).toEqual([
+      { path: "/parse-error.html", confidence: "low", reason: "file-parse-error" },
+      { path: "/partial.html", confidence: "low", reason: "partial-parse" },
+    ]);
+  });
+
+  it("when aggregate drops to 'low' (no clean evidence), file-parse-error wins over partial-parse in the aggregate reason", () => {
+    // Edge: every evaluated file is degraded (1 parse-error + 1
+    // partial-parse, no clean). cleanEvaluated == filesEvaluated 2
+    // - parseErrorMatches 1 = 1 ≥ MIN floor → aggregate STAYS high.
+    // To exercise the "no-clean-evidence aggregate drop" branch we
+    // need a row whose only file is parse-error (cleanEvaluated 0 <
+    // MIN). The byFile list still rides for traceability.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "html/example",
+        filesEvaluated: 1,
+        filesEligible: 1,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "high",
+      },
+    ];
+    const files = [syntheticHtml("/parse-error.html", true)];
+    const out = applyParseErrorAdjustment(rows, files, [htmlRule], new Set());
+    const [row] = out;
+    expect(row?.coverageConfidence).toBe("low");
+    expect(row?.coverageConfidenceReason).toBe("file-parse-error");
+    expect(row?.byFile).toEqual([
+      { path: "/parse-error.html", confidence: "low", reason: "file-parse-error" },
+    ]);
   });
 });
 

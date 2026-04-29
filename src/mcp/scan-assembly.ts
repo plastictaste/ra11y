@@ -23,7 +23,6 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
-import { isBuildArtifact } from "./build-artifacts.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
@@ -489,8 +488,15 @@ export const PER_RULE_COVERAGE_CAP = 200;
  *     reduced-confidence band — `scss-unresolved-variables`,
  *     `fragment-input-no-document-envelope`,
  *     `cross_file_*_not_attempted_by_rule`).
- *   - 2: `coverageConfidence === "high"` (rule ran on full evidence —
- *     the canonical "ran clean" row, least informative).
+ *   - 2: `coverageConfidence === "high"` with non-empty `byFile`
+ *     (rule's corpus-level evidence is clean but at least one
+ *     specific file's per-file confidence was bounded — Q9 doctrine
+ *     "Parser-failure invalidates per-file confidence" applied
+ *     per-file, not corpus-wide). The agent reads `byFile` to triage
+ *     the bounded files specifically.
+ *   - 3: `coverageConfidence === "high"` with no byFile (rule ran on
+ *     full evidence — the canonical "ran clean" row, least
+ *     informative).
  */
 function prioritizePerRuleCoverageForCap(
   rows: readonly PerRuleCoverage[],
@@ -498,7 +504,8 @@ function prioritizePerRuleCoverageForCap(
   const priorityOf = (row: PerRuleCoverage): number => {
     if (row.coverageConfidence === "low") return 0;
     if (row.coverageConfidence === "medium") return 1;
-    return 2;
+    if (row.byFile !== undefined && row.byFile.length > 0) return 2;
+    return 3;
   };
   return [...rows].sort((a, b) => priorityOf(a) - priorityOf(b));
 }
@@ -565,151 +572,17 @@ function perRuleCoverageMetaFragment(
   };
 }
 
-/**
- * Adjusts {@link PerRuleCoverage} rows so files that failed to parse
- * are honest about whether the rule actually evaluated their content
- *
- * The engine's evaluation tracker bumps `eligible` and `evaluated` per
- * (rule, file) pair purely on extension match — a file in
- * `parseErrorFiles` (parser totally failed, AST is empty) still
- * contributes the same +1 as a clean-parsing file, even though the
- * rule never saw the content. Without correction, an extension-gated
- * rule whose only matching files all failed to parse surfaces as
- * `findingsEmitted: 0, coverageConfidence: "high"` — the canonical
- * silent-miss the doctrine "zero-output success is ambiguous failure"
- * names at per-rule granularity.
- *
- * Two adjustments fire:
- *
- *   - Parse-error files (errored AND zero findings): subtracted from
- *     the row's `filesEvaluated`. When the resulting count is below
- *     `MIN_FILES_FOR_HIGH_CONFIDENCE` (1), confidence drops to `"low"`
- *     and `coverageConfidenceReason: "file-parse-error"` stamps the
- *     structured cause. `filesEligible` is left intact — eligibility
- *     is "matched the gate," which the parse-error file did; the
- *     gap is at evaluation, not eligibility.
- *   - Partial-parse files (errored AND at least one finding):
- *     `filesEvaluated` stays — rules genuinely fired on the recovered
- *     AST — but confidence drops to `"low"` and
- *     `coverageConfidenceReason: "partial-parse"` stamps the cause.
- *     The row's existing `reason` (if any) is preserved alongside,
- *     since it names a different axis (e.g. extension-gate,
- *     cross-file-bound) than the parse-state axis the new field
- *     covers.
- *
- * Project-scoped rules use `filesScanned` as their evaluated count;
- * the same subtraction applies for parse-error files since a project
- * rule running over an empty AST cannot detect anything in that file
- * either.
- *
- * No-op fast path: when no parse-error / partial-parse files matched
- * any rule's gate, the function returns the input array unchanged so
- * the common case stays cheap. Exported so the wiring layer (which
- * also passes `perRuleCoverage` to {@link buildRuleCoverageDerivative})
- * can adjust the rows once and feed both consumers, avoiding cross-
- * surface drift between `meta.perRuleCoverage` and the top-level
- * `ruleCoverage` headline.
- */
-export function applyParseErrorAdjustment(
-  rows: readonly PerRuleCoverage[],
-  files: readonly ParsedFile[],
-  activeRules: readonly Rule[],
-  findingFilePaths: ReadonlySet<string> | undefined,
-): readonly PerRuleCoverage[] {
-  const partition = partitionParseStateFiles(files, findingFilePaths);
-  if (partition.parseError.size === 0 && partition.partialParse.size === 0) return rows;
-  // Re-bind to ParsedFile arrays for the per-row matcher, which gates
-  // on `appliesTo.fileExtensions`.
-  const parseErrorFiles = files.filter((f) => partition.parseError.has(f.filePath));
-  const partialParseFiles = files.filter((f) => partition.partialParse.has(f.filePath));
-  const ruleById = new Map<string, Rule>();
-  for (const r of activeRules) ruleById.set(r.id, r);
-  return rows.map((row) =>
-    adjustRowForParseErrors(row, ruleById.get(row.ruleId), parseErrorFiles, partialParseFiles),
-  );
-}
-
-/**
- * Partitions the scan's parsed files into the two parse-state buckets
- * the per-rule confidence adjuster and the per-finding propagation
- * helper both need:
- *
- *   - `parseError` — files where the parser errored AND no rule / finder
- *     emitted any output. These contribute to the `file-parse-error`
- *     reason on the per-rule coverage row.
- *   - `partialParse` — files where the parser errored AND at least one
- *     rule / finder emitted output (the recovered AST was usable).
- *     These contribute to the `partial-parse` reason.
- *
- * Build-artifact files are excluded from both buckets — their phantom
- * parse errors are suppressed from `meta.analysisCoverage.parseErrorFiles[]`
- * elsewhere, so any per-rule / per-finding confidence downgrade keyed
- * off the same predicate must agree.
- *
- * Exported so the per-finding propagation helper can gate
- * `file_parse_error` / `partial_parse` codes on file membership: a
- * substrate code attached to a finding whose file is NOT in either
- * bucket reads as "the file's parser failed" when the finding's file
- * actually parsed cleanly — the silent-miss failure mode the doctrine
- * "Per-finding confidence must reflect per-rule coverage limitations"
- * names at the per-finding layer.
- */
-export function partitionParseStateFiles(
-  files: readonly ParsedFile[],
-  findingFilePaths: ReadonlySet<string> | undefined,
-): { readonly parseError: ReadonlySet<string>; readonly partialParse: ReadonlySet<string> } {
-  const parseError = new Set<string>();
-  const partialParse = new Set<string>();
-  for (const f of files) {
-    if (f.ast.errors.length === 0) continue;
-    if (isBuildArtifact(f.filePath, f.source)) continue;
-    if (findingFilePaths?.has(f.filePath)) partialParse.add(f.filePath);
-    else parseError.add(f.filePath);
-  }
-  return { parseError, partialParse };
-}
-
-/**
- * Per-row adjustment helper for {@link applyParseErrorAdjustment}.
- * Returns the input row unchanged when neither parse-error nor
- * partial-parse files matched the rule's gate; otherwise returns a
- * fresh row with `filesEvaluated` / `coverageConfidence` /
- * `coverageConfidenceReason` updated. The original row's optional
- * fields (`concentration`, `classPatternConcentration`, etc.) survive
- * via the spread so the adjustment never strips additive telemetry.
- */
-function adjustRowForParseErrors(
-  row: PerRuleCoverage,
-  rule: Rule | undefined,
-  parseErrorFiles: readonly ParsedFile[],
-  partialParseFiles: readonly ParsedFile[],
-): PerRuleCoverage {
-  // Level-gated rows were never evaluated against any file (the
-  // standard filter excluded the rule before per-file dispatch), so
-  // stamping `coverageConfidenceReason: "partial-parse"` on a
-  // gated row would lie about why its `filesEvaluated` is zero —
-  // the cause is level gating, not parse error. Pass through
-  // unchanged.
-  if (row.skipReason === "gated_by_level") return row;
-  const parseErrorMatches = countMatchingFiles(rule, parseErrorFiles);
-  const partialParseMatches = countMatchingFiles(rule, partialParseFiles);
-  if (parseErrorMatches === 0 && partialParseMatches === 0) return row;
-  // Subtract parse-error matches from `filesEvaluated`. Floor at 0 so
-  // an off-by-one in match counting never produces a negative count
-  // on the wire — defensive for callers that pre-trim rows.
-  const adjustedEvaluated = Math.max(0, row.filesEvaluated - parseErrorMatches);
-  // Partial-parse files still contributed to evaluation (rules fired
-  // on the recovered AST), so confidence drops without changing the
-  // count. Parse-error matches alone also drop confidence: the rule
-  // may have lost its only honest evidence horizon on this scan.
-  const reason = parseErrorMatches > 0 ? "file-parse-error" : "partial-parse";
-  return {
-    ...row,
-    filesEvaluated: adjustedEvaluated,
-    coverageConfidence: "low",
-    coverageConfidenceReason: reason,
-  };
-}
+// {@link applyParseErrorAdjustment} + {@link partitionParseStateFiles}
+// live in `./parse-error-adjustment.ts` — extracted so this file
+// stays under the 500-line budget and the per-rule per-file
+// degradation rules (Q9 doctrine: "Parser-failure invalidates
+// per-file confidence") sit next to the shape they describe.
+// Re-exported here so the historical import path keeps resolving for
+// every consumer (the MCP wiring layer + unit tests).
+export {
+  applyParseErrorAdjustment,
+  partitionParseStateFiles,
+} from "./parse-error-adjustment.ts";
 
 /**
  * returns the subset of

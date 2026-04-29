@@ -913,6 +913,55 @@ export interface PerRuleCoverage {
      */
     readonly samples: readonly string[];
   }[];
+  /**
+   * Per-file confidence detail for files where this rule's evidence
+   * horizon was bounded on a per-file (not corpus-wide) axis. Each
+   * entry names a single file the rule's gate matched but where a
+   * substrate-level signal — parser failure (`file-parse-error`) or
+   * partial-parse recovery — invalidates the rule's per-file confidence
+   * on that one file. Files that parsed cleanly are NOT enumerated
+   * here (their per-file confidence equals the aggregate
+   * {@link coverageConfidence} via implication); only the degraded
+   * subset rides so the field is bounded by the parse-error /
+   * partial-parse population, not the eligible-file count.
+   *
+   * Why per-file: a single parse-error file in a 429-file corpus used to
+   * blanket-degrade EVERY rule's aggregate `coverageConfidence` to
+   * `"low"` with `coverageConfidenceReason: "file-parse-error"`,
+   * regardless of which file the rule actually produced its evidence
+   * from — the canonical silent-miss the AI-first doctrine "Parser-
+   * failure invalidates per-file confidence" names at the per-rule
+   * layer. The aggregate now folds from these per-file entries: as long
+   * as the rule has at least {@link MIN_FILES_FOR_HIGH_CONFIDENCE}
+   * cleanly-evaluated files outside the degraded set, the aggregate
+   * stays `"high"` and `byFile` carries the per-file-bounded entries
+   * the agent reads to triage the small handful of degraded files
+   * specifically.
+   *
+   * Cross-surface contract: when a rule's aggregate
+   * {@link coverageConfidence} stays `"high"` but `byFile` is non-empty,
+   * the per-finding propagation helper
+   * (`src/mcp/per-finding-confidence-parity.ts`) STILL attaches the
+   * file-scoped substrate code (`file_parse_error` / `partial_parse`)
+   * to findings whose path appears in `byFile` — the per-rule-coverage
+   * row is the one truthful surface that names which files the rule's
+   * confidence was bounded on, regardless of whether the aggregate
+   * scalar dropped.
+   *
+   * Schema: `confidence` is the per-file label (`"low"` for parse-error
+   * files, `"low"` for partial-parse files — matching the aggregate's
+   * pre-fix behavior on the file-scoped axis); `reason` mirrors the
+   * substrate-level enum on {@link coverageConfidenceReason}
+   * (`"file-parse-error"` / `"partial-parse"`). Sorted by `path` for
+   * deterministic wire output. Present-when-meaningful per CLAUDE.md
+   * §1: omitted entirely when no parse-error / partial-parse file
+   * matched the rule's gate.
+   */
+  readonly byFile?: readonly {
+    readonly path: string;
+    readonly confidence: "high" | "medium" | "low";
+    readonly reason: "file-parse-error" | "partial-parse";
+  }[];
 }
 
 /** Aggregate result of a full scan. */
