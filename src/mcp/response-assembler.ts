@@ -94,6 +94,7 @@ import {
   outputFilePathSet,
   partitionParseStateFiles,
 } from "./scan-assembly.ts";
+import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
@@ -326,13 +327,24 @@ function buildAssemblerWarningsField(args: {
   // consumption site. Safe because the producer is our own helper.
   const analysisCoverage = args.meta["analysisCoverage"] as Record<string, unknown> | undefined;
   const filesByExtension = args.meta["filesByExtension"] as Record<string, number> | undefined;
-  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+  const overlapResult = computeTemplateDirectiveOverlap({
     findings: args.violations.map((v) => ({
       filePath: v.location.filePath,
       line: v.location.line,
     })),
     sourcesByPath: new Map(args.parsedFiles.map((f) => [f.filePath, f.source])),
   });
+  const templateDirectivesOverlap = overlapResult.overlap;
+  // Combine the analysis-coverage accumulator's frontmatter-fence
+  // file list (lifted onto `analysisCoverage.frontmatterFenceFiles`)
+  // with the overlap-confirmed directive files so the warning's
+  // `warningsDetails.template_files_parsed_as_literal.files` payload
+  // names every file that contributed to the predicate. Empty when
+  // neither emission path produced per-file evidence on this scan.
+  const templateLiteralFiles = combineTemplateLiteralFiles(
+    analysisCoverage,
+    overlapResult.overlapFiles,
+  );
   // Q-SHARED-META-ARRAY-BUDGET-CAP: the assembler-seam meta block
   // already carries the capped `analysisCoverage.*` arrays with
   // their per-array `*Truncated: { shown, total }` siblings; derive
@@ -359,6 +371,7 @@ function buildAssemblerWarningsField(args: {
       ? {}
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
     templateDirectivesOverlap,
+    ...(templateLiteralFiles.length === 0 ? {} : { templateLiteralFiles }),
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),

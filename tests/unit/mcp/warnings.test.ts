@@ -2258,17 +2258,16 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     });
   });
 
-  it("warnings-details schema discipline — binary-presence code `template_files_parsed_as_literal` ships the empty-object marker", () => {
-    // `template_files_parsed_as_literal` is binary too: the
-    // interpolation token list lives in
-    // `meta.analysisCoverage.templateInterpolationFound` and the
-    // code's prose names the dispatch (overlap or frontmatter fence).
-    // A count of tokens or fence presence bit doesn't change the
-    // agent's next action — read the file, confirm the parse-as-
-    // literal regime, decide whether to add a pragma — the bare
-    // code IS the entire top-level signal. The marker on
-    // `warningsDetails` keeps the membership invariant honest across
-    // the response.
+  it("warnings-details schema discipline — `template_files_parsed_as_literal` falls back to the empty-object marker when the call site did not thread per-file evidence", () => {
+    // Derivative surfaces (e.g. `warningsFromScanMeta`) can fire the
+    // warning without materializing the per-file evidence list — the
+    // predicate (`templateDirectivesOverlap` OR `hasFrontmatterFence`)
+    // is independent of the payload axis. When `templateLiteralFiles`
+    // is absent, the dispatch falls back to the binary-presence
+    // marker so the membership invariant ("every fired code has a
+    // `warningsDetails` key") still holds and the bare code stays the
+    // signal — the same shape the warning shipped before per-file
+    // evidence was added to the payload axis.
     const out = warningsField({
       filesScanned: 5,
       rootSource: "explicit",
@@ -2285,6 +2284,43 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
         "template_files_parsed_as_literal"
       ],
     ).toEqual({});
+  });
+
+  it("`template_files_parsed_as_literal` ships `{ files, extensions }` payload when the call site threaded per-file evidence", () => {
+    // Primary call sites (`tool-scan-project.ts`,
+    // `response-assembler.ts`, `scan-time-warnings.ts`) materialize
+    // the per-file evidence by combining the analysis-coverage
+    // accumulator's `frontmatterFenceFiles` list with the
+    // overlap-confirmed directive files. When that list reaches
+    // `warningsField`, the payload names every contributing path plus
+    // the unique lowercased extensions across them — the agent reads
+    // a mixed-extension scan (`.yml` + `.html` + `.md`) and
+    // disambiguates which file-shape was the literal-parse substrate
+    // without re-walking sources.
+    const out = warningsField({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { hasFrontmatterFence: true },
+      filesByExtension: { ".yml": 3, ".html": 2 },
+      templateDirectivesOverlap: true,
+      templateLiteralFiles: [
+        "/proj/.github/workflows/ci.yml",
+        "/proj/_posts/2026-04-29-post.md",
+        "/proj/index.html",
+      ],
+    });
+    expect(out.warnings).toContain("template_files_parsed_as_literal");
+    const detail = (out.warningsDetails as Record<string, unknown> | undefined)?.[
+      "template_files_parsed_as_literal"
+    ] as { files: readonly string[]; extensions: readonly string[] };
+    expect(detail).toBeDefined();
+    expect(detail.files).toEqual([
+      "/proj/.github/workflows/ci.yml",
+      "/proj/_posts/2026-04-29-post.md",
+      "/proj/index.html",
+    ]);
+    expect(detail.extensions).toEqual([".html", ".md", ".yml"]);
   });
 
   it("the membership-vs-payload invariant holds when the seven canonical regression codes all fire on one response", () => {
@@ -2329,9 +2365,13 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     expect(out.warningsDetails?.scanned_build_artifacts_present).toBeDefined();
     // warnings-details schema discipline: every fired code is keyed.
     // Disambiguation:
-    //   - `template_files_parsed_as_literal` is binary by design
-    //     (typed as `BinaryPresenceMarker`) so the fall-through
-    //     stamps `{}` honestly.
+    //   - `template_files_parsed_as_literal` is payload-bearing in
+    //     the schema; this call site did NOT thread
+    //     `templateLiteralFiles`, so the fall-through stamps the
+    //     bare `{}` marker honestly. Primary call sites
+    //     (`tool-scan-project.ts`, `response-assembler.ts`,
+    //     `scan-time-warnings.ts`) DO thread the list and ship the
+    //     `{ files, extensions }` payload.
     //   - `no_config_found` is payload-bearing in the schema; the
     //     caller didn't thread `configSearchedFromForWarning`, so
     //     the fall-through stamps the truncation sentinel rather
@@ -2442,8 +2482,13 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       truncated: true,
       reason: "summarizer_inputs_unavailable",
     });
-    // Binary-presence code (typed as `BinaryPresenceMarker`) →
-    // bare `{}` marker, honestly.
+    // `template_files_parsed_as_literal` falls back to the bare
+    // marker here because this call site did NOT thread
+    // `templateLiteralFiles` (per-file evidence). The primary call
+    // sites (`tool-scan-project.ts`, `response-assembler.ts`,
+    // `scan-time-warnings.ts`) DO thread the list — covered by the
+    // dedicated test above (`ships { files, extensions } payload`)
+    // and the cross-surface integration test.
     expect(detailsMap.template_files_parsed_as_literal).toEqual({});
   });
 });

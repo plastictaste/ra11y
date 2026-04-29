@@ -749,6 +749,32 @@ export interface WarningInputs {
    */
   readonly templateDirectivesOverlap?: boolean;
   /**
+   * caller-supplied list of files whose source contributed to the
+   * `template_files_parsed_as_literal` predicate. Drives the
+   * `warningsDetails.template_files_parsed_as_literal: { files, extensions }`
+   * payload so the agent can disambiguate which of the scanned files
+   * sat on the literal-parse substrate (frontmatter fence at file start
+   * OR template-directive line intersecting a finding) vs. which were
+   * unrelated. Without this field the warning still fires on the bare
+   * predicate (`hasFrontmatterFence` OR `templateDirectivesOverlap`),
+   * but the payload drops conservatively to the binary-presence marker
+   * — agents reading mixed-extension scans (a `.yml` workflow file with
+   * `${{ ... }}` expressions next to an unrelated `.html` page) cannot
+   * tell which file was the substrate.
+   *
+   * Two emission paths feed this list at the call site:
+   *   - Frontmatter-fence files from the analysis-coverage accumulator
+   *     (`acc.frontmatterFenceFiles`).
+   *   - Overlap-confirmed directive files from
+   *     {@link computeTemplateDirectiveOverlap}'s `overlapFiles` set.
+   *
+   * Pass `undefined` (or omit) when the caller didn't materialize either
+   * subset (e.g. tools that only have a pre-resolved violation list with
+   * no source files in hand). Empty array is treated identically to
+   * `undefined` — neither populates the payload.
+   */
+  readonly templateLiteralFiles?: readonly string[];
+  /**
    * Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: true when the walk-up from the
    * scan root saw a `package.json` (or a `ra11y.config.*` that for some
    * reason didn't load) anywhere along the same directory range the
@@ -1840,7 +1866,35 @@ export interface ScanWarningDetails {
     readonly searchedFrom: string;
   };
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
-  readonly template_files_parsed_as_literal?: BinaryPresenceMarker;
+  /**
+   * Payload for `template_files_parsed_as_literal`. Names the files whose
+   * source contributed to the warning's two emission paths (frontmatter
+   * fence at file start, OR a template-directive token whose line
+   * intersected an emitted finding) and the unique extensions seen on
+   * those paths. Without the payload, an agent reading the bare code on a
+   * mixed-extension scan (`.html` + `.yml` + `.md`) cannot tell which
+   * file-shape was the literal-parse substrate vs. which was unrelated —
+   * the canonical case is `extensions_skipped_no_parser` reporting
+   * `.yml` as the top skipped extension while `template_files_parsed_as_literal`
+   * also fires on `${{ ... }}` expressions in `.yml` workflow files;
+   * the two warnings co-fire on overlapping but categorically different
+   * file sets. With `files` + `extensions`, the agent disambiguates
+   * which `.yml` was skipped vs. which was parsed-as-literal in one read.
+   *
+   * Both axes are always populated together so consumers never have to
+   * disambiguate "absent" from "empty" on a known dimension. `files` is
+   * sorted alphabetically for deterministic wire output; `extensions`
+   * holds the unique lowercased file extensions across `files` (sorted
+   * alphabetically). Empty arrays are not emitted — when the
+   * call site cannot supply file paths the dispatch falls through to
+   * the `BinaryPresenceMarker` shape via the schema-discipline contract.
+   */
+  readonly template_files_parsed_as_literal?:
+    | {
+        readonly files: readonly string[];
+        readonly extensions: readonly string[];
+      }
+    | BinaryPresenceMarker;
   readonly php_islands_stripped?: BinaryPresenceMarker;
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
@@ -2937,25 +2991,32 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
 }
 
 /**
- * predicate: returns `true` when at least
- * one emitted finding's line sits inside a template-directive line in
- * the same file. Callers (scan-family handlers, derivative tools)
- * supply per-file source text plus `(filePath, line)` pairs for every
- * emitted finding — the function scans each file's source on demand
- * and short-circuits on the first overlap. Returns `false` when no
- * overlap exists; callers treat that identically to
- * `templateDirectivesOverlap: false` on {@link WarningInputs}, which
- * drops the `template_files_parsed_as_literal` code.
+ * predicate + per-file evidence:
+ * scans every emitted finding to detect line overlap with a template-
+ * directive line in the same file. The boolean `overlap` returns true
+ * when at least one finding's line sits inside a directive line; the
+ * `overlapFiles` set names each file that contributed at least one
+ * such overlap so the warning channel can surface a per-file evidence
+ * list rather than a bare presence bit.
  *
- * The cost is O(total source bytes across files with at least one
- * finding), bounded by the parsed-file set the scanner already
- * materialized. Files without findings are never read.
+ * Walks every finding (no short-circuit) so the file set is complete —
+ * the warning's `warningsDetails.template_files_parsed_as_literal.files`
+ * payload requires the full set, not the first hit. Cost is still
+ * O(total source bytes across finding-bearing files) because each
+ * file's directive-line set is computed once and cached; the additional
+ * iterations after the first overlap only check set membership.
+ *
+ * Callers wanting only the boolean (the gate predicate) read
+ * `overlap`; callers building the warning payload read `overlapFiles`.
+ * The `boolean` predicate semantics on {@link WarningInputs.templateDirectivesOverlap}
+ * are unchanged.
  */
 export function computeTemplateDirectiveOverlap(args: {
   readonly findings: Iterable<{ readonly filePath: string; readonly line: number }>;
   readonly sourcesByPath: ReadonlyMap<string, string>;
-}): boolean {
+}): { readonly overlap: boolean; readonly overlapFiles: ReadonlySet<string> } {
   const linesByPath = new Map<string, ReadonlySet<number>>();
+  const overlapFiles = new Set<string>();
   for (const finding of args.findings) {
     let directiveLines = linesByPath.get(finding.filePath);
     if (directiveLines === undefined) {
@@ -2971,9 +3032,9 @@ export function computeTemplateDirectiveOverlap(args: {
       }
       linesByPath.set(finding.filePath, directiveLines);
     }
-    if (directiveLines.has(finding.line)) return true;
+    if (directiveLines.has(finding.line)) overlapFiles.add(finding.filePath);
   }
-  return false;
+  return { overlap: overlapFiles.size > 0, overlapFiles };
 }
 
 /**
@@ -3002,6 +3063,15 @@ type ScanMetaWarningArgs = {
   readonly sessionWrappersMismatchCwd?: boolean;
   readonly vendorCssNoise?: WarningInputs["vendorCssNoise"];
   readonly templateDirectivesOverlap?: boolean;
+  /**
+   * Pass-through for the per-file evidence list that drives the
+   * `warningsDetails.template_files_parsed_as_literal` payload. See
+   * {@link WarningInputs.templateLiteralFiles} for the contract. The
+   * call site materializes the list (frontmatter-fence files +
+   * overlap-confirmed directive files) and threads it here so the
+   * warnings module stays pure over its inputs.
+   */
+  readonly templateLiteralFiles?: readonly string[];
   readonly additionalPathsRedundant?: boolean;
   readonly restrictToPathsEmpty?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
@@ -3096,6 +3166,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "sessionWrappersMismatchCwd",
   "vendorCssNoise",
   "templateDirectivesOverlap",
+  "templateLiteralFiles",
   "additionalPathsRedundant",
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
@@ -3219,6 +3290,10 @@ export function computeScanWarningDetails(
     {
       code: "scanned_minified_file",
       summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
+    },
+    {
+      code: "template_files_parsed_as_literal",
+      summarize: () => summarizeTemplateFilesParsedAsLiteral(inputs.templateLiteralFiles),
     },
     {
       code: "bulk_catalog_detected",
@@ -3408,6 +3483,52 @@ function summarizeScannedMinifiedFiles(
 ): NonNullable<ScanWarningDetails["scanned_minified_file"]> | undefined {
   if (files === undefined || files.length === 0) return undefined;
   return { files: [...files].sort() };
+}
+
+/**
+ * Builds the `template_files_parsed_as_literal` payload from the
+ * caller-supplied file list. Returns `undefined` when the list is
+ * absent or empty so the dispatch table falls back to the
+ * `BinaryPresenceMarker` shape — the warning code's predicate
+ * (frontmatter fence OR directive overlap) can fire on derivative
+ * surfaces (e.g. {@link warningsFromScanMeta}) where the caller has not
+ * threaded per-file evidence; the bare code stays the signal in that
+ * case.
+ *
+ * `files` is sorted alphabetically for deterministic wire output;
+ * `extensions` carries the unique lowercased file extensions across
+ * `files` (also sorted alphabetically) so an agent triaging a mixed-
+ * extension scan can disambiguate which file-shapes contributed
+ * without re-deriving the set from `files[]`.
+ *
+ * Both axes are always populated together — the empty-list branch
+ * returns `undefined` rather than a half-built `{ files: [], extensions: [] }`
+ * shape, per `docs/kb/architecture/ai-first-consumer.md` "Ambiguous
+ * field shapes are dishonest." Files without an extension (no `.` in
+ * the basename) contribute nothing to `extensions`; that's a tradeoff
+ * favoring honest output (an empty extension token would be ambiguous
+ * between "extension is the empty string" and "no extension")
+ * over completeness on an edge case the predicate doesn't fire on
+ * today (frontmatter requires a markdown/HTML extension; directive
+ * overlap requires the parser to have routed the file).
+ */
+function summarizeTemplateFilesParsedAsLiteral(
+  files: WarningInputs["templateLiteralFiles"],
+):
+  | NonNullable<
+      Exclude<ScanWarningDetails["template_files_parsed_as_literal"], BinaryPresenceMarker>
+    >
+  | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  const extSet = new Set<string>();
+  for (const path of sortedFiles) {
+    const dot = path.lastIndexOf(".");
+    if (dot === -1) continue;
+    const ext = path.slice(dot).toLowerCase();
+    if (ext.length > 1) extSet.add(ext);
+  }
+  return { files: sortedFiles, extensions: [...extSet].sort() };
 }
 
 /**

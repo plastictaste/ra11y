@@ -84,6 +84,39 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
   return JSON.parse(result.content[0].text) as Record<string, unknown>;
 }
 
+/**
+ * Asserts the `warningsDetails.template_files_parsed_as_literal` payload
+ * is honestly populated: both axes non-empty when the warning fires on
+ * a primary surface, every listed file lives inside the expected
+ * fixture root, extensions are lowercased / sorted / deduped, and the
+ * extensions axis exactly mirrors the file-derived extension set. Pure
+ * over its inputs; lifted out of the per-test body so individual tests
+ * stay under the cognitive-complexity cap.
+ */
+function assertTemplateLiteralPayload(
+  detail: { files: readonly string[]; extensions: readonly string[] } | undefined,
+  fixtureRootSubstring: string,
+): void {
+  expect(detail).toBeDefined();
+  if (detail === undefined) return;
+  expect(Array.isArray(detail.files)).toBe(true);
+  expect(Array.isArray(detail.extensions)).toBe(true);
+  expect(detail.files.length).toBeGreaterThan(0);
+  expect(detail.extensions.length).toBeGreaterThan(0);
+  for (const path of detail.files) expect(path).toContain(fixtureRootSubstring);
+  expect(detail.extensions).toEqual([...detail.extensions].sort());
+  for (const ext of detail.extensions) {
+    expect(ext.startsWith(".")).toBe(true);
+    expect(ext).toBe(ext.toLowerCase());
+  }
+  const seenExts = new Set<string>();
+  for (const path of detail.files) {
+    const dot = path.lastIndexOf(".");
+    if (dot !== -1) seenExts.add(path.slice(dot).toLowerCase());
+  }
+  expect([...seenExts].sort()).toEqual([...detail.extensions].sort());
+}
+
 describe("scan_project emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the scan root exists but contains zero parseable files", async () => {
     // Malformed-input paths (nonexistent cwd) now hard-error with the
@@ -113,6 +146,32 @@ describe("scan_project emits top-level `warnings` for silent-failure modes", () 
     const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
     expect(Array.isArray(body.warnings)).toBe(true);
     expect(body.warnings).toContain("template_files_parsed_as_literal");
+  });
+
+  it("template_files_parsed_as_literal: payload names the contributing files + extensions", async () => {
+    // `extensions_skipped_no_parser` and
+    // `template_files_parsed_as_literal` co-fire on overlapping but
+    // categorically different file sets (the canonical case is `.yml`
+    // workflow files with `${{ ... }}` expressions next to a Jinja
+    // `.html`). Without per-file evidence on the warning's payload,
+    // an agent reading the response cannot disambiguate which
+    // file-shape was the literal-parse substrate vs. which was
+    // unrelated. The payload axis names the actual contributing paths
+    // plus the unique lowercased extensions across them so the agent
+    // disambiguates in one read.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: TEMPLATE_FIXTURE }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(body.warnings).toContain("template_files_parsed_as_literal");
+    const detail = body.warningsDetails?.["template_files_parsed_as_literal"] as
+      | { files: readonly string[]; extensions: readonly string[] }
+      | undefined;
+    assertTemplateLiteralPayload(detail, "template-directives/source");
   });
 
   it("a healthy scan omits the `warnings` field entirely (not `warnings: []`)", async () => {

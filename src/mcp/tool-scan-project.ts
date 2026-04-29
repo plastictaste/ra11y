@@ -52,6 +52,7 @@ import {
   type ScanProjectReviewCandidate,
 } from "./scan-project-review-candidates.ts";
 import {
+  combineTemplateLiteralFiles,
   computeAnimationLibraryGuardCandidates,
   computeVendorCssNoise,
 } from "./scan-time-warnings.ts";
@@ -795,12 +796,22 @@ function buildBaseWarningsForScanProject(args: {
   // `(filePath, line)` tuples out of every finding `formatted.files`
   // already grouped; cross-reference against per-file source text
   // indexed by `ParsedFile.filePath`.
-  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+  const templateOverlapResult = computeTemplateDirectiveOverlap({
     findings: formatted.files.flatMap((f) =>
       f.findings.map((fn) => ({ filePath: f.path, line: fn.line })),
     ),
     sourcesByPath: new Map(parsedFiles.map((f) => [f.filePath, f.source])),
   });
+  const templateDirectivesOverlap = templateOverlapResult.overlap;
+  // Combine the analysis-coverage accumulator's frontmatter-fence
+  // file list (lifted onto `analysisCoverage.frontmatterFenceFiles`)
+  // with the overlap-confirmed directive files so the warning's
+  // `warningsDetails.template_files_parsed_as_literal.files` payload
+  // names every file that contributed to the predicate.
+  const templateLiteralFiles = combineTemplateLiteralFiles(
+    formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
+    templateOverlapResult.overlapFiles,
+  );
   // derive the
   // `scanned_build_artifacts_present` payload here so the warning code
   // ships with quantitative signal (count + first-pivot path). Without
@@ -891,6 +902,7 @@ function buildBaseWarningsForScanProject(args: {
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
+    ...templateLiteralFilesField(templateLiteralFiles),
     additionalPathsRedundant,
     restrictToPathsEmpty,
     configSearchSawProjectMarker,
@@ -964,6 +976,20 @@ function buildBaseWarningsForScanProject(args: {
  * field shapes are dishonest"). Extracted so the handler's
  * cognitive complexity stays inside the lint budget.
  */
+/**
+ * Builds the spreadable `templateLiteralFiles` subset for the
+ * `warningsFieldFromScanMeta` call. Conditional-spread per the
+ * present-when-meaningful contract: empty list omits the field, non-
+ * empty carries the path list. Drives the
+ * `warningsDetails.template_files_parsed_as_literal: { files, extensions }`
+ * payload at the warnings-module seam.
+ */
+function templateLiteralFilesField(files: readonly string[]): {
+  templateLiteralFiles?: readonly string[];
+} {
+  return files.length === 0 ? {} : { templateLiteralFiles: files };
+}
+
 function warningsFieldsForAssembler(warningsFromMeta: {
   readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
   readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;

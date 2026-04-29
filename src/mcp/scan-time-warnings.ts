@@ -207,6 +207,7 @@ interface DerivedBuildArtifactSignals {
   readonly scannedBuildArtifactsAllFiles: boolean;
   readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
   readonly templateDirectivesOverlap: boolean;
+  readonly templateLiteralFiles: readonly string[];
   readonly filesScanned: number;
   readonly totalFindings: number;
   readonly jsInnerHtmlFileSamples: readonly {
@@ -267,13 +268,23 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
           buildArtifacts: buildArtifactEntries,
         });
 
-  const templateDirectivesOverlap = computeTemplateDirectiveOverlap({
+  const overlapResult = computeTemplateDirectiveOverlap({
     findings: inputs.violations.map((v) => ({
       filePath: v.location.filePath,
       line: v.location.line,
     })),
     sourcesByPath: new Map(inputs.parsedFiles.map((f) => [f.filePath, f.source])),
   });
+  const templateDirectivesOverlap = overlapResult.overlap;
+  // Combine per-file frontmatter evidence (lifted off the coverage
+  // accumulator) with the overlap-confirmed directive files so the
+  // warning channel's payload names every file that contributed to
+  // the `template_files_parsed_as_literal` predicate. Empty when
+  // neither emission path produced per-file evidence on this scan.
+  const templateLiteralFiles = combineTemplateLiteralFiles(
+    inputs.analysisCoverage,
+    overlapResult.overlapFiles,
+  );
 
   // Per-file inline-HTML pattern samples are surfaced only for files
   // where the routed parser produced zero findings — the routing-skip
@@ -319,12 +330,44 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     scannedBuildArtifactsAllFiles,
     bulkCatalogDetection,
     templateDirectivesOverlap,
+    templateLiteralFiles,
     filesScanned,
     totalFindings,
     jsInnerHtmlFileSamples,
     linkedStylesheetsUnresolvedForContrast,
     jsRoutedThroughTsxSucceededCount,
   };
+}
+
+/**
+ * Builds the per-file evidence list backing
+ * `warningsDetails.template_files_parsed_as_literal.files`. Combines
+ * the analysis-coverage accumulator's `frontmatterFenceFiles` (lifted
+ * onto the coverage block by `buildAnalysisCoverage`) with the
+ * overlap-confirmed directive files returned by
+ * {@link computeTemplateDirectiveOverlap}. Both subsets are file-path
+ * lists; the warning's predicate fires on the union so the payload
+ * names every file that contributed.
+ *
+ * Pure over its inputs — sorted union, deduped via `Set`. Returns an
+ * empty array when neither subset contributed evidence; the caller
+ * conditional-spreads the field away in that case so the wire shape
+ * stays present-when-meaningful.
+ */
+export function combineTemplateLiteralFiles(
+  analysisCoverage: Record<string, unknown> | undefined,
+  overlapFiles: ReadonlySet<string>,
+): readonly string[] {
+  const out = new Set<string>();
+  if (analysisCoverage !== undefined) {
+    const fence = analysisCoverage["frontmatterFenceFiles"];
+    if (Array.isArray(fence)) {
+      for (const path of fence) if (typeof path === "string") out.add(path);
+    }
+  }
+  for (const path of overlapFiles) out.add(path);
+  if (out.size === 0) return [];
+  return [...out].sort();
 }
 
 /**
@@ -414,6 +457,7 @@ function buildWarningsFieldInputs(
     ...(inputs.storybookPresetActive ? { storybookPresetActive: true } : {}),
     ...(inputs.sessionWrappersMismatchCwd ? { sessionWrappersMismatchCwd: true } : {}),
     templateDirectivesOverlap: derived.templateDirectivesOverlap,
+    ...templateLiteralInputs(derived.templateLiteralFiles),
     ...(inputs.additionalPathsRedundant ? { additionalPathsRedundant: true } : {}),
     ...(inputs.restrictToPathsEmpty ? { restrictToPathsEmpty: true } : {}),
     configSearchSawProjectMarker: inputs.configSearchSawProjectMarker,
@@ -446,6 +490,20 @@ function buildWarningsFieldInputs(
       ? {}
       : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
   };
+}
+
+/**
+ * Builds the spreadable template-literal-files subset of
+ * {@link WarningInputs}. Conditional-spread per the
+ * present-when-meaningful contract: empty list omits the field, non-
+ * empty carries the path list. Drives the
+ * `warningsDetails.template_files_parsed_as_literal: { files, extensions }`
+ * payload at the warnings-module seam. Extracted from
+ * {@link buildWarningsFieldInputs} so the orchestrator stays under the
+ * cognitive-complexity cap as new evidence axes accrete.
+ */
+function templateLiteralInputs(files: readonly string[]): Partial<WarningInputs> {
+  return files.length === 0 ? {} : { templateLiteralFiles: files };
 }
 
 /**

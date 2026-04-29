@@ -283,8 +283,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Cross-surface count + warning drift
 
-- [ ] **Q10-YML-SKIPPED-BUT-TEMPLATE-LITERAL-CO-FIRES-NO-DETAIL** `extensions_skipped_no_parser` reports `.yml` as topExtension while `template_files_parsed_as_literal` ALSO fires; the two warnings co-fire on the same files but mean different things. The `template_files_parsed_as_literal` warning has no `files[]` / `extensions[]` detail to disambiguate. Fix: ship `warningsDetails.template_files_parsed_as_literal: {files: [...], extensions: [...]}` so the agent can tell which `.yml` was skipped vs parsed-as-literal. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
-
 ### suggest_fix shape + correctness bugs
 
 - [ ] **Q10-SUGGEST-FIX-VENDOR-REDIRECT-COMPOUNDS-MISLABEL** When `suggest_fix` is called on a finding whose file was classified as a build artifact, it returns `kind: "none"` with `vendorContext.redirectTo: "consumer-override"` instead of a fix. Combined with a heuristic mis-classification (Q9-MINIFIED-LABEL-MISLABELS-LONG-LINE-SCSS recurrence), the agent is silently denied fix help on hand-authored source. Two failure modes compound. Fix: gate vendor-redirect on a high-confidence build-artifact classifier (token co-occurrence, not single-marker) AND surface the underlying classification signals in `vendorContext` so the agent can decide whether to trust the redirect. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."

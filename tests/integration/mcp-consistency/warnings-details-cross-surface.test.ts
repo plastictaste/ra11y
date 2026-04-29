@@ -427,7 +427,14 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   "scanned_zero_files",
   "root_source_defaulted",
   "tailwind_detected_css_undercounted",
-  "template_files_parsed_as_literal",
+  // `template_files_parsed_as_literal` is now payload-bearing on the
+  // canonical surfaces (`scan_project`, `coverage`, `checklist`,
+  // `scan_file`) — they thread the per-file evidence list through the
+  // warnings aggregator. Derivative surfaces that don't materialize
+  // the file list still fall back to the bare `{}` marker, but the
+  // typed schema declares the code as `{ files, extensions } |
+  // BinaryPresenceMarker` so it no longer belongs in the
+  // exclusively-binary set this invariant walks.
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",

@@ -222,6 +222,17 @@ interface CoverageBlock {
    * scanned file opened with a fence.
    */
   hasFrontmatterFence?: boolean;
+  /**
+   * Paths of every parsed HTML-family file whose source opened with a
+   * YAML frontmatter fence. Companion to `hasFrontmatterFence`: the
+   * boolean is the gate the warnings layer reads, this list is the
+   * per-file evidence lifted onto
+   * `warningsDetails.template_files_parsed_as_literal.files`. Sorted
+   * alphabetically for deterministic wire output. Present-when-
+   * meaningful: omitted when no parsed HTML-family file opened with a
+   * fence.
+   */
+  frontmatterFenceFiles?: readonly string[];
   parseErrorFileCount?: number;
   parseErrorFiles?: readonly ParseErrorEntry[];
   /**
@@ -384,10 +395,20 @@ interface CoverageAccumulator {
    * frontmatter fence. A single sighting is sufficient — the fence is
    * not per-file telemetry but a scan-level substrate signal ("at
    * least one file in this scan sits on a template layer the HTML
-   * parser saw as literal text"), so the accumulator stays a boolean
-   * rather than a path list.
+   * parser saw as literal text"), so the boolean stays the wire-shape
+   * gate. The companion `frontmatterFenceFiles` list below carries the
+   * per-file evidence for the warning channel's payload.
    */
   hasFrontmatterFence: boolean;
+  /**
+   * Paths of every parsed HTML-family file whose source opened with a
+   * YAML frontmatter fence — the per-file evidence backing the
+   * `warningsDetails.template_files_parsed_as_literal.files` payload.
+   * The boolean above gates the warning's emission predicate; this
+   * list lets the call site name which files contributed without
+   * re-walking parsed sources.
+   */
+  readonly frontmatterFenceFiles: string[];
   /**
    * flipped to true the
    * first time any scanned `.php` / `.phtml` file's source contains a
@@ -494,6 +515,7 @@ export function buildAnalysisCoverage(
     parseErrorEntries: [],
     fragmentFiles: [],
     hasFrontmatterFence: false,
+    frontmatterFenceFiles: [],
     phpIslandsStripped: false,
   };
   const wrapperSet = new Set(wrappers);
@@ -547,15 +569,7 @@ export function buildAnalysisCoverage(
       acc.templateInterpolation,
     );
   }
-  if (acc.hasFrontmatterFence) {
-    // surface the
-    // substrate signal alongside `templateInterpolationFound` so the
-    // warnings layer can fire `template_files_parsed_as_literal`
-    // on Jekyll / Hugo / Eleventy / Astro posts whose header is the
-    // only template evidence. Present-when-meaningful — omitted when
-    // no file in this scan opened with a fence.
-    coverage.hasFrontmatterFence = true;
-  }
+  populateFrontmatterCoverage(acc, coverage);
   if (acc.phpIslandsStripped) {
     // surface the parser-level evidence that at least one `.php` /
     // `.phtml` file ran through the {@link parsePhp} island-stripping
@@ -583,6 +597,25 @@ export function buildAnalysisCoverage(
     analysisCoverage: coverage as Record<string, unknown>,
     ...(metaArrayTruncated ? { metaArrayTruncated: true } : {}),
   };
+}
+
+/**
+ * Surfaces the frontmatter-fence sub-block onto the coverage record:
+ * the boolean gate (`hasFrontmatterFence`) drives the warnings-layer
+ * predicate, and the companion `frontmatterFenceFiles` path list
+ * backs the `warningsDetails.template_files_parsed_as_literal.files`
+ * payload at the warnings-module seam. Present-when-meaningful — both
+ * fields are omitted when no parsed HTML-family file opened with a
+ * fence. Extracted from {@link buildAnalysisCoverage} so the
+ * orchestrator stays under the cognitive-complexity cap as new
+ * substrate signals accrete.
+ */
+function populateFrontmatterCoverage(acc: CoverageAccumulator, coverage: CoverageBlock): void {
+  if (!acc.hasFrontmatterFence) return;
+  coverage.hasFrontmatterFence = true;
+  if (acc.frontmatterFenceFiles.length > 0) {
+    coverage.frontmatterFenceFiles = [...acc.frontmatterFenceFiles].sort();
+  }
 }
 
 /**
@@ -992,7 +1025,10 @@ function rulesEligibleByExtension(
 function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulator): void {
   const src = isMarkdownFile(file.filePath) ? stripMarkdownCodeRegions(file.source) : file.source;
   detectTemplateInterpolation(src, acc.templateInterpolation);
-  acc.hasFrontmatterFence ||= hasFrontmatterFence(file.source);
+  if (hasFrontmatterFence(file.source)) {
+    acc.hasFrontmatterFence = true;
+    acc.frontmatterFenceFiles.push(file.filePath);
+  }
   if (!acc.phpIslandsStripped && isPhpFile(file.filePath)) {
     // Detect PHP island openers in the original source. The
     // {@link parsePhp} adapter blanks the islands before the AST is
