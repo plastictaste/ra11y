@@ -46,13 +46,7 @@
 import type { FixClass } from "../../types/rule.ts";
 import type { Violation } from "../../types/violation.ts";
 import { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
-import type {
-  AgentFile,
-  AgentPlan,
-  Effort,
-  FixesByClass,
-  FixesByClassLane,
-} from "./types.ts";
+import type { AgentFile, AgentPlan, Effort, FixesByClass, FixesByClassLane } from "./types.ts";
 
 const MODERATE_THRESHOLD = 5;
 const TOP_RULES_COUNT = 3;

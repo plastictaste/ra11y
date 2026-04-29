@@ -1082,9 +1082,7 @@ export function withViolationsByScanKind(
   const split = splitViolationsByScanKind(files, vendorPaths);
   const fixesByClassRewritten = splitFixesByClassByScanKind(files, vendorPaths);
   const planWithFixesByClass =
-    plan["fixesByClass"] === undefined
-      ? plan
-      : { ...plan, fixesByClass: fixesByClassRewritten };
+    plan["fixesByClass"] === undefined ? plan : { ...plan, fixesByClass: fixesByClassRewritten };
   return { ...planWithFixesByClass, violationsByScanKind: split };
 }
 

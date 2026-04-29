@@ -409,12 +409,7 @@ function readFixesByClass(plan: unknown): FixesByClassSubset | null {
   const guidance = readLane(raw, "guidance");
   const runtimeOnly = readLane(raw, "runtimeOnly");
   const verifyInSource = readLane(raw, "verifyInSource");
-  if (
-    mechanical === null ||
-    guidance === null ||
-    runtimeOnly === null ||
-    verifyInSource === null
-  ) {
+  if (mechanical === null || guidance === null || runtimeOnly === null || verifyInSource === null) {
     return null;
   }
   return { mechanical, guidance, runtimeOnly, verifyInSource };
