@@ -361,6 +361,105 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
 });
 
 /**
+ * Per-bucket cross-surface invariant. The total `parseErrorFileCount` +
+ * `partialParseFileCount` may agree across surfaces while the bucket
+ * assignment drifts — the field-test reported scan_project: 100/105 and
+ * checklist+coverage: 92/113 with totals matching 205==205. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" the agreement requirement extends to every sub-counter
+ * an agent budgets against, not just the headline; an agent reading
+ * `parseErrorFiles` (invisible-to-rules) on coverage and the same paths
+ * appearing in `partialParseFiles` (live findings) on scan_project hits
+ * the silent-miss failure mode the doctrine warns against.
+ *
+ * Drift root cause: `findingFilePaths` (the predicate that chooses the
+ * bucket for an errored file) is derived from the scan's
+ * `result.violations` ∪ `report.candidates`. `coverage` and `checklist`
+ * previously called {@link runScan} without threading
+ * `nativeWrapperElements` or `processes`, while `scan_project` did —
+ * so the same cwd produced different `result.violations` across
+ * surfaces, and the bucket assignment downstream silently disagreed.
+ * Closure: shared {@link runScanForCrossSurfaceParity} helper threads
+ * both inputs from `projectConfig` consistently across all three.
+ */
+interface ParseCoverageBucketsTopLevel {
+  readonly analysisCoverage?: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+    readonly parseErrorFiles?: readonly { readonly path: string }[];
+    readonly partialParseFiles?: readonly { readonly path: string }[];
+  };
+}
+interface ParseCoverageBucketsScanBody {
+  readonly meta?: ParseCoverageBucketsTopLevel;
+}
+
+describe("MCP invariant: parse-coverage per-bucket assignment agrees across surfaces", () => {
+  it("scan_project, coverage, and checklist agree on per-bucket counts and path membership", async () => {
+    const dir = await makeParseErrorFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+      toolCall(3, "coverage", { cwd: dir, verboseMeta: true }),
+      toolCall(4, "checklist", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<ParseCoverageBucketsScanBody>(responses[1]);
+    const coverageEnv = body<ParseCoverageBucketsTopLevel>(responses[2]);
+    // checklist surfaces `analysisCoverage` at the top level (mirroring
+    // coverage), not under `meta` — same shape coverage uses.
+    const checklistEnv = body<ParseCoverageBucketsTopLevel>(responses[3]);
+
+    const scanParseCount = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
+    const scanPartialCount = scanBody.meta?.analysisCoverage?.partialParseFileCount ?? 0;
+    const coverageParseCount = coverageEnv.analysisCoverage?.parseErrorFileCount ?? 0;
+    const coveragePartialCount = coverageEnv.analysisCoverage?.partialParseFileCount ?? 0;
+    const checklistParseCount = checklistEnv.analysisCoverage?.parseErrorFileCount ?? 0;
+    const checklistPartialCount = checklistEnv.analysisCoverage?.partialParseFileCount ?? 0;
+
+    // Per-bucket count equality (the field-test failure mode).
+    expect(coverageParseCount).toBe(scanParseCount);
+    expect(coveragePartialCount).toBe(scanPartialCount);
+    expect(checklistParseCount).toBe(scanParseCount);
+    expect(checklistPartialCount).toBe(scanPartialCount);
+
+    // Sanity floor — the fixture seeds a parse-error file, so at least
+    // one bucket on every surface is non-empty.
+    expect(scanParseCount + scanPartialCount).toBeGreaterThan(0);
+
+    // Per-bucket membership equality. The path-set comparison is what
+    // catches a drift that sums cleanly but reshuffles entries — the
+    // canonical 100/105 vs 92/113 failure shape (totals match, buckets
+    // disagree by 8 paths). Inline lists are present-when-meaningful
+    // under verboseMeta=true, so falling through to empty-set
+    // comparisons here would silently pass on a regression that gutted
+    // both lists. The sanity floor above guards against that.
+    const scanParsePaths = new Set(
+      (scanBody.meta?.analysisCoverage?.parseErrorFiles ?? []).map((e) => e.path),
+    );
+    const scanPartialPaths = new Set(
+      (scanBody.meta?.analysisCoverage?.partialParseFiles ?? []).map((e) => e.path),
+    );
+    const coverageParsePaths = new Set(
+      (coverageEnv.analysisCoverage?.parseErrorFiles ?? []).map((e) => e.path),
+    );
+    const coveragePartialPaths = new Set(
+      (coverageEnv.analysisCoverage?.partialParseFiles ?? []).map((e) => e.path),
+    );
+    const checklistParsePaths = new Set(
+      (checklistEnv.analysisCoverage?.parseErrorFiles ?? []).map((e) => e.path),
+    );
+    const checklistPartialPaths = new Set(
+      (checklistEnv.analysisCoverage?.partialParseFiles ?? []).map((e) => e.path),
+    );
+
+    expect([...coverageParsePaths].sort()).toEqual([...scanParsePaths].sort());
+    expect([...coveragePartialPaths].sort()).toEqual([...scanPartialPaths].sort());
+    expect([...checklistParsePaths].sort()).toEqual([...scanParsePaths].sort());
+    expect([...checklistPartialPaths].sort()).toEqual([...scanPartialPaths].sort());
+  });
+});
+
+/**
  * Builds a fixture where a minified vendor file at a `.min.js` path
  * carries a comparison expression (`r.length<b.length`) that the TSX
  * parser reads as an unclosed `<r.length>` JSX element. The file would

@@ -5,7 +5,7 @@
  * of the central tool-registration module.
  */
 
-import { type ParsedFile, runScan } from "../engine/scanner.ts";
+import type { ParsedFile, runScan } from "../engine/scanner.ts";
 import {
   type AttestationStalenessProbe,
   type AttestationSurface,
@@ -24,6 +24,7 @@ import type {
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import {
   type Applicability,
   detectApplicability,
@@ -33,7 +34,6 @@ import {
 import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
-import { outputFilePathSet } from "./scan-assembly.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
@@ -691,15 +691,28 @@ export const checklistTool: McpTool = {
     // runs zero rules, so the field would lie; see
     //.)
     const activeRules = resolveActiveRules(session, projectConfig);
-    const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan({
-      standards: session.registry.standards,
-      rules: activeRules,
-      enabled: standards,
-      files,
-      finders: session.registry.finders,
-      level,
-      ...(attestations.length > 0 && { attestations }),
-    });
+    // route the scan through the
+    // shared cross-surface helper so `nativeWrapperElements` and
+    // `processes` are threaded onto {@link runScan} with the same
+    // presence rules `scan_project` uses. Without this, a real-corpus
+    // scan with `nativeWrappers` configured (or `processes` declared)
+    // produced different `result.violations` than `scan_project`'s on
+    // the same cwd, and the `outputFilePathSet` derivation silently
+    // drifted — feeding mismatched `findingFilePaths` into the
+    // `parseErrorFiles` vs `partialParseFiles` bucket assembler. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+    // invariant" the per-bucket axis must agree on identical input,
+    // not just the totals.
+    const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated, outputFilePaths } =
+      runScanForCrossSurfaceParity({
+        files,
+        session,
+        enabled: standards,
+        level,
+        activeRules,
+        attestations,
+        projectConfig,
+      });
 
     // thread testableCriteria so the
     // `clean` / `untestable` counters surfaced on
@@ -968,8 +981,10 @@ export const checklistTool: McpTool = {
       // surface grounded candidates from a file that produced zero
       // rule violations; without the union those files would mis-bucket
       // as `invisible-to-rules` while live candidates reach the caller.
-      // Mirrors `coverage`.
-      outputFilePathSet(result.violations, report.candidates ?? []),
+      // Threaded from the shared cross-surface scan helper so the
+      // per-bucket assignment agrees with `scan_project` on identical
+      // input — not just the totals.
+      outputFilePaths,
     );
     const filesByExtension = countFilesByExtension(files);
     // emit the same `scanned` envelope
