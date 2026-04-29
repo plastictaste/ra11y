@@ -21,7 +21,11 @@ import {
   type OversizeEnvelopeReason,
   oversizeEnvelopeWarningsField,
 } from "./oversize-envelope.ts";
-import type { ReferenceGuide } from "./reference-guide.ts";
+import {
+  type FixDescriptions,
+  type ReferenceGuide,
+  repairResponseDangling,
+} from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import type { McpSession } from "./session.ts";
@@ -93,6 +97,18 @@ interface PageShape {
 interface HoistedShape {
   readonly files: readonly FileEntry[];
   readonly referenceGuide: ReferenceGuide | undefined;
+  /**
+   * Complete pre-truncation `fixDescriptions` map computed during the
+   * hoist pass — see {@link import("./reference-guide.ts").hoistAndBuildReferenceGuide}.
+   * Threaded through the assembler so the
+   * {@link import("./reference-guide.ts").repairDanglingDescriptionRefs}
+   * invariant guard at the end of {@link assembleScanProjectResponse}
+   * has the source-of-truth map to re-inline from when a future
+   * truncation site drops `referenceGuide` while keeping findings
+   * with `fix.descriptionRef`. Optional for backward compatibility
+   * with callers that haven't been updated; absent → no repair pass.
+   */
+  readonly originalFixDescriptions?: FixDescriptions;
 }
 
 interface AssembleArgs {
@@ -271,7 +287,22 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
         session,
       }),
   });
-  return guarded.response;
+  // dangling-pointer
+  // invariant guard: every `fix.descriptionRef.hash` emitted in the
+  // response must resolve in `referenceGuide.fixDescriptions[ruleId]`
+  // in the same response, OR the finding must carry an inline
+  // `fix.description`. The doctrine bullet "Truncated containers must
+  // rename or sentinel, not retain" forbids the dangling-pointer
+  // shape: looks like a populated reference but resolves to nothing.
+  //
+  // Today's truncation paths preserve the invariant by construction —
+  // the density cap keeps `referenceGuide` intact via the `tentative`
+  // spread, and the slim envelope drops `files: []` so no surviving
+  // finding can dangle. The guard fires regardless as defense-in-depth
+  // for any future truncation site that drops `referenceGuide` (or
+  // trims its entries) without rewriting surviving findings. Identity-
+  // preserving on the common case where every ref resolves cleanly.
+  return repairResponseDangling(guarded.response, hoisted.originalFixDescriptions);
 }
 
 /**

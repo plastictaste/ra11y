@@ -518,19 +518,38 @@ export function hoistAndBuildReferenceGuide<T extends AgentFinding>(
     readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
   }[];
   readonly referenceGuide: ReferenceGuide | undefined;
+  /**
+   * Complete pre-truncation `fixDescriptions` map computed during the
+   * hoist pass — every distinct (ruleId, hash) pair the rewrite stripped
+   * `fix.description` for, regardless of whether the source guide was
+   * defined. Threaded through to truncation sites so they can pass it to
+   * {@link repairDanglingDescriptionRefs} as the saved source-of-truth
+   * map. Stays under the same {@link FixDescriptions} type so the
+   * repair helper consumes it without re-shaping.
+   */
+  readonly originalFixDescriptions: FixDescriptions;
 } {
   const { fixDescriptions, hoistedKeys } = hoistFixDescriptions(fileEntries);
   const rewritten = applyFixDescriptionHoist(fileEntries, hoistedKeys);
   if (sourceGuide === undefined) {
-    return { files: rewritten, referenceGuide: undefined };
+    return {
+      files: rewritten,
+      referenceGuide: undefined,
+      originalFixDescriptions: fixDescriptions,
+    };
   }
   const hasFixDescriptions = Object.keys(fixDescriptions).length > 0;
   if (!hasFixDescriptions) {
-    return { files: rewritten, referenceGuide: sourceGuide };
+    return {
+      files: rewritten,
+      referenceGuide: sourceGuide,
+      originalFixDescriptions: fixDescriptions,
+    };
   }
   return {
     files: rewritten,
     referenceGuide: { ...sourceGuide, fixDescriptions },
+    originalFixDescriptions: fixDescriptions,
   };
 }
 
@@ -558,4 +577,265 @@ function rewriteFinding<T extends AgentFinding>(finding: T, hoistedKeys: Readonl
     ...finding,
     fix: { ...fixRest, descriptionRef: { hash } },
   };
+}
+
+/**
+ * Defensive repair for the dangling-pointer regime: walks every
+ * finding's `fix.descriptionRef.hash` and every file's
+ * `groupFixDescriptionRefs[].hash`, and — when the hash does not
+ * resolve in the response's currently-emitted
+ * `referenceGuide.fixDescriptions[ruleId]` — re-inlines the
+ * description from the saved-source map at `fix.description` (or, for
+ * a group-level ref, drops the orphaned group entry and re-inlines on
+ * each sibling finding sharing that `groupKey`).
+ *
+ * Invariant per `docs/kb/architecture/ai-first-consumer.md` ("Truncated
+ * containers must rename or sentinel, not retain"): when
+ * `descriptionRef` is present, the hash MUST resolve in the same
+ * response. The earlier hoist pass strips `fix.description` and
+ * replaces it with `fix.descriptionRef`, on the assumption that the
+ * top-level `referenceGuide.fixDescriptions[ruleId][hash]` will resolve
+ * the pointer. A truncation pass that drops `referenceGuide` (or
+ * trims `fixDescriptions` entries to fit the budget) without
+ * rewriting the surviving findings would leave dangling pointers —
+ * the agent reads `fix.descriptionRef.hash: "abc123"` and finds
+ * nothing at the top-level.
+ *
+ * Two closure paths from the doctrine: (a) hoist used references
+ * ahead of truncation, (b) inline the description string under each
+ * finding's `fix.description` and drop `descriptionRef`. This helper
+ * implements (b) — simpler invariant: if `descriptionRef` is present,
+ * the hash MUST resolve in the same response. When the response's
+ * `referenceGuide.fixDescriptions` doesn't carry the hash, we
+ * re-inline from the saved-source `originalFixDescriptions` map (the
+ * complete pre-truncation map computed during the hoist pass) and
+ * strip `descriptionRef` from the finding.
+ *
+ * Pure function — no I/O, no mutation of inputs. Returns a new files
+ * array with repaired findings; identity-preserving when no repair is
+ * needed (every ref resolves cleanly).
+ *
+ * Defense-in-depth: today the slim-envelope fallback in
+ * `scan-project-budget.ts` drops `files: []` entirely (no surviving
+ * findings can dangle), and the density-cap path preserves
+ * `referenceGuide` via the `tentative` spread in `mergeBudgetedFields`
+ * (no entries are dropped). This helper is the durable invariant
+ * preserver for any future truncation site that touches
+ * `referenceGuide` while keeping findings — without it, that future
+ * site would silently produce dangling pointers.
+ */
+export function repairDanglingDescriptionRefs<
+  T extends AgentFinding,
+  F extends {
+    readonly path: string;
+    readonly findings: readonly T[];
+    readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+  },
+>(
+  fileEntries: readonly F[],
+  currentFixDescriptions: FixDescriptions | undefined,
+  originalFixDescriptions: FixDescriptions,
+): readonly F[] {
+  const resolves = (ruleId: string, hash: string): boolean =>
+    typeof currentFixDescriptions?.[ruleId]?.[hash] === "string";
+  const lookupOriginal = (ruleId: string, hash: string): string | undefined =>
+    originalFixDescriptions[ruleId]?.[hash];
+
+  return fileEntries.map((file) => repairFile(file, resolves, lookupOriginal));
+}
+
+function repairFile<
+  T extends AgentFinding,
+  F extends {
+    readonly path: string;
+    readonly findings: readonly T[];
+    readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+  },
+>(
+  file: F,
+  resolves: (ruleId: string, hash: string) => boolean,
+  lookupOriginal: (ruleId: string, hash: string) => string | undefined,
+): F {
+  // Pass 1: walk file-level groupFixDescriptionRefs[]; any entry whose
+  // hash doesn't resolve names a dangling group ref. Findings sharing
+  // that `groupKey` need their description re-inlined from the saved
+  // source map (since the group-lift previously stripped their per-
+  // finding `fix.descriptionRef`).
+  const danglingGroupKeys = new Map<string, { ruleId: string; hash: string }>();
+  const survivingGroupRefs: GroupFixDescriptionRef[] = [];
+  const incomingGroupRefs = file.groupFixDescriptionRefs ?? [];
+  for (const groupRef of incomingGroupRefs) {
+    // group-lift refs don't carry a ruleId — every sibling under the
+    // groupKey shares the same rule. Determine the rule from the
+    // findings carrying this groupKey.
+    const ruleIdForGroup = file.findings.find((f) => f.groupKey === groupRef.groupKey)?.ruleId;
+    if (ruleIdForGroup === undefined) {
+      // Group ref has no surviving sibling — impossible under current
+      // assembly but defensive: a future truncation that drops the
+      // findings without dropping the group ref would land here.
+      continue;
+    }
+    if (resolves(ruleIdForGroup, groupRef.hash)) {
+      survivingGroupRefs.push(groupRef);
+      continue;
+    }
+    danglingGroupKeys.set(groupRef.groupKey, { ruleId: ruleIdForGroup, hash: groupRef.hash });
+  }
+
+  // Pass 2: walk findings. Repair findings whose per-finding ref
+  // dangles (re-inline from source). Repair findings whose groupKey
+  // is in `danglingGroupKeys` (re-inline + ensure `fix` is present).
+  let findingsChanged = false;
+  const repairedFindings = file.findings.map((finding) => {
+    const repaired = repairFinding(finding, danglingGroupKeys, resolves, lookupOriginal);
+    if (repaired !== finding) findingsChanged = true;
+    return repaired;
+  });
+
+  const groupRefsDropped = incomingGroupRefs.length !== survivingGroupRefs.length;
+  // Identity-preserving fast path: when no finding was rewritten and no
+  // group ref was dropped, return the file unchanged so the response-
+  // level helper can short-circuit on per-element reference equality.
+  // Spreads otherwise so callers' extra fields (e.g. `limitations`)
+  // survive the repair walk.
+  if (!(findingsChanged || groupRefsDropped)) return file;
+
+  if (survivingGroupRefs.length > 0) {
+    return {
+      ...file,
+      findings: repairedFindings,
+      groupFixDescriptionRefs: survivingGroupRefs,
+    };
+  }
+  // Drop the field entirely when every entry was dangling, matching
+  // the present-when-meaningful invariant. Re-build from `file` minus
+  // the field rather than spread-and-overwrite so the wire shape stays
+  // honest.
+  const { groupFixDescriptionRefs: _omitted, ...fileRest } = file;
+  return { ...(fileRest as F), findings: repairedFindings };
+}
+
+function repairFinding<T extends AgentFinding>(
+  finding: T,
+  danglingGroupKeys: ReadonlyMap<string, { ruleId: string; hash: string }>,
+  resolves: (ruleId: string, hash: string) => boolean,
+  lookupOriginal: (ruleId: string, hash: string) => string | undefined,
+): T {
+  const perFindingResult = repairPerFindingRef(finding, resolves, lookupOriginal);
+  if (perFindingResult !== finding) return perFindingResult;
+  return repairGroupKeyDangling(finding, danglingGroupKeys, lookupOriginal);
+}
+
+/**
+ * Per-finding ref repair branch — when the nested
+ * `fix.descriptionRef.hash` doesn't resolve in the current response,
+ * re-inline from the saved source and strip the ref. When the source
+ * also doesn't carry the hash, strip the ref entirely (drops the
+ * `fix` wrapper if it would become empty — same precedent as
+ * {@link stripRefIfLifted}). Returns the input unchanged when no
+ * dangling per-finding ref exists.
+ */
+function repairPerFindingRef<T extends AgentFinding>(
+  finding: T,
+  resolves: (ruleId: string, hash: string) => boolean,
+  lookupOriginal: (ruleId: string, hash: string) => string | undefined,
+): T {
+  const refHash = finding.fix?.descriptionRef?.hash;
+  if (refHash === undefined) return finding;
+  if (resolves(finding.ruleId, refHash)) return finding;
+  const fix = finding.fix;
+  if (fix === undefined) return finding;
+  const restored = lookupOriginal(finding.ruleId, refHash);
+  if (restored !== undefined) {
+    const { descriptionRef: _omitted, ...fixRest } = fix;
+    return { ...finding, fix: { ...fixRest, description: restored } };
+  }
+  // No source entry available — strip `descriptionRef` to drop the
+  // dangling pointer. Better to ship a fix without prose than a
+  // fix pointing at nothing per the doctrine bullet.
+  const { descriptionRef: _omitted, ...fixRest } = fix;
+  if (Object.keys(fixRest).length === 0) {
+    const { fix: _droppedFix, ...findingRest } = finding;
+    return findingRest as T;
+  }
+  return { ...finding, fix: fixRest };
+}
+
+/**
+ * Group-ref repair branch — when this finding's `groupKey` is in
+ * `danglingGroupKeys` (the file-level group entry was dropped),
+ * re-inline the description on this finding so the prose still
+ * reaches the agent. Returns the input unchanged when no dangling
+ * group ref applies.
+ */
+function repairGroupKeyDangling<T extends AgentFinding>(
+  finding: T,
+  danglingGroupKeys: ReadonlyMap<string, { ruleId: string; hash: string }>,
+  lookupOriginal: (ruleId: string, hash: string) => string | undefined,
+): T {
+  const { groupKey } = finding;
+  if (groupKey === undefined || groupKey.length === 0) return finding;
+  const dangling = danglingGroupKeys.get(groupKey);
+  if (dangling === undefined) return finding;
+  const restored = lookupOriginal(dangling.ruleId, dangling.hash);
+  if (restored === undefined) return finding;
+  const fix =
+    finding.fix === undefined
+      ? { description: restored }
+      : { ...finding.fix, description: restored };
+  return { ...finding, fix };
+}
+
+/**
+ * Response-level wrapper over {@link repairDanglingDescriptionRefs} —
+ * walks the assembled response's `files[]` and the response-level
+ * `referenceGuide.fixDescriptions` map, applies the per-finding repair
+ * pass, and returns the response with re-inlined `fix.description`
+ * (and stripped `descriptionRef`) on any finding whose hash doesn't
+ * resolve in the current response. Identity-preserving when no repair
+ * was needed.
+ *
+ * Lives here (rather than in `scan-project-budget.ts`) because
+ * `reference-guide.ts` already owns the hoist/repair invariant and the
+ * scan-project file is at its size budget. Defensive narrowing: returns
+ * the input unchanged when `originalFixDescriptions` is unavailable
+ * (legacy callers haven't been updated) or `files` isn't an array.
+ *
+ * Identity check on the returned files array uses per-element reference
+ * equality with the input — when the helper's per-file repair walk
+ * returned the input file objects unchanged on every entry, the
+ * response is returned unchanged (the new wrapper avoids reshaping the
+ * top-level response on the no-repair-needed path).
+ */
+export function repairResponseDangling(
+  response: Record<string, unknown>,
+  originalFixDescriptions: FixDescriptions | undefined,
+): Record<string, unknown> {
+  if (originalFixDescriptions === undefined) return response;
+  const filesField = response["files"];
+  if (!Array.isArray(filesField)) return response;
+  const guideField = response["referenceGuide"] as ReferenceGuide | undefined;
+  const currentFixDescriptions = guideField?.fixDescriptions;
+  const repaired = repairDanglingDescriptionRefs(
+    filesField as readonly {
+      readonly path: string;
+      readonly findings: readonly AgentFinding[];
+      readonly groupFixDescriptionRefs?: readonly GroupFixDescriptionRef[];
+    }[],
+    currentFixDescriptions,
+    originalFixDescriptions,
+  );
+  let changed = false;
+  if (repaired.length === filesField.length) {
+    for (let i = 0; i < repaired.length; i += 1) {
+      if (repaired[i] !== filesField[i]) {
+        changed = true;
+        break;
+      }
+    }
+  } else {
+    changed = true;
+  }
+  if (!changed) return response;
+  return { ...response, files: repaired };
 }
