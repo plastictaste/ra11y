@@ -19,30 +19,19 @@ import {
 import { createBuiltinRegistry, type Registry } from "../../engine/registry/registry.ts";
 import { type ParsedFile, runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
-import {
-  parseAstro,
-  parseCss,
-  parseHtml,
-  parseLess,
-  parseMdx,
-  parsePhp,
-  parseScss,
-  parseSvg,
-  parseTsx,
-} from "../../input/parsers/index.ts";
 import { BUILTIN_FORMATTERS } from "../../output/formatters/index.ts";
 import {
   buildChecklist,
   buildCoverageReport,
   renderChecklistMarkdown,
 } from "../../reports/index.ts";
-import type { Ast } from "../../types/ast.ts";
 import type { ConformanceProfile, LoadedConfig } from "../../types/config.ts";
 import type { Rule } from "../../types/rule.ts";
 import type { ScanResult } from "../../types/violation.ts";
 import { filesChangedSince, stagedFiles } from "../../utils/git.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
+import { parseFor } from "../parse-for.ts";
 
 export interface ScanExit {
   readonly stdout: string;
@@ -294,69 +283,6 @@ async function handleBaselineMode(
     stderr: "",
     exitCode: diff.newViolations.length > 0 ? ExitCode.NEW_VIOLATIONS : ExitCode.OK,
   };
-}
-
-function parseFor(filePath: string, source: string): Ast | null {
-  if (
-    filePath.endsWith(".html") ||
-    filePath.endsWith(".htm") ||
-    filePath.endsWith(".xhtml") ||
-    filePath.endsWith(".erb")
-  ) {
-    // `.erb` — Ruby embedded-template (Rails views, Middleman,
-    // Jekyll `*.md.erb`). Routes straight to parseHtml; the HTML
-    // parser's stripTemplateDirectives pass removes `<%= … %>` /
-    // `<% … %>` / `<%# … %>` from text nodes so rules see the
-    // rendered-text shape.
-    //
-    // `.xhtml` — XML-serialized HTML (mandatory `<?xml ... ?>`
-    // prologue, self-closing tags). The HTML tokenizer tolerates the
-    // prologue and the close-bracket angle slashes, so every
-    // `.html`-scoped rule applies without a dedicated XHTML adapter.
-    const r = parseHtml(source);
-    return { language: "html", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".css")) {
-    const r = parseCss(source);
-    return { language: "css", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".scss")) {
-    const r = parseScss(source);
-    return { language: "css", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".less")) {
-    const r = parseLess(source);
-    return { language: "css", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".mdx")) {
-    const r = parseMdx(source);
-    return { language: "tsx", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".astro")) {
-    const r = parseAstro(source);
-    return { language: "html", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".svg")) {
-    const r = parseSvg(source);
-    return { language: "html", root: r.root, errors: r.errors };
-  }
-  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
-    // PHP server pages route through {@link parsePhp}, which blanks
-    // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
-    // line/col) and feeds the HTML residue to parseHtml.
-    const r = parsePhp(source);
-    return { language: "html", root: r.root, errors: r.errors };
-  }
-  if (
-    filePath.endsWith(".tsx") ||
-    filePath.endsWith(".jsx") ||
-    filePath.endsWith(".ts") ||
-    filePath.endsWith(".js")
-  ) {
-    const r = parseTsx(source, { filePath });
-    return { language: "tsx", root: r.root, errors: r.errors };
-  }
-  return null;
 }
 
 function shouldFail(

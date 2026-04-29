@@ -12,11 +12,10 @@ import { createBuiltinRegistry, type Registry } from "../../engine/registry/regi
 import type { ParsedFile } from "../../engine/scanner.ts";
 import { runScan } from "../../engine/scanner.ts";
 import { discoverFiles } from "../../input/discover.ts";
-import { parseHtml, parseTsx } from "../../input/parsers/index.ts";
 import { buildCoverageReport } from "../../reports/coverage.ts";
-import type { Ast } from "../../types/ast.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
+import { parseFor } from "../parse-for.ts";
 import type { ScanExit } from "./scan.ts";
 
 export async function runCoverage(
@@ -50,26 +49,6 @@ export async function runCoverage(
 
   const coverage = buildCoverageReport(result, registry.standards);
   return { stdout: renderCoverageSummary(coverage), stderr: "", exitCode: ExitCode.OK };
-}
-
-function parseFor(filePath: string, source: string): Ast | null {
-  if (filePath.endsWith(".html") || filePath.endsWith(".htm") || filePath.endsWith(".xhtml")) {
-    // `.xhtml` is XML-serialized HTML; routed through parseHtml since
-    // the tokenizer tolerates the `<?xml ... ?>` prologue and
-    // self-closing tags (see `src/utils/path.ts`).
-    const r = parseHtml(source);
-    return { language: "html", root: r.root, errors: r.errors };
-  }
-  if (
-    filePath.endsWith(".tsx") ||
-    filePath.endsWith(".jsx") ||
-    filePath.endsWith(".ts") ||
-    filePath.endsWith(".js")
-  ) {
-    const r = parseTsx(source, { filePath });
-    return { language: "tsx", root: r.root, errors: r.errors };
-  }
-  return null;
 }
 
 function renderCoverageSummary(
