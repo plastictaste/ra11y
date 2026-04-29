@@ -562,4 +562,80 @@ describe("review/consistent-navigation (edge cases)", () => {
     expect(candidates.length).toBe(1);
     expect(candidates[0]?.location.filePath).toBe("/p/b.html");
   });
+
+  // Guards the heuristic-fallback upper-bound gate (closure path (a)
+  // from the AI-first doctrine bullet "Heuristic emission is the
+  // symmetric twin of heuristic suppression"): when N>>10 sub-template
+  // directories all happen to ship a `<nav>` with the same canonical
+  // labels, the predicate "repeated navigational mechanism within a
+  // set" no longer holds — they're separate sites, not one site. The
+  // finder must NOT emit candidates for that group. The caller can
+  // re-anchor deterministically via `processes: [...]` config, which
+  // routes through the process-aware path with no cardinality gate.
+  it("fallback: does NOT emit when the heuristic group exceeds the bulk-corpus threshold", () => {
+    // 12 unrelated sub-template directories, each with the same
+    // [Home, About] label set but with differing orderings — well
+    // above the threshold of 10. None should emit.
+    const files: ParsedFile[] = [];
+    for (let i = 0; i < 12; i++) {
+      const order =
+        i % 2 === 0
+          ? `<a href="/">Home</a><a href="/about">About</a>`
+          : `<a href="/about">About</a><a href="/">Home</a>`;
+      files.push(
+        htmlFile(
+          `/repo/templates/template-${i}/index.html`,
+          `<html><body><nav>${order}</nav></body></html>`,
+        ),
+      );
+    }
+    const candidates = runWith(files).filter((c) => c.criterionId === "wcag22:3.2.3");
+    expect(candidates).toEqual([]);
+  });
+
+  // Guards the within-threshold case: the upper-bound gate doesn't
+  // accidentally suppress real findings on a plausibly-coherent site.
+  // 10 pages with the same nav labels and divergent orderings is at
+  // the threshold (group size 10, gate fires only when length > 10),
+  // so the finder still emits.
+  it("fallback: still emits when the heuristic group sits AT the threshold", () => {
+    const files: ParsedFile[] = [];
+    for (let i = 0; i < 10; i++) {
+      const order =
+        i % 2 === 0
+          ? `<a href="/">Home</a><a href="/about">About</a>`
+          : `<a href="/about">About</a><a href="/">Home</a>`;
+      files.push(htmlFile(`/p/page-${i}.html`, `<html><body><nav>${order}</nav></body></html>`));
+    }
+    const candidates = runWith(files).filter((c) => c.criterionId === "wcag22:3.2.3");
+    expect(candidates.length).toBeGreaterThan(0);
+  });
+
+  // Guards the deterministic-evidence escape hatch: even with 12
+  // pages well above the heuristic threshold, declaring the page
+  // set explicitly via `processes` routes the scan through the
+  // process-aware path which has no cardinality gate (the caller
+  // has told us these pages participate in one user journey, so
+  // the "is this one site?" question is settled by configuration).
+  // This is the recommended migration when a real site exceeds the
+  // heuristic threshold.
+  it("process-aware: declared `processes` overrides the heuristic threshold even at large scale", () => {
+    const files: ParsedFile[] = [];
+    const pages: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const order =
+        i === 0
+          ? `<a href="/">Home</a><a href="/about">About</a>`
+          : `<a href="/about">About</a><a href="/">Home</a>`;
+      const filePath = `/p/page-${i}.html`;
+      files.push(htmlFile(filePath, `<html><body><nav>${order}</nav></body></html>`));
+      pages.push(filePath);
+    }
+    const processes: readonly Process[] = [{ name: "site", pages }];
+    const candidates = runWith(files, processes).filter((c) => c.criterionId === "wcag22:3.2.3");
+    // Modal signature is the [About, Home] ordering shared by 11 of
+    // the 12 pages; page-0 is the outlier and should flag.
+    expect(candidates.length).toBe(1);
+    expect(candidates[0]?.location.filePath).toBe("/p/page-0.html");
+  });
 });

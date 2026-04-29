@@ -71,6 +71,43 @@ const CRITERION_IDS = [
   "en301549:9.3.2.3",
 ] as const;
 
+/**
+ * Sibling-detection threshold for the heuristic-fallback path.
+ *
+ * The fallback groups every nav across every scanned file by its
+ * sorted unique link labels and flags any group whose members
+ * disagree on order. That works as long as the group plausibly
+ * represents *one site's* repeated nav. When the group is much
+ * larger than a plausible site's page count — a bulk-template
+ * corpus where 174 unrelated sub-template directories all happen
+ * to ship a `<nav>` with the same canonical labels — the
+ * "repeated navigational mechanism within a set" predicate WCAG
+ * 3.2.3 measures simply doesn't hold. The directories belong to
+ * different sites; their nav orderings should not be cross-
+ * compared.
+ *
+ * Per AI-first doctrine ("Heuristic emission is the symmetric
+ * twin of heuristic suppression"), a rule that emits on
+ * speculation about composition — here, "these N landmarks are
+ * part of the same site" when the only evidence is "they share a
+ * label set" — is dishonest at error/warning severity.
+ *
+ * Closure path (a) from the backlog item: when the heuristic
+ * group exceeds this threshold, do NOT emit candidates for that
+ * group. The downstream agent can scope down via
+ * `additionalPaths` to bring the comparison set within a
+ * plausible site, OR declare `processes: [...]` in
+ * ra11y.config.ts to route the scan through the deterministic
+ * process-aware path that has no cardinality gate.
+ *
+ * Threshold value: 10. Conservative — catches the bulk-corpus
+ * case (174 templates) and the moderate-bulk case (e.g. 50
+ * unrelated demos) while still firing on a plausible 10-page
+ * site whose pages all participate in one navigation. Above 10,
+ * the caller must anchor the comparison deterministically.
+ */
+const MAX_HEURISTIC_GROUP_SIZE = 10;
+
 /** A single `<nav>` (or role=navigation) observed in one scanned file. */
 interface NavInstance {
   readonly filePath: string;
@@ -243,9 +280,17 @@ function normalizeLower(value: string | null): string | null {
  * Groups instances by "set of link labels" and flags any group whose
  * members disagree on order. The set signature is the sorted unique
  * labels — two navs with the same labels but a different ordering
- * share a signature and fall into the same group. No membership
- * threshold: a two-link nav reordered across two files is still
- * evidence of a 3.2.3 question the agent should verify.
+ * share a signature and fall into the same group. No lower-bound
+ * membership threshold: a two-link nav reordered across two files is
+ * still evidence of a 3.2.3 question the agent should verify.
+ *
+ * Upper-bound gate: when the group exceeds MAX_HEURISTIC_GROUP_SIZE
+ * the predicate "repeated navigational mechanism within a set" no
+ * longer holds — a bulk-template corpus where N>>10 unrelated sub-
+ * template directories share the same canonical labels is not "one
+ * site." Skip emission for those groups; the caller can re-anchor
+ * deterministically via `processes: [...]` config or scope the scan
+ * down via `additionalPaths`.
  */
 function flagDivergentGroups(instances: readonly NavInstance[]): readonly ReviewCandidate[] {
   const groups = new Map<string, NavInstance[]>();
@@ -259,6 +304,7 @@ function flagDivergentGroups(instances: readonly NavInstance[]): readonly Review
   const out: ReviewCandidate[] = [];
   for (const members of groups.values()) {
     if (members.length < 2) continue;
+    if (members.length > MAX_HEURISTIC_GROUP_SIZE) continue;
     const distinctOrderings = new Set(members.map((m) => m.order.join("\u0001")));
     if (distinctOrderings.size < 2) continue;
     emitGroupCandidates(members, out);
