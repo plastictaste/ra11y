@@ -87,8 +87,7 @@ const DRAG_EVENT_NAMES: ReadonlySet<string> = new Set([
  * keeps the match anchored to a real `addEventListener` token rather
  * than a substring (`fooaddEventListener('…')` is not a match).
  */
-const ADD_EVENT_LISTENER_PATTERN =
-  /\baddEventListener\s*\(\s*['"`]([a-z]+)['"`]/g;
+const ADD_EVENT_LISTENER_PATTERN = /\baddEventListener\s*\(\s*['"`]([a-z]+)['"`]/g;
 
 const DRAG_REASON =
   " — single-pointer alternative — verify a click/keyboard alternative exists for the dragging operation (SC 2.5.7 requires the same functionality be achievable without a drag, unless dragging is essential or determined by the user agent)";
@@ -110,7 +109,12 @@ export const finder = defineCandidateFinder({
     ],
   },
   find(ctx) {
-    if (ctx.language !== "tsx" && ctx.language !== "jsx" && ctx.language !== "ts" && ctx.language !== "js") {
+    if (
+      ctx.language !== "tsx" &&
+      ctx.language !== "jsx" &&
+      ctx.language !== "ts" &&
+      ctx.language !== "js"
+    ) {
       return [];
     }
     return findSourceCandidates(ctx);
