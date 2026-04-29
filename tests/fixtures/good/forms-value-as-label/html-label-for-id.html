@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Sign up</title>
+  </head>
+  <body>
+    <!--
+      Good: <input type="text"> with a real <label for> association.
+      The accessible name is established through the spec-compliant
+      channel. A `value` attribute MAY also be present (e.g. an edit
+      form pre-filled with the user's saved name) without the rule
+      firing — the label still announces the field; the value just
+      pre-fills its content.
+    -->
+    <form>
+      <label for="username">Username</label>
+      <input id="username" type="text">
+      <button type="submit">Sign up</button>
+    </form>
+  </body>
+</html>

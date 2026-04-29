@@ -290,8 +290,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Rule predicate gaps (false negatives)
 
-- [ ] **Q10-RULE-VALUE-AS-LABEL-ANTIPATTERN** No rule fires on the `<input type="text" value="Username" />` value-as-label antipattern (default `value=` used as the visible label, often cleared on focus by inline JS). The placeholder-as-label rule captures a sibling antipattern; the value-as-label variant prevalent in older templates is uncovered. Fix: add `forms/value-as-label` (or extend `forms/placeholder-as-label`) detecting `<input type="text|email|search">` elements with `value` attribute equal to a label-shaped string, no `<label>`, no `aria-label`, no `aria-labelledby`. Satisfies wcag22:1.3.1 + 4.1.2.
-
 ### Rule predicate too-broad (false positives)
 
 - [ ] **Q10-RULE-TABLE-CAPTION-MISSING-FIRES-ON-MD-FENCED-TABLES** `semantics/table-caption-missing` fires on `<table>` elements rendered from markdown table syntax (kramdown / GFM) — markdown source has no caption mechanism in the syntax, so the rule cannot honestly establish that an authoring choice was made. Fix: when the table's source file is `.md`/`.markdown`/`.mkdn`, OR the file is in `fragmentFiles[]`, attach `couldBeWrongBecause: ["markdown_table_no_caption_syntax_in_md"]` AND downgrade per-finding confidence to `medium`. Per AI-first doctrine "Reason text and severity must agree."

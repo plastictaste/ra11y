@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Sign up</title>
+  </head>
+  <body>
+    <!--
+      Bad: <input type="text"> carries label-shaped copy in the
+      `value` attribute and has no <label>, aria-label, or any other
+      accessible name. The "Username" copy LOOKS like a label on
+      first paint, but it is pre-filled input text — it disappears
+      the moment the user focuses the field and starts typing, and
+      the form may submit "Username" as the user's value if they
+      tab past without editing.
+    -->
+    <form>
+      <input type="text" value="Username">
+      <button type="submit">Sign up</button>
+    </form>
+  </body>
+</html>
