@@ -4,6 +4,7 @@
  */
 
 import type { CandidateFinder } from "../types/review.ts";
+import { finder as altDuplicatesSiblingText } from "./finders/alt-duplicates-sibling-text.ts";
 import { finder as captcha } from "./finders/captcha.ts";
 import { finder as carouselPattern } from "./finders/carousel-pattern.ts";
 import { finder as colorClassCrossref } from "./finders/color-class-crossref.ts";
@@ -51,6 +52,7 @@ import { finder as validationTiming } from "./finders/validation-timing.ts";
 import { finder as visuallyHiddenOnlyName } from "./finders/visually-hidden-only-name.ts";
 
 export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
+  altDuplicatesSiblingText,
   captcha,
   carouselPattern,
   colorClassCrossref,
