@@ -60,6 +60,7 @@ import { rule as requiredIndicatorMissing } from "./forms/required-indicator-mis
 import { rule as requiredMarkerWithoutRequiredAttr } from "./forms/required-marker-without-required-attr.ts";
 import { rule as selectOnchangeContextChange } from "./forms/select-onchange-context-change.ts";
 import { rule as submitNotButtonOrInput } from "./forms/submit-not-button-or-input.ts";
+import { rule as valueAsLabel } from "./forms/value-as-label.ts";
 import { rule as accesskeyDuplicate } from "./keyboard/accesskey-duplicate.ts";
 import { rule as anchorButtonNotFocusable } from "./keyboard/anchor-button-not-focusable.ts";
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
@@ -224,6 +225,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   textSpacing,
   tooltipDismissable,
   validAttr,
+  valueAsLabel,
   videoCaptionsMissing,
   viewportZoom,
   visualDisabledNonControl,
@@ -337,6 +339,7 @@ export {
   textSpacing,
   tooltipDismissable,
   validAttr,
+  valueAsLabel,
   videoCaptionsMissing,
   viewportZoom,
   visualDisabledNonControl,
