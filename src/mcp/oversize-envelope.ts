@@ -107,19 +107,59 @@ export interface OversizeEnvelopeInput {
    * without building 100KB-of-findings inputs.
    */
   readonly hardCeilingChars?: number;
+  /**
+   * Full pre-pagination, pre-density-cap inventory size — the count
+   * of files-with-findings the scan produced before any clip pass
+   * trimmed the wire shape. Threaded through to the slim builder so
+   * the warningsDetails payload can ship `totalFilesWithFindings`
+   * alongside `droppedFileCountFromRequestedLimit`. Without this, an
+   * agent reading the warning sees only the post-density count being
+   * dropped now (e.g. "1 dropped" on a corpus with 4936 files-with-
+   * findings) and concludes the corpus was nearly empty — the silent
+   * underreport this counter exists to defeat. Required so the
+   * minimum-honest envelope is honest about the inventory it could
+   * not fit.
+   */
+  readonly totalFilesWithFindings: number;
 }
 
 /**
  * Reason the fallback fired, threaded into the slim-builder so the
  * `warningsDetails.response_dropped_files_oversize` payload carries
- * the byte arithmetic. `droppedFileCount` is the count the slim
- * builder is being asked to drop — not the post-density count, but
- * the per-file inventory the original response was about to ship.
+ * the byte arithmetic.
+ *
+ * Two file counters travel side by side because they answer different
+ * questions and the agent needs both:
+ *
+ *   - `droppedFileCountFromRequestedLimit` — files in the response at
+ *     the moment the slim path fires. The earlier requested-limit /
+ *     density-cap pass may have ALREADY trimmed the inventory before
+ *     the oversize guard ran (e.g. caller asked for `limit: 25`, the
+ *     density cap clipped to `effectiveLimit: 1`, so this counter is
+ *     1). It honestly answers "how many file entries did the slim
+ *     path discard from `files[]` to fit under the ceiling," not
+ *     "how many files have findings."
+ *   - `totalFilesWithFindings` — the full pre-pagination, pre-density
+ *     inventory size. On a 4936-files-with-findings corpus where the
+ *     density cap clipped to 1, the per-pass counter above reports 1
+ *     and this counter reports 4936 so the agent reading the warning
+ *     can size the actual recovery work (narrower scope, scoped
+ *     rerun) against the real inventory rather than the trimmed
+ *     post-cap remnant.
+ *
+ * Both counters ship together — the renamed `droppedFileCountFromRequestedLimit`
+ * makes the per-pass framing explicit, and the sibling `totalFilesWithFindings`
+ * carries the underreport-defeating denominator. Per the AI-first
+ * doctrine ("Composite headline counts are dishonest"), splitting one
+ * counter into two named for what they each measure is the durable
+ * shape; a single fused number that summed pre-cap + post-cap drops
+ * would silently misclassify recovery work.
  */
 export interface OversizeEnvelopeReason {
   readonly preDropBytes: number;
   readonly hardCeilingBytes: number;
-  readonly droppedFileCount: number;
+  readonly droppedFileCountFromRequestedLimit: number;
+  readonly totalFilesWithFindings: number;
 }
 
 /**
@@ -154,13 +194,16 @@ export function guardOversizeEnvelope(input: OversizeEnvelopeInput): OversizeEnv
   // asked to drop so the warningsDetails payload carries the honest
   // arithmetic. Defaults to 0 if `files` isn't an array (the slim
   // builder still runs — the slim shape is owned by the caller, not
-  // this helper).
+  // this helper). This is the post-density-cap remnant — the
+  // `totalFilesWithFindings` field carries the pre-cap denominator
+  // so the agent can size the actual inventory.
   const filesField = input.original["files"];
-  const droppedFileCount = Array.isArray(filesField) ? filesField.length : 0;
+  const droppedFileCountFromRequestedLimit = Array.isArray(filesField) ? filesField.length : 0;
   const reason: OversizeEnvelopeReason = {
     preDropBytes: measured,
     hardCeilingBytes: ceiling,
-    droppedFileCount,
+    droppedFileCountFromRequestedLimit,
+    totalFilesWithFindings: input.totalFilesWithFindings,
   };
   const slim = input.buildSlim(reason);
   return { response: slim, triggered: true, preDropBytes: measured };
@@ -238,7 +281,8 @@ export function oversizeEnvelopeWarningsField(args: {
     response_dropped_files_oversize: {
       preDropBytes: reason.preDropBytes,
       hardCeilingBytes: reason.hardCeilingBytes,
-      droppedFileCount: reason.droppedFileCount,
+      droppedFileCountFromRequestedLimit: reason.droppedFileCountFromRequestedLimit,
+      totalFilesWithFindings: reason.totalFilesWithFindings,
       ...(metaFieldsDropped !== undefined && metaFieldsDropped.length > 0
         ? { metaFieldsDropped }
         : {}),

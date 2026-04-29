@@ -129,12 +129,24 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const dropPayload = details["response_dropped_files_oversize"] as {
       preDropBytes: number;
       hardCeilingBytes: number;
-      droppedFileCount: number;
+      droppedFileCountFromRequestedLimit: number;
+      totalFilesWithFindings: number;
     };
     expect(dropPayload).toBeDefined();
     expect(dropPayload.preDropBytes).toBeGreaterThan(dropPayload.hardCeilingBytes);
     expect(dropPayload.hardCeilingBytes).toBeGreaterThan(0);
-    expect(dropPayload.droppedFileCount).toBeGreaterThanOrEqual(0);
+    expect(dropPayload.droppedFileCountFromRequestedLimit).toBeGreaterThanOrEqual(0);
+    // The pre-cap inventory denominator must always ship — without
+    // it, an agent seeing only the post-cap drop count would silently
+    // underread the corpus on a bulk-vendor scan where the density
+    // cap clipped most of the inventory before the slim guard fired.
+    // The synthetic fixture has 1 file in `formatted.files`, so the
+    // sibling counter ships 1 here; the integration assertion that
+    // pins `total >= dropped + emitted` lives in
+    // `tests/integration/mcp-tools.test.ts`.
+    expect(dropPayload.totalFilesWithFindings).toBeGreaterThanOrEqual(
+      dropPayload.droppedFileCountFromRequestedLimit,
+    );
 
     // Per "Truncated containers must rename or sentinel, not retain"
     // (doctrine): when the slim builder strips top-level `meta`

@@ -247,6 +247,16 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
   // slim-builder owns the replacement shape.
   const guarded = guardOversizeEnvelope({
     original: postDensity,
+    // `formatted.files.length` is the full pre-pagination, pre-
+    // density-cap inventory of files-with-findings — passed through
+    // so the slim path's warningsDetails payload can ship a sibling
+    // `totalFilesWithFindings` next to `droppedFileCountFromRequestedLimit`.
+    // Without it, an agent reading the slim warning sees only the
+    // post-density count being dropped now (e.g. "1 dropped" on a
+    // 4936-files-with-findings corpus where the density cap clipped
+    // 4936→1) and concludes the corpus was nearly empty — the silent
+    // underreport this counter exists to defeat.
+    totalFilesWithFindings: formatted.files.length,
     buildSlim: (reason) =>
       buildSlimScanProjectEnvelope({
         original: postDensity,
@@ -568,7 +578,9 @@ function buildSlimScanProjectEnvelope(args: {
     // object — keeps the wire-shape contract for `files` (always an
     // array) intact for every consumer that already iterates it, and
     // the count payload already lives on
-    // `warningsDetails.response_dropped_files_oversize.droppedFileCount`.
+    // `warningsDetails.response_dropped_files_oversize.droppedFileCountFromRequestedLimit`
+    // (which pairs with `totalFilesWithFindings` for the pre-cap
+    // denominator).
     filesArrayDropped: true as const,
     nextStep: SLIM_NEXT_STEP_PROSE,
     nextStepStructured: buildSlimNextStepStructured({

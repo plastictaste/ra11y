@@ -1209,7 +1209,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         response_dropped_files_oversize?: {
           preDropBytes: number;
           hardCeilingBytes: number;
-          droppedFileCount: number;
+          droppedFileCountFromRequestedLimit: number;
+          totalFilesWithFindings: number;
         };
       };
       files?: readonly unknown[];
@@ -1220,6 +1221,17 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const dropPayload = body.warningsDetails?.response_dropped_files_oversize;
     expect(dropPayload).toBeDefined();
     expect(dropPayload?.preDropBytes).toBeGreaterThan(dropPayload?.hardCeilingBytes ?? 0);
+    // The full pre-cap inventory size travels alongside the post-cap
+    // drop count so an agent reading the warning sees both numbers
+    // and can size recovery work against the real inventory rather
+    // than the trimmed post-density remnant. Per the AI-first
+    // doctrine ("Composite headline counts are dishonest"), splitting
+    // one fused counter into two named for what they each measure is
+    // the durable shape — the rename closes the silent underreport
+    // a single `droppedFileCount` allowed.
+    expect(dropPayload?.totalFilesWithFindings).toBeGreaterThanOrEqual(
+      (dropPayload?.droppedFileCountFromRequestedLimit ?? 0) + (body.files?.length ?? 0),
+    );
     // Slim envelope drops files[] entirely so the routing channel
     // (plan + meta + nextStep) survives under the host wall.
     expect(body.files).toEqual([]);

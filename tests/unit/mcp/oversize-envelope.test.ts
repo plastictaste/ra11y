@@ -47,6 +47,7 @@ describe("guardOversizeEnvelope", () => {
     let slimBuilderCalled = false;
     const result = guardOversizeEnvelope({
       original,
+      totalFilesWithFindings: 1,
       buildSlim: () => {
         slimBuilderCalled = true;
         return {};
@@ -72,6 +73,13 @@ describe("guardOversizeEnvelope", () => {
     const result = guardOversizeEnvelope({
       original,
       hardCeilingChars: 1000,
+      // Pre-cap inventory was larger than the post-cap remnant — the
+      // slim path needs both numbers to ship an honest payload.
+      // Synthetic 4936 mirrors the 4936-files-with-findings repro the
+      // backlog item names: in production the density cap can clip the
+      // response down to a single file, but the inventory the agent
+      // needs to recover against stays at 4936.
+      totalFilesWithFindings: 4936,
       buildSlim: (reason) => {
         receivedReason = reason;
         return { plan: original.plan, files: [], slim: true };
@@ -83,10 +91,19 @@ describe("guardOversizeEnvelope", () => {
     expect(receivedReason).toBeDefined();
     expect(receivedReason?.preDropBytes).toBeGreaterThan(1000);
     expect(receivedReason?.hardCeilingBytes).toBe(1000);
-    expect(receivedReason?.droppedFileCount).toBe(20);
+    // Post-cap remnant: the helper counts the `files` array on the
+    // input object — that's how many entries the slim builder is
+    // about to drop NOW.
+    expect(receivedReason?.droppedFileCountFromRequestedLimit).toBe(20);
+    // Pre-cap denominator: caller-threaded, mirrors the underreport
+    // failure mode the backlog item exposes — without this counter,
+    // an agent seeing `droppedFileCountFromRequestedLimit: 20` could
+    // not tell a 20-file scan from a 4936-file scan that the density
+    // cap clipped to 20.
+    expect(receivedReason?.totalFilesWithFindings).toBe(4936);
   });
 
-  it("reports droppedFileCount: 0 when the original carries no files array", () => {
+  it("reports droppedFileCountFromRequestedLimit: 0 when the original carries no files array", () => {
     // Defensive: helper doesn't know the response shape — when
     // `files` is absent or non-array, the count defaults to 0 and the
     // slim builder still runs.
@@ -94,10 +111,16 @@ describe("guardOversizeEnvelope", () => {
     const result = guardOversizeEnvelope({
       original,
       hardCeilingChars: 5,
-      buildSlim: (reason) => ({ slim: true, droppedReported: reason.droppedFileCount }),
+      totalFilesWithFindings: 0,
+      buildSlim: (reason) => ({
+        slim: true,
+        droppedReported: reason.droppedFileCountFromRequestedLimit,
+        totalReported: reason.totalFilesWithFindings,
+      }),
     });
     expect(result.triggered).toBe(true);
     expect((result.response as { droppedReported?: number }).droppedReported).toBe(0);
+    expect((result.response as { totalReported?: number }).totalReported).toBe(0);
   });
 
   it("does not mutate the input response object", () => {
@@ -106,6 +129,7 @@ describe("guardOversizeEnvelope", () => {
     guardOversizeEnvelope({
       original,
       hardCeilingChars: 5,
+      totalFilesWithFindings: 3,
       buildSlim: () => ({}),
     });
     expect(JSON.stringify(original)).toBe(snapshot);
@@ -116,7 +140,8 @@ describe("oversizeEnvelopeWarningsField", () => {
   const reason: OversizeEnvelopeReason = {
     preDropBytes: 472_000,
     hardCeilingBytes: 96_000,
-    droppedFileCount: 14,
+    droppedFileCountFromRequestedLimit: 14,
+    totalFilesWithFindings: 4936,
   };
 
   it("emits the structured warning + payload as the only code when no base codes exist", () => {
@@ -125,7 +150,8 @@ describe("oversizeEnvelopeWarningsField", () => {
     expect(fragment.warningsDetails.response_dropped_files_oversize).toEqual({
       preDropBytes: 472_000,
       hardCeilingBytes: 96_000,
-      droppedFileCount: 14,
+      droppedFileCountFromRequestedLimit: 14,
+      totalFilesWithFindings: 4936,
     });
   });
 

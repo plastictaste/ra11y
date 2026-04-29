@@ -1689,10 +1689,32 @@ export interface ScanWarningDetails {
    *   so consumers branching on the warning don't have to read source
    *   to know the ceiling, and so a future tightening of the constant
    *   is observable on the wire.
-   * - `droppedFileCount` — how many file entries `files[]` was
-   *   carrying when the fallback fired. After the fallback, `files[]`
-   *   ships as `[]` (drop-all) so the agent's view is honest: every
-   *   file's findings are gone, not just the trailing tail.
+   * - `droppedFileCountFromRequestedLimit` — how many file entries
+   *   `files[]` was carrying when the fallback fired. After the
+   *   fallback, `files[]` ships as `[]` (drop-all) so the agent's
+   *   view is honest: every file's findings in THIS response are
+   *   gone. Named with the `_FromRequestedLimit` suffix because the
+   *   earlier requested-limit / density-cap pass may have ALREADY
+   *   trimmed the inventory before this guard ran (a 4936-files-with-
+   *   findings corpus can show `droppedFileCountFromRequestedLimit: 1`
+   *   when `requestedLimit: 25` resolved to `effectiveLimit: 1` under
+   *   density-cap pressure). The sibling `totalFilesWithFindings`
+   *   carries the pre-cap denominator so the agent can size recovery
+   *   work against the real inventory rather than the trimmed remnant.
+   * - `totalFilesWithFindings` — full pre-pagination, pre-density
+   *   inventory size — how many files-with-findings the scan
+   *   produced before any clip pass. Pairs with
+   *   `droppedFileCountFromRequestedLimit` per the AI-first doctrine
+   *   ("Composite headline counts are dishonest"): two named
+   *   counters answer different questions ("how many entries did the
+   *   slim path discard from `files[]`" vs. "how many files have
+   *   findings on this corpus") so an agent reading the warning
+   *   doesn't have to guess whether a small post-cap count means
+   *   the inventory itself was small or the cap clipped most of it
+   *   away. Always present when this warning fires; ships even when
+   *   the two counters happen to agree (small-corpus single-file
+   *   pathology) so downstream agents don't disambiguate
+   *   present-vs-absent on a numeric equality.
    * - `metaFieldsDropped` — top-level `meta` sub-fields the slim
    *   builder discarded to keep the minimum-honest envelope under
    *   budget. Closes the "Truncated containers must rename or
@@ -1721,7 +1743,8 @@ export interface ScanWarningDetails {
   readonly response_dropped_files_oversize?: {
     readonly preDropBytes: number;
     readonly hardCeilingBytes: number;
-    readonly droppedFileCount: number;
+    readonly droppedFileCountFromRequestedLimit: number;
+    readonly totalFilesWithFindings: number;
     readonly metaFieldsDropped?: readonly string[];
     /**
      * Per-field truncation summaries for verbose collections the slim
