@@ -902,6 +902,45 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
 }
 
 /**
+ * Cross-check helper for the
+ * `coverage_confidence_uniformly_high_with_parse_errors` warning code.
+ *
+ * Returns `true` when the assembled per-rule-coverage rows are uniformly
+ * `coverageConfidence: "high"` AND no row carries any per-file `byFile`
+ * override entries. That shape is the consistency gap the warning
+ * names: parse-error files exist (separate predicate at the call site)
+ * but every per-rule entry claims full evidence with no per-file
+ * degradation, so an agent reading the per-rule layer is silently
+ * misled about the substrate.
+ *
+ * Pure over its inputs — the call site supplies the already-adjusted
+ * rows (after {@link applyParseErrorAdjustment} +
+ * {@link applyScssUnresolvedVariablesAdjustment} +
+ * {@link applyFragmentInputAdjustment} have run). The check is a
+ * one-pass scan; an empty rows array returns `true` (vacuously
+ * uniform-high), but the warning emission gates on a non-empty
+ * `parseErrorFiles` list at the call site so a clean scan with no rows
+ * doesn't fire.
+ *
+ * Per the AI-first "Parser-failure invalidates per-file confidence"
+ * doctrine: a non-empty `byFile` array is the per-file degradation
+ * surface that already names which files the rule's confidence was
+ * bounded on; only when the adjustment leaves every row at uniform
+ * `"high"` with no `byFile` does the consistency gap become invisible
+ * to an agent reading the coverage block. Either degradation axis
+ * (aggregate `medium`/`low` OR per-file `byFile`) clears the predicate.
+ */
+export function isPerRuleCoverageUniformlyHigh(
+  rows: readonly PerRuleCoverage[],
+): boolean {
+  for (const row of rows) {
+    if (row.coverageConfidence !== "high") return false;
+    if (row.byFile !== undefined && row.byFile.length > 0) return false;
+  }
+  return true;
+}
+
+/**
  * Per-scan-kind violation tally surfaced as `plan.violationsByScanKind`
  * on `scan_project` responses. Splits error+warning findings by
  * whether the source file was classified as a deterministic build

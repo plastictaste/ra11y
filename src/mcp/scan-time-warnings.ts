@@ -135,6 +135,19 @@ export interface ScanTimeWarningInputs {
   readonly restrictToPathsEmpty?: boolean;
   readonly metaArrayTruncatedFields?: readonly string[];
   readonly nearestConfigAncestor?: string;
+  /**
+   * Pre-computed cross-check for
+   * `coverage_confidence_uniformly_high_with_parse_errors`. `true` when
+   * every adjusted `perRuleCoverage` row reports
+   * `coverageConfidence: "high"` with no per-file `byFile` overrides;
+   * the warnings module pairs that with the parse-error count axis to
+   * decide whether to fire the code. Pass `false` (or omit) when the
+   * caller didn't compute the cross-check (e.g. a derivative tool
+   * without the assembled rows in hand) — the code drops conservatively
+   * in that case. See {@link import("./scan-assembly.ts").isPerRuleCoverageUniformlyHigh}
+   * for the canonical helper.
+   */
+  readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
 }
 
 /**
@@ -501,6 +514,9 @@ function buildWarningsFieldInputs(
     ...(derived.jsRoutedThroughTsxSucceededCount === 0
       ? {}
       : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
+    ...(inputs.perRuleCoverageUniformlyHighWithParseErrors === true
+      ? { perRuleCoverageUniformlyHighWithParseErrors: true }
+      : {}),
   };
 }
 

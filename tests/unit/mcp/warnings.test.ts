@@ -677,6 +677,73 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
   });
 
+  it("fires `coverage_confidence_uniformly_high_with_parse_errors` when parse errors exist AND every per-rule row reports uniform high confidence with no byFile overrides", () => {
+    // Parser-failure invalidates per-file confidence; uniform high
+    // across every row WITH a non-empty parseErrorFiles list is the
+    // dishonest meta shape this code names. The cross-check axis is
+    // pre-computed at the assembler seam (every row at high + no byFile)
+    // and threaded as a boolean; the warnings module pairs it with the
+    // parse-error-count axis (read from `analysisCoverage`) for the
+    // emission gate.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".tsx": 41, ".js": 1 },
+      perRuleCoverageUniformlyHighWithParseErrors: true,
+    });
+    expect(codes).toContain("coverage_confidence_uniformly_high_with_parse_errors");
+  });
+
+  it("does NOT fire `coverage_confidence_uniformly_high_with_parse_errors` when no parse errors exist (vacuous-true on a clean scan)", () => {
+    // The boolean alone isn't sufficient — a clean scan with every row
+    // at uniform high confidence and zero parse-error files is the
+    // healthy shape, not the consistency gap. Both axes must co-occur
+    // for the code to fire.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 0 },
+      filesByExtension: { ".tsx": 42 },
+      perRuleCoverageUniformlyHighWithParseErrors: true,
+    });
+    expect(codes).not.toContain("coverage_confidence_uniformly_high_with_parse_errors");
+  });
+
+  it("does NOT fire `coverage_confidence_uniformly_high_with_parse_errors` when per-rule coverage already carries byFile overrides (per-file degradation makes the meta consistent)", () => {
+    // When the assembler's parse-error adjustment leaves at least one
+    // `byFile[]` entry on a row whose extension gate matched the failed
+    // file, the per-rule coverage layer already names the per-file
+    // degradation honestly — no consistency gap remains.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".tsx": 41, ".js": 1 },
+      perRuleCoverageUniformlyHighWithParseErrors: false,
+    });
+    expect(codes).not.toContain("coverage_confidence_uniformly_high_with_parse_errors");
+  });
+
+  it("does NOT fire `coverage_confidence_uniformly_high_with_parse_errors` when the boolean is undefined (drops conservatively without evidence)", () => {
+    // Derivative tools that don't compute the cross-check should never
+    // speculatively fire the code — same drop-conservatively pattern as
+    // the parser_bailed_zero_findings predicate when totalFindings is
+    // undefined.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".tsx": 41, ".js": 1 },
+      // no perRuleCoverageUniformlyHighWithParseErrors threaded.
+    });
+    expect(codes).not.toContain("coverage_confidence_uniformly_high_with_parse_errors");
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     // `no_config_found` now requires filesScanned >= 10 AND the probe
     // to have seen a project marker (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO).

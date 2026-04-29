@@ -605,7 +605,32 @@ export type ScanWarningCode =
   // telemetry so the agent can do its own triage. Binary-presence: the
   // per-file count of `.js` files lives in `meta.filesByExtension`
   // already; the wire is the entire signal.
-  | "parser_bailed_on_non_jsx_in_tsx_route";
+  | "parser_bailed_on_non_jsx_in_tsx_route"
+  // at least one file landed in
+  // `analysisCoverage.parseErrorFiles` AND every `meta.perRuleCoverage`
+  // row reports `coverageConfidence: "high"` with NO per-file `byFile`
+  // overrides — the meta is internally inconsistent under the AI-first
+  // doctrine "Parser-failure invalidates per-file confidence." A parse
+  // failure means at least one file's evidence horizon was unobservable
+  // to every rule whose extension gate matched the failed file; the
+  // per-rule coverage layer is the surface that names which rules were
+  // bounded on which files (`byFile[]` entries with
+  // `confidence: "low"`, `reason: "file-parse-error"`). When the
+  // assembler's parse-error adjustment leaves every row at uniform
+  // `"high"` despite the parse-error-files list being non-empty, the
+  // agent reading per-rule coverage as scan-confidence telemetry is
+  // silently misled — the headline label claims every rule observed
+  // full evidence, the parse-error list says at least one rule did
+  // not. Without this code, the inconsistency is only discoverable by
+  // cross-referencing the two surfaces by hand. Binary-presence: the
+  // load-bearing identity (which files failed, which rules' `byFile`
+  // would carry the override) lives on `meta.analysisCoverage.parseErrorFiles`
+  // and `meta.perRuleCoverage[].byFile` respectively; the wire is the
+  // entire signal. Pairs with `parse_errors_present` (which fires
+  // whenever the parse-error count is non-zero — that code names the
+  // existence of parse errors; this code names the consistency gap
+  // between the parse-error surface and the per-rule coverage surface).
+  | "coverage_confidence_uniformly_high_with_parse_errors";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -1041,6 +1066,29 @@ export interface WarningInputs {
    * stays pure over its inputs.
    */
   readonly jsRoutedThroughTsxSucceededCount?: number;
+  /**
+   * `true` when at least one file is in
+   * `analysisCoverage.parseErrorFiles[]` AND every row of the assembled
+   * `meta.perRuleCoverage[]` reports `coverageConfidence: "high"` with
+   * NO per-file `byFile` overrides. Drives the
+   * `coverage_confidence_uniformly_high_with_parse_errors` warning code.
+   *
+   * The two-axis check (parse-error count > 0 + uniform-high without
+   * `byFile` degradation) is computed at the call site so the warnings
+   * module stays pure over its inputs — the same per-rule coverage rows
+   * that drive `meta.perRuleCoverage` are inspected once at the
+   * assembler seam, not re-walked here. Per the AI-first
+   * "Parser-failure invalidates per-file confidence" doctrine: a
+   * non-empty `byFile[]` is the per-file degradation that already
+   * surfaces the inconsistency on the per-rule layer; only when the
+   * adjustment leaves every row at uniform `"high"` with no `byFile`
+   * does the consistency gap become invisible to an agent reading the
+   * coverage block. Pass `false` (or omit) when the caller didn't
+   * compute the cross-check (e.g. a derivative tool that doesn't have
+   * the assembled `perRuleCoverage` rows in hand) — the code drops
+   * conservatively in that case.
+   */
+  readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
 }
 
 // MARKER_PROBE_002
@@ -2113,6 +2161,7 @@ export interface ScanWarningDetails {
     readonly topUnresolvedHrefs: readonly string[];
   };
   readonly parser_bailed_on_non_jsx_in_tsx_route?: BinaryPresenceMarker;
+  readonly coverage_confidence_uniformly_high_with_parse_errors?: BinaryPresenceMarker;
 }
 
 /**
@@ -2227,6 +2276,7 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
   "parser_bailed_on_non_jsx_in_tsx_route",
+  "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
 
 /**
@@ -2295,6 +2345,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "js_innerhtml_template_literal_unparsed",
   "linked_stylesheet_not_resolved_for_contrast",
   "parser_bailed_on_non_jsx_in_tsx_route",
+  "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -2408,13 +2459,40 @@ function pathShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
  *      `parseErrorFileCount > 0` AND `totalFindings === 0`. Drops
  *      conservatively when `totalFindings` is `undefined` so derivative
  *      tools never speculatively fire it.
+ * 4. `coverage_confidence_uniformly_high_with_parse_errors`.
+ *      Names the "parse error files exist BUT per-rule coverage shows
+ *      uniform high confidence with no `byFile` overrides" shape — the
+ *      consistency gap between the parse-error surface and the per-rule
+ *      coverage surface. The cross-check is performed at the call site
+ *      (the warnings module stays pure over its inputs); this branch
+ *      only emits on the threaded boolean.
  */
 function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (hasParseErrors(inputs.analysisCoverage)) out.push("parse_errors_present");
   if (hasPartialParseFiles(inputs.analysisCoverage)) out.push("partial_parse_files_present");
   if (parserBailedZeroFindings(inputs)) out.push("parser_bailed_zero_findings");
+  if (coverageConfidenceUniformlyHighWithParseErrors(inputs)) {
+    out.push("coverage_confidence_uniformly_high_with_parse_errors");
+  }
   return out;
+}
+
+/**
+ * Predicate for `coverage_confidence_uniformly_high_with_parse_errors`.
+ * Two-axis gate: (a) the caller's pre-computed cross-check fired
+ * (every assembled `perRuleCoverage` row at `coverageConfidence: "high"`
+ * with no `byFile` overrides) AND (b) the analysis-coverage block
+ * actually carries a non-zero `parseErrorFileCount`. Both axes must be
+ * present — the boolean alone is not sufficient because a caller that
+ * trivially returns `true` on a clean scan with no parse errors
+ * shouldn't trip the code (the inconsistency requires a parse-error
+ * file to disagree with). Drops conservatively when either axis is
+ * absent so derivative tools never speculatively fire the code.
+ */
+function coverageConfidenceUniformlyHighWithParseErrors(inputs: WarningInputs): boolean {
+  if (inputs.perRuleCoverageUniformlyHighWithParseErrors !== true) return false;
+  return hasParseErrors(inputs.analysisCoverage);
 }
 
 /**
@@ -3271,6 +3349,14 @@ type ScanMetaWarningArgs = {
    * pure over its inputs.
    */
   readonly jsRoutedThroughTsxSucceededCount?: number;
+  /**
+   * Pass-through for the cross-check that drives
+   * `coverage_confidence_uniformly_high_with_parse_errors`. See
+   * {@link WarningInputs.perRuleCoverageUniformlyHighWithParseErrors}.
+   * Computed at the assembler seam where the adjusted `perRuleCoverage`
+   * rows are available; the warnings module stays pure over its inputs.
+   */
+  readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
 };
 
 /**
@@ -3310,6 +3396,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "jsInnerHtmlFileSamples",
   "linkedStylesheetsUnresolvedForContrast",
   "jsRoutedThroughTsxSucceededCount",
+  "perRuleCoverageUniformlyHighWithParseErrors",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**

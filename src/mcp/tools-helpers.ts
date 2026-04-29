@@ -27,7 +27,7 @@ import {
 } from "../output/agent-response/index.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
-import type { Violation } from "../types/violation.ts";
+import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
@@ -550,6 +550,18 @@ export async function runScanAndFormat(
    * on `meta.perRuleCoverage` rows whose extension gate matched.
    */
   readonly scssUnresolvedVariableFiles: readonly string[];
+  /**
+   * Adjusted `perRuleCoverage` rows — the same view that lands in
+   * `meta.perRuleCoverage` after every parse-error / SCSS / fragment /
+   * extension-subkind adjustment has run. Exposed so the caller (e.g.
+   * `tool-scan-project.ts`) can run the
+   * `coverage_confidence_uniformly_high_with_parse_errors` cross-check
+   * without re-walking the adjustment chain. Same identity as the rows
+   * surfaced under `formatted.meta.perRuleCoverage` (when
+   * `verboseMeta`) — the wire shape and this view share a single
+   * source.
+   */
+  readonly adjustedPerRuleCoverage: readonly PerRuleCoverage[];
 }> {
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -862,6 +874,7 @@ export async function runScanAndFormat(
     filesScanned: result.filesScanned,
     reviewCandidates: report.candidates ?? [],
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
+    adjustedPerRuleCoverage,
   };
 }
 

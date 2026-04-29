@@ -29,6 +29,7 @@ import {
   computeTopRules,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
+  isPerRuleCoverageUniformlyHigh,
   PER_RULE_COVERAGE_CAP,
   splitViolationsByScanKind,
   sumFindingsAcrossFiles,
@@ -76,6 +77,71 @@ describe("sumFindingsEmitted + sumFindingsAcrossFiles reductions", () => {
   it("sumFindingsAcrossFiles sums `findings.length` across file buckets", () => {
     const files = [{ findings: [1, 2, 3] }, { findings: [] }, { findings: [1] }];
     expect(sumFindingsAcrossFiles(files)).toBe(4);
+  });
+});
+
+describe("isPerRuleCoverageUniformlyHigh", () => {
+  it("returns true when every row is high confidence with no byFile overrides", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "alt-text/missing",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "high",
+      },
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 3,
+        filesEligible: 3,
+        findingsEmitted: 1,
+        fired: true,
+        coverageConfidence: "high",
+      },
+    ];
+    expect(isPerRuleCoverageUniformlyHigh(rows)).toBe(true);
+  });
+
+  it("returns false when at least one row is medium or low confidence", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "alt-text/missing",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "high",
+      },
+      {
+        ruleId: "contrast/minimum",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "low",
+      },
+    ];
+    expect(isPerRuleCoverageUniformlyHigh(rows)).toBe(false);
+  });
+
+  it("returns false when a row has non-empty byFile entries (per-file degradation)", () => {
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "alt-text/missing",
+        filesEvaluated: 5,
+        filesEligible: 5,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "high",
+        byFile: [{ path: "/fixtures/broken.html", confidence: "low", reason: "file-parse-error" }],
+      },
+    ];
+    expect(isPerRuleCoverageUniformlyHigh(rows)).toBe(false);
+  });
+
+  it("returns true on an empty rows array (vacuous case — caller pairs with parse-error count gate)", () => {
+    expect(isPerRuleCoverageUniformlyHigh([])).toBe(true);
   });
 });
 
