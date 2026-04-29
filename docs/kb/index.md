@@ -103,6 +103,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [aria/icon-font-hidden](./rules/aria__icon-font-hidden.md)
 - [aria/invalid-role](./rules/aria__invalid-role.md)
 - [aria/labelledby-target-exists](./rules/aria__labelledby-target-exists.md)
+- [aria/live-region-missing-on-innerhtml-target](./rules/aria__live-region-missing-on-innerhtml-target.md)
 - [aria/live-region-valid](./rules/aria__live-region-valid.md)
 - [aria/popover-trigger-missing-haspopup](./rules/aria__popover-trigger-missing-haspopup.md)
 - [aria/presentation-on-semantic-ancestor](./rules/aria__presentation-on-semantic-ancestor.md)
