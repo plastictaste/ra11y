@@ -101,7 +101,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.5.4` | Motion Actuation | A | manual | — | motion-actuation | **finder** |
 | `wcag22:2.5.5` | Target Size (Enhanced) | AAA | partial | — | — | **gap** |
 | `wcag22:2.5.6` | Concurrent Input Mechanisms | AAA | manual | — | pointer-input | **finder** |
-| `wcag22:2.5.7` | Dragging Movements | AA | partial | pointer/drag-alternative, pointer/draggable-no-keyboard-alt | — | **rule** |
+| `wcag22:2.5.7` | Dragging Movements | AA | partial | pointer/drag-alternative, pointer/draggable-no-keyboard-alt | drag-events | **rule** |
 | `wcag22:2.5.8` | Target Size (Minimum) | AA | partial | pointer/target-size | — | **rule** |
 | `wcag22:3.1.1` | Language of Page | A | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `wcag22:3.1.2` | Language of Parts | AA | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
