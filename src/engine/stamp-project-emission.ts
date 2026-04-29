@@ -61,6 +61,15 @@ export function stampProjectEmission(
     ...(em.fixPaths !== undefined && { fixPaths: em.fixPaths }),
     ...(em.snippet !== undefined && { snippet: em.snippet }),
     ...(em.couldBeWrongBecause?.length ? { couldBeWrongBecause: em.couldBeWrongBecause } : {}),
+    // Per-finding scanner-confidence label, project-scope twin of the
+    // per-file stamp in `rule-runner.ts`. Cross-file rules with
+    // `crossFileCapable: true` whose evidence is bounded on a specific
+    // input (one half of the pair scanned, the other not) emit
+    // `confidence: "medium"` per docs/kb/architecture/ai-first-consumer.md
+    // "Per-finding confidence must reflect per-rule coverage limitations."
+    // Conditional spread keeps `confidence: undefined` off the wire per
+    // CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+    ...(em.confidence !== undefined && { confidence: em.confidence }),
     ...(em.classEvidence ? { classEvidence: em.classEvidence } : {}),
     // Structured discriminating evidence — project-scope emit twin of
     // the per-file stamp in `rule-runner.ts`. No project-scope rule
