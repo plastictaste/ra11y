@@ -250,6 +250,124 @@ describe("review/pointer-input — path-based pairs (regression)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Branch 5: Mouse-only listener patterns (SC 2.5.1 pointer-event compatibility)
+// ---------------------------------------------------------------------------
+
+describe("review/pointer-input — mouse-only listeners (positive)", () => {
+  it("flags addEventListener('mousedown') with no sibling touch/pointer listener", () => {
+    const source = `
+      const canvas = document.getElementById("draw");
+      canvas.addEventListener("mousedown", start);
+      canvas.addEventListener("mousemove", draw);
+      canvas.addEventListener("mouseup", end);
+    `;
+    const out = runFinder(finder, source, { filePath: "drawing-app.js" });
+    const matching = out.filter((c) => c.reason.includes("mousedown"));
+    expect(matching.length).toBeGreaterThan(0);
+    expect(matching[0]?.confidence).toBe("medium");
+    expect(matching[0]?.reason).toContain("pointer-event compatibility");
+    expect(matching[0]?.reason).toContain("touch / pointer fallback");
+  });
+
+  it("emits one candidate per mouse event when all three are present", () => {
+    const source = `
+      el.addEventListener("mousedown", a);
+      el.addEventListener("mousemove", b);
+      el.addEventListener("mouseup", c);
+    `;
+    const out = runFinder(finder, source, { filePath: "drag.js" });
+    const seen = new Set<string>();
+    for (const c of out) {
+      if (c.reason.includes("mousedown")) seen.add("mousedown");
+      if (c.reason.includes("mousemove")) seen.add("mousemove");
+      if (c.reason.includes("mouseup")) seen.add("mouseup");
+    }
+    expect(seen.size).toBe(3);
+  });
+
+  it("flags onmousedown HTML inline attribute with no touch/pointer sibling", () => {
+    const source = `<html><body><canvas onmousedown="start(event)"></canvas></body></html>`;
+    const out = runFinder(finder, source, { filePath: "draw.html" });
+    const matching = out.filter((c) => c.reason.includes("onmousedown"));
+    expect(matching.length).toBeGreaterThan(0);
+    expect(matching[0]?.confidence).toBe("medium");
+    expect(matching[0]?.reason).toContain("pointer-event compatibility");
+    expect(matching[0]?.reason).toContain("touch / pointer fallback");
+  });
+
+  it("flags JSX onMouseDown attribute with no touch/pointer sibling", () => {
+    const source = `export function Pad() { return <div onMouseDown={start} onMouseMove={move} onMouseUp={end} />; }`;
+    const out = runFinder(finder, source, { filePath: "pad.tsx" });
+    const matching = out.filter((c) => c.reason.includes("onMouseDown"));
+    expect(matching.length).toBeGreaterThan(0);
+    expect(matching[0]?.confidence).toBe("medium");
+    expect(matching[0]?.reason).toContain("pointer-event compatibility");
+    expect(matching[0]?.reason).toContain("touch / pointer fallback");
+  });
+
+  it("mouse-only candidate covers all four criterion IDs", () => {
+    const source = `el.addEventListener("mousedown", h);`;
+    const out = runFinder(finder, source, { filePath: "draw.js" });
+    const matching = out.filter((c) => c.reason.includes("mousedown"));
+    const ids = criterionIds(matching);
+    expect(ids).toContain("wcag22:2.5.1");
+    expect(ids).toContain("wcag21:2.5.1");
+    expect(ids).toContain("wcag22:2.5.6");
+    expect(ids).toContain("wcag21:2.5.6");
+  });
+});
+
+describe("review/pointer-input — mouse-only listeners (sibling-silenced)", () => {
+  it("does NOT fire when mousedown coexists with addEventListener('touchstart') in the same file", () => {
+    const source = `
+      el.addEventListener("mousedown", a);
+      el.addEventListener("touchstart", b);
+    `;
+    const out = runFinder(finder, source, { filePath: "drag.js" });
+    const matching = out.filter((c) => c.reason.includes("no sibling touch/pointer"));
+    expect(matching.length).toBe(0);
+  });
+
+  it("does NOT fire when mousedown coexists with addEventListener('pointerdown') in the same file", () => {
+    const source = `
+      el.addEventListener("mousedown", a);
+      el.addEventListener("pointerdown", b);
+    `;
+    const out = runFinder(finder, source, { filePath: "drag.js" });
+    const matching = out.filter((c) => c.reason.includes("no sibling touch/pointer"));
+    expect(matching.length).toBe(0);
+  });
+
+  it("does NOT fire when JSX onMouseDown coexists with onTouchStart on any element in the file", () => {
+    const source = `
+      export function Pad() {
+        return (
+          <div>
+            <canvas onMouseDown={start} />
+            <canvas onTouchStart={start} />
+          </div>
+        );
+      }
+    `;
+    const out = runFinder(finder, source, { filePath: "pad.tsx" });
+    const matching = out.filter((c) => c.reason.includes("no sibling touch/pointer"));
+    expect(matching.length).toBe(0);
+  });
+
+  it("does NOT fire when HTML onmousedown coexists with onpointerdown on any element in the file", () => {
+    const source = `
+      <html><body>
+        <canvas onmousedown="a()"></canvas>
+        <canvas onpointerdown="b()"></canvas>
+      </body></html>
+    `;
+    const out = runFinder(finder, source, { filePath: "draw.html" });
+    const matching = out.filter((c) => c.reason.includes("no sibling touch/pointer"));
+    expect(matching.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Negative: Q5 false-positive guard (bare substring match)
 // ---------------------------------------------------------------------------
 

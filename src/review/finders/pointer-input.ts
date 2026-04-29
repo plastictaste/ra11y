@@ -18,7 +18,7 @@
  * is the path stroke of a signature pad (gesture-required — likely
  * real 2.5.1 issue) or a hover-tooltip trigger (no gesture — fine).
  *
- * The finder fires on four classes of evidence:
+ * The finder fires on five classes of evidence:
  *   1. JSX event-handler attributes known to be path-based / multipoint
  *      (onPointerMove, onTouchMove, gesture*).
  *   2. addEventListener() calls for the same set of DOM event names, plus
@@ -32,6 +32,15 @@
  *      identifiers matching /swipe|pan|pinch|rotate/i.
  *   4. HTML inline event-handler attributes: `ontouchstart`, `ontouchmove`,
  *      and `onpointermove` on any element in an HTML / HTM file.
+ *   5. Mouse-only listener patterns (`mousedown` / `mousemove` / `mouseup`
+ *      via addEventListener, JSX `onMouseDown` / `onMouseMove` /
+ *      `onMouseUp`, and HTML inline `onmousedown` / `onmousemove` /
+ *      `onmouseup`) when no sibling touch / pointer listener is present
+ *      in the same file. Surfaces SC 2.5.1 risk: drawing/drag/path
+ *      handlers wired to mouse events alone do not work for touch users.
+ *      Suppressed at file-level when a touch or pointer listener is
+ *      present (the reviewer is already prompted by branch 1–4 in that
+ *      case).
  */
 
 import { defineCandidateFinder } from "../../api/plugin.ts";
@@ -188,6 +197,99 @@ const IDENTIFIER_DECL_PATTERN =
 const GESTURE_REASON =
   " — verify the interaction also works with a single-point input (click/tap) and that the interface does not restrict the user to a single input mechanism";
 
+/**
+ * JSX event-handler attribute names for mouse-only events. These map
+ * 1:1 to the `mousedown`/`mousemove`/`mouseup` DOM events. When wired
+ * standalone — without a sibling `onTouchStart` / `onPointerDown` etc.
+ * in the same file — they signal that touch and pen users will be
+ * locked out of the interaction (the canonical SC 2.5.1 path-tracking
+ * risk on drawing canvases and drag-handles).
+ */
+const MOUSE_ONLY_JSX_HANDLERS: ReadonlySet<string> = new Set([
+  "onMouseDown",
+  "onMouseMove",
+  "onMouseUp",
+]);
+
+/**
+ * HTML inline event-handler attribute names for mouse-only events.
+ * Same shape and rationale as `MOUSE_ONLY_JSX_HANDLERS` but lower-case
+ * for HTML attribute matching.
+ */
+const HTML_INLINE_MOUSE_ONLY_ATTRS: ReadonlySet<string> = new Set([
+  "onmousedown",
+  "onmousemove",
+  "onmouseup",
+]);
+
+/**
+ * addEventListener call for the mouse-event family. Captured separately
+ * from the gesture-event `SOURCE_PATTERNS` because mouse events alone
+ * are not gesture evidence — they only become an SC 2.5.1 risk when
+ * NO sibling touch/pointer listener is present in the same file.
+ * Sibling-silencing is done by `hasTouchOrPointerListenerOrAttr` below.
+ */
+const MOUSE_LISTENER_PATTERN = /addEventListener\s*\(\s*['"`](mousedown|mousemove|mouseup)['"`]/g;
+
+/**
+ * Source-text predicate: does this file contain any touch- or
+ * pointer-event listener (`addEventListener` form)? Used to silence
+ * mouse-only candidates when the author has already wired a fallback.
+ *
+ * Listener variants matched: touchstart / touchmove / touchend /
+ * touchcancel / pointerdown / pointermove / pointerup / pointercancel /
+ * pointerover / pointerout / pointerenter / pointerleave. The wider
+ * pointer-event family is included because any one of them is evidence
+ * that the author considered non-mouse input modalities — the reviewer
+ * does not need a mouse-only candidate on top of the existing
+ * branches 1–4 in that case.
+ */
+const TOUCH_OR_POINTER_LISTENER_PATTERN =
+  /addEventListener\s*\(\s*['"`](touchstart|touchmove|touchend|touchcancel|pointerdown|pointermove|pointerup|pointercancel|pointerover|pointerout|pointerenter|pointerleave)['"`]/;
+
+/**
+ * JSX event-handler attribute names that count as a touch/pointer
+ * fallback. A JSX file declaring `<canvas onMouseDown=... onTouchStart=...>`
+ * has paired modalities and the mouse-only candidate is silenced.
+ */
+const TOUCH_OR_POINTER_JSX_HANDLERS: ReadonlySet<string> = new Set([
+  "onTouchStart",
+  "onTouchMove",
+  "onTouchEnd",
+  "onTouchCancel",
+  "onPointerDown",
+  "onPointerMove",
+  "onPointerUp",
+  "onPointerCancel",
+  "onPointerOver",
+  "onPointerOut",
+  "onPointerEnter",
+  "onPointerLeave",
+]);
+
+/**
+ * HTML inline event-handler attribute names that count as a
+ * touch/pointer fallback. Same family as the JSX set, lower-cased for
+ * HTML attribute matching.
+ */
+const HTML_TOUCH_OR_POINTER_ATTRS: ReadonlySet<string> = new Set([
+  "ontouchstart",
+  "ontouchmove",
+  "ontouchend",
+  "ontouchcancel",
+  "onpointerdown",
+  "onpointermove",
+  "onpointerup",
+  "onpointercancel",
+  "onpointerover",
+  "onpointerout",
+  "onpointerenter",
+  "onpointerleave",
+]);
+
+const MOUSE_ONLY_REASON =
+  " — pointer-event compatibility — verify a touch / pointer fallback exists (mouse-only listeners do not fire on touch or pen input)";
+
 export const finder = defineCandidateFinder({
   id: "review/pointer-input",
   criterionIds: [...CRITERION_IDS],
@@ -195,7 +297,7 @@ export const finder = defineCandidateFinder({
   appliesTo: { fileExtensions: [".tsx", ".jsx", ".ts", ".js", ".html", ".htm"] },
   docs: {
     description:
-      "Finds path-based/multipoint pointer and touch event handlers (onPointerMove, onTouchMove, gesture events), HTML inline gesture attributes (ontouchstart, ontouchmove, onpointermove), gesture library imports (hammer.js, use-gesture, @use-gesture/*, interactjs), co-occurring touchstart+touchmove / pointerdown+pointermove pairs that signal path tracking, and file/class/function identifiers named like swipe/pan/pinch/rotate — signals of gesture-driven UI that must offer a single-pointer alternative (2.5.1) and support concurrent input modalities (2.5.6).",
+      "Finds path-based/multipoint pointer and touch event handlers (onPointerMove, onTouchMove, gesture events), HTML inline gesture attributes (ontouchstart, ontouchmove, onpointermove), gesture library imports (hammer.js, use-gesture, @use-gesture/*, interactjs), co-occurring touchstart+touchmove / pointerdown+pointermove pairs that signal path tracking, file/class/function identifiers named like swipe/pan/pinch/rotate, and mouse-only listener patterns (mousedown/mousemove/mouseup) without a sibling touch / pointer fallback — signals of gesture-driven UI that must offer a single-pointer alternative (2.5.1) and support concurrent input modalities (2.5.6).",
     reviewPrompt:
       "At each handler, determine what the interaction does. If the user can only achieve the outcome through a path, swipe, pinch, or multi-finger gesture, verify a single-pointer alternative exists (2.5.1). If the handler restricts input to touch only — no equivalent mouse/keyboard path — verify that's intended, else add the alternative (2.5.6).",
     references: [
@@ -214,6 +316,7 @@ export const finder = defineCandidateFinder({
     findLibraryImports(ctx, out);
     findPathBasedPairs(ctx, out);
     findNamePatternHits(ctx, out);
+    findMouseOnlyHandlers(ctx, out);
     return out;
   },
 });
@@ -580,6 +683,139 @@ function collectMatches(source: string, pattern: RegExp): Map<string, number[]> 
     else out.set(token, [offset]);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Mouse-only branch: SC 2.5.1 pointer-event compatibility (Q9-FINDER)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects mouse-only listener patterns and emits review candidates
+ * when no sibling touch / pointer listener exists in the same file.
+ *
+ * SC 2.5.1 requires that path-based and multipoint gestures have a
+ * single-pointer alternative. Drawing canvases, drag handles, and
+ * pan/swipe handlers wired to `mousedown` / `mousemove` / `mouseup`
+ * alone fail this for touch and pen users — the mouse events do not
+ * fire on touch input on most platforms (modern browsers synthesize
+ * `click` from `tap`, but `mousedown`/`move`/`up` are not reliably
+ * dispatched).
+ *
+ * Confidence "medium": mouse listeners alone are common in click-and-
+ * release UI that does not depend on path tracking (range sliders,
+ * draggable scrollbars on desktop-only apps), so the agent must read
+ * the file to confirm the predicate. Per the AI-first doctrine
+ * "Surface, don't suppress" — we frame the question and let the agent
+ * adjudicate.
+ *
+ * Sibling-silence rule: when the file already contains a touch or
+ * pointer listener (addEventListener form, JSX handler attribute, or
+ * HTML inline attribute), the mouse-only candidate is suppressed. The
+ * existing branches 1–4 will already prompt the reviewer; emitting a
+ * second candidate at the same file would duplicate the prompt without
+ * adding signal.
+ */
+function findMouseOnlyHandlers(ctx: RuleContext, out: ReviewCandidate[]): void {
+  if (hasTouchOrPointerSibling(ctx)) return;
+  emitMouseListenerHits(ctx, out);
+  if (ctx.language === "html") {
+    emitHtmlInlineMouseHits(ctx.ast as HtmlDocument, ctx.filePath, out);
+  } else if (ctx.language === "tsx" || ctx.language === "jsx") {
+    emitJsxMouseHits(ctx.ast as TsxModule, ctx.filePath, out);
+  }
+}
+
+/**
+ * Returns true when the file contains any touch- or pointer-event
+ * sibling — addEventListener call, JSX handler, or HTML inline
+ * attribute. The sibling-silencing predicate is file-level (per the
+ * dispatch guidance) — scope-level analysis would require call-graph
+ * walking and the AI-first doctrine "Don't duplicate capability the
+ * agent already has" prefers pointing to file:line and letting the
+ * agent investigate the body.
+ */
+function hasTouchOrPointerSibling(ctx: RuleContext): boolean {
+  if (TOUCH_OR_POINTER_LISTENER_PATTERN.test(ctx.source)) return true;
+  if (ctx.language === "html") {
+    if (htmlHasTouchOrPointerAttr(ctx.ast as HtmlDocument)) return true;
+  } else if (ctx.language === "tsx" || ctx.language === "jsx") {
+    if (jsxHasTouchOrPointerAttr(ctx.ast as TsxModule)) return true;
+  }
+  return false;
+}
+
+function htmlHasTouchOrPointerAttr(root: HtmlDocument): boolean {
+  for (const el of walkHtmlElements(root)) {
+    for (const attrName of HTML_TOUCH_OR_POINTER_ATTRS) {
+      if (getHtmlAttribute(el, attrName) !== null) return true;
+    }
+  }
+  return false;
+}
+
+function jsxHasTouchOrPointerAttr(module: TsxModule): boolean {
+  for (const el of walkJsxElements(module)) {
+    for (const attr of el.attributes) {
+      if (TOUCH_OR_POINTER_JSX_HANDLERS.has(attr.name)) return true;
+    }
+  }
+  return false;
+}
+
+function emitMouseListenerHits(ctx: RuleContext, out: ReviewCandidate[]): void {
+  MOUSE_LISTENER_PATTERN.lastIndex = 0;
+  for (const match of ctx.source.matchAll(MOUSE_LISTENER_PATTERN)) {
+    const offset = match.index ?? 0;
+    const eventName = match[1] ?? "";
+    const { line, column } = offsetToLineColumn(ctx.source, offset);
+    for (const criterionId of CRITERION_IDS) {
+      out.push({
+        criterionId,
+        location: { filePath: ctx.filePath, line, column },
+        reason: `addEventListener('${eventName}') with no sibling touch/pointer listener in this file${MOUSE_ONLY_REASON}`,
+        confidence: "medium",
+      });
+    }
+  }
+}
+
+function emitJsxMouseHits(module: TsxModule, filePath: string, out: ReviewCandidate[]): void {
+  for (const el of walkJsxElements(module)) {
+    for (const attr of el.attributes) {
+      if (!MOUSE_ONLY_JSX_HANDLERS.has(attr.name)) continue;
+      for (const criterionId of CRITERION_IDS) {
+        out.push({
+          criterionId,
+          location: { filePath, line: attr.loc.start.line, column: attr.loc.start.column },
+          reason: `<${el.tagName}> has ${attr.name} with no sibling touch/pointer handler in this file${MOUSE_ONLY_REASON}`,
+          confidence: "medium",
+        });
+      }
+    }
+  }
+}
+
+function emitHtmlInlineMouseHits(
+  root: HtmlDocument,
+  filePath: string,
+  out: ReviewCandidate[],
+): void {
+  for (const el of walkHtmlElements(root)) {
+    for (const attrName of HTML_INLINE_MOUSE_ONLY_ATTRS) {
+      const attrValue = getHtmlAttribute(el, attrName);
+      if (attrValue === null) continue;
+      const snippet = attrValue.length <= 60 ? `="${attrValue}"` : "";
+      const reason = `<${el.tagName}> has \`${attrName}${snippet}\` with no sibling touch/pointer handler in this file${MOUSE_ONLY_REASON}`;
+      for (const criterionId of CRITERION_IDS) {
+        out.push({
+          criterionId,
+          location: { filePath, line: el.loc.start.line, column: el.loc.start.column },
+          reason,
+          confidence: "medium",
+        });
+      }
+    }
+  }
 }
 
 function removeCandidatesAt(
