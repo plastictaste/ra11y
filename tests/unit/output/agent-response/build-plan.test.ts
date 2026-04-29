@@ -66,37 +66,42 @@ function makeViolations(): Violation[] {
 }
 
 describe("buildAgentPlan: fixesByClass structured tally", () => {
-  it("counts violations in the mechanical lane", () => {
+  it("counts violations in the mechanical lane (source axis on a no-vendor scan)", () => {
     const plan = buildAgentPlan(makeViolations(), []);
-    expect(plan.fixesByClass.mechanical).toBe(1);
+    // Each lane carries a per-scan-kind sub-tally (`source` +
+    // `buildArtifact`). The CLI agent format scope doesn't run the
+    // build-artifact classifier, so every finding routes to `source`
+    // — `buildArtifact` is honestly zero, not absent.
+    expect(plan.fixesByClass.mechanical).toEqual({ source: 1, buildArtifact: 0 });
   });
 
   it("counts violations in the guidance lane", () => {
     const plan = buildAgentPlan(makeViolations(), []);
-    expect(plan.fixesByClass.guidance).toBe(1);
+    expect(plan.fixesByClass.guidance).toEqual({ source: 1, buildArtifact: 0 });
   });
 
   it("counts violations in the runtimeOnly lane (camelCased from `runtime-only`)", () => {
     const plan = buildAgentPlan(makeViolations(), []);
-    expect(plan.fixesByClass.runtimeOnly).toBe(1);
+    expect(plan.fixesByClass.runtimeOnly).toEqual({ source: 1, buildArtifact: 0 });
   });
 
   it("counts violations in the verifyInSource lane (camelCased from `verify-in-source`)", () => {
     const plan = buildAgentPlan(makeViolations(), []);
-    expect(plan.fixesByClass.verifyInSource).toBe(1);
+    expect(plan.fixesByClass.verifyInSource).toEqual({ source: 1, buildArtifact: 0 });
   });
 
-  it("emits all four lane keys with zero when the scan finds nothing", () => {
+  it("emits all four lane keys with zero pairs when the scan finds nothing", () => {
     // `fixesByClass` is always present on the plan — agents never have
-    // to disambiguate "field absent" from "lane zero." Zero-count
-    // lanes surface as `0` rather than being omitted, matching the
-    // shape consumers read on a violating scan.
+    // to disambiguate "field absent" from "lane zero." Each lane's
+    // per-scan-kind pair surfaces as `{ source: 0, buildArtifact: 0 }`
+    // rather than being omitted, matching the shape consumers read on
+    // a violating scan.
     const plan = buildAgentPlan([], []);
     expect(plan.fixesByClass).toEqual({
-      mechanical: 0,
-      guidance: 0,
-      runtimeOnly: 0,
-      verifyInSource: 0,
+      mechanical: { source: 0, buildArtifact: 0 },
+      guidance: { source: 0, buildArtifact: 0 },
+      runtimeOnly: { source: 0, buildArtifact: 0 },
+      verifyInSource: { source: 0, buildArtifact: 0 },
     });
   });
 });
@@ -140,8 +145,10 @@ describe("buildAgentPlan: dropped safeEditsAvailable composite", () => {
     expect((plan as unknown as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
     // The per-lane `fixesByClass.mechanical` key still reflects the
     // rule-level lane of the edited violation — that's the honest
-    // signal callers read instead of a composite.
-    expect(plan.fixesByClass.mechanical).toBe(1);
+    // signal callers read instead of a composite. The lane carries a
+    // per-scan-kind sub-tally; on the CLI agent path with no vendor
+    // classification, the count rides in the `source` half.
+    expect(plan.fixesByClass.mechanical).toEqual({ source: 1, buildArtifact: 0 });
   });
 
   it("lets callers derive the apply-now subset from fixesByClass on verify-in-source edits", () => {
@@ -173,11 +180,15 @@ describe("buildAgentPlan: dropped safeEditsAvailable composite", () => {
       ])[0] as Violation;
     const plan = buildAgentPlan([makeVerifyInSource(1), makeVerifyInSource(2)], []);
     expect((plan as unknown as Record<string, unknown>)["safeEditsAvailable"]).toBeUndefined();
-    expect(plan.fixesByClass.mechanical).toBe(0);
-    expect(plan.fixesByClass.verifyInSource).toBe(2);
+    expect(plan.fixesByClass.mechanical).toEqual({ source: 0, buildArtifact: 0 });
+    expect(plan.fixesByClass.verifyInSource).toEqual({ source: 2, buildArtifact: 0 });
     // The apply-now subset the former composite tried to express is
-    // now a trivial sum of two honest per-lane keys.
-    expect(plan.fixesByClass.mechanical + plan.fixesByClass.verifyInSource).toBe(2);
+    // now a trivial sum of two honest per-lane sub-tallies.
+    const mechanicalTotal =
+      plan.fixesByClass.mechanical.source + plan.fixesByClass.mechanical.buildArtifact;
+    const verifyInSourceTotal =
+      plan.fixesByClass.verifyInSource.source + plan.fixesByClass.verifyInSource.buildArtifact;
+    expect(mechanicalTotal + verifyInSourceTotal).toBe(2);
   });
 });
 
@@ -221,13 +232,17 @@ describe("buildAgentPlan: dropped violations composite", () => {
   it("the structured per-lane `fixesByClass` carries the honest tally callers sum themselves", () => {
     // The signal a former `plan.violations` consumer wanted is now a
     // trivial sum of the four per-lane keys, each of which names
-    // exactly what it measures.
+    // exactly what it measures. Each lane carries a per-scan-kind
+    // sub-tally; the flat per-lane number is the sum of `source +
+    // buildArtifact`.
     const plan = buildAgentPlan(makeViolations(), []);
+    const laneSum = (lane: { readonly source: number; readonly buildArtifact: number }): number =>
+      lane.source + lane.buildArtifact;
     const flatTotal =
-      plan.fixesByClass.mechanical +
-      plan.fixesByClass.guidance +
-      plan.fixesByClass.runtimeOnly +
-      plan.fixesByClass.verifyInSource;
+      laneSum(plan.fixesByClass.mechanical) +
+      laneSum(plan.fixesByClass.guidance) +
+      laneSum(plan.fixesByClass.runtimeOnly) +
+      laneSum(plan.fixesByClass.verifyInSource);
     // makeViolations() seeds one violation per lane.
     expect(flatTotal).toBe(4);
   });
@@ -261,24 +276,40 @@ describe("buildAgentPlan: summary string", () => {
 });
 
 describe("countFixesByClass helper", () => {
-  it("tallies an empty violation array as all zeros", () => {
+  it("tallies an empty violation array as all zero pairs", () => {
     // Defensive: the helper must return the full four-key shape so
     // downstream consumers never have to check for missing keys.
     expect(countFixesByClass([])).toEqual({
-      mechanical: 0,
-      guidance: 0,
-      runtimeOnly: 0,
-      verifyInSource: 0,
+      mechanical: { source: 0, buildArtifact: 0 },
+      guidance: { source: 0, buildArtifact: 0 },
+      runtimeOnly: { source: 0, buildArtifact: 0 },
+      verifyInSource: { source: 0, buildArtifact: 0 },
     });
   });
 
-  it("tallies violations across all four lanes in one pass", () => {
+  it("tallies violations across all four lanes in one pass (no vendor paths)", () => {
     const result = countFixesByClass(makeViolations());
     expect(result).toEqual({
-      mechanical: 1,
-      guidance: 1,
-      runtimeOnly: 1,
-      verifyInSource: 1,
+      mechanical: { source: 1, buildArtifact: 0 },
+      guidance: { source: 1, buildArtifact: 0 },
+      runtimeOnly: { source: 1, buildArtifact: 0 },
+      verifyInSource: { source: 1, buildArtifact: 0 },
+    });
+  });
+
+  it("routes findings on vendor paths into the buildArtifact half of each lane", () => {
+    // When the build-artifact classifier produces a non-empty path
+    // set, `countFixesByClass` splits each lane per scan-kind so the
+    // cross-surface invariant `sum(fixesByClass[*].X) ===
+    // violationsByScanKind[X]` holds. The fixture seeds one violation
+    // per lane on a vendor path, so every `source` count drops to
+    // zero and every `buildArtifact` count rises to one.
+    const result = countFixesByClass(makeViolations(), new Set(["src/a.tsx"]));
+    expect(result).toEqual({
+      mechanical: { source: 0, buildArtifact: 1 },
+      guidance: { source: 0, buildArtifact: 1 },
+      runtimeOnly: { source: 0, buildArtifact: 1 },
+      verifyInSource: { source: 0, buildArtifact: 1 },
     });
   });
 });

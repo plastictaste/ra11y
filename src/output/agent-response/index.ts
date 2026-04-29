@@ -14,6 +14,7 @@ export {
   buildAgentPlan,
   countFixes,
   countFixesByClass,
+  laneTotal,
   type FixCounts,
 } from "./build-plan.ts";
 export { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
@@ -30,4 +31,5 @@ export type {
   Effort,
   FileLimitation,
   FixesByClass,
+  FixesByClassLane,
 } from "./types.ts";

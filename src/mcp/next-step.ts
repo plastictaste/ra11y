@@ -446,13 +446,20 @@ function numFromPlan(plan: Record<string, unknown>, key: string): number {
 }
 
 /**
- * Reads one lane from `plan.fixesByClass`, defaulting to 0 when the
- * field shape doesn't match. Defensive — the plan is typed at the
- * call site but `nextStep` consumes a `Record<string, unknown>` so
- * the pair of scan tools can stay in exact lockstep without coupling
- * on the interface. `plan.fixesByClass` is conditional-spread on
- * clean scans (see `src/mcp/scan-assembly.ts`), so a missing parent
- * object is a valid "no violations" signal — we read it as lane-zero.
+ * Reads one lane's flat total from `plan.fixesByClass`, defaulting to
+ * 0 when the field shape doesn't match. Defensive — the plan is typed
+ * at the call site but `nextStep` consumes a `Record<string, unknown>`
+ * so the pair of scan tools can stay in exact lockstep without coupling
+ * on the interface. `plan.fixesByClass` is conditional-spread on clean
+ * scans (see `src/mcp/scan-assembly.ts`), so a missing parent object
+ * is a valid "no violations" signal — we read it as lane-zero.
+ *
+ * Each lane carries a per-scan-kind sub-tally
+ * ({@link FixesByClassLane}); this helper sums the
+ * `source + buildArtifact` halves into the flat lane number the
+ * branching predicate ("any violations to point at?") wants. The
+ * structured per-kind sibling continues to ride on the wire — this
+ * helper is local-only.
  */
 function fixesByClassLane(
   plan: Record<string, unknown>,
@@ -461,7 +468,12 @@ function fixesByClassLane(
   const raw = plan["fixesByClass"];
   if (!raw || typeof raw !== "object") return 0;
   const v = (raw as Record<string, unknown>)[lane];
-  return typeof v === "number" ? v : 0;
+  if (!v || typeof v !== "object") return 0;
+  const pair = v as Record<string, unknown>;
+  const source = typeof pair["source"] === "number" ? (pair["source"] as number) : 0;
+  const buildArtifact =
+    typeof pair["buildArtifact"] === "number" ? (pair["buildArtifact"] as number) : 0;
+  return source + buildArtifact;
 }
 
 /**

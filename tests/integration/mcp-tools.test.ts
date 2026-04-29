@@ -260,10 +260,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       plan: {
         notes: number;
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: { source: number; buildArtifact: number };
+          guidance: { source: number; buildArtifact: number };
+          runtimeOnly: { source: number; buildArtifact: number };
+          verifyInSource: { source: number; buildArtifact: number };
         };
       };
       meta: { scanMode: string; scanned: { mode: string; root: string } };
@@ -274,7 +274,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // alongside `plan.notes` for the total finding count.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
-      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
     expect(errorWarning + body.plan.notes).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
@@ -729,10 +729,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const body = bodyOf(responses[1]) as {
       plan: {
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: { source: number; buildArtifact: number };
+          guidance: { source: number; buildArtifact: number };
+          runtimeOnly: { source: number; buildArtifact: number };
+          verifyInSource: { source: number; buildArtifact: number };
         };
         limitations?: readonly string[];
       };
@@ -741,7 +741,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // sum the per-lane tally for the error+warning total.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
-      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
     expect(errorWarning).toBeGreaterThan(0);
     expect(Array.isArray(body.plan.limitations)).toBe(true);
@@ -1391,13 +1391,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
+    type Lane = { source: number; buildArtifact: number };
     type PlanShape = {
       readonly notes: number;
       readonly fixesByClass?: {
-        readonly mechanical: number;
-        readonly guidance: number;
-        readonly runtimeOnly: number;
-        readonly verifyInSource: number;
+        readonly mechanical: Lane;
+        readonly guidance: Lane;
+        readonly runtimeOnly: Lane;
+        readonly verifyInSource: Lane;
       };
     };
     function planTotal(plan: PlanShape): number {
@@ -1405,7 +1406,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       // alongside `plan.notes` for the total finding count.
       const lanes = plan.fixesByClass;
       const errorWarning = lanes
-        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
         : 0;
       return errorWarning + plan.notes;
     }
@@ -1929,15 +1930,16 @@ describe("scan_project plan: composite counters split into honest top-level fiel
       initMsg(1),
       toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
     ]);
+    type Lane = { source: number; buildArtifact: number };
     const body = bodyOf(responses[1]) as {
       plan: Record<string, unknown> & {
         actionableManualItems?: number;
         untargetedCriteria?: number;
         fixesByClass?: {
-          mechanical?: number;
-          guidance?: number;
-          runtimeOnly?: number;
-          verifyInSource?: number;
+          mechanical?: Lane;
+          guidance?: Lane;
+          runtimeOnly?: Lane;
+          verifyInSource?: Lane;
         };
       };
     };
@@ -1958,11 +1960,13 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // disambiguate "absent" from "zero" per lane.
     expect(body.plan.fixesByClass).toBeDefined();
     const fbc = body.plan.fixesByClass ?? {};
+    const laneSum = (l: Lane | undefined): number =>
+      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const anyLanePopulated =
-      (fbc.mechanical ?? 0) > 0 ||
-      (fbc.guidance ?? 0) > 0 ||
-      (fbc.runtimeOnly ?? 0) > 0 ||
-      (fbc.verifyInSource ?? 0) > 0;
+      laneSum(fbc.mechanical) > 0 ||
+      laneSum(fbc.guidance) > 0 ||
+      laneSum(fbc.runtimeOnly) > 0 ||
+      laneSum(fbc.verifyInSource) > 0;
     expect(anyLanePopulated).toBe(true);
     // Regression guard: `safeEditsAvailable` must never reappear on the
     // plan. Agents that want the apply-now subset sum the two editable

@@ -96,10 +96,10 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
       // tests that need the flat count derive it from `fixesByClass`.
       notes: number;
       fixesByClass: {
-        mechanical: number;
-        guidance: number;
-        runtimeOnly: number;
-        verifyInSource: number;
+        mechanical: { source: number; buildArtifact: number };
+        guidance: { source: number; buildArtifact: number };
+        runtimeOnly: { source: number; buildArtifact: number };
+        verifyInSource: { source: number; buildArtifact: number };
       };
       reviewNeeded: number;
       manualOnly: number;
@@ -186,11 +186,13 @@ describe("formatter: agent — plan", () => {
     // `fixesByClass` lanes sum to 4 and notes is 0.
     const { plan } = parse();
     expect(plan.notes).toBe(0);
+    const laneSum = (l: { source: number; buildArtifact: number }): number =>
+      l.source + l.buildArtifact;
     const violationsTotal =
-      plan.fixesByClass.mechanical +
-      plan.fixesByClass.guidance +
-      plan.fixesByClass.runtimeOnly +
-      plan.fixesByClass.verifyInSource;
+      laneSum(plan.fixesByClass.mechanical) +
+      laneSum(plan.fixesByClass.guidance) +
+      laneSum(plan.fixesByClass.runtimeOnly) +
+      laneSum(plan.fixesByClass.verifyInSource);
     expect(violationsTotal).toBe(4);
     expect((plan as Record<string, unknown>)["totalFindings"]).toBeUndefined();
     expect((plan as Record<string, unknown>)["violations"]).toBeUndefined();
@@ -227,10 +229,12 @@ describe("formatter: agent — plan", () => {
     // `fixesByClass` is the honest per-lane tally — RESULT has 1
     // mechanical (media/alt-text-missing) and 3 verify-in-source
     // (keyboard/handler-missing x2, semantics/button-name) violations.
-    expect(plan.fixesByClass.mechanical).toBe(1);
-    expect(plan.fixesByClass.guidance).toBe(0);
-    expect(plan.fixesByClass.runtimeOnly).toBe(0);
-    expect(plan.fixesByClass.verifyInSource).toBe(3);
+    // The CLI agent format scope doesn't run the build-artifact
+    // classifier, so every finding routes to the `source` half.
+    expect(plan.fixesByClass.mechanical).toEqual({ source: 1, buildArtifact: 0 });
+    expect(plan.fixesByClass.guidance).toEqual({ source: 0, buildArtifact: 0 });
+    expect(plan.fixesByClass.runtimeOnly).toEqual({ source: 0, buildArtifact: 0 });
+    expect(plan.fixesByClass.verifyInSource).toEqual({ source: 3, buildArtifact: 0 });
     // After V1-FINDING-CATEGORY-VS-FIXCLASS-CONTRADICTION: `category: "auto-fix"` now
     // requires a mechanical edit (`fixPaths.primary.edit`). The synthetic RESULT
     // violations carry no `fixPaths`, so all 4 route to `category: "review"`.

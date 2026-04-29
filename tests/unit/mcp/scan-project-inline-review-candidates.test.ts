@@ -51,10 +51,10 @@ interface ScanProjectResponse {
     // clean scans).
     readonly notes: number;
     readonly fixesByClass?: {
-      readonly mechanical: number;
-      readonly guidance: number;
-      readonly runtimeOnly: number;
-      readonly verifyInSource: number;
+      readonly mechanical: { readonly source: number; readonly buildArtifact: number };
+      readonly guidance: { readonly source: number; readonly buildArtifact: number };
+      readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
+      readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
     };
     readonly actionableManualItems: number;
   };

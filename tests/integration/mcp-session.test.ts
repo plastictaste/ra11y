@@ -110,10 +110,10 @@ describe("MCP session: full agent workflow", () => {
       plan: {
         notes: number;
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: { source: number; buildArtifact: number };
+          guidance: { source: number; buildArtifact: number };
+          runtimeOnly: { source: number; buildArtifact: number };
+          verifyInSource: { source: number; buildArtifact: number };
         };
       };
       files: Array<{ findings: Array<{ ruleId: string; line: number }> }>;
@@ -123,7 +123,7 @@ describe("MCP session: full agent workflow", () => {
     // total alongside `plan.notes`.
     const lanes = scanData.plan.fixesByClass;
     const errorWarning = lanes
-      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
     expect(errorWarning + scanData.plan.notes).toBeGreaterThan(0);
 

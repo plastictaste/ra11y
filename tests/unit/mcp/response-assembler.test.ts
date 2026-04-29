@@ -251,16 +251,18 @@ describe("assembleScanFamilyResponse", () => {
     const r = assembleScanFamilyResponse(baseInput({ violations: [v] }));
     expect(r.plan["safeEditsAvailable"]).toBeUndefined();
     expect(r.plan["fixesByClass"]).toBeDefined();
+    type Lane = { source: number; buildArtifact: number };
     const lanes = r.plan["fixesByClass"] as {
-      mechanical: number;
-      guidance: number;
-      runtimeOnly: number;
-      verifyInSource: number;
+      mechanical: Lane;
+      guidance: Lane;
+      runtimeOnly: Lane;
+      verifyInSource: Lane;
     };
+    const laneSum = (l: Lane): number => l.source + l.buildArtifact;
     // The test `violation` helper stamps fixClass: "mechanical"; the
     // editable-lane sum is a straightforward caller-side derivation.
-    expect(lanes.mechanical).toBe(1);
-    expect(lanes.mechanical + lanes.verifyInSource).toBe(1);
+    expect(laneSum(lanes.mechanical)).toBe(1);
+    expect(laneSum(lanes.mechanical) + laneSum(lanes.verifyInSource)).toBe(1);
   });
 
   it("splits notes from non-note violations via plan.notes + plan.fixesByClass (no composite headline)", () => {
@@ -279,12 +281,15 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.plan["violations"]).toBeUndefined();
     expect(r.plan["totalFindings"]).toBeUndefined();
     expect(r.plan["notes"]).toBe(1);
-    const lanes = r.plan["fixesByClass"] as Record<string, number>;
+    type Lane = { source: number; buildArtifact: number };
+    const lanes = r.plan["fixesByClass"] as Record<string, Lane>;
+    const laneSum = (l: Lane | undefined): number =>
+      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const errorWarningTotal =
-      (lanes["mechanical"] ?? 0) +
-      (lanes["guidance"] ?? 0) +
-      (lanes["runtimeOnly"] ?? 0) +
-      (lanes["verifyInSource"] ?? 0);
+      laneSum(lanes["mechanical"]) +
+      laneSum(lanes["guidance"]) +
+      laneSum(lanes["runtimeOnly"]) +
+      laneSum(lanes["verifyInSource"]);
     expect(errorWarningTotal).toBe(1);
   });
 
@@ -369,12 +374,15 @@ describe("assembleScanFamilyResponse", () => {
       expect(r.truncated).toBeUndefined();
       let filesSurface = 0;
       for (const f of r.files) filesSurface += f.findings.length;
-      const lanes = r.plan["fixesByClass"] as Record<string, number> | undefined;
+      type Lane = { source: number; buildArtifact: number };
+      const lanes = r.plan["fixesByClass"] as Record<string, Lane> | undefined;
+      const laneSum = (l: Lane | undefined): number =>
+        (l?.source ?? 0) + (l?.buildArtifact ?? 0);
       const errorWarning =
-        (lanes?.["mechanical"] ?? 0) +
-        (lanes?.["guidance"] ?? 0) +
-        (lanes?.["runtimeOnly"] ?? 0) +
-        (lanes?.["verifyInSource"] ?? 0);
+        laneSum(lanes?.["mechanical"]) +
+        laneSum(lanes?.["guidance"]) +
+        laneSum(lanes?.["runtimeOnly"]) +
+        laneSum(lanes?.["verifyInSource"]);
       const planTotal = errorWarning + (r.plan["notes"] as number);
       expect(filesSurface).toBe(planTotal);
     });

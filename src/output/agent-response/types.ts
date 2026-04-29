@@ -460,20 +460,56 @@ export interface AgentReviewCandidate {
 }
 
 /**
+ * Per-scan-kind sub-tally on a single {@link FixesByClass} lane —
+ * splits one remediation lane's count across `source` (authored files
+ * the user can edit) and `buildArtifact` (compiled CSS, vendor
+ * bundles, hashed webpack chunks classified by `collectBuildArtifacts`).
+ *
+ * Mirrors the {@link ./scan-assembly#ViolationsByScanKind} axis so the
+ * two surfaces split the same error+warning corpus on the same axis;
+ * the cross-surface invariant `sum(fixesByClass[*].source) ===
+ * violationsByScanKind.source` (and same for `buildArtifact`) is
+ * pinned by `tests/integration/mcp-scan-project-fixes-by-class-by-scan-kind.test.ts`.
+ *
+ * `buildArtifact: 0` is honest signal — the scope tallied the axis
+ * and found zero artifact-side findings on this lane. Distinct from
+ * "the scope didn't classify build artifacts at all," which is
+ * conveyed by `meta.scannedBuildArtifacts` absence and the omission
+ * of `plan.violationsByScanKind` itself. On scopes that don't run
+ * the build-artifact classifier (CLI agent format, scan, scan_file,
+ * scan_diff), every lane reads `{ source: N, buildArtifact: 0 }`
+ * because the default classification routes every file to the
+ * `source` lane, matching `splitViolationsByScanKind`'s
+ * empty-vendorPaths behavior.
+ */
+export interface FixesByClassLane {
+  readonly source: number;
+  readonly buildArtifact: number;
+}
+
+/**
  * Per-{@link FixClass} lane tally exposed on {@link AgentPlan#fixesByClass}.
  *
  * Keys are one-to-one with the `FixClass` union, renamed to camelCase for
  * JSON ergonomics (`runtime-only` → `runtimeOnly`, `verify-in-source` →
- * `verifyInSource`). Each value counts one kind of thing per CLAUDE.md §1
+ * `verifyInSource`). Each value is a {@link FixesByClassLane} carrying
+ * the per-scan-kind split (`source` + `buildArtifact`) so an agent
+ * reading the per-lane tally can tell at a glance how many findings
+ * sit in vendor / build-artifact files (often un-editable; the
+ * productive triage is a `propose_config` exclude or source-level
+ * disable, not a fix attempt) vs. authored source — the same axis
+ * `plan.violationsByScanKind` carries at the cross-lane aggregate
+ * level. Each lane's pair counts one kind of thing per CLAUDE.md §1
  * "Composite headline counts are dishonest," so agents can budget
- * per-lane (mechanical edits vs. guidance rewrites vs. runtime harness
- * vs. source-read decisions) without a guess.
+ * per-lane × per-scan-kind without a guess; callers that want the
+ * flat per-lane number sum the two sub-keys themselves
+ * (`fixesByClass.mechanical.source + fixesByClass.mechanical.buildArtifact`).
  */
 export interface FixesByClass {
-  readonly mechanical: number;
-  readonly guidance: number;
-  readonly runtimeOnly: number;
-  readonly verifyInSource: number;
+  readonly mechanical: FixesByClassLane;
+  readonly guidance: FixesByClassLane;
+  readonly runtimeOnly: FixesByClassLane;
+  readonly verifyInSource: FixesByClassLane;
 }
 
 /**

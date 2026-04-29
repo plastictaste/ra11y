@@ -136,10 +136,10 @@ describe("scan_project hard-errors when cwd does not exist", () => {
       plan?: {
         notes?: number;
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: { source: number; buildArtifact: number };
+          guidance: { source: number; buildArtifact: number };
+          runtimeOnly: { source: number; buildArtifact: number };
+          verifyInSource: { source: number; buildArtifact: number };
         };
       };
     };
@@ -183,10 +183,10 @@ describe("scan hard-errors when every path is missing", () => {
       plan?: {
         notes?: number;
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: { source: number; buildArtifact: number };
+          guidance: { source: number; buildArtifact: number };
+          runtimeOnly: { source: number; buildArtifact: number };
+          verifyInSource: { source: number; buildArtifact: number };
         };
       };
     };

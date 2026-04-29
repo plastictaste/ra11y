@@ -27,7 +27,7 @@ function buildMinimalFormatted(): ScanFormatted {
   return {
     plan: {
       notes: 0,
-      fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+      fixesByClass: { mechanical: { source: 1, buildArtifact: 0 }, guidance: { source: 0, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
       reviewNeeded: 0,
       manualOnly: 0,
       estimatedEffort: "trivial",
@@ -185,7 +185,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
-        fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        fixesByClass: { mechanical: { source: 2, buildArtifact: 0 }, guidance: { source: 0, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
         reviewNeeded: 0,
         manualOnly: 0,
         estimatedEffort: "small",
@@ -262,7 +262,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
-        fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        fixesByClass: { mechanical: { source: 1, buildArtifact: 0 }, guidance: { source: 0, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
         reviewNeeded: 0,
         manualOnly: 0,
         estimatedEffort: "trivial",
@@ -447,7 +447,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
-        fixesByClass: { mechanical: 250, guidance: 100, runtimeOnly: 0, verifyInSource: 50 },
+        fixesByClass: { mechanical: { source: 250, buildArtifact: 0 }, guidance: { source: 100, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 50, buildArtifact: 0 } },
         reviewNeeded: 17,
         manualOnly: 5,
         estimatedEffort: "large",
@@ -683,7 +683,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
-        fixesByClass: { mechanical: 4, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+        fixesByClass: { mechanical: { source: 4, buildArtifact: 0 }, guidance: { source: 0, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
         reviewNeeded: 0,
         manualOnly: 0,
         estimatedEffort: "small",
@@ -806,7 +806,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
-        fixesByClass: { mechanical: 0, guidance: 10, runtimeOnly: 0, verifyInSource: 0 },
+        fixesByClass: { mechanical: { source: 0, buildArtifact: 0 }, guidance: { source: 10, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
         reviewNeeded: 0,
         manualOnly: 0,
         estimatedEffort: "small",

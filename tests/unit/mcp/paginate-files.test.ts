@@ -282,14 +282,15 @@ describe("scan_project pagination (overflow)", () => {
         initMsg(1),
         toolCall(2, "scan_project", { cwd: root, limit: 2 }),
       ]);
+      type Lane = { source: number; buildArtifact: number };
       const body = bodyOf(responses[1]) as {
         plan: {
           notes: number;
           fixesByClass?: {
-            mechanical: number;
-            guidance: number;
-            runtimeOnly: number;
-            verifyInSource: number;
+            mechanical: Lane;
+            guidance: Lane;
+            runtimeOnly: Lane;
+            verifyInSource: Lane;
           };
         };
       };
@@ -301,10 +302,15 @@ describe("scan_project pagination (overflow)", () => {
       // subset, otherwise the agent reads "found 2" when there's more
       // work. Per the flat
       // `plan.violations` headline is gone; sum the four
-      // `fixesByClass` lanes for the error+warning total.
+      // `fixesByClass` lanes (each a per-scan-kind pair) for the
+      // error+warning total.
       const lanes = body.plan.fixesByClass;
+      const laneSum = (l: Lane): number => l.source + l.buildArtifact;
       const errorWarning = lanes
-        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        ? laneSum(lanes.mechanical) +
+          laneSum(lanes.guidance) +
+          laneSum(lanes.runtimeOnly) +
+          laneSum(lanes.verifyInSource)
         : 0;
       const total = errorWarning + body.plan.notes;
       expect(total).toBeGreaterThanOrEqual(6);

@@ -37,10 +37,10 @@ interface BootstrapResponse {
     readonly notesCount: number;
     readonly scanMode?: string;
     readonly fixesByClass?: {
-      readonly mechanical: number;
-      readonly guidance: number;
-      readonly runtimeOnly: number;
-      readonly verifyInSource: number;
+      readonly mechanical: { readonly source: number; readonly buildArtifact: number };
+      readonly guidance: { readonly source: number; readonly buildArtifact: number };
+      readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
+      readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
     };
     readonly limitations?: readonly string[];
   };
@@ -244,20 +244,26 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // (violations > 0 gate in scan-assembly.ts). Each lane counts
       // one kind of thing per CLAUDE.md §1.
       expect(response.scan.fixesByClass).toBeDefined();
+      const zeroLane = { source: 0, buildArtifact: 0 };
       const lanes = response.scan.fixesByClass ?? {
-        mechanical: 0,
-        guidance: 0,
-        runtimeOnly: 0,
-        verifyInSource: 0,
+        mechanical: zeroLane,
+        guidance: zeroLane,
+        runtimeOnly: zeroLane,
+        verifyInSource: zeroLane,
       };
-      expect(typeof lanes.mechanical).toBe("number");
-      expect(typeof lanes.guidance).toBe("number");
-      expect(typeof lanes.runtimeOnly).toBe("number");
-      expect(typeof lanes.verifyInSource).toBe("number");
+      // Each lane is a per-scan-kind sub-tally — `source` (authored)
+      // + `buildArtifact` (vendor / generated). The bootstrap subset
+      // forwards the upstream shape verbatim.
+      const laneSum = (l: { source: number; buildArtifact: number }): number =>
+        l.source + l.buildArtifact;
+      const total =
+        laneSum(lanes.mechanical) +
+        laneSum(lanes.guidance) +
+        laneSum(lanes.runtimeOnly) +
+        laneSum(lanes.verifyInSource);
       // Per-lane tally sums to the total violation count — honest
       // invariant that fails the day the subset drops one lane.
-      const laneSum = lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource;
-      expect(laneSum).toBe(response.scan.violationsCount);
+      expect(total).toBe(response.scan.violationsCount);
       // The nextStep prose reads violations separately from notes —
       // the former "N findings" sum is gone.
       expect(response.nextStep).toContain(

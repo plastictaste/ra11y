@@ -118,11 +118,21 @@ describe("scan_project: violations split by scan kind", () => {
       // each lane (`source`, `buildArtifact`) names exactly one kind
       // of thing. Surface-don't-suppress still holds: every finding
       // rides in `files[]` regardless of lane.
+      type Lane = { source: number; buildArtifact: number };
       const lanes = plan["fixesByClass"] as
-        | { mechanical: number; guidance: number; runtimeOnly: number; verifyInSource: number }
+        | {
+            mechanical: Lane;
+            guidance: Lane;
+            runtimeOnly: Lane;
+            verifyInSource: Lane;
+          }
         | undefined;
+      const laneSum = (l: Lane): number => l.source + l.buildArtifact;
       const totalViolations = lanes
-        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        ? laneSum(lanes.mechanical) +
+          laneSum(lanes.guidance) +
+          laneSum(lanes.runtimeOnly) +
+          laneSum(lanes.verifyInSource)
         : 0;
       expect(totalViolations).toBeGreaterThan(0);
       // The structured per-kind sibling.
@@ -255,11 +265,21 @@ describe("scan_project: violations split by scan kind", () => {
       // the flat `plan.violations`
       // counter is gone; sum the per-lane `fixesByClass` tally for
       // the error+warning total.
+      type Lane = { source: number; buildArtifact: number };
       const lanes = plan["fixesByClass"] as
-        | { mechanical: number; guidance: number; runtimeOnly: number; verifyInSource: number }
+        | {
+            mechanical: Lane;
+            guidance: Lane;
+            runtimeOnly: Lane;
+            verifyInSource: Lane;
+          }
         | undefined;
+      const laneSum = (l: Lane): number => l.source + l.buildArtifact;
       const totalViolations = lanes
-        ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+        ? laneSum(lanes.mechanical) +
+          laneSum(lanes.guidance) +
+          laneSum(lanes.runtimeOnly) +
+          laneSum(lanes.verifyInSource)
         : 0;
       expect(totalViolations).toBeGreaterThan(0);
       // Field is absent on the no-artifacts common case.

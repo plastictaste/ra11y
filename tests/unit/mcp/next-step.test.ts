@@ -46,6 +46,31 @@ function formatted(overrides: {
   };
 }
 
+/**
+ * Test fixture helper: produce a `plan.fixesByClass` block in the
+ * per-scan-kind shape ({@link FixesByClassLane}) from flat per-lane
+ * counts. Defaults every lane's `buildArtifact` half to zero — the
+ * common `nextStep` test scope is "no vendor classification ran," so
+ * every finding routes to the `source` half. Keeps the per-test fixture
+ * literals readable while still emitting the shape the production
+ * helper expects.
+ */
+function lanes(
+  flat: Partial<{
+    mechanical: number;
+    guidance: number;
+    runtimeOnly: number;
+    verifyInSource: number;
+  }>,
+): Record<string, { source: number; buildArtifact: number }> {
+  return {
+    mechanical: { source: flat.mechanical ?? 0, buildArtifact: 0 },
+    guidance: { source: flat.guidance ?? 0, buildArtifact: 0 },
+    runtimeOnly: { source: flat.runtimeOnly ?? 0, buildArtifact: 0 },
+    verifyInSource: { source: flat.verifyInSource ?? 0, buildArtifact: 0 },
+  };
+}
+
 const sampleFinding = {
   ruleId: "aria/hidden-focus",
   line: 21,
@@ -62,7 +87,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 1 }),
         },
         files: [{ path: "DemoComposer.tsx", findings: [sampleFinding] }],
       }),
@@ -87,7 +112,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+          fixesByClass: lanes({ runtimeOnly: 2 }),
         },
         files: [{ path: "Header.tsx", findings: [sampleFinding] }],
       }),
@@ -141,7 +166,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 1, verifyInSource: 0 },
+          fixesByClass: lanes({ runtimeOnly: 1 }),
         },
         files: [{ path: "Unknown.tsx", findings: [{ malformed: true }] }],
       }),
@@ -161,7 +186,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 2, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 2 }),
         },
         files: [
           {
@@ -195,7 +220,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 1, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 1, guidance: 1 }),
         },
         files: [
           {
@@ -229,7 +254,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ guidance: 1 }),
         },
         files: [
           {
@@ -268,7 +293,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 1 }),
         },
         files: [
           {
@@ -315,7 +340,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ guidance: 2 }),
         },
         files: [
           {
@@ -344,7 +369,7 @@ describe("buildNextStep", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 1 }),
         },
         files: [
           {
@@ -369,13 +394,13 @@ describe("buildNextStep", () => {
     const cases: readonly ScanFormatted[] = [
       formatted({
         plan: {
-          fixesByClass: { mechanical: 1, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+          fixesByClass: lanes({ mechanical: 1 }),
         },
         files: [{ path: "A.tsx", findings: [sampleFinding] }],
       }),
       formatted({
         plan: {
-          fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+          fixesByClass: lanes({ runtimeOnly: 2 }),
         },
         files: [{ path: "B.tsx", findings: [sampleFinding] }],
       }),
@@ -415,7 +440,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 2 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
@@ -449,7 +474,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 2 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
@@ -483,7 +508,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 2 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
@@ -524,7 +549,7 @@ describe("buildNextStep", () => {
       const withoutOption = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 1 }),
           },
           files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
         }),
@@ -532,7 +557,7 @@ describe("buildNextStep", () => {
       const withEmptySet = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 1, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 1 }),
           },
           files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
         }),
@@ -561,7 +586,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 2 }),
           },
           files: [
             { path: "authored/site.css", findings: [contrastFinding(42)] },
@@ -586,7 +611,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+            fixesByClass: lanes({ runtimeOnly: 2 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
@@ -628,7 +653,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 4 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [contrastFinding(365)] },
@@ -659,7 +684,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 1, verifyInSource: 0 },
+            fixesByClass: lanes({ runtimeOnly: 1 }),
           },
           files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
         }),
@@ -708,7 +733,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 4 }),
           },
           files: [
             { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
@@ -742,7 +767,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 3, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 3 }),
           },
           files: [
             { path: "app/login.tsx", findings: [labelsFinding(10), labelsFinding(45)] },
@@ -768,7 +793,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 4 }),
           },
           files: [
             { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
@@ -793,7 +818,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 4, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 4 }),
           },
           files: [
             { path: "__fixtures__/visual.tsx", findings: [altFinding(20)] },
@@ -821,7 +846,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 3, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 3 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [labelsFinding(365)] },
@@ -856,7 +881,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 2, runtimeOnly: 0, verifyInSource: 0 },
+            fixesByClass: lanes({ guidance: 2 }),
           },
           files: [
             { path: "vendor/bootstrap.css", findings: [labelsFinding(365)] },
@@ -886,7 +911,7 @@ describe("buildNextStep", () => {
       const result = buildNextStep(
         formatted({
           plan: {
-            fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 2, verifyInSource: 0 },
+            fixesByClass: lanes({ runtimeOnly: 2 }),
           },
           files: [
             { path: "_a/vendor.css", findings: [labelsFinding(1)] },

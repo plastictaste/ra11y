@@ -437,14 +437,15 @@ describe("MCP tool: scan", () => {
     const result = await tool.handler({ paths: [BAD_ALT] }, session);
 
     expect(result.isError).toBeUndefined();
+    type FbcLane = { source: number; buildArtifact: number };
     const data = JSON.parse(result.content[0].text) as {
       plan: {
         notes: number;
         fixesByClass?: {
-          mechanical: number;
-          guidance: number;
-          runtimeOnly: number;
-          verifyInSource: number;
+          mechanical: FbcLane;
+          guidance: FbcLane;
+          runtimeOnly: FbcLane;
+          verifyInSource: FbcLane;
         };
       };
       files: Array<{ path: string; findings: unknown[] }>;
@@ -452,10 +453,15 @@ describe("MCP tool: scan", () => {
     };
     // The flat `plan.violations`
     // headline is gone; sum the four `fixesByClass` lanes for the
-    // error+warning total alongside `plan.notes`.
+    // error+warning total alongside `plan.notes`. Each lane carries
+    // a per-scan-kind sub-tally (`source + buildArtifact`).
     const lanes = data.plan.fixesByClass;
+    const laneSum = (l: FbcLane): number => l.source + l.buildArtifact;
     const errorWarning = lanes
-      ? lanes.mechanical + lanes.guidance + lanes.runtimeOnly + lanes.verifyInSource
+      ? laneSum(lanes.mechanical) +
+        laneSum(lanes.guidance) +
+        laneSum(lanes.runtimeOnly) +
+        laneSum(lanes.verifyInSource)
       : 0;
     expect(errorWarning + data.plan.notes).toBeGreaterThan(0);
     expect(data.files.length).toBeGreaterThan(0);
@@ -559,26 +565,31 @@ describe("MCP tool: scan_project", () => {
       const session = new McpSession();
       const fixtureDir = BAD_ALT.replace(/\/[^/]+$/, "");
       const result = await tool.handler({ cwd: fixtureDir }, session);
+      type Lane = { source: number; buildArtifact: number };
       const data = JSON.parse(result.content[0].text) as {
         plan: {
           fixesByClass?: {
-            mechanical?: number;
-            guidance?: number;
-            runtimeOnly?: number;
-            verifyInSource?: number;
+            mechanical?: Lane;
+            guidance?: Lane;
+            runtimeOnly?: Lane;
+            verifyInSource?: Lane;
           };
         };
         nextStep: string;
       };
       // The fixture at tests/fixtures/bad/alt-text-missing/ has violations.
       // The flat `plan.violations`
-      // counter is gone — sum the per-lane tally instead.
+      // counter is gone — sum the per-lane tally instead. Each lane
+      // carries a per-scan-kind sub-tally; the flat per-lane number
+      // is the sum of `source + buildArtifact`.
       const lanes = data.plan.fixesByClass;
+      const laneSum = (l: Lane | undefined): number =>
+        (l?.source ?? 0) + (l?.buildArtifact ?? 0);
       const errorWarning =
-        (lanes?.mechanical ?? 0) +
-        (lanes?.guidance ?? 0) +
-        (lanes?.runtimeOnly ?? 0) +
-        (lanes?.verifyInSource ?? 0);
+        laneSum(lanes?.mechanical) +
+        laneSum(lanes?.guidance) +
+        laneSum(lanes?.runtimeOnly) +
+        laneSum(lanes?.verifyInSource);
       expect(errorWarning).toBeGreaterThan(0);
       // Directive guidance: names something concrete the agent can
       // follow. Three shapes the response can take, all valid:

@@ -172,12 +172,15 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
     // regardless of whether totals agree or disagree on this scan.
     expect(formatted.meta["countsBySurface"]).toBeUndefined();
     // Smoke-check the scan actually produced findings.
-    const lanes = formatted.plan["fixesByClass"] as Record<string, number> | undefined;
+    type FbcLane = { source: number; buildArtifact: number };
+    const lanes = formatted.plan["fixesByClass"] as Record<string, FbcLane> | undefined;
+    const laneSum = (l: FbcLane | undefined): number =>
+      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const errorWarning =
-      (lanes?.["mechanical"] ?? 0) +
-      (lanes?.["guidance"] ?? 0) +
-      (lanes?.["runtimeOnly"] ?? 0) +
-      (lanes?.["verifyInSource"] ?? 0);
+      laneSum(lanes?.["mechanical"]) +
+      laneSum(lanes?.["guidance"]) +
+      laneSum(lanes?.["runtimeOnly"]) +
+      laneSum(lanes?.["verifyInSource"]);
     const findings = errorWarning + ((formatted.plan["notes"] as number | undefined) ?? 0);
     expect(findings).toBeGreaterThan(0);
   });
@@ -1251,20 +1254,28 @@ describe("splitViolationsByScanKind", () => {
 });
 
 describe("withViolationsByScanKind — plan-stamping helper", () => {
-  function f(severity: string) {
-    return { severity };
+  function f(severity: string, fixClass: string = "mechanical") {
+    return { severity, fixClass };
   }
   const E = f("error");
   const W = f("warning");
+  const Eg = f("error", "guidance");
+  const Wv = f("warning", "verify-in-source");
 
   it("stamps `plan.violationsByScanKind` when the vendor path set is non-empty", () => {
-    // Plan fixture uses the post-Q7 shape (notes + fixesByClass) —
-    // the helper is pure-spread so any input fields would pass
-    // through, but matching the production shape keeps the test
-    // honest about what the wire surface looks like in 2026-04+.
+    // Plan fixture uses the post-Q7 shape (notes + fixesByClass)
+    // with the per-scan-kind sub-tally on every lane. The helper
+    // re-derives `fixesByClass` from `vendorPaths` + per-file
+    // findings so the lanes match what `splitViolationsByScanKind`
+    // tallies — the cross-surface invariant is the honest shape.
     const plan = {
       notes: 0,
-      fixesByClass: { mechanical: 5, guidance: 0, runtimeOnly: 0, verifyInSource: 3 },
+      fixesByClass: {
+        mechanical: { source: 8, buildArtifact: 0 },
+        guidance: { source: 0, buildArtifact: 0 },
+        runtimeOnly: { source: 0, buildArtifact: 0 },
+        verifyInSource: { source: 0, buildArtifact: 0 },
+      },
     } satisfies Record<string, unknown>;
     const files = [
       { path: "src/page.tsx", findings: [E, E, W] },
@@ -1272,23 +1283,33 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     ];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 3, buildArtifact: 5 });
-    // Existing fields preserved — additive enrichment only.
     expect(out["notes"]).toBe(0);
+    // The helper re-derives the per-lane × per-kind tally from the
+    // per-file findings; every fixture finding is `mechanical`, so
+    // the `mechanical` lane gets the whole split and the others
+    // stay zero.
     expect(out["fixesByClass"]).toEqual({
-      mechanical: 5,
-      guidance: 0,
-      runtimeOnly: 0,
-      verifyInSource: 3,
+      mechanical: { source: 3, buildArtifact: 5 },
+      guidance: { source: 0, buildArtifact: 0 },
+      runtimeOnly: { source: 0, buildArtifact: 0 },
+      verifyInSource: { source: 0, buildArtifact: 0 },
     });
   });
 
   it("returns the input plan by identity (no shallow copy) when no artifacts were classified", () => {
     // Common-case fast path: the no-artifacts scan pays nothing for
     // the helper; the conditional-spread doctrine keeps the field off
-    // the wire entirely.
+    // the wire entirely AND leaves `fixesByClass` untouched (the
+    // upstream `countFixesByClass` already produced the per-kind
+    // shape with `buildArtifact: 0` everywhere).
     const plan = {
       notes: 1,
-      fixesByClass: { mechanical: 4, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+      fixesByClass: {
+        mechanical: { source: 4, buildArtifact: 0 },
+        guidance: { source: 0, buildArtifact: 0 },
+        runtimeOnly: { source: 0, buildArtifact: 0 },
+        verifyInSource: { source: 0, buildArtifact: 0 },
+      },
     } satisfies Record<string, unknown>;
     const out = withViolationsByScanKind(plan, [{ path: "x", findings: [E] }], new Set());
     expect(out).toBe(plan);
@@ -1298,15 +1319,28 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
   it("preserves the input plan's other fields verbatim — additive only", () => {
     const plan = {
       notes: 0,
-      fixesByClass: { mechanical: 1, guidance: 1 },
+      fixesByClass: {
+        mechanical: { source: 1, buildArtifact: 0 },
+        guidance: { source: 1, buildArtifact: 0 },
+        runtimeOnly: { source: 0, buildArtifact: 0 },
+        verifyInSource: { source: 0, buildArtifact: 0 },
+      },
       summary: "x",
     } satisfies Record<string, unknown>;
-    const files = [{ path: "vendor/a.min.css", findings: [E, W] }];
+    const files = [{ path: "vendor/a.min.css", findings: [Eg, Wv] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/a.min.css"]));
     expect(out["notes"]).toBe(0);
-    expect(out["fixesByClass"]).toEqual({ mechanical: 1, guidance: 1 });
     expect(out["summary"]).toBe("x");
     expect(out["violationsByScanKind"]).toEqual({ source: 0, buildArtifact: 2 });
+    // The helper re-derives `fixesByClass` from the per-file findings
+    // — one `guidance` finding and one `verify-in-source` finding,
+    // both on the vendor path, so each lane carries `buildArtifact: 1`.
+    expect(out["fixesByClass"]).toEqual({
+      mechanical: { source: 0, buildArtifact: 0 },
+      guidance: { source: 0, buildArtifact: 1 },
+      runtimeOnly: { source: 0, buildArtifact: 0 },
+      verifyInSource: { source: 0, buildArtifact: 1 },
+    });
   });
 
   it("emits the field even when the buildArtifact lane is zero, as long as artifacts were classified", () => {
@@ -1319,11 +1353,22 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     // findings on artifacts."
     const plan = {
       notes: 0,
-      fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 2 },
+      fixesByClass: {
+        mechanical: { source: 3, buildArtifact: 0 },
+        guidance: { source: 0, buildArtifact: 0 },
+        runtimeOnly: { source: 0, buildArtifact: 0 },
+        verifyInSource: { source: 2, buildArtifact: 0 },
+      },
     } satisfies Record<string, unknown>;
-    const files = [{ path: "src/app.tsx", findings: [E, E, E, W, W] }];
+    const files = [{ path: "src/app.tsx", findings: [E, E, E, Wv, Wv] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 5, buildArtifact: 0 });
+    expect(out["fixesByClass"]).toEqual({
+      mechanical: { source: 3, buildArtifact: 0 },
+      guidance: { source: 0, buildArtifact: 0 },
+      runtimeOnly: { source: 0, buildArtifact: 0 },
+      verifyInSource: { source: 2, buildArtifact: 0 },
+    });
   });
 });
 

@@ -46,7 +46,13 @@
 import type { FixClass } from "../../types/rule.ts";
 import type { Violation } from "../../types/violation.ts";
 import { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
-import type { AgentFile, AgentPlan, Effort, FixesByClass } from "./types.ts";
+import type {
+  AgentFile,
+  AgentPlan,
+  Effort,
+  FixesByClass,
+  FixesByClassLane,
+} from "./types.ts";
 
 const MODERATE_THRESHOLD = 5;
 const TOP_RULES_COUNT = 3;
@@ -195,32 +201,74 @@ export function countFixes(violations: readonly Violation[]): FixCounts {
 }
 
 /**
- * Tally violations by their rule-level {@link FixClass} lane.
+ * Tally violations by their rule-level {@link FixClass} lane,
+ * additionally split per scan-kind ({@link FixesByClassLane#source}
+ * vs. {@link FixesByClassLane#buildArtifact}).
  *
  * Returns the `{ mechanical, guidance, runtimeOnly, verifyInSource }`
  * shape consumed by `plan.fixesByClass` — one key per lane, each
- * counting one kind of thing. Distinct axis from
- * {@link FixCounts#editsWithInlineFixPath}: that internal counter
- * answers "does this violation ship a ready-to-apply edit?"
+ * carrying its own `{ source, buildArtifact }` pair. Distinct axis
+ * from {@link FixCounts#editsWithInlineFixPath}: that internal
+ * counter answers "does this violation ship a ready-to-apply edit?"
  * (mechanical or verify-in-source lane); this one answers "which
- * remediation lane does the rule route into?". The former is an
- * internal effort-math signal (never surfaced), this one is the
- * plan's honest per-lane headline.
+ * remediation lane does the rule route into?" with the same
+ * per-scan-kind axis `plan.violationsByScanKind` carries at the
+ * cross-lane aggregate level.
+ *
+ * `vendorPaths` is the build-artifact path set produced by
+ * `collectBuildArtifacts` / `vendorPathSet`. Findings whose
+ * `location.filePath` is in the set route to the `buildArtifact`
+ * sub-key; everything else routes to `source`. Empty / omitted
+ * (default) routes every finding to `source` — matching
+ * {@link ../../mcp/scan-assembly#splitViolationsByScanKind}'s
+ * empty-vendorPaths semantics so scopes that don't run the
+ * classifier (CLI agent format, scan, scan_file, scan_diff) emit a
+ * uniform `{ source: N, buildArtifact: 0 }` per lane without a
+ * shape divergence.
+ *
+ * Cross-surface invariant pinned at the integration layer: for each
+ * scan-kind X, `sum(fixesByClass[*].X) === violationsByScanKind[X]`.
+ * Both surfaces filter info-severity findings out (caller passes
+ * `nonNote`); the per-kind classification is the same path-set
+ * membership check, so the equality holds regardless of how the
+ * lanes distribute. See
+ * `tests/integration/mcp-scan-project-fixes-by-class-by-scan-kind.test.ts`.
  */
-export function countFixesByClass(violations: readonly Violation[]): FixesByClass {
-  const counts: Record<FixClass, number> = {
-    mechanical: 0,
-    guidance: 0,
-    "runtime-only": 0,
-    "verify-in-source": 0,
+export function countFixesByClass(
+  violations: readonly Violation[],
+  vendorPaths: ReadonlySet<string> = new Set(),
+): FixesByClass {
+  const counts: Record<FixClass, FixesByClassLane> = {
+    mechanical: { source: 0, buildArtifact: 0 },
+    guidance: { source: 0, buildArtifact: 0 },
+    "runtime-only": { source: 0, buildArtifact: 0 },
+    "verify-in-source": { source: 0, buildArtifact: 0 },
   };
-  for (const v of violations) counts[v.fixClass] += 1;
+  for (const v of violations) {
+    const lane = counts[v.fixClass];
+    const isBuildArtifact = vendorPaths.has(v.location.filePath);
+    counts[v.fixClass] = {
+      source: lane.source + (isBuildArtifact ? 0 : 1),
+      buildArtifact: lane.buildArtifact + (isBuildArtifact ? 1 : 0),
+    };
+  }
   return {
     mechanical: counts.mechanical,
     guidance: counts.guidance,
     runtimeOnly: counts["runtime-only"],
     verifyInSource: counts["verify-in-source"],
   };
+}
+
+/**
+ * Sums one {@link FixesByClassLane}'s per-scan-kind sub-tally into the
+ * flat lane count. Internal helper for sites that want the
+ * per-remediation-lane number (effort math, summary prose, the
+ * `fixClassBreakdown` parenthetical) without forcing every consumer to
+ * spell out the addition. Pure over its input.
+ */
+export function laneTotal(lane: FixesByClassLane): number {
+  return lane.source + lane.buildArtifact;
 }
 
 interface CategoryCounts {
@@ -294,11 +342,15 @@ export function buildAgentPlan(
   // `safeEditsAvailable` was dropped per
   // Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT); the
   // `editsWithInlineFixPath` count remains internal to effort math.
+  // Flatten the per-scan-kind sub-tallies for the summary parenthetical
+  // — the prose breakdown describes the per-remediation-lane axis, not
+  // the per-scan-kind axis (that lives in `plan.violationsByScanKind`
+  // separately so the prose stays focused on one axis at a time).
   const fixClassCounts: FixClassCounts = {
-    mechanical: fixesByClass.mechanical,
-    guidance: fixesByClass.guidance,
-    "runtime-only": fixesByClass.runtimeOnly,
-    "verify-in-source": fixesByClass.verifyInSource,
+    mechanical: laneTotal(fixesByClass.mechanical),
+    guidance: laneTotal(fixesByClass.guidance),
+    "runtime-only": laneTotal(fixesByClass.runtimeOnly),
+    "verify-in-source": laneTotal(fixesByClass.verifyInSource),
   };
 
   const summary = buildSummary(

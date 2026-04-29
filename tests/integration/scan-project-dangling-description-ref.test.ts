@@ -57,10 +57,13 @@ function buildScanFormatted(filesWithFindings: ScanFormatted["files"]): ScanForm
     plan: {
       notes: 0,
       fixesByClass: {
-        mechanical: 0,
-        guidance: filesWithFindings.reduce((acc, f) => acc + f.findings.length, 0),
-        runtimeOnly: 0,
-        verifyInSource: 0,
+        mechanical: { source: 0, buildArtifact: 0 },
+        guidance: {
+          source: filesWithFindings.reduce((acc, f) => acc + f.findings.length, 0),
+          buildArtifact: 0,
+        },
+        runtimeOnly: { source: 0, buildArtifact: 0 },
+        verifyInSource: { source: 0, buildArtifact: 0 },
       },
       reviewNeeded: 0,
       manualOnly: 0,

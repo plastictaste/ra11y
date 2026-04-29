@@ -1025,36 +1025,130 @@ export function splitViolationsByScanKind(
 
 /**
  * Stamps `plan.violationsByScanKind` onto a `plan` record produced by
- * {@link buildScanPlan}. Conditional-spread per CLAUDE.md §1
- * "Ambiguous field shapes are dishonest": when no build artifacts
- * were classified for the scan (the `vendorPaths` set is empty), the
- * split would always read `{ source: <total>, buildArtifact: 0 }` —
- * a field whose only signal is "no artifacts," which the existing
- * `meta.scannedBuildArtifacts` absence already conveys honestly.
- * Omitting in the no-artifacts case keeps the present-when-meaningful
- * shape and avoids two fields telling the same story.
+ * {@link buildScanPlan} AND re-derives `plan.fixesByClass` per-scan-kind
+ * so each lane carries the same `{ source, buildArtifact }` axis the
+ * cross-lane `violationsByScanKind` aggregate carries.
  *
- * Identity-stable when the spread is a no-op (no artifacts), so
+ * Two transforms ride on the same helper because they both key off
+ * `vendorPaths` and the per-file finding buckets — the seam where
+ * both are in scope is the post-classifier point in
+ * `tool-scan-project.ts` (between the build-artifact pass and
+ * `assembleScanProjectResponse`). Conditional-spread per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest": the
+ * `violationsByScanKind` aggregate sibling is omitted when no
+ * artifacts were classified (the existing `meta.scannedBuildArtifacts`
+ * absence already conveys "no artifacts"). The per-lane
+ * `fixesByClass` rewrite ALWAYS runs — every lane already ships the
+ * `{ source: N, buildArtifact: 0 }` shape upstream from
+ * `response-assembler` (which calls `countFixesByClass` with an empty
+ * vendor path set), so on a no-artifacts scan the rewrite is a no-op
+ * by value. When artifacts ARE classified, the upstream's
+ * empty-vendor-path tally is wrong (every finding routed to `source`)
+ * and the rewrite restores the honest split.
+ *
+ * Identity-stable when the rewrite is a no-op (no artifacts), so
  * callers can route through this helper unconditionally without
  * paying for a shallow copy on the common case.
  *
- * Designed to run AFTER {@link buildScanPlan} produced the `plan`
- * record but BEFORE the `plan` reaches the wire — `tool-scan-project.ts`
- * calls this between the build-artifact classification pass and
- * `assembleScanProjectResponse`, which is the only seam where both
- * the per-file finding buckets and the vendor path set are in scope.
+ * Cross-surface invariant: for each scan-kind X,
+ * `sum(plan.fixesByClass[*].X) === plan.violationsByScanKind[X]`.
+ * Both surfaces filter info-severity findings the same way (the
+ * upstream `nonNote` slice in `response-assembler` and the
+ * `severity !== "info"` filter inside `splitViolationsByScanKind`),
+ * and the per-kind classification is the same path-set membership
+ * check, so the equality holds regardless of how the lanes
+ * distribute. Pinned by
+ * `tests/integration/mcp-scan-project-fixes-by-class-by-scan-kind.test.ts`.
  */
 export function withViolationsByScanKind(
   plan: Record<string, unknown>,
   files: readonly {
     readonly path: string;
-    readonly findings: readonly { readonly severity: string }[];
+    readonly findings: readonly { readonly severity: string; readonly fixClass?: string }[];
   }[],
   vendorPaths: ReadonlySet<string>,
 ): Record<string, unknown> {
   if (vendorPaths.size === 0) return plan;
+  // Re-derive `fixesByClass` per-scan-kind from the per-file findings.
+  // The upstream `response-assembler` call to `countFixesByClass` ran
+  // with an empty vendor-path set (the classifier hadn't run yet), so
+  // every lane's `buildArtifact` count was zero by construction. With
+  // `vendorPaths` now resolved, we redo the split honestly so each
+  // lane carries the same `{ source, buildArtifact }` axis the
+  // cross-lane `violationsByScanKind` aggregate carries. The rewrite
+  // only runs when artifacts WERE classified (the `vendorPaths.size
+  // === 0` short-circuit above) — the no-artifacts common case keeps
+  // the upstream tally and the helper stays identity-stable on it.
   const split = splitViolationsByScanKind(files, vendorPaths);
-  return { ...plan, violationsByScanKind: split };
+  const fixesByClassRewritten = splitFixesByClassByScanKind(files, vendorPaths);
+  const planWithFixesByClass =
+    plan["fixesByClass"] === undefined
+      ? plan
+      : { ...plan, fixesByClass: fixesByClassRewritten };
+  return { ...planWithFixesByClass, violationsByScanKind: split };
+}
+
+/**
+ * Re-derives `plan.fixesByClass` per-scan-kind from the per-file
+ * finding buckets and the build-artifact path set. Mirrors
+ * {@link splitViolationsByScanKind} on the per-remediation-lane axis
+ * — each lane gets its own `{ source, buildArtifact }` pair, and
+ * `sum(*.source) === splitViolationsByScanKind(...).source` (and
+ * same for `buildArtifact`). Findings without a `fixClass` field on
+ * the per-file shape (legacy callers) route into the lane mix the
+ * upstream `countFixesByClass` would have produced — currently a
+ * pure no-op on missing metadata.
+ *
+ * Severity filter — info-severity findings are excluded the same
+ * way `splitViolationsByScanKind` excludes them, so both surfaces
+ * split the same error+warning corpus.
+ */
+function splitFixesByClassByScanKind(
+  files: readonly {
+    readonly path: string;
+    readonly findings: readonly { readonly severity: string; readonly fixClass?: string }[];
+  }[],
+  vendorPaths: ReadonlySet<string>,
+): {
+  readonly mechanical: { readonly source: number; readonly buildArtifact: number };
+  readonly guidance: { readonly source: number; readonly buildArtifact: number };
+  readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
+  readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
+} {
+  const lanes = {
+    mechanical: { source: 0, buildArtifact: 0 },
+    guidance: { source: 0, buildArtifact: 0 },
+    runtimeOnly: { source: 0, buildArtifact: 0 },
+    verifyInSource: { source: 0, buildArtifact: 0 },
+  };
+  for (const f of files) {
+    const isBuildArtifact = vendorPaths.has(f.path);
+    const kind: "source" | "buildArtifact" = isBuildArtifact ? "buildArtifact" : "source";
+    for (const finding of f.findings) {
+      if (finding.severity === "info") continue;
+      const lane = laneKeyFor(finding.fixClass);
+      if (lane === null) continue;
+      lanes[lane][kind] += 1;
+    }
+  }
+  return lanes;
+}
+
+function laneKeyFor(
+  fixClass: string | undefined,
+): "mechanical" | "guidance" | "runtimeOnly" | "verifyInSource" | null {
+  switch (fixClass) {
+    case "mechanical":
+      return "mechanical";
+    case "guidance":
+      return "guidance";
+    case "runtime-only":
+      return "runtimeOnly";
+    case "verify-in-source":
+      return "verifyInSource";
+    default:
+      return null;
+  }
 }
 
 /**

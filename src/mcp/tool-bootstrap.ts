@@ -282,11 +282,16 @@ function extractProposedConfig(
   return cfg;
 }
 
+interface FixesByClassLaneSubset {
+  readonly source: number;
+  readonly buildArtifact: number;
+}
+
 interface FixesByClassSubset {
-  readonly mechanical: number;
-  readonly guidance: number;
-  readonly runtimeOnly: number;
-  readonly verifyInSource: number;
+  readonly mechanical: FixesByClassLaneSubset;
+  readonly guidance: FixesByClassLaneSubset;
+  readonly runtimeOnly: FixesByClassLaneSubset;
+  readonly verifyInSource: FixesByClassLaneSubset;
 }
 
 interface ScanSubset {
@@ -366,10 +371,10 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const violationsCount =
     fixesByClass === null
       ? 0
-      : fixesByClass.mechanical +
-        fixesByClass.guidance +
-        fixesByClass.runtimeOnly +
-        fixesByClass.verifyInSource;
+      : laneSum(fixesByClass.mechanical) +
+        laneSum(fixesByClass.guidance) +
+        laneSum(fixesByClass.runtimeOnly) +
+        laneSum(fixesByClass.verifyInSource);
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionable = readNumberFromRecord(plan, "actionableManualItems");
@@ -400,19 +405,45 @@ function readFixesByClass(plan: unknown): FixesByClassSubset | null {
   if (!plan || typeof plan !== "object") return null;
   const raw = (plan as Record<string, unknown>)["fixesByClass"];
   if (!raw || typeof raw !== "object") return null;
-  const mechanical = readNumberFromRecord(raw, "mechanical");
-  const guidance = readNumberFromRecord(raw, "guidance");
-  const runtimeOnly = readNumberFromRecord(raw, "runtimeOnly");
-  const verifyInSource = readNumberFromRecord(raw, "verifyInSource");
+  const mechanical = readLane(raw, "mechanical");
+  const guidance = readLane(raw, "guidance");
+  const runtimeOnly = readLane(raw, "runtimeOnly");
+  const verifyInSource = readLane(raw, "verifyInSource");
   if (
-    typeof mechanical !== "number" ||
-    typeof guidance !== "number" ||
-    typeof runtimeOnly !== "number" ||
-    typeof verifyInSource !== "number"
+    mechanical === null ||
+    guidance === null ||
+    runtimeOnly === null ||
+    verifyInSource === null
   ) {
     return null;
   }
   return { mechanical, guidance, runtimeOnly, verifyInSource };
+}
+
+/**
+ * Reads one {@link FixesByClassLaneSubset} from a `fixesByClass` parent
+ * record. Each lane is a `{ source, buildArtifact }` pair carrying the
+ * per-scan-kind split so the bootstrap subset preserves the same axis
+ * `plan.violationsByScanKind` carries at the cross-lane aggregate
+ * level. Returns null on malformed input — the parent helper folds
+ * any null lane back into a null subset (matching the upstream
+ * conditional-spread gate so an absent / partial `fixesByClass` lands
+ * as "subset omits the field").
+ */
+function readLane(parent: unknown, key: string): FixesByClassLaneSubset | null {
+  if (!parent || typeof parent !== "object") return null;
+  const raw = (parent as Record<string, unknown>)[key];
+  if (!raw || typeof raw !== "object") return null;
+  const source = readNumberFromRecord(raw, "source");
+  const buildArtifact = readNumberFromRecord(raw, "buildArtifact");
+  if (typeof source !== "number" || typeof buildArtifact !== "number") {
+    return null;
+  }
+  return { source, buildArtifact };
+}
+
+function laneSum(lane: FixesByClassLaneSubset): number {
+  return lane.source + lane.buildArtifact;
 }
 
 interface BaselineSummary {
