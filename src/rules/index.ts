@@ -16,6 +16,7 @@ import { rule as iconChildMissingAriaHidden } from "./aria/icon-child-missing-ar
 import { rule as iconFontHidden } from "./aria/icon-font-hidden.ts";
 import { rule as invalidRole } from "./aria/invalid-role.ts";
 import { rule as labelledbyTargetExists } from "./aria/labelledby-target-exists.ts";
+import { rule as liveRegionMissingOnInnerhtmlTarget } from "./aria/live-region-missing-on-innerhtml-target.ts";
 import { rule as liveRegionValid } from "./aria/live-region-valid.ts";
 import { rule as popoverTriggerMissingHaspopup } from "./aria/popover-trigger-missing-haspopup.ts";
 import { rule as presentationOnSemanticAncestor } from "./aria/presentation-on-semantic-ancestor.ts";
@@ -182,6 +183,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   linkNoHref,
   linkTargetBlankAnnouncement,
   listStructure,
+  liveRegionMissingOnInnerhtmlTarget,
   liveRegionValid,
   malformedTag,
   meaningByColorOnly,
@@ -296,6 +298,7 @@ export {
   linkNoHref,
   linkTargetBlankAnnouncement,
   listStructure,
+  liveRegionMissingOnInnerhtmlTarget,
   liveRegionValid,
   malformedTag,
   meaningByColorOnly,
