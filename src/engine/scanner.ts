@@ -504,7 +504,7 @@ function collectCandidatesFromFiles(
 ): readonly ReviewCandidate[] {
   const finders = inputs.finders ?? [];
   if (finders.length === 0) return [];
-  const activeCriterionIds = collectManualCriterionIds(standards, enabled);
+  const activeCriterionIds = collectActiveCandidateCriterionIds(standards, enabled);
   const out: ReviewCandidate[] = [];
   for (const file of inputs.files) {
     const perFile = runFindersForFile({
@@ -640,13 +640,29 @@ function dedupUniquePerCriterion(
 const RA11Y_PROCESS_CRITERION_IDS: readonly string[] = ["ra11y:suppression-no-reason"];
 
 /**
- * Collects the set of manual criterion IDs across enabled standards,
- * plus ra11y's process-rule criteria (see
- * {@link RA11Y_PROCESS_CRITERION_IDS}). Process criteria are always
- * active — they don't belong to any standard, so "enabled standards"
- * doesn't gate them.
+ * Collects the set of criterion IDs across enabled standards that
+ * candidate finders are allowed to fire under, plus ra11y's process-
+ * rule criteria (see {@link RA11Y_PROCESS_CRITERION_IDS}). Process
+ * criteria are always active — they don't belong to any standard, so
+ * "enabled standards" doesn't gate them.
+ *
+ * Includes both `manual` AND `partial` criteria. `manual` criteria
+ * have no static rule at all; `partial` criteria have a rule that
+ * catches a meaningful subset of failures, but the criterion still
+ * needs human verification for cases the rule cannot statically
+ * judge — finders cover that gap. Excluding partial-automatable
+ * criteria silently dropped finders like `reduced-motion-candidate`
+ * (wcag22:2.3.3 — partial) and `carousel-pattern` (wcag22:2.2.2 —
+ * partial) from the production scan, even though their unit tests
+ * pass via direct invocation. The failure mode is silent under-
+ * emission of review candidates the agent should investigate; this
+ * widening is the AI-first "surface, don't suppress" answer.
+ *
+ * `full` criteria are intentionally excluded: when the rule catches
+ * every failure, a finder citing the same criterion would only echo
+ * the rule's findings and dilute the candidate surface.
  */
-function collectManualCriterionIds(
+function collectActiveCandidateCriterionIds(
   standards: StandardsRegistry,
   enabled: ReadonlySet<string>,
 ): ReadonlySet<string> {
@@ -655,7 +671,9 @@ function collectManualCriterionIds(
     const standard = standards.get(standardId);
     if (!standard) continue;
     for (const criterion of standard.criteria) {
-      if (criterion.automatable === "manual") ids.add(criterion.id);
+      if (criterion.automatable === "manual" || criterion.automatable === "partial") {
+        ids.add(criterion.id);
+      }
     }
   }
   for (const id of RA11Y_PROCESS_CRITERION_IDS) ids.add(id);
