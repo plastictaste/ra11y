@@ -429,6 +429,127 @@ describe("rule semantics/table-caption-missing", () => {
     });
   });
 
+  describe("conceded-uncertainty: markdown-source / fragment host file", () => {
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+    // confidence must reflect per-rule coverage limitations" + "Parser-
+    // failure invalidates per-file confidence": when the host file is
+    // a Markdown source (`.md`/`.markdown`/`.mkdn`) OR fragment-
+    // classified (no `<html>`/`<body>`, no layout directive, not under
+    // `_layouts/`), the rule's "no accessible name" claim concedes its
+    // predicate may not hold. Surface the finding (per "Surface,
+    // don't suppress") with `confidence: "medium"` and a
+    // `couldBeWrongBecause` code naming the conceded axis.
+    it("downgrades confidence to medium and attaches markdown reason on a .md host file", () => {
+      const violations = runRule(
+        rule,
+        `<table>
+          <thead><tr><th>Region</th><th>Q1</th></tr></thead>
+          <tbody><tr><td>North</td><td>$100</td></tr></tbody>
+        </table>`,
+        { filePath: "docs/sales.md" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.confidence).toBe("medium");
+      // The `.md` extension fires the markdown axis. The file also
+      // happens to be fragment-classified (no <html>/<body> envelope,
+      // no layout directive, not under _layouts/), so the fragment
+      // axis fires too — both codes ride the same finding because the
+      // predicate-uncertainty has two distinct sources.
+      expect(violations[0]?.couldBeWrongBecause).toEqual([
+        "markdown_table_no_caption_syntax_in_md",
+        "fragment_input_no_document_envelope",
+      ]);
+    });
+
+    it("downgrades on .markdown and .mkdn extensions equivalently", () => {
+      const tableSnippet = `<table><tr><th>A</th></tr><tr><td>1</td></tr></table>`;
+      const a = runRule(rule, tableSnippet, { filePath: "x.markdown" });
+      const b = runRule(rule, tableSnippet, { filePath: "x.mkdn" });
+      expect(a[0]?.confidence).toBe("medium");
+      expect(b[0]?.confidence).toBe("medium");
+      expect(a[0]?.couldBeWrongBecause).toContain("markdown_table_no_caption_syntax_in_md");
+      expect(b[0]?.couldBeWrongBecause).toContain("markdown_table_no_caption_syntax_in_md");
+    });
+
+    it("annotates the message with the markdown conceded-uncertainty suffix", () => {
+      const violations = runRule(rule, `<table><tr><th>A</th></tr><tr><td>1</td></tr></table>`, {
+        filePath: "docs/page.md",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toContain("Markdown source");
+      expect(violations[0]?.message).toContain("no first-class caption syntax");
+    });
+
+    it("severity stays unchanged on the conceded-uncertainty branch (warning, not error)", () => {
+      // Severity is the budget axis; confidence is the predicate-
+      // strength axis. The conceded-uncertainty downgrade lives on
+      // the confidence axis only.
+      const violations = runRule(rule, `<table><tr><th>A</th></tr><tr><td>1</td></tr></table>`, {
+        filePath: "page.md",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.confidence).toBe("medium");
+    });
+
+    it("downgrades on a fragment-classified .html file with the fragment axis only", () => {
+      // Plain fragment HTML (no <html>/<body>, no layout directive,
+      // path NOT under _layouts/) — fragment axis fires; markdown
+      // axis does not (extension is .html). Single code.
+      const violations = runRule(
+        rule,
+        `<div><table><tr><th>A</th></tr><tr><td>1</td></tr></table></div>`,
+        { filePath: "_includes/data.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.confidence).toBe("medium");
+      expect(violations[0]?.couldBeWrongBecause).toEqual(["fragment_input_no_document_envelope"]);
+    });
+
+    it("does NOT downgrade on a full-page .html file with <html>/<body>", () => {
+      // Full document envelope — both axes negative. Rule emits at
+      // its normal high-confidence shape (no per-finding confidence
+      // field, no couldBeWrongBecause field).
+      const violations = runRule(
+        rule,
+        `<!DOCTYPE html><html><body><table><tr><th>A</th></tr><tr><td>1</td></tr></table></body></html>`,
+        { filePath: "page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.confidence).toBeUndefined();
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT downgrade on a layout file under _layouts/ (positive page-envelope evidence)", () => {
+      // Files under _layouts/ render AS the page envelope via parent-
+      // layout composition — they are NOT fragments. Markdown axis
+      // negative, fragment axis vetoed by inLayoutsDir signal.
+      const violations = runRule(
+        rule,
+        `<!DOCTYPE html><html><body>{{ content }}<table><tr><th>A</th></tr><tr><td>1</td></tr></table></body></html>`,
+        { filePath: "_layouts/page.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.confidence).toBeUndefined();
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("JSX files do not engage the markdown / fragment gate (file-scoped by design)", () => {
+      // JSX modules are file-scoped by design (no document-envelope
+      // concept and no markdown-residue projection). The conceded-
+      // uncertainty gate stays off on the JSX branch even if the
+      // emit shape would otherwise carry the codes.
+      const violations = runRule(
+        rule,
+        `function Page() { return (<table><tr><th>A</th></tr><tr><td>1</td></tr></table>); }`,
+        { filePath: "Page.tsx" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.confidence).toBeUndefined();
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+  });
+
   describe("rule metadata", () => {
     it("satisfies WCAG 1.3.1 across all four loaded standards", () => {
       expect(rule.satisfies).toEqual([

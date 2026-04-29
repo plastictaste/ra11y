@@ -43,6 +43,31 @@
  * caption is a practical non-issue even though the spec prefers the
  * relationship be explicit. The rule surfaces so the agent can verify
  * intent in source; no heuristic suppression.
+ *
+ * Conceded-uncertainty refinement (markdown-source / fragment host file):
+ * when the host file is a Markdown source (`.md`/`.markdown`/`.mkdn`)
+ * or is fragment-classified (no `<html>`/`<body>` opener, no layout
+ * directive, not under a `_layouts/` segment), the rule's emission
+ * concedes its predicate may not hold. Markdown has no first-class
+ * `<caption>` analogue — pipe-table syntax does not encode one — so a
+ * `<table>` block authored in Markdown would naturally lack a caption
+ * the static scanner can see, but the rendered page may carry one
+ * supplied by the SSG (Pandoc table-caption, MultiMarkdown caption
+ * syntax `Table: …`, kramdown IAL `{:caption=…}`) or by a parent
+ * layout's heading. Fragment-classified HTML files have the same
+ * shape: the file's missing caption may be supplied by a sibling
+ * partial composing into the rendered page.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+ * confidence must reflect per-rule coverage limitations" + "Parser-
+ * failure invalidates per-file confidence", the rule still surfaces
+ * (per "Surface, don't suppress") but the per-finding `confidence`
+ * downgrades to `"medium"` and the finding carries either
+ * `["markdown_table_no_caption_syntax_in_md"]` (Markdown source),
+ * `["fragment_input_no_document_envelope"]` (fragment-classified
+ * HTML), or both (a Markdown file that is also fragment-classified).
+ * Severity stays at `warning` — confidence is the predicate-strength
+ * axis, severity is the budget axis.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -56,6 +81,7 @@ import {
   jsxHasContentChildren,
   jsxTextContent,
 } from "../../engine/ast-helpers.ts";
+import { isFragmentFile } from "../../engine/layout-partial.ts";
 import type {
   HtmlDocument,
   HtmlElement,
@@ -65,6 +91,48 @@ import type {
   TsxModule,
 } from "../../types/ast.ts";
 import type { ViolationEvidence } from "../../types/violation.ts";
+import { extension } from "../../utils/path.ts";
+
+/**
+ * Structured `couldBeWrongBecause` codes attached to markdown-source
+ * or fragment-host emits. Each code names a distinct predicate-
+ * strength concession:
+ *
+ *   - `markdown_table_no_caption_syntax_in_md` — host file is a
+ *     Markdown source. Markdown's pipe-table syntax has no native
+ *     `<caption>` analogue, so the absence of a caption in the static
+ *     residue does not confirm the rendered page lacks one (Pandoc
+ *     table-caption, MultiMarkdown `Table: …`, kramdown IAL caption
+ *     attributes, or a heading promoted by the SSG can supply the
+ *     caption at render time).
+ *   - `fragment_input_no_document_envelope` — host file is fragment-
+ *     classified (no `<html>` opener, no layout directive, not under
+ *     a `_layouts/` segment). The composed parent layout may inject
+ *     a heading, `<figcaption>`, or `aria-labelledby` target that the
+ *     static scanner cannot see.
+ *
+ * Both can co-occur when a `.md` file ALSO classifies as a fragment;
+ * the predicate-uncertainty has two distinct sources and each is
+ * independently meaningful — an agent dismissing on confirmed SSG
+ * caption rendering keys on the first; an agent dismissing on a
+ * confirmed parent-layout caption keys on the second.
+ */
+const MARKDOWN_TABLE_NO_CAPTION_SYNTAX_IN_MD = "markdown_table_no_caption_syntax_in_md";
+const FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE = "fragment_input_no_document_envelope";
+
+/**
+ * True when `filePath` is a Markdown source file routed through
+ * `parseMarkdown` (`.md`, `.markdown`, `.mkdn`). Mirrors the
+ * `isMarkdownSourceFile` predicate used by `semantics/heading-
+ * hierarchy.ts` — both rules need to know whether the AST they're
+ * walking came from a markdown-residue projection rather than native
+ * HTML, because residue-derived findings concede their predicate may
+ * not hold (the SSG may render syntax the residue stripped).
+ */
+function isMarkdownSourceFile(filePath: string): boolean {
+  const ext = extension(filePath);
+  return ext === ".md" || ext === ".markdown" || ext === ".mkdn";
+}
 
 export const rule = defineRule({
   id: "semantics/table-caption-missing",
@@ -94,7 +162,26 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      const doc = ctx.ast as HtmlDocument;
+      // Conceded-uncertainty enrichment: when the host file is a
+      // Markdown source OR is fragment-classified, the rule's "no
+      // accessible name" claim concedes its predicate may not hold —
+      // either Markdown's missing first-class caption syntax routes
+      // the caption through the SSG layer, or the parent layout
+      // composes a caption / heading the static scanner cannot see.
+      // The two axes can co-occur (a `.md` file is often also
+      // fragment-classified). Per `docs/kb/architecture/ai-first-
+      // consumer.md` "Per-finding confidence must reflect per-rule
+      // coverage limitations," surface the finding (per "Surface,
+      // don't suppress") with `confidence: "medium"` and the matching
+      // axis codes so the agent triages the conceded uncertainty
+      // rather than budgeting against a contradictory confidence /
+      // severity pair. Severity stays at `warning`. JSX modules are
+      // file-scoped by design (no document-envelope concept and no
+      // markdown-residue projection), so this gate only applies on
+      // the HTML branch.
+      const codes = computeConcededUncertaintyCodes(doc, ctx.source, ctx.filePath);
+      checkHtml(doc, codes, (v) => ctx.emit(v));
       return;
     }
     if (
@@ -108,11 +195,34 @@ export const rule = defineRule({
   },
 });
 
+/**
+ * Walks the two independent gates (markdown source extension,
+ * fragment-classified HTML) and returns the ordered list of
+ * `couldBeWrongBecause` codes that apply. Empty array means neither
+ * gate fired — the rule emits at its normal high-confidence shape.
+ *
+ * Order matches the file-shape evidence chain a reader follows: the
+ * extension is the cheapest, most-visible signal; the structural
+ * fragment classification is the deeper read.
+ */
+function computeConcededUncertaintyCodes(
+  doc: HtmlDocument,
+  source: string,
+  filePath: string,
+): readonly string[] {
+  const codes: string[] = [];
+  if (isMarkdownSourceFile(filePath)) codes.push(MARKDOWN_TABLE_NO_CAPTION_SYNTAX_IN_MD);
+  if (isFragmentFile(doc, source, filePath)) codes.push(FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE);
+  return codes;
+}
+
 type Emit = (v: {
   severity: "error" | "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  confidence?: "high" | "medium" | "low" | "inherited";
+  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 // ---------------------------------------------------------------------------
@@ -201,12 +311,12 @@ function precedingHeadingEvidence(heading: PrecedingHeadingInfo): ViolationEvide
 // HTML branch
 // ---------------------------------------------------------------------------
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, concededCodes: readonly string[], emit: Emit): void {
   for (const table of findHtmlElementsByTag(doc, "table")) {
     if (isLayoutHtmlTable(table)) continue;
     if (!hasHtmlDataCells(table)) continue;
     if (hasHtmlAccessibleName(table)) continue;
-    emit(buildHtmlViolation(table, doc));
+    emit(buildHtmlViolation(table, doc, concededCodes));
   }
 }
 
@@ -279,14 +389,29 @@ function hasHtmlCaptionChild(table: HtmlElement): boolean {
 function buildHtmlViolation(
   table: HtmlElement,
   doc: HtmlDocument,
+  concededCodes: readonly string[],
 ): {
   severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  confidence?: "high" | "medium" | "low" | "inherited";
+  couldBeWrongBecause?: readonly string[];
   evidence?: ViolationEvidence;
 } {
   const hint = inferHtmlCaptionHint(table, doc);
+  // Conceded-uncertainty annotation: when the host file is markdown-
+  // source or fragment-classified, the rule's "missing accessible
+  // name" claim concedes its predicate may not hold (the SSG layer
+  // or parent layout may supply the caption). Append a short suffix
+  // to the message so the agent reading the message channel sees the
+  // same uncertainty the `confidence` / `couldBeWrongBecause`
+  // channels carry. Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Reason / priority / fix-description must agree across all
+  // three channels."
+  const messageBase =
+    "<table> has data cells but no <caption>, aria-label, aria-labelledby, or title — screen readers announce only the dimensions, not what the table represents.";
+  const concededSuffix = buildConcededSuffix(concededCodes);
   return {
     severity: "warning",
     location: {
@@ -294,11 +419,35 @@ function buildHtmlViolation(
       line: table.loc.start.line,
       column: table.loc.start.column,
     },
-    message:
-      "<table> has data cells but no <caption>, aria-label, aria-labelledby, or title — screen readers announce only the dimensions, not what the table represents.",
+    message: `${messageBase}${concededSuffix}`,
     suggestion: buildSuggestion(hint),
+    ...(concededCodes.length > 0
+      ? { confidence: "medium" as const, couldBeWrongBecause: concededCodes }
+      : {}),
     ...(hint.precedingHeading ? { evidence: precedingHeadingEvidence(hint.precedingHeading) } : {}),
   };
+}
+
+/**
+ * Builds the message-channel suffix that names the conceded-
+ * uncertainty axes. Empty when no axis fires; otherwise a short
+ * sentence the agent reads alongside the `couldBeWrongBecause` codes
+ * so the message and the structured codes agree.
+ */
+function buildConcededSuffix(codes: readonly string[]): string {
+  if (codes.length === 0) return "";
+  const parts: string[] = [];
+  if (codes.includes(MARKDOWN_TABLE_NO_CAPTION_SYNTAX_IN_MD)) {
+    parts.push(
+      "Host file is a Markdown source — Markdown has no first-class caption syntax, so a caption may be supplied at SSG render time (Pandoc table-caption, MultiMarkdown `Table: …`, kramdown IAL).",
+    );
+  }
+  if (codes.includes(FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE)) {
+    parts.push(
+      "Host file is fragment-classified (no document envelope) — a parent layout may compose a caption / heading the static scanner cannot see; verify the rendered shape before fixing.",
+    );
+  }
+  return ` ${parts.join(" ")}`;
 }
 
 function inferHtmlCaptionHint(table: HtmlElement, doc: HtmlDocument): CaptionHint {

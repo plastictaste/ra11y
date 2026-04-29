@@ -285,8 +285,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Rule predicate too-broad (false positives)
 
-- [ ] **Q10-RULE-TABLE-CAPTION-MISSING-FIRES-ON-MD-FENCED-TABLES** `semantics/table-caption-missing` fires on `<table>` elements rendered from markdown table syntax (kramdown / GFM) — markdown source has no caption mechanism in the syntax, so the rule cannot honestly establish that an authoring choice was made. Fix: when the table's source file is `.md`/`.markdown`/`.mkdn`, OR the file is in `fragmentFiles[]`, attach `couldBeWrongBecause: ["markdown_table_no_caption_syntax_in_md"]` AND downgrade per-finding confidence to `medium`. Per AI-first doctrine "Reason text and severity must agree."
-
 ### scan_file surface gaps
 
 - [ ] **Q10-SCAN-FILE-NO-TRUNCATION-NO-OVERSIZE-PROTECTION** `scan_file` has no `limit`/`offset`/`restrictToPaths` and no oversize-success protection; a single dense HTML file produces 68k–84k character responses that blow the host token cap, returning only a transport error with no `truncated` flag, no warning, no minimum-honest envelope. Same silent failure mode as `scan_project` but worse because there's no scope-down lever. Fix: add `limit`/`offset`/`maxBytes` parameters; pre-serialization size estimator; minimum-honest envelope fallback (drop `findings[]` body, keep `meta + warnings + nextStep`) when the post-clip envelope still exceeds the host cap. Per AI-first doctrine "Oversize-success is ambiguous failure" — extends Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION to the scan_file surface.
