@@ -457,6 +457,14 @@ export interface AgentReviewCandidate {
    * dishonest" → present-when-meaningful.
    */
   readonly handlerFunctionName?: string;
+  /**
+   * Stable content-addressable fingerprint of the candidate's emission
+   * shape, mirrors {@link ReviewCandidate#dismissalKey}. Lets a
+   * checklist consumer record ONE verdict via `attest` and apply it
+   * to every matching templated sibling. Omitted on candidates whose
+   * finder does not populate the field, per CLAUDE.md §1.
+   */
+  readonly dismissalKey?: string;
 }
 
 /**

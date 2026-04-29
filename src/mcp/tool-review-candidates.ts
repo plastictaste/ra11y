@@ -182,9 +182,9 @@ export const reviewCandidatesTool: McpTool = {
  * `review_candidates` wire shape. Extracted from the tool's main
  * handler so the per-candidate present-when-meaningful spreads
  * (siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
- * durationLiteralMs, durationExpression, sourceCount) live in one place rather than
- * inflating the handler's cognitive complexity above the linter's
- * cap. `confidence` is required on every grounded candidate;
+ * durationLiteralMs, durationExpression, sourceCount, dismissalKey) live in
+ * one place rather than inflating the handler's cognitive complexity above
+ * the linter's cap. `confidence` is required on every grounded candidate;
  * `title` / `level` come from the standard's criterion record and
  * conditional-spread when the resolution succeeds.
  */
@@ -216,6 +216,7 @@ function mapCandidateOut(
     ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
     ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
     ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
+    ...(c.dismissalKey === undefined ? {} : { dismissalKey: c.dismissalKey }),
   };
 }
 

@@ -384,6 +384,32 @@ export interface ReviewCandidate {
    * handlers and on shapes the extractor cannot resolve cleanly.
    */
   readonly handlerFunctionName?: string;
+  /**
+   * Stable content-addressable fingerprint of the candidate's emission
+   * shape — `(ruleId, filename-pattern, src-basename-pattern)`. When
+   * the same brand mark or image-of-text candidate fans out across
+   * dozens or hundreds of templated routes (canonical case: 174 logo-
+   * image candidates pointing at the same `<img src="/assets/logo.png">`
+   * across 174 product pages), every emission carries the same
+   * `dismissalKey` so the agent records ONE verdict keyed on the hash
+   * and applies it to subsequent matching candidates via the `attest`
+   * tool — workflow scaffolding rather than rule-suppression.
+   *
+   * Computed by `computeDismissalKey` in `src/utils/dismissal-key.ts`:
+   * 8 hex chars of a SHA-1 digest over the normalized inputs. Per the
+   * AI-first consumer model the field is strictly additive — every
+   * candidate still surfaces at the same confidence with every WCAG
+   * criterion attached. The key only enables deduplication of
+   * dismissal *verdicts*; never gates suppression, never alters
+   * emission.
+   *
+   * Present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+   * are dishonest": finders that emit images-of-text-style candidates
+   * with a path-shape and image-src signal populate the field; finders
+   * whose emission shape doesn't have a path-pattern and src-basename
+   * to fingerprint omit it rather than emit a sentinel hash.
+   */
+  readonly dismissalKey?: string;
 }
 
 /** Scope for a candidate finder — same semantics as RuleScope minus "project". */

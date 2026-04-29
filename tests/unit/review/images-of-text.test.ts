@@ -786,4 +786,152 @@ describe("review/images-of-text", () => {
       expect(aa).toEqual([]);
     });
   });
+
+  describe("dismissalKey — content-addressable verdict-dedup fingerprint", () => {
+    // Workflow scaffolding per docs/kb/architecture/ai-first-consumer.md.
+    // The same logo image fanning out across N templated routes emits N
+    // candidates with the same dismissalKey, so an agent records ONE
+    // verdict and applies it to siblings via `attest`. Strictly additive
+    // — never gates suppression, never alters confidence.
+
+    it("populates dismissalKey on every emitted candidate (singleton)", () => {
+      const out = runFinder(finder, `<img src="/assets/site-logo.png" alt="Acme">`, {
+        filePath: "products/iphone-15.html",
+      });
+      expect(out.length).toBeGreaterThan(0);
+      for (const candidate of out) {
+        expect(candidate.dismissalKey).toBeDefined();
+        expect(candidate.dismissalKey).toMatch(/^[0-9a-f]{8}$/);
+      }
+    });
+
+    it("the same logo image on different paths within the same parent dir hashes to the same key", () => {
+      // Canonical 174-page case: every product page hosts the same
+      // `<img src="/assets/logo.png">`. The filename-pattern collapses
+      // `products/iphone.html`, `products/galaxy.html`, etc. all to
+      // `products/*.html`, and the src-basename collapses to `logo`.
+      const sourceTemplate = (alt: string) => `<img src="/assets/logo.png" alt="${alt}">`;
+      const candidatesByPath = (filePath: string, alt: string) =>
+        runFinder(finder, sourceTemplate(alt), { filePath });
+      const a = candidatesByPath("products/iphone-15-pro.html", "Acme");
+      const b = candidatesByPath("products/galaxy-s24-ultra.html", "Acme");
+      const c = candidatesByPath("products/pixel-9.html", "Acme");
+      const aaA = a.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaB = b.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaC = c.find((x) => x.criterionId === "wcag22:1.4.5");
+      expect(aaA?.dismissalKey).toBeDefined();
+      expect(aaB?.dismissalKey).toBe(aaA?.dismissalKey);
+      expect(aaC?.dismissalKey).toBe(aaA?.dismissalKey);
+    });
+
+    it("different logo images in the same parent dir produce different keys", () => {
+      // Both srcs match the keyword regex (`logo` and `banner`) so both
+      // fire — only the src-basename pattern differs, so the dismissal
+      // keys diverge.
+      const a = runFinder(finder, `<img src="/assets/site-logo.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const b = runFinder(finder, `<img src="/assets/page-banner.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const aaA = a.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaB = b.find((x) => x.criterionId === "wcag22:1.4.5");
+      expect(aaA?.dismissalKey).toBeDefined();
+      expect(aaB?.dismissalKey).toBeDefined();
+      expect(aaA?.dismissalKey).not.toBe(aaB?.dismissalKey);
+    });
+
+    it("different parent-dir patterns produce different keys", () => {
+      // Same logo basename, different parent dir tree: 'products' vs
+      // 'docs'. The filename-pattern differs, so the hash differs —
+      // the agent gets to record separate verdicts per pattern.
+      const a = runFinder(finder, `<img src="/assets/logo.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const b = runFinder(finder, `<img src="/assets/logo.png" alt="Acme">`, {
+        filePath: "docs/getting-started.html",
+      });
+      const aaA = a.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaB = b.find((x) => x.criterionId === "wcag22:1.4.5");
+      expect(aaA?.dismissalKey).not.toBe(aaB?.dismissalKey);
+    });
+
+    it("digit-version variations of the same logo collapse to the same key", () => {
+      // `logo-v2.png`, `logo-v3.png`, `logo-2024.png` all share the
+      // same brand identity — the src-basename normalizer collapses
+      // digits to `*` so the hash stays stable across versions.
+      const a = runFinder(finder, `<img src="/assets/logo-v2.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const b = runFinder(finder, `<img src="/assets/logo-v3.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const c = runFinder(finder, `<img src="/assets/logo-v2024.png" alt="Acme">`, {
+        filePath: "products/iphone.html",
+      });
+      const aaA = a.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaB = b.find((x) => x.criterionId === "wcag22:1.4.5");
+      const aaC = c.find((x) => x.criterionId === "wcag22:1.4.5");
+      expect(aaA?.dismissalKey).toBeDefined();
+      expect(aaB?.dismissalKey).toBe(aaA?.dismissalKey);
+      expect(aaC?.dismissalKey).toBe(aaA?.dismissalKey);
+    });
+
+    it("174 brand-mark candidates with the same logo image but different paths all share one dismissalKey", () => {
+      // The motivating case from the field report: a bulk-template tree
+      // emits 174 logo-image candidates pointing at the same
+      // `<img src="/assets/logo.png">` across 174 product pages. With
+      // `dismissalKey` populated deterministically, all 174 hash to the
+      // same value — the agent records ONE verdict and applies it to
+      // every match via `attest`. This is the integration assertion the
+      // dispatch prompt pinned: surface, don't suppress; deduplicate the
+      // verdict, not the candidate.
+      const keys = new Set<string>();
+      for (let i = 0; i < 174; i += 1) {
+        const filePath = `products/product-${i}.html`;
+        const out = runFinder(finder, `<img src="/assets/logo.png" alt="Acme">`, {
+          filePath,
+        });
+        const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+        expect(aa?.dismissalKey).toBeDefined();
+        if (aa?.dismissalKey) keys.add(aa.dismissalKey);
+      }
+      // The whole point of the field-report fix: 174 candidates, ONE
+      // dismissalKey. If the set has more than one entry, the
+      // fingerprint is not deduplicating verdicts the way the dispatch
+      // contract requires.
+      expect(keys.size).toBe(1);
+    });
+
+    it("aggregated sibling group carries a single dismissalKey on the consolidated candidate", () => {
+      // Per-sibling candidates are collapsed into one aggregated
+      // emission; the consolidated candidate still carries
+      // `dismissalKey` so the verdict-dedup story works on aggregated
+      // emissions too.
+      const source = [
+        '<a href="/s1"><img class="sponsor-logo" src="/sponsor1.png" alt="Sponsor 1"></a>',
+        '<a href="/s2"><img class="sponsor-logo" src="/sponsor2.png" alt="Sponsor 2"></a>',
+        '<a href="/s3"><img class="sponsor-logo" src="/sponsor3.png" alt="Sponsor 3"></a>',
+        '<a href="/s4"><img class="sponsor-logo" src="/sponsor4.png" alt="Sponsor 4"></a>',
+      ].join("\n");
+      const out = runFinder(finder, source, { filePath: "sponsors/index.html" });
+      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa.length).toBeGreaterThan(0);
+      for (const candidate of aa) {
+        expect(candidate.dismissalKey).toBeDefined();
+        expect(candidate.dismissalKey).toMatch(/^[0-9a-f]{8}$/);
+      }
+    });
+
+    it("populates dismissalKey on JSX emissions too", () => {
+      const out = runFinder(
+        finder,
+        `const x = <img className="site-logo" src="/brand.png" alt="Acme" />;`,
+      );
+      expect(out.length).toBeGreaterThan(0);
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.dismissalKey).toBeDefined();
+      expect(aa?.dismissalKey).toMatch(/^[0-9a-f]{8}$/);
+    });
+  });
 });

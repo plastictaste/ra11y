@@ -132,6 +132,7 @@ function buildAgentReviewCandidate(c: ReviewCandidate): AgentReviewCandidate {
     ...(c.durationExpression === undefined ? {} : { durationExpression: c.durationExpression }),
     ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
     ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
+    ...(c.dismissalKey === undefined ? {} : { dismissalKey: c.dismissalKey }),
   };
 }
 

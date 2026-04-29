@@ -218,6 +218,17 @@ interface ChecklistCandidateOut {
    * not have to re-call review_candidates to recover the symbol.
    */
   readonly handlerFunctionName?: string;
+  /**
+   * Stable content-addressable fingerprint of the candidate's emission
+   * shape passed through from the finder (see
+   * `ReviewCandidate.dismissalKey`). When the same templated emission
+   * shape fans out across many routes, every candidate carries the same
+   * key so a checklist consumer can record ONE verdict via `attest` and
+   * apply it to every matching sibling. Workflow scaffolding —
+   * strictly additive, never gates suppression. Omitted on candidates
+   * whose finder does not populate the field.
+   */
+  readonly dismissalKey?: string;
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -1284,9 +1295,10 @@ function mapCandidates(
  * Maps a single {@link ReviewCandidate} onto one row of the checklist
  * surface — the per-candidate present-when-meaningful spreads (snippet,
  * siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
- * durationLiteralMs, durationExpression, sourceCount, handlerFunctionName)
- * live here so {@link mapCandidates} stays under the linter's cognitive-
- * complexity cap. All optional fields conditional-spread per CLAUDE.md §1.
+ * durationLiteralMs, durationExpression, sourceCount, handlerFunctionName,
+ * dismissalKey) live here so {@link mapCandidates} stays under the linter's
+ * cognitive-complexity cap. All optional fields conditional-spread per
+ * CLAUDE.md §1.
  */
 function mapOneCandidate(
   c: ReviewCandidate,
@@ -1336,6 +1348,12 @@ function mapOneCandidate(
     // agent's next Read targets the binding directly instead of
     // re-parsing the reason text. Omitted on inline-body handlers.
     ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
+    // dismissalKey carries through so a checklist consumer can record
+    // ONE verdict keyed on the hash and apply it to every matching
+    // candidate via `attest`. Workflow scaffolding per AI-first
+    // doctrine — strictly additive, never gates suppression. Omitted
+    // when the emitting finder did not populate the field.
+    ...(c.dismissalKey === undefined ? {} : { dismissalKey: c.dismissalKey }),
   };
 }
 

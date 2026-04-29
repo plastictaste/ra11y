@@ -49,12 +49,19 @@ import type {
   ReviewCandidateSibling,
 } from "../../types/review.ts";
 import {
+  computeDismissalKey,
+  normalizeFilenamePattern,
+  normalizeSrcBasenamePattern,
+} from "../../utils/dismissal-key.ts";
+import {
   type AggregationGroup,
   type AggregationShapeKind,
   computeAggregationGroups,
   type SiblingSummary,
 } from "./images-of-text-aggregate.ts";
 import { htmlSrOnlySiblingHint, jsxSrOnlySiblingHint } from "./images-of-text-sr-only.ts";
+
+const FINDER_ID = "review/images-of-text";
 
 const CRITERION_IDS = [
   "wcag22:1.4.5",
@@ -493,6 +500,7 @@ function emitHtmlImageCandidate(
     undefined,
     alt?.raw ?? null,
     buildPredicateConceded(alt?.raw ?? null, classVal, srcVal),
+    srcVal,
   );
 }
 
@@ -567,6 +575,7 @@ function emitHtmlAggregationGroup(
     // images-of-text-aggregate.ts), so the anchor's alt is
     // representative of the group's evidence.
     buildPredicateConceded(anchorAltRaw, classVal, srcVal),
+    srcVal,
   );
 }
 
@@ -720,6 +729,7 @@ function emitJsxImageCandidate(
     undefined,
     alt?.raw ?? null,
     buildPredicateConceded(alt?.raw ?? null, classVal, srcVal),
+    srcVal,
   );
 }
 
@@ -783,6 +793,7 @@ function emitJsxAggregationGroup(
     // logotype-pattern probe input — every member of the group shares
     // the same parent/class by group precondition.
     buildPredicateConceded(anchorAltRaw, classVal, srcVal),
+    srcVal,
   );
 }
 
@@ -978,6 +989,7 @@ function pushForAllCriteria(
   siblingOccurrences: readonly ReviewCandidateSibling[] | undefined,
   altRaw: string | null,
   predicateConceded: ReviewCandidatePredicateConceded | null,
+  srcValue: string | null,
 ): void {
   // Confidence "low": alt/className/src pattern matching on
   // "logo"/"banner"/"heading" tokens and short-alt-duplicated-in-text
@@ -991,6 +1003,20 @@ function pushForAllCriteria(
   // AI-first consumer model the gate matches the reason-text gate
   // above; both surfaces agree on which criteria the exemption
   // framing is honest for.
+  //
+  // `dismissalKey` is computed from the candidate's emission shape —
+  // (FINDER_ID, normalized filename pattern, normalized src basename
+  // pattern). Stamped on every emitted candidate (per-criterion) so
+  // an agent that records a verdict on one criterion's hash can
+  // apply it to siblings in the same group via `attest`. Per the
+  // AI-first consumer model the key is workflow scaffolding, not
+  // suppression: every candidate still surfaces at the same
+  // confidence with every WCAG criterion attached.
+  const dismissalKey = computeDismissalKey({
+    ruleId: FINDER_ID,
+    filenamePattern: normalizeFilenamePattern(filePath),
+    srcBasenamePattern: normalizeSrcBasenamePattern(srcValue),
+  });
   for (const criterionId of CRITERION_IDS) {
     const augmented = renderPerCriterionReason(
       criterionId,
@@ -1014,6 +1040,7 @@ function pushForAllCriteria(
         ? { siblingOccurrences }
         : {}),
       ...(conceded === null ? {} : { predicateConceded: conceded }),
+      dismissalKey,
     };
     candidates.push(candidate);
     // Stash the raw alt against the candidate identity for the post-
