@@ -1,5 +1,14 @@
 /**
  * Unit tests for the review/images-of-text finder (wcag22:1.4.5).
+ *
+ * 1.4.5 governs whether the image PIXELS render text as glyphs. The
+ * finder fires on signals provable from the static markup that
+ * suggest baked-in text artwork — a class name or src filename
+ * containing `logo`/`banner`/`heading`/`title`/`header`. The
+ * historical "alt repeats surrounding text" predicate was a 1.1.1
+ * (Non-text Content) concern and migrated to
+ * `review/redundant-alt-text` — see tests/unit/review/redundant-alt-text.test.ts
+ * for that surface.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -7,13 +16,6 @@ import { finder } from "../../../src/review/finders/images-of-text.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
 
 describe("review/images-of-text", () => {
-  it("flags HTML img whose short alt text is repeated in surrounding text", () => {
-    const source = `<a href="/sale"><img alt="Summer Sale" src="/promo.png"><span>Summer Sale</span></a>`;
-    const out = runFinder(finder, source, { filePath: "input.html" });
-    expect(out.length).toBeGreaterThan(0);
-    expect(out[0]?.reason).toContain("surrounding text");
-  });
-
   it("flags HTML img whose src filename suggests text artwork", () => {
     const source = `<img src="/assets/site-header-banner.png" alt="Hero">`;
     const out = runFinder(finder, source, { filePath: "input.html" });
@@ -33,23 +35,6 @@ describe("review/images-of-text", () => {
     const out = runFinder(finder, source);
     expect(out.length).toBeGreaterThan(0);
     expect(out[0]?.reason).toContain('src filename suggests "heading"');
-  });
-
-  it("does not flag long alt text echoed nearby", () => {
-    const source = `
-      <div>
-        <img alt="This banner contains more than five words" src="/hero-art.png">
-        This banner contains more than five words
-      </div>
-    `;
-    const out = runFinder(finder, source, { filePath: "input.html" });
-    expect(out).toEqual([]);
-  });
-
-  it("does not flag unrelated surrounding text", () => {
-    const source = `<div><img alt="Download" src="/cta.png">Upload</div>`;
-    const out = runFinder(finder, source, { filePath: "input.html" });
-    expect(out).toEqual([]);
   });
 
   it("does not flag ordinary photos without text hints", () => {
@@ -136,6 +121,9 @@ describe("review/images-of-text", () => {
     // suppress — the candidate still emits at the same confidence.
 
     it("populates predicateConceded when the alt text contains a logotype token", () => {
+      // src filename `/header.png` matches the keyword regex, so the
+      // candidate fires; alt text "Acme logo" still feeds the
+      // predicateConceded probe.
       const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
         filePath: "x.html",
       });
@@ -143,34 +131,6 @@ describe("review/images-of-text", () => {
       expect(aa?.predicateConceded).toBeDefined();
       expect(aa?.predicateConceded?.signal.kind).toBe("logotype-pattern");
       expect(aa?.predicateConceded?.evidence).toContain("Acme logo");
-    });
-
-    it("populates predicateConceded when the class names a brand mark", () => {
-      // The class token "brand" doesn't match the keywordHint regex
-      // (logo|banner|heading|title|header), so the finder needs the
-      // surrounding-text signal to fire. The class token still feeds
-      // the predicateConceded probe — the priority-honesty signal is
-      // independent of which signal source emitted the candidate.
-      const source = `const x = <div><img className="brand-mark" src="/h.png" alt="Acme" /><span>Acme</span></div>;`;
-      const out = runFinder(finder, source);
-      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa?.predicateConceded).toBeDefined();
-      expect(aa?.predicateConceded?.signal.kind).toBe("logotype-pattern");
-      expect(aa?.predicateConceded?.evidence).toContain("brand");
-    });
-
-    it("populates predicateConceded when the src basename contains 'logotype'", () => {
-      // The "logotype" token isn't in the keywordHint regex; the
-      // candidate needs a sibling-text echo to fire. The src basename
-      // still feeds the predicateConceded probe.
-      const out = runFinder(
-        finder,
-        `<div><img src="/assets/site-logotype.svg" alt="Acme"><span>Acme</span></div>`,
-        { filePath: "x.html" },
-      );
-      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa?.predicateConceded).toBeDefined();
-      expect(aa?.predicateConceded?.evidence).toContain("logotype");
     });
 
     it("does NOT populate predicateConceded on the AAA 1.4.9 variant — logos still apply at AAA", () => {
@@ -188,12 +148,12 @@ describe("review/images-of-text", () => {
     it("omits predicateConceded when the alt text is ambiguous about logotype evidence", () => {
       // "Image showing text overlay" describes a generic image-of-
       // text pattern with no logotype concession. The candidate
-      // surfaces at the same confidence, but the priority-honesty
+      // surfaces (heading keyword in src) but the priority-honesty
       // signal must NOT fire — this is exactly the actionable case
       // the checklist budget should rank as high.
       const out = runFinder(
         finder,
-        `<div><img src="/poster.png" alt="Image showing text overlay">Image showing text overlay</div>`,
+        `<img src="/poster-heading.png" alt="Image showing text overlay">`,
         { filePath: "x.html" },
       );
       const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
@@ -224,7 +184,7 @@ describe("review/images-of-text", () => {
     // ("Enrich reason with dismissal signal; keep candidate in
     // primary list").
     it("annotates when the svg data URI payload has no text/tspan tokens", () => {
-      // `alt="Logo"` triggers keywordHint; the carousel-style SVG is a
+      // `class="logo"` triggers keywordHint; the carousel-style SVG is a
       // path-only placeholder decoded to `<svg><path d='M0 0h10v10H0z'/></svg>`.
       const source = `<img class="logo" src="data:image/svg+xml,%3Csvg%3E%3Cpath%20d%3D%27M0%200h10v10H0z%27%2F%3E%3C%2Fsvg%3E" alt="Acme">`;
       const out = runFinder(finder, source, { filePath: "input.html" });
@@ -271,59 +231,6 @@ describe("review/images-of-text", () => {
       const out = runFinder(finder, source);
       expect(out.length).toBeGreaterThan(0);
       expect(out[0]?.reason).toContain("text-baked-in concern is provably lower");
-    });
-  });
-
-  describe("parent-text corpus partitions <svg> subtrees", () => {
-    // Invariant: when the only "surrounding text" match for an <img>'s
-    // short alt attribute lives inside a sibling <svg>'s <text>/<tspan>
-    // descendant, the reason must NOT use the unqualified
-    // "repeated in surrounding text" phrasing (which implies equivalent
-    // live HTML text is already present). It must name the sibling
-    // <svg> as the match source so the agent can triage accurately.
-    // Per CLAUDE.md § 1 "Surface, don't suppress" the candidate still
-    // emits at the same confidence — only the phrasing differs.
-    // Captured case: Bootstrap's carousel renders inline SVG placeholder
-    // images whose <text> paints the slide label sibling-adjacent to an
-    // <img alt="First slide">.
-    it("names the sibling <svg> when the match is SVG-only (HTML img)", () => {
-      const source = `<div><img alt="First slide" src="/p.png"><svg><text>First slide</text></svg></div>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      expect(out.length).toBeGreaterThan(0);
-      expect(out[0]?.reason).toContain("inside a sibling <svg>");
-      expect(out[0]?.reason).not.toContain("is repeated in surrounding text");
-    });
-
-    it("names the sibling <svg> when the match is in a <tspan> (HTML img)", () => {
-      // <tspan> inside <text> still renders as SVG-painted glyphs, not live HTML.
-      const source = `<div><img alt="Hello" src="/p.png"><svg><text><tspan>Hello</tspan></text></svg></div>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      expect(out.length).toBeGreaterThan(0);
-      expect(out[0]?.reason).toContain("inside a sibling <svg>");
-    });
-
-    it("prefers live-HTML phrasing when BOTH live text and SVG text match", () => {
-      // Live HTML text equivalence IS present — agent should see the
-      // existing phrasing, not the SVG-only variant.
-      const source = `<div><img alt="Sale" src="/p.png"><svg><text>Sale</text></svg><span>Sale</span></div>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      expect(out.length).toBeGreaterThan(0);
-      expect(out[0]?.reason).toContain("is repeated in surrounding text");
-      expect(out[0]?.reason).not.toContain("inside a sibling <svg>");
-    });
-
-    it("names the sibling <svg> when the match is SVG-only (JSX img)", () => {
-      const source = `
-        const x = (
-          <div>
-            <img alt="First slide" src="/p.png" />
-            <svg><text>First slide</text></svg>
-          </div>
-        );
-      `;
-      const out = runFinder(finder, source);
-      expect(out.length).toBeGreaterThan(0);
-      expect(out[0]?.reason).toContain("inside a sibling <svg>");
     });
   });
 
@@ -389,8 +296,6 @@ describe("review/images-of-text", () => {
     it("still surfaces the candidate when the sr-only hint applies (no suppression)", () => {
       const source = `<a><img class="site-logo" src="/l.svg" alt="Jekyll"><span class="sr-only">Jekyll</span></a>`;
       const out = runFinder(finder, source, { filePath: "header.html" });
-      // Surface-not-suppress: the candidate stays at the same
-      // confidence and still fires for every criterion in the bundle.
       const ids = new Set(out.map((c) => c.criterionId));
       expect(ids.has("wcag22:1.4.5")).toBe(true);
       expect(ids.has("wcag22:1.4.9")).toBe(true);
@@ -399,12 +304,6 @@ describe("review/images-of-text", () => {
     });
 
     it("annotates 1.4.9 (AAA) too — the sibling signal is criterion-agnostic", () => {
-      // The sr-only hint is evidence about the DOM, not about the
-      // criterion's exemption structure. Unlike the logotype exemption
-      // hint (which only applies to 1.4.5 AA), this annotation fires
-      // for every criterion in the 1.4.5 / 1.4.9 family — the agent
-      // still reads the file, but the dismissal signal surfaces
-      // uniformly.
       const source = `<a><img class="site-logo" src="/l.svg" alt="Jekyll"><span class="sr-only">Jekyll</span></a>`;
       const out = runFinder(finder, source, { filePath: "header.html" });
       const aaa = out.find((c) => c.criterionId === "wcag22:1.4.9");
@@ -588,7 +487,7 @@ describe("review/images-of-text", () => {
   });
 
   describe("parent-shape contiguous-range aggregation", () => {
-    // Q7 axis: when ≥4 adjacent same-shape sibling images share the
+    // When ≥4 adjacent same-shape sibling images share the
     // same parent and same wrapping shape but their alt text is too
     // divergent for the strict enumerated-token predicate (>1 varying
     // token positions), fall back to a contiguous-range collapse. The
@@ -596,11 +495,6 @@ describe("review/images-of-text", () => {
     // sibling trail is preserved via siblingOccurrences. Honest
     // aggregation per AI-first doctrine: same parent + same shape +
     // contiguous run is provable from the AST.
-    //
-    // Captured shape: contributor-list / sponsor-avatar clusters where
-    // each row carries a person name (`<img alt="Alice Liddell">`,
-    // `<img alt="Bob Bouvier">`, …) — divergent alts but a deterministic
-    // structural cluster.
 
     it("collapses 4 adjacent <a><img/></a> siblings whose alts diverge in 2+ token positions", () => {
       // Same parent (<div>), same wrapping shape (linked-img), 4
@@ -648,11 +542,7 @@ describe("review/images-of-text", () => {
       // 3 same-shape same-parent siblings — below the 4-member
       // threshold for the contiguous-range collapse. Each fires
       // individually (per-sibling emit path on the keyword hint);
-      // siblingOccurrences is omitted on each. (The post-emit
-      // stem-dedup pass also doesn't fire on these because the alts
-      // have no shared trailing enumeration token — distinct
-      // multi-word names — confirming the contiguous-range axis is
-      // the only one that could have collapsed them.)
+      // siblingOccurrences is omitted on each.
       const source = `<div>
         <a href="/u/1"><img class="contributor-logo" src="/u1.png" alt="Alice Liddell"/></a>
         <a href="/u/2"><img class="contributor-logo" src="/u2.png" alt="Bob Bouvier"/></a>
@@ -673,14 +563,6 @@ describe("review/images-of-text", () => {
       // MIN_GROUP_SIZE, so no aggregation fires. Each img emits its
       // own per-sibling candidate. (`banner` keyword keeps each img
       // firing on the per-sibling path.)
-      //
-      // NOTE: After per-sibling emit, the post-emit stem-dedup pass
-      // does NOT fire either — these alts ("Alice Liddell" /
-      // "Bob Bouvier" / "Carol Danvers" / "Diana Prince") have no
-      // shared trailing enumeration token, so accessibleNameStem
-      // returns null for each. The cross-axis isolation makes this
-      // the cleanest test of "shape boundary stops the contiguous-
-      // range collapse without smuggling in stem-dedup as a backup."
       const source = `<div>
         <img class="banner" src="/h1.png" alt="Alice Liddell"/>
         <a href="/u/2"><img class="banner" src="/u2.png" alt="Bob Bouvier"/></a>
@@ -742,19 +624,8 @@ describe("review/images-of-text", () => {
     // whose normalized alt shares a stem (alt with trailing
     // enumeration token stripped) into ONE consolidated candidate
     // carrying `sourceCount: N` and a `siblingOccurrences` trail.
-    // Operates AFTER the same-parent aggregator (which handles
-    // adjacent ≥4 same-shape runs) and is independent of adjacency
-    // or wrapping shape — runs across all candidates the finder
-    // emitted for the file. Honest aggregation per the AI-first
-    // consumer model: the stem is provable from the AST (digit/
-    // ordinal-suffix-strip on the normalized alt), not a heuristic
-    // on weaker evidence.
 
     it("collapses 3 same-stem candidates into ONE with sourceCount: 3 and 3 locations", () => {
-      // Canonical worked example: three sponsor images with sequential
-      // alt prefix "Sponsor 1/2/3". Stem "sponsor" matches across all
-      // three — collapse to one candidate per criterion carrying
-      // sourceCount: 3 and a 3-entry siblingOccurrences trail.
       const links = Array.from(
         { length: 3 },
         (_, i) =>
@@ -769,10 +640,6 @@ describe("review/images-of-text", () => {
     });
 
     it("3 unrelated images with distinct accnames stay as 3 separate candidates", () => {
-      // Disjoint stems (no shared "sponsor"/"avatar"/etc. prefix) —
-      // each image's accessible name normalizes to a different stem,
-      // so dedup yields three independent candidates carrying neither
-      // sourceCount nor siblingOccurrences (singletons).
       const source = `<div>
         <img class="logo" src="/a.png" alt="Alpha One"/>
         <img class="logo" src="/b.png" alt="Beta Two"/>
@@ -788,9 +655,6 @@ describe("review/images-of-text", () => {
     });
 
     it("groups by stem across non-adjacent siblings (different parents)", () => {
-      // Stem-dedup is independent of adjacency or parent. Two sponsor
-      // images in `<header>` and one in `<footer>` still collapse if
-      // their stems match.
       const source = `<div>
         <header>
           <img class="logo" src="/h1.png" alt="Sponsor 1"/>
@@ -808,9 +672,6 @@ describe("review/images-of-text", () => {
     });
 
     it("strips trailing alphabet-letter ordinal markers (Item A / Item B / Item C)", () => {
-      // Trailing single-letter enumeration is in the dedup token set
-      // (per accessibleNameStem). "Item A" / "Item B" / "Item C" share
-      // stem "item" and collapse.
       const source = `<div>
         <img class="banner" src="/a.png" alt="Item A"/>
         <img class="banner" src="/b.png" alt="Item B"/>
@@ -835,10 +696,6 @@ describe("review/images-of-text", () => {
     });
 
     it("does NOT dedup when alt has no trailing enumeration token", () => {
-      // Single-token alts ("Acme") have no enumeration suffix to
-      // strip — accessibleNameStem returns null for them, and they
-      // stay singletons. Same parent + same shape isn't enough on its
-      // own; the dedup pass requires a stripped enumeration token.
       const source = `<div>
         <img class="logo" src="/a.png" alt="Acme"/>
         <img class="logo" src="/b.png" alt="Beta"/>
@@ -853,9 +710,6 @@ describe("review/images-of-text", () => {
     });
 
     it("keeps cross-standard cardinality intact — every criterion gets its own collapsed row", () => {
-      // The finder declares 6 criteria; the dedup pass is per-criterion
-      // so every member of the 1.4.5 family + the 1.4.9 AAA pair sees
-      // its own collapsed candidate with the same sourceCount/trail.
       const links = Array.from(
         { length: 3 },
         (_, i) => `<img class="logo" src="/s${i + 1}.png" alt="Avatar ${i + 1}"/>`,
@@ -888,12 +742,6 @@ describe("review/images-of-text", () => {
     });
 
     it("does NOT double-aggregate candidates the same-parent aggregator already collapsed", () => {
-      // Five sponsor links in one parent — same-parent aggregator
-      // collapses them to one candidate with siblingOccurrences. The
-      // stem-dedup pass skips candidates already carrying that field
-      // (else it would double-count). Result: ONE candidate, with
-      // siblingOccurrences but NO sourceCount (sourceCount is the
-      // stem-dedup signal).
       const links = Array.from(
         { length: 5 },
         (_, i) =>
@@ -903,77 +751,19 @@ describe("review/images-of-text", () => {
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
       expect(aa.length).toBe(1);
       expect(aa[0]?.siblingOccurrences?.length).toBe(5);
-      // sourceCount is reserved for stem-dedup-collapsed candidates;
-      // same-parent aggregation uses siblingOccurrences alone (the
-      // existing contract is unchanged).
       expect(aa[0]?.sourceCount).toBeUndefined();
     });
   });
 
-  describe("markdown link syntax FP scope-tightening", () => {
-    // Captured case (jekyll README.markdown:58-67,78): rows of
-    // `[![Sponsor N](logo-N.png)](sponsor-N-url)` produced one
-    // candidate per criterion per row because each next-line URL
-    // slug (`/sponsor-N`) normalized to "sponsor N" and matched the
-    // adjacent `<img>`'s alt via the immediate-sibling text-node
-    // predicate. The fix drops that signal in markdown contexts when
-    // the adjacent text contains markdown link syntax (`](`).
+  describe("aggregation under the keyword-only signal (post 1.1.1 split)", () => {
+    // After the alt-repeats-prose predicate moved to redundant-alt-text
+    // under 1.1.1, the keyword-hint signal (logo/banner/heading/title/
+    // header on class or src) is the sole 1.4.5 trigger. Aggregation
+    // still fires on keyword-bearing siblings (the canonical jekyll
+    // sponsor pattern stays covered because every `<img>` carries
+    // `class="sponsor-logo"`).
 
-    it("drops sibling-text fire when adjacent text is a markdown link slug (.markdown)", () => {
-      // Between img-1 and img-2 the residue is "](href-1)\n[", which
-      // contains "](" — the marker. Sibling-text signal must drop.
-      const source = [
-        "[![Sponsor 1](logo1.png)](https://example.com/sponsor-1)",
-        "[![Sponsor 2](logo2.png)](https://example.com/sponsor-2)",
-      ].join("\n");
-      const out = runFinder(finder, source, { filePath: "README.markdown" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      // No sibling-text or parent-text match should fire — the only
-      // shared text is the URL slug, which the markdown carve-out
-      // discards. Imgs without a logo/banner/heading keyword in their
-      // src or class produce no candidate at all.
-      expect(aa).toEqual([]);
-    });
-
-    it("drops sibling-text fire when adjacent text is a markdown link slug (.md)", () => {
-      const source = [
-        "[![Acme](acme.png)](https://acme.example/acme-page)",
-        "[![Bravo](bravo.png)](https://bravo.example/bravo-page)",
-      ].join("\n");
-      const out = runFinder(finder, source, { filePath: "docs/README.md" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa).toEqual([]);
-    });
-
-    it("still fires on non-markdown adjacent text (unrelated prose) in markdown files", () => {
-      // Prose without markdown link syntax must still trigger the
-      // sibling-text signal — the carve-out is scoped to "](" markers,
-      // not to all markdown files. `<img>` here is HTML embedded
-      // inside `.markdown` (a common pattern); the trailing prose
-      // "Buy Now" repeats the alt and is not link syntax.
-      const source = `<img alt="Buy Now" src="/promo.png">Buy Now`;
-      const out = runFinder(finder, source, { filePath: "page.markdown" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-      expect(aa[0]?.reason).toContain("immediate sibling text node");
-    });
-
-    it('still fires in HTML files (.html) when adjacent text contains "]("', () => {
-      // The carve-out is markdown-only — `.html` files don't go through
-      // the markdown rewrite, so a literal `](` in HTML text is just
-      // text, and the signal must still fire.
-      const source = `<div><img alt="Sale" src="/p.png">Sale](nope)</div>`;
-      const out = runFinder(finder, source, { filePath: "page.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-    });
-
-    it("still fires in markdown when keyword signal is independent of sibling text", () => {
-      // Surface-don't-suppress floor: even when the markdown carve-out
-      // drops the sibling-text signal, an independent signal (logo
-      // keyword on the class) keeps the candidate alive. Aggregation
-      // still applies (≥4 same-shape, enumerated-token alt) so this
-      // collapses to one candidate per criterion.
+    it("still aggregates keyword-bearing siblings in markdown files", () => {
       const source = [
         '<a href="/s1"><img class="sponsor-logo" src="/s1.png" alt="Sponsor 1"></a>',
         '<a href="/s2"><img class="sponsor-logo" src="/s2.png" alt="Sponsor 2"></a>',
@@ -982,124 +772,16 @@ describe("review/images-of-text", () => {
       ].join("\n");
       const out = runFinder(finder, source, { filePath: "README.markdown" });
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      // Aggregation still fires on the keyword-signal-bearing siblings.
       expect(aa.length).toBe(1);
       expect(aa[0]?.reason).toContain("aggregated from 4 adjacent sibling images");
     });
-  });
 
-  describe("photo-with-block-level-label FP scope-tightening", () => {
-    // Captured case (insect-catch-game/index.html:21,27,36,45):
-    // `<button class="choose-insect-btn"><img alt="fly"><p>Fly</p></button>`
-    // groups produced one candidate per criterion per group because
-    // the `<p>` label's text matched the `<img>`'s alt via the
-    // parent-text-corpus path. 1.4.5 asks whether the image renders
-    // text as glyphs — an HTML label adjacent to a photo doesn't
-    // establish that. The fix partitions parent-text into live (direct
-    // text + inline descendants) and block-sibling (text inside a
-    // block-level direct child); a match limited to block-sibling
-    // drops the signal.
-
-    it("drops the fire when alt only matches block-level <p> sibling text (HTML)", () => {
-      const source = `<button class="choose-insect-btn"><img alt="fly" src="/fly.png"><p>Fly</p></button>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      // The only signal would have been parent-text-match against the
-      // <p> label, which the block-sibling partition now drops.
-      expect(aa).toEqual([]);
-    });
-
-    it("drops the fire when alt only matches block-level <h2> sibling text", () => {
-      const source = `<section><img alt="Pricing" src="/p.png"><h2>Pricing</h2></section>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa).toEqual([]);
-    });
-
-    it("drops the fire when alt only matches <figcaption> text", () => {
-      const source = `<figure><img alt="Mountains" src="/m.jpg"><figcaption>Mountains</figcaption></figure>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa).toEqual([]);
-    });
-
-    it("still fires when alt matches inline <span> sibling text (existing pattern preserved)", () => {
-      // <span> is inline — the existing `<a><img/><span>X</span></a>`
-      // pattern stays firing per surface-don't-suppress.
+    it("does not fire on imgs whose only signal would have been alt-repeats-prose", () => {
+      // No class/src keyword hint. Pre-split this fired via the
+      // alt-repeats-prose predicate; post-split it migrates to
+      // redundant-alt-text under 1.1.1, so 1.4.5 stays clean.
       const source = `<a href="/sale"><img alt="Summer Sale" src="/promo.png"><span>Summer Sale</span></a>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-      expect(aa[0]?.reason).toContain("surrounding text");
-    });
-
-    it("still fires when alt matches direct text child of parent", () => {
-      // Direct text child is not block-sibling text — fire as before.
-      const source = `<div><img alt="Sale" src="/p.png"> Sale </div>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-    });
-
-    it("still fires when keyword signal is present alongside block-sibling label", () => {
-      // The block-sibling partition only suppresses the parent-text
-      // signal — keyword/sr-only/svg signals still surface
-      // independently. A logo keyword on class survives.
-      const source = `<button><img alt="Acme" class="site-logo" src="/l.svg"><p>Acme</p></button>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-      expect(aa[0]?.reason).toContain('class suggests "logo"');
-    });
-
-    it("still fires when alt matches immediate sibling text node alongside block-sibling label", () => {
-      // Immediate-sibling-text-node match is independent of the
-      // parent-text bucket — it fires regardless of the block-sibling
-      // partitioning.
-      const source = `<div><img alt="Sale" src="/p.png">Sale<p>Sale</p></div>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-      expect(aa[0]?.reason).toContain("immediate sibling text node");
-    });
-
-    it("drops the fire when alt only matches block-level <p> sibling text (JSX)", () => {
-      const source = `
-        const x = (
-          <button className="choose-insect-btn">
-            <img alt="fly" src="/fly.png" />
-            <p>Fly</p>
-          </button>
-        );
-      `;
-      const out = runFinder(finder, source);
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa).toEqual([]);
-    });
-
-    it("still fires in JSX when alt matches inline <span> sibling text", () => {
-      const source = `
-        const x = (
-          <a href="/sale">
-            <img alt="Summer Sale" src="/promo.png" />
-            <span>Summer Sale</span>
-          </a>
-        );
-      `;
-      const out = runFinder(finder, source);
-      const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
-      expect(aa.length).toBeGreaterThan(0);
-      expect(aa[0]?.reason).toContain("surrounding text");
-    });
-
-    it("treats nested block descendants as block-sibling text", () => {
-      // The first wrapping direct-child of the parent is what
-      // determines the bucket. Here the parent is <section> and its
-      // direct child is <div> (block-level). Text deeper inside <div>
-      // — even via an inline <span> — is still classified as
-      // block-sibling text.
-      const source = `<section><img alt="Hello" src="/h.png"><div><span>Hello</span></div></section>`;
-      const out = runFinder(finder, source, { filePath: "x.html" });
+      const out = runFinder(finder, source, { filePath: "input.html" });
       const aa = out.filter((c) => c.criterionId === "wcag22:1.4.5");
       expect(aa).toEqual([]);
     });

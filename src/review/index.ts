@@ -34,6 +34,7 @@ import { finder as paginationGlyphAccessibleName } from "./finders/pagination-gl
 import { finder as passwordInputs } from "./finders/password-inputs.ts";
 import { finder as pointerInput } from "./finders/pointer-input.ts";
 import { finder as reducedMotionCandidate } from "./finders/reduced-motion-candidate.ts";
+import { finder as redundantAltText } from "./finders/redundant-alt-text.ts";
 import { finder as redundantEntry } from "./finders/redundant-entry.ts";
 import { finder as sectionHeadings } from "./finders/section-headings.ts";
 import { finder as sensoryCharacteristics } from "./finders/sensory-characteristics.ts";
@@ -75,6 +76,7 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   passwordInputs,
   pointerInput,
   reducedMotionCandidate,
+  redundantAltText,
   redundantEntry,
   sectionHeadings,
   sensoryCharacteristics,
