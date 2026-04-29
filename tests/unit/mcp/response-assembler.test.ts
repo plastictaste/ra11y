@@ -283,8 +283,7 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.plan["notes"]).toBe(1);
     type Lane = { source: number; buildArtifact: number };
     const lanes = r.plan["fixesByClass"] as Record<string, Lane>;
-    const laneSum = (l: Lane | undefined): number =>
-      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
+    const laneSum = (l: Lane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const errorWarningTotal =
       laneSum(lanes["mechanical"]) +
       laneSum(lanes["guidance"]) +
@@ -376,8 +375,7 @@ describe("assembleScanFamilyResponse", () => {
       for (const f of r.files) filesSurface += f.findings.length;
       type Lane = { source: number; buildArtifact: number };
       const lanes = r.plan["fixesByClass"] as Record<string, Lane> | undefined;
-      const laneSum = (l: Lane | undefined): number =>
-        (l?.source ?? 0) + (l?.buildArtifact ?? 0);
+      const laneSum = (l: Lane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
       const errorWarning =
         laneSum(lanes?.["mechanical"]) +
         laneSum(lanes?.["guidance"]) +

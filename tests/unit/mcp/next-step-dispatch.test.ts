@@ -134,7 +134,12 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: { source: 0, buildArtifact: 0 }, guidance: { source: 1, buildArtifact: 0 }, runtimeOnly: { source: 0, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
+          fixesByClass: {
+            mechanical: { source: 0, buildArtifact: 0 },
+            guidance: { source: 1, buildArtifact: 0 },
+            runtimeOnly: { source: 0, buildArtifact: 0 },
+            verifyInSource: { source: 0, buildArtifact: 0 },
+          },
         },
         files: [{ path: "App.tsx", findings: [sampleFinding] }],
       }),
@@ -154,7 +159,12 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
     const result = buildNextStep(
       formatted({
         plan: {
-          fixesByClass: { mechanical: { source: 0, buildArtifact: 0 }, guidance: { source: 0, buildArtifact: 0 }, runtimeOnly: { source: 1, buildArtifact: 0 }, verifyInSource: { source: 0, buildArtifact: 0 } },
+          fixesByClass: {
+            mechanical: { source: 0, buildArtifact: 0 },
+            guidance: { source: 0, buildArtifact: 0 },
+            runtimeOnly: { source: 1, buildArtifact: 0 },
+            verifyInSource: { source: 0, buildArtifact: 0 },
+          },
         },
         files: [{ path: "App.tsx", findings: [sampleFinding] }],
       }),

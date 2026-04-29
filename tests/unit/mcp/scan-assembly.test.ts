@@ -174,8 +174,7 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
     // Smoke-check the scan actually produced findings.
     type FbcLane = { source: number; buildArtifact: number };
     const lanes = formatted.plan["fixesByClass"] as Record<string, FbcLane> | undefined;
-    const laneSum = (l: FbcLane | undefined): number =>
-      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
+    const laneSum = (l: FbcLane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const errorWarning =
       laneSum(lanes?.["mechanical"]) +
       laneSum(lanes?.["guidance"]) +

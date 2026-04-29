@@ -583,8 +583,7 @@ describe("MCP tool: scan_project", () => {
       // carries a per-scan-kind sub-tally; the flat per-lane number
       // is the sum of `source + buildArtifact`.
       const lanes = data.plan.fixesByClass;
-      const laneSum = (l: Lane | undefined): number =>
-        (l?.source ?? 0) + (l?.buildArtifact ?? 0);
+      const laneSum = (l: Lane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
       const errorWarning =
         laneSum(lanes?.mechanical) +
         laneSum(lanes?.guidance) +

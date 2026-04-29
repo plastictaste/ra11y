@@ -274,7 +274,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // alongside `plan.notes` for the total finding count.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
-      ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
+      ? lanes.mechanical.source +
+        lanes.mechanical.buildArtifact +
+        (lanes.guidance.source + lanes.guidance.buildArtifact) +
+        (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
+        (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
     expect(errorWarning + body.plan.notes).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
@@ -741,7 +745,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // sum the per-lane tally for the error+warning total.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
-      ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
+      ? lanes.mechanical.source +
+        lanes.mechanical.buildArtifact +
+        (lanes.guidance.source + lanes.guidance.buildArtifact) +
+        (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
+        (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
     expect(errorWarning).toBeGreaterThan(0);
     expect(Array.isArray(body.plan.limitations)).toBe(true);
@@ -1406,7 +1414,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       // alongside `plan.notes` for the total finding count.
       const lanes = plan.fixesByClass;
       const errorWarning = lanes
-        ? (lanes.mechanical.source + lanes.mechanical.buildArtifact) + (lanes.guidance.source + lanes.guidance.buildArtifact) + (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) + (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
+        ? lanes.mechanical.source +
+          lanes.mechanical.buildArtifact +
+          (lanes.guidance.source + lanes.guidance.buildArtifact) +
+          (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
+          (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
         : 0;
       return errorWarning + plan.notes;
     }
@@ -1960,8 +1972,7 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // disambiguate "absent" from "zero" per lane.
     expect(body.plan.fixesByClass).toBeDefined();
     const fbc = body.plan.fixesByClass ?? {};
-    const laneSum = (l: Lane | undefined): number =>
-      (l?.source ?? 0) + (l?.buildArtifact ?? 0);
+    const laneSum = (l: Lane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
     const anyLanePopulated =
       laneSum(fbc.mechanical) > 0 ||
       laneSum(fbc.guidance) > 0 ||
