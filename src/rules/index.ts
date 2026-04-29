@@ -67,6 +67,7 @@ import { rule as anchorButtonNotFocusable } from "./keyboard/anchor-button-not-f
 import { rule as characterShortcuts } from "./keyboard/character-shortcuts.ts";
 import { rule as handlerMissing } from "./keyboard/handler-missing.ts";
 import { rule as hoverOnlyNoFocusMirror } from "./keyboard/hover-only-no-focus-mirror.ts";
+import { rule as interactiveDivRoleMissing } from "./keyboard/interactive-div-role-missing.ts";
 import { rule as horizontalScrollNoKeyboard } from "./layout/horizontal-scroll-no-keyboard.ts";
 import { rule as orientationLock } from "./layout/orientation-lock.ts";
 import { rule as reflowHardcodedWidth } from "./layout/reflow-hardcoded-width.ts";
@@ -166,6 +167,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   imgEmptyAltInClickableGroup,
   inPageLinkFragmentMissing,
   inlineDisplayNoneOnFocusable,
+  interactiveDivRoleMissing,
   invalidIdShape,
   invalidRole,
   labelAdjacentMismatch,
@@ -281,6 +283,7 @@ export {
   imgEmptyAltInClickableGroup,
   inlineDisplayNoneOnFocusable,
   inPageLinkFragmentMissing,
+  interactiveDivRoleMissing,
   invalidIdShape,
   invalidRole,
   labelAdjacentMismatch,
