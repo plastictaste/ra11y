@@ -377,6 +377,152 @@ describe("rule navigation/link-no-href", () => {
     });
   });
 
+  describe("structural-ancestor constraint: suggestion does NOT recommend a bare <a> → <button> swap", () => {
+    // When the flagged <a> sits inside a parent whose role contract
+    // restricts descendant shape (menu / menubar / listbox / tablist /
+    // tree, or `<select>` / `<datalist>` / `<table>` etc.), the bare
+    // swap loses the parent's keyboard model OR produces invalid markup.
+    // The suggestion must (a) name the constraint and (b) propose a
+    // within-constraint alternative.
+
+    it('HTML: <a onclick> inside <ul role="menu"> — names the menu constraint and avoids unconstrained swap', () => {
+      const violations = runRule(
+        rule,
+        `<ul role="menu"><li><a onclick="doThing()">Action</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="menu"`);
+      expect(sugg).toContain("menuitem");
+      // Must NOT contain the bare swap recommendation that doesn't
+      // mention the menu constraint — the prior bug recommended
+      // changing `<a>` to `<button>` with no acknowledgment of the
+      // ancestor's keyboard model.
+      expect(sugg).toContain("HOWEVER");
+    });
+
+    it('HTML: <a onclick> inside <ul class="dropdown-menu"> — names the Bootstrap dropdown constraint', () => {
+      const violations = runRule(
+        rule,
+        `<ul class="dropdown-menu"><li><a onclick="doThing()">Action</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("dropdown-menu");
+      expect(sugg).toContain("Bootstrap");
+      expect(sugg.toLowerCase()).toContain("keyboard model");
+    });
+
+    it('HTML: <a onclick> inside <ul role="menubar"> — names the menubar constraint', () => {
+      const violations = runRule(
+        rule,
+        `<ul role="menubar"><li><a onclick="doThing()">Action</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="menubar"`);
+    });
+
+    it('HTML: <a onclick> inside <ul role="tablist"> — names the tabs constraint', () => {
+      const violations = runRule(
+        rule,
+        `<ul role="tablist"><li><a onclick="select()">Tab 1</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="tablist"`);
+      expect(sugg).toContain(`role="tab"`);
+    });
+
+    it('HTML: <a onclick> inside <ul role="listbox"> — names the listbox constraint', () => {
+      const violations = runRule(
+        rule,
+        `<ul role="listbox"><li><a onclick="pick()">Option</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="listbox"`);
+      expect(sugg).toContain(`role="option"`);
+    });
+
+    it('HTML: <a onclick> inside <ul role="tree"> — names the tree constraint', () => {
+      const violations = runRule(
+        rule,
+        `<ul role="tree"><li><a onclick="expand()">Node</a></li></ul>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="tree"`);
+      expect(sugg).toContain("treeitem");
+    });
+
+    it("HTML: <a onclick> inside <table>/<tr>/<td> ladder — names the table content-model constraint", () => {
+      const violations = runRule(
+        rule,
+        `<table><tbody><tr><td><a onclick="edit()">Edit</a></td></tr></tbody></table>`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      // Closest ancestor classified is the <td> not in the constraint
+      // list — but <tr>/<tbody>/<table> ARE; we walk through <td> until
+      // a constraint hits.
+      expect(sugg).toContain("table");
+      expect(sugg).toContain("table-structural");
+    });
+
+    it('JSX: <a onClick> inside <ul role="menu"> — names the menu constraint', () => {
+      const violations = runRule(
+        rule,
+        `const X = <ul role="menu"><li><a onClick={doThing}>Action</a></li></ul>;`,
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain(`role="menu"`);
+      expect(sugg).toContain("menuitem");
+    });
+
+    it('JSX: <a onClick> inside <ul className="dropdown-menu"> — names the Bootstrap dropdown constraint', () => {
+      const violations = runRule(
+        rule,
+        `const X = <ul className="dropdown-menu"><li><a onClick={doThing}>Action</a></li></ul>;`,
+      );
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).toContain("dropdown-menu");
+      expect(sugg).toContain("Bootstrap");
+    });
+
+    it('HTML: <a> with class="dropdown-toggle" outside any <ul role="menu"> — generic suggestion (no false-positive constraint match)', () => {
+      // The dropdown-toggle is a TRIGGER (sibling to the menu, not
+      // inside it). The constraint must not falsely apply.
+      const violations = runRule(rule, `<a class="dropdown-toggle">Account</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      // Generic class-trigger suggestion should fire; no constraint hit.
+      expect(sugg).not.toContain("HOWEVER");
+    });
+
+    it("HTML: bare <a onclick> with no constrained ancestor — keeps the original suggestion shape", () => {
+      const violations = runRule(rule, `<div><a onclick="doThing()">Click</a></div>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const sugg = violations[0]?.suggestion ?? "";
+      expect(sugg).not.toContain("HOWEVER");
+      // Original shape: "decide the intent" / "<button type=\"button\">".
+      expect(sugg).toContain("decide the intent");
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:2.1.1, wcag21:2.1.1, wcag22:4.1.2, wcag21:4.1.2", () => {
       expect(rule.satisfies).toContain("wcag22:2.1.1");
