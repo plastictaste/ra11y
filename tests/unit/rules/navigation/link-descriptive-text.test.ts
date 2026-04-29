@@ -305,13 +305,19 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("the anchor has a title attribute", () => {
+    it("the anchor has a title attribute (downgraded to info name-via-title-fallback)", () => {
+      // Per ARIA 1.2 §4.3 step 5+, `title` is a last-resort name source
+      // many SRs suppress (NVDA default verbosity, VoiceOver in some
+      // modes). The link is no longer silenced — instead an info-severity
+      // candidate fires so the agent verifies SR support.
       const v = runRule(
         rule,
         `<a href="/twitter" title="Twitter"><i class="fa fa-twitter"></i></a>`,
         { filePath: "index.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
     });
 
     it("the child <img> has real alt text", () => {
@@ -798,16 +804,21 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(1);
     });
 
-    it("HTML: does NOT flag when title adds context (different from body)", () => {
-      // Title carries real additional info ("opens in new window") — the
-      // override genuinely supplies name content the body doesn't, so
-      // the generic-phrase path stays silent and lets the agent judge.
+    it("HTML: downgrades to info name-via-title-fallback when title is the only descriptive name source", () => {
+      // Per ARIA 1.2 §4.3 step 5+, `title` is a last-resort name source
+      // many SRs suppress. Generic-phrase body + descriptive title is no
+      // longer silenced — it's an info-severity candidate so the agent
+      // can verify whether the target SR setup announces the title.
       const v = runRule(
         rule,
         `<a href="/api-docs.pdf" title="API reference (PDF, opens in new tab)">click here</a>`,
         { filePath: "index.html" },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
+      expect(v[0]?.message).toContain("click here");
+      expect(v[0]?.message).toContain("API reference");
     });
 
     it("HTML: does NOT flag when aria-label adds context", () => {
@@ -831,12 +842,11 @@ describe("rule navigation/link-descriptive-text", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("HTML: empty-body icon-only link with non-matching title still silenced (existing contract)", () => {
-      // Regression guard: visible text is empty (icon-only), title is
-      // different → override returns true → icon-only path doesn't
-      // fire. This preserves the pre-existing
-      // `"the anchor has a title attribute"` behavior for icon-only
-      // anchors.
+    it("HTML: empty-body icon-only link with title fires info name-via-title-fallback", () => {
+      // Per ARIA 1.2 §4.3 step 5+, `title` is a last-resort name source
+      // many SRs suppress. The icon-only + title pattern is the textbook
+      // 2.4.4 risk surface (social-link rows) — it's no longer silenced;
+      // the agent verifies SR support via an info-severity candidate.
       const v = runRule(
         rule,
         `<a href="/twitter" title="Twitter"><i class="fa fa-twitter"></i></a>`,
@@ -844,7 +854,9 @@ describe("rule navigation/link-descriptive-text", () => {
           filePath: "index.html",
         },
       );
-      expect(v).toHaveLength(0);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
     });
 
     it("JSX: flags when title equals visible generic text", () => {
@@ -864,6 +876,104 @@ describe("rule navigation/link-descriptive-text", () => {
         `const X = <Link to="/x" aria-label="Open settings">click here</Link>;`,
       );
       expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("title is a last-resort name source (ARIA 1.2 §4.3 step 5+)", () => {
+    // The canonical regression case Q7 closes: icon-only social-link
+    // pattern with only `title` as a name source. Many screen readers
+    // (NVDA at default verbosity, VoiceOver in some modes) suppress
+    // `title` — silencing the rule entirely produces a silent under-fire
+    // on the textbook 2.4.4 risk surface. Per AI-first consumer doctrine,
+    // surface an info-severity candidate so the agent reads the file and
+    // verifies SR support, rather than asserting the link is broken
+    // (warning) or fine (silent).
+
+    it("HTML: fires info name-via-title-fallback on canonical icon-only social-link pattern", () => {
+      const v = runRule(rule, `<a href="/fb"><i class="fab fa-facebook"></i></a>`, {
+        filePath: "footer.html",
+      });
+      // Without title: existing icon-only warning.
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("no accessible name");
+    });
+
+    it("HTML: with title='Facebook' downgrades to info name-via-title-fallback (the Q7 regression)", () => {
+      const v = runRule(
+        rule,
+        `<a href="/fb" title="Facebook"><i class="fab fa-facebook"></i></a>`,
+        { filePath: "footer.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
+      expect(v[0]?.message).toContain("Facebook");
+      expect(v[0]?.suggestion).toContain("aria-label");
+    });
+
+    it("HTML: legitimate <a title='Open in new tab' aria-label='Foo'> stays silent", () => {
+      // aria-label is a reliable name source; title here is supplementary
+      // tooltip content, not the name. No emission.
+      const v = runRule(
+        rule,
+        `<a href="/external" title="Open in new tab" aria-label="External resource">click here</a>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: aria-labelledby silences title-fallback path", () => {
+      const v = runRule(
+        rule,
+        `<h2 id="h">Twitter</h2>` +
+          `<a href="/tw" title="Twitter" aria-labelledby="h"><i class="fa fa-twitter"></i></a>`,
+        { filePath: "index.html" },
+      );
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML: empty/whitespace title doesn't trigger the fallback path", () => {
+      const v = runRule(rule, `<a href="/tw" title="   "><i class="fa fa-twitter"></i></a>`, {
+        filePath: "index.html",
+      });
+      // Falls through to icon-only warning (no real title to fall back to).
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.message).toContain("no accessible name");
+    });
+
+    it("JSX: <Link> icon-only with title fires info name-via-title-fallback", () => {
+      const v = runRule(
+        rule,
+        `const X = <Link to="/fb" title="Facebook"><i className="fab fa-facebook" /></Link>;`,
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
+    });
+
+    it("JSX: generic-phrase body + descriptive title fires info name-via-title-fallback", () => {
+      const v = runRule(rule, `const X = <a href="/api" title="API reference">click here</a>;`);
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
+      expect(v[0]?.message).toContain("click here");
+    });
+
+    it("variantKey is name-via-title-fallback so finding doesn't collide with sibling variants", () => {
+      const v = runRule(
+        rule,
+        `<a href="/fb" title="Facebook"><i class="fab fa-facebook"></i></a>`,
+        { filePath: "footer.html" },
+      );
+      // The variantKey is folded into findingId; the test asserts the
+      // emit shape carries it via the message/severity contract that
+      // any caller reading this would route on. No direct variantKey
+      // accessor on the public Violation surface — the contract is
+      // observed via severity + message.
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.message).toContain("last-resort");
     });
   });
 

@@ -17,7 +17,7 @@
  * > A mechanism is available to allow the purpose of each link to be
  * > identified from link text alone. (SC 2.4.9, AAA)
  *
- * This rule covers three unnamed-link failure modes:
+ * This rule covers four unnamed-link failure modes:
  *
  *   1. GENERIC-PHRASE PATH — the anchor has visible text, but the text
  *      is a known non-descriptive phrase: "click here", "here", "read
@@ -39,6 +39,22 @@
  *          `role="presentation" | "none"`),
  *        - any element with `aria-hidden="true"` or `role="presentation"
  *          | "none"`.
+ *
+ *   2b. NAME-VIA-TITLE-FALLBACK PATH (info-severity candidate) — the
+ *      anchor would be icon-only or generic-phrase, BUT a `title`
+ *      attribute supplies a non-empty descriptive value. Per ARIA 1.2
+ *      §4.3 "Accessible Name and Description Computation" step 5+ of 5,
+ *      `title` is a *last-resort* name source many screen readers
+ *      suppress (NVDA at default verbosity reads it as the description,
+ *      not the name; VoiceOver in some modes does the same). The link
+ *      MIGHT have a usable name on some user agents and not others —
+ *      the agent reading the file is the right arbiter. Fires at
+ *      severity `info` with `variantKey: "name-via-title-fallback"` so
+ *      the agent verifies SR support rather than treating the link as
+ *      definitively broken (warning) or definitively fine (silent).
+ *      `aria-label` / `aria-labelledby` outrank `title` and silence
+ *      this path — the legitimate `<a title="Open in new tab"
+ *      aria-label="Foo">` pattern stays clean.
  *
  *   3. DUPLICATE-NAME-DIFFERENT-HREF PATH — two or more anchors in the
  *      same file AND the same landmark scope share the same normalized
@@ -108,6 +124,12 @@ import {
   checkDuplicateHrefHtml as checkDuplicateHrefHtmlImpl,
   checkDuplicateHrefJsx as checkDuplicateHrefJsxImpl,
 } from "./link-duplicate-name.ts";
+import {
+  emitTitleFallbackGenericHtml,
+  emitTitleFallbackGenericJsx,
+  emitTitleFallbackIconOnlyHtml,
+  emitTitleFallbackIconOnlyJsx,
+} from "./link-title-fallback.ts";
 
 /**
  * Phrases that are never acceptable as link text on their own. Matched
@@ -270,58 +292,84 @@ type Emit = (v: {
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const a of findHtmlElementsByTag(doc, "a")) {
     if (!hasHtmlAttribute(a, "href")) continue;
-
-    // Compute visible text stripped of presentational descendants
-    // (icon-font glyphs, decorative <img>, any aria-hidden subtree).
-    // The stripped view mirrors what assistive tech actually hears:
-    //   - icon-font text (Material Icons ligatures like "home") is
-    //     rendered as a glyph, not announced as a word; strip it.
-    //   - <img> contributes its non-empty `alt` as text.
-    //   - <svg> with a <title> child contributes the title text.
-    // Branch on the stripped result:
-    //   - empty → icon-only failure (2.4.4 + 4.1.2)
-    //   - matches a generic phrase → 2.4.4 generic-phrase path
-    //   - otherwise → clean.
-    const strippedText = visibleTextExcludingPresentationalHtml(a);
-
-    // `title` / `aria-label` normally override the body text for a11y
-    // name purposes. Treat them as non-overrides when they are exact
-    // (case-insensitive, trimmed) duplicates of the visible text —
-    // `<a title="click here">click here</a>` reads "click here" once
-    // to AT, not twice, so the body text still carries the generic-
-    // phrase signal.
-    if (hasAccessibleNameOverrideHtml(a, strippedText)) continue;
-
-    if (strippedText.trim().length === 0) {
-      emitIconOnlyHtml(a, emit);
-      continue;
-    }
-
-    const generic = matchesGenericPhrase(strippedText);
-    if (!generic) continue;
-
-    // Honest signal: if the link text had template directives stripped
-    // (e.g. `<a>{{ icon }} Read more</a>` → "Read more"), let the agent
-    // know the generic-phrase match was against the stripped shape.
-    // Directives are not heuristically suppressed — they're removed
-    // because the rule's premise (visible text) genuinely excludes them
-    // — but the agent should be able to distinguish "literally 'read
-    // more'" from "rendered-into-'read more'".
-    const strippedSuffix = htmlSubtreeHasStrippedDirective(a)
-      ? " (template_directive_stripped: the link text contained template expressions that were stripped before the generic-phrase check; residual visible text still matches the generic phrase)"
-      : "";
-    emit({
-      severity: "warning",
-      location: {
-        filePath: "",
-        line: a.loc.start.line,
-        column: a.loc.start.column,
-      },
-      message: `Link text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.${strippedSuffix}`,
-      suggestion: buildSuggestion(getHtmlAttribute(a, "href"), generic),
-      variantKey: "generic-phrase",
-    });
+    checkHtmlAnchor(a, emit);
   }
+}
+
+/**
+ * Per-anchor branching for the HTML pass. Extracted from `checkHtml`
+ * to keep that function under Biome's cognitive-complexity ceiling.
+ *
+ * Resolution order mirrors ARIA 1.2 §4.3 with one project-specific
+ * branch:
+ *   1. `aria-label` / `aria-labelledby` provides a non-duplicate name
+ *      → silent (a reliable name source).
+ *   2. visible text empty → icon-only path (downgrade to title-fallback
+ *      info if `title` exists, else warning).
+ *   3. visible text is a generic phrase → generic-phrase path
+ *      (downgrade to title-fallback info if `title` exists, else
+ *      warning).
+ *   4. visible text is real and not a generic phrase → silent.
+ */
+function checkHtmlAnchor(a: HtmlElement, emit: Emit): void {
+  // Compute visible text stripped of presentational descendants
+  // (icon-font glyphs, decorative <img>, any aria-hidden subtree).
+  // The stripped view mirrors what assistive tech actually hears:
+  //   - icon-font text (Material Icons ligatures like "home") is
+  //     rendered as a glyph, not announced as a word; strip it.
+  //   - <img> contributes its non-empty `alt` as text.
+  //   - <svg> with a <title> child contributes the title text.
+  const strippedText = visibleTextExcludingPresentationalHtml(a);
+
+  // `aria-label` / `aria-labelledby` are reliable name sources;
+  // `title` is NOT (handled below as a last-resort fallback per
+  // ARIA 1.2 §4.3 step 5+ of 5). aria-label that duplicates visible
+  // text falls through so the body's generic-phrase signal still
+  // surfaces.
+  if (hasAriaAccessibleNameOverrideHtml(a, strippedText)) return;
+
+  const titleFallback = getTitleNameFallbackHtml(a, strippedText);
+
+  if (strippedText.trim().length === 0) {
+    if (titleFallback !== null) {
+      emitTitleFallbackIconOnlyHtml(a, titleFallback, emit);
+      return;
+    }
+    emitIconOnlyHtml(a, emit);
+    return;
+  }
+
+  const generic = matchesGenericPhrase(strippedText);
+  if (!generic) return;
+  if (titleFallback !== null) {
+    emitTitleFallbackGenericHtml(a, titleFallback, generic, emit);
+    return;
+  }
+  emitGenericPhraseHtml(a, generic, emit);
+}
+
+function emitGenericPhraseHtml(a: HtmlElement, generic: string, emit: Emit): void {
+  // Honest signal: if the link text had template directives stripped
+  // (e.g. `<a>{{ icon }} Read more</a>` → "Read more"), let the agent
+  // know the generic-phrase match was against the stripped shape.
+  // Directives are not heuristically suppressed — they're removed
+  // because the rule's premise (visible text) genuinely excludes them
+  // — but the agent should be able to distinguish "literally 'read
+  // more'" from "rendered-into-'read more'".
+  const strippedSuffix = htmlSubtreeHasStrippedDirective(a)
+    ? " (template_directive_stripped: the link text contained template expressions that were stripped before the generic-phrase check; residual visible text still matches the generic phrase)"
+    : "";
+  emit({
+    severity: "warning",
+    location: {
+      filePath: "",
+      line: a.loc.start.line,
+      column: a.loc.start.column,
+    },
+    message: `Link text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.${strippedSuffix}`,
+    suggestion: buildSuggestion(getHtmlAttribute(a, "href"), generic),
+    variantKey: "generic-phrase",
+  });
 }
 
 function emitIconOnlyHtml(a: HtmlElement, emit: Emit): void {
@@ -375,45 +423,6 @@ function checkJsx(module: TsxModule, wrappersForA: ReadonlySet<string>, emit: Em
   // and iterating it alongside the polymorphic sweep driven by the
   // native tag literal `"a"`.
   const seen = new Set<JsxElement>();
-  const emitEl = (el: JsxElement): void => {
-    if (seen.has(el)) return;
-    seen.add(el);
-    if (!(hasJsxAttribute(el, "href") || hasJsxAttribute(el, "to"))) return;
-
-    const strippedText = visibleTextExcludingPresentationalJsx(el);
-    // See `checkHtml` — title/aria-label duplicates of the visible
-    // text don't count as overrides.
-    if (hasAccessibleNameOverrideJsx(el, strippedText)) return;
-    // Runtime JSX expression children (`<a>{label}</a>`) may carry a
-    // name we can't see statically — avoid a false-positive icon-only
-    // report on those. The generic-phrase path only fires on exact
-    // matches of the stripped static text, so expression children are
-    // already ignored there; the icon-only path needs the explicit
-    // guard because it fires on *absence* of text.
-    const hasExpressionChild = el.children.some((c) => c.kind === "JsxExpression");
-
-    if (strippedText.trim().length === 0 && !hasExpressionChild) {
-      emitIconOnlyJsx(el, emit);
-      return;
-    }
-
-    const generic = matchesGenericPhrase(strippedText);
-    if (!generic) return;
-    emit({
-      severity: "warning",
-      location: {
-        filePath: "",
-        line: el.loc.start.line,
-        column: el.loc.start.column,
-      },
-      message: `<${el.tagName}> text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.`,
-      suggestion: buildSuggestion(
-        getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to"),
-        generic,
-      ),
-      variantKey: "generic-phrase",
-    });
-  };
   // Pass the full set of tag names (native `<a>` + framework link tags
   // + mapped wrappers) as the "wrappers" argument; `findJsxElementsForTag`
   // treats them all as equivalent native/wrapper matches for `"a"`,
@@ -421,8 +430,68 @@ function checkJsx(module: TsxModule, wrappersForA: ReadonlySet<string>, emit: Em
   const wrappers = new Set<string>([...JSX_LINK_TAGS, ...wrappersForA]);
   wrappers.delete("a"); // bare <a> is already the `targetTag` channel.
   for (const el of findJsxElementsForTag(module, "a", wrappers)) {
-    emitEl(el);
+    if (seen.has(el)) continue;
+    seen.add(el);
+    if (!(hasJsxAttribute(el, "href") || hasJsxAttribute(el, "to"))) continue;
+    checkJsxAnchor(el, emit);
   }
+}
+
+/**
+ * Per-anchor branching for the JSX pass. Mirrors `checkHtmlAnchor` —
+ * extracted to keep `checkJsx` under Biome's cognitive-complexity
+ * ceiling. See `checkHtmlAnchor` for the resolution-order rationale.
+ */
+function checkJsxAnchor(el: JsxElement, emit: Emit): void {
+  const strippedText = visibleTextExcludingPresentationalJsx(el);
+  // See `checkHtml` — aria-label / aria-labelledby duplicates of the
+  // visible text don't count as overrides; `title` is NOT in that
+  // group because it's a last-resort ARIA name source many SRs
+  // suppress (handled below as a downgrade-to-info path).
+  if (hasAriaAccessibleNameOverrideJsx(el, strippedText)) return;
+  // Runtime JSX expression children (`<a>{label}</a>`) may carry a
+  // name we can't see statically — avoid a false-positive icon-only
+  // report on those. The generic-phrase path only fires on exact
+  // matches of the stripped static text, so expression children are
+  // already ignored there; the icon-only path needs the explicit
+  // guard because it fires on *absence* of text.
+  const hasExpressionChild = el.children.some((c) => c.kind === "JsxExpression");
+
+  const titleFallback = getTitleNameFallbackJsx(el, strippedText);
+
+  if (strippedText.trim().length === 0 && !hasExpressionChild) {
+    if (titleFallback !== null) {
+      emitTitleFallbackIconOnlyJsx(el, titleFallback, emit);
+      return;
+    }
+    emitIconOnlyJsx(el, emit);
+    return;
+  }
+
+  const generic = matchesGenericPhrase(strippedText);
+  if (!generic) return;
+  if (titleFallback !== null) {
+    emitTitleFallbackGenericJsx(el, titleFallback, generic, emit);
+    return;
+  }
+  emitGenericPhraseJsx(el, generic, emit);
+}
+
+function emitGenericPhraseJsx(el: JsxElement, generic: string, emit: Emit): void {
+  emit({
+    severity: "warning",
+    location: {
+      filePath: "",
+      line: el.loc.start.line,
+      column: el.loc.start.column,
+    },
+    message: `<${el.tagName}> text "${generic}" is not descriptive — screen readers reading this out of context tell users nothing about where they'll end up.`,
+    suggestion: buildSuggestion(
+      getJsxAttributeString(el, "href") ?? getJsxAttributeString(el, "to"),
+      generic,
+    ),
+    variantKey: "generic-phrase",
+  });
 }
 
 function emitIconOnlyJsx(el: JsxElement, emit: Emit): void {
@@ -438,42 +507,97 @@ function emitIconOnlyJsx(el: JsxElement, emit: Emit): void {
 }
 
 /**
- * Returns true when the element carries an accessible-name override
- * (`aria-label`, `aria-labelledby`, or `title`) that genuinely supplies
- * a different name than the visible body text. When the override value
- * is an exact (case-insensitive, whitespace-trimmed) duplicate of the
- * visible text, it contributes nothing new — AT still announces the
- * single name — so it is NOT treated as an override, and the generic-
- * phrase path continues. Only `title` and `aria-label` are compared;
- * `aria-labelledby` references a separate DOM node whose text this rule
- * does not chase cross-element.
+ * Returns true when the element carries a *reliable* accessible-name
+ * override — `aria-label` or `aria-labelledby`. These sources are
+ * announced by every major screen reader (NVDA / JAWS / VoiceOver /
+ * TalkBack / Orca) at default verbosity; when either supplies a name
+ * that differs from the visible text, the link has a real programmatic
+ * name and this rule's three failure modes don't apply. When the
+ * `aria-label` value is an exact (case-insensitive, whitespace-trimmed)
+ * duplicate of the visible text, it contributes nothing new — AT still
+ * announces the single name — so it is NOT treated as an override, and
+ * the generic-phrase path continues.
+ *
+ * `title` is intentionally NOT consulted here. Per ARIA 1.2 §4.3
+ * "Accessible Name and Description Computation" step 5+ of 5, `title`
+ * is a *last-resort* fallback. Many screen readers suppress it (NVDA
+ * at default verbosity reads it as the description, not the name;
+ * VoiceOver in some modes does the same). Treating `title` as a
+ * reliable override silently under-fires the canonical icon-only
+ * social-link pattern (`<a><i class="fab fa-facebook"></i></a>` with
+ * `title="Facebook"`) — the textbook 2.4.4 risk surface. Title is
+ * handled by `getTitleNameFallback*` below: it downgrades an otherwise-
+ * fired finding to an info-severity "name-via-title-fallback"
+ * candidate so the agent reads the file and verifies SR support.
+ *
+ * `aria-labelledby` is treated as a reliable override even though this
+ * rule does not chase the referenced DOM nodes' text — the presence
+ * of the attribute signals the author intentionally wired up a
+ * cross-element name source, and AT supports it broadly.
  */
-function hasAccessibleNameOverrideHtml(el: HtmlElement, visibleText: string): boolean {
+function hasAriaAccessibleNameOverrideHtml(el: HtmlElement, visibleText: string): boolean {
   const normVisible = normalizeOverride(visibleText);
   const ariaLabel = getHtmlAttribute(el, "aria-label");
   if (ariaLabel !== null && ariaLabel.trim().length > 0) {
     if (normalizeOverride(ariaLabel) !== normVisible) return true;
   }
   if (hasHtmlAttribute(el, "aria-labelledby")) return true;
-  const title = getHtmlAttribute(el, "title");
-  if (title !== null && title.trim().length > 0) {
-    if (normalizeOverride(title) !== normVisible) return true;
-  }
   return false;
 }
 
-function hasAccessibleNameOverrideJsx(el: JsxElement, visibleText: string): boolean {
+function hasAriaAccessibleNameOverrideJsx(el: JsxElement, visibleText: string): boolean {
   const normVisible = normalizeOverride(visibleText);
   const ariaLabel = getJsxAttributeString(el, "aria-label");
   if (ariaLabel !== null && ariaLabel.trim().length > 0) {
     if (normalizeOverride(ariaLabel) !== normVisible) return true;
   }
   if (hasJsxAttribute(el, "aria-labelledby")) return true;
-  const title = getJsxAttributeString(el, "title");
-  if (title !== null && title.trim().length > 0) {
-    if (normalizeOverride(title) !== normVisible) return true;
-  }
   return false;
+}
+
+/**
+ * Returns the `title` attribute value when title is the *only* candidate
+ * name source for this anchor — i.e. no `aria-label` and no
+ * `aria-labelledby` are present (or aria-label exists but is an exact
+ * duplicate of the visible text and the visible text is generic / empty),
+ * AND the title is non-empty AND not a duplicate of the visible text.
+ *
+ * When this returns non-null, the caller emits an info-severity
+ * `name-via-title-fallback` candidate rather than the warning-severity
+ * generic-phrase or icon-only finding — title MIGHT carry the real name
+ * for the user but the SR support is unreliable, so the finding asks
+ * the agent to verify rendered SR behavior rather than asserting the
+ * link is broken.
+ *
+ * Returns null when:
+ *   - title attribute absent or whitespace-only
+ *   - title is an exact (case-insensitive, trimmed) duplicate of the
+ *     visible text (announced once, not twice — no fallback in play)
+ *   - aria-label exists with a non-duplicate value (already handled
+ *     by `hasAriaAccessibleNameOverride*` upstream as a reliable
+ *     override; title is supplementary tooltip content here)
+ *   - aria-labelledby exists (already handled upstream)
+ *
+ * The aria-label-with-duplicate-of-visible-text case is rare but
+ * deliberately falls through to title-fallback handling: an aria-label
+ * that just echoes the body text isn't a real name source, and if a
+ * non-duplicate title is present alongside, the title is the only thing
+ * adding name content — same fallback uncertainty applies.
+ */
+function getTitleNameFallbackHtml(el: HtmlElement, visibleText: string): string | null {
+  const title = getHtmlAttribute(el, "title");
+  if (title === null || title.trim().length === 0) return null;
+  const normVisible = normalizeOverride(visibleText);
+  if (normalizeOverride(title) === normVisible) return null;
+  return title.trim();
+}
+
+function getTitleNameFallbackJsx(el: JsxElement, visibleText: string): string | null {
+  const title = getJsxAttributeString(el, "title");
+  if (title === null || title.trim().length === 0) return null;
+  const normVisible = normalizeOverride(visibleText);
+  if (normalizeOverride(title) === normVisible) return null;
+  return title.trim();
 }
 
 /**
