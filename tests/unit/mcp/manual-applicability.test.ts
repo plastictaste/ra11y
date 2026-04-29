@@ -321,10 +321,7 @@ describe("isLikelyIrrelevant — iframe-embedded media demotes from likelyIrrele
     // bucket must stay `likelyIrrelevant` so we don't promote 1.2.x
     // on every site that embeds a calendar or map widget.
     const applicability = detectApplicability([
-      makeFile(
-        "contact.html",
-        `<iframe src="https://www.google.com/maps/embed?pb=..."></iframe>`,
-      ),
+      makeFile("contact.html", `<iframe src="https://www.google.com/maps/embed?pb=..."></iframe>`),
     ]);
     for (const id of MEDIA_CRITERIA) {
       expect(isLikelyIrrelevant(id, applicability)).toBe(true);
