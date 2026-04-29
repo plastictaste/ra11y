@@ -15,7 +15,8 @@
  *     file paths.
  */
 
-import { readFile, stat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DEFAULT_IGNORED_DIRS, walkFiles } from "../utils/fs.ts";
 import { compileGlobs, type GlobMatcher } from "../utils/glob.ts";
@@ -210,6 +211,94 @@ export function isWellKnownTextualNoExtFilename(token: string): boolean {
 }
 
 /**
+ * Subset of {@link DEFAULT_IGNORED_DIRS} the discovery walker tracks
+ * for the `default_excluded_artifact_paths` warning channel. Names a
+ * directory whose canonical role is "build / generated output" rather
+ * than "vendor cache" or "language runtime" — the cases where the
+ * agent's silent-miss failure mode is "I scanned the repo but the
+ * compiled bundle output was never seen and the response gave me no
+ * signal that my scan envelope dropped half the surface."
+ *
+ * `node_modules`, `.git`, language runtimes (`venv`, `__pycache__`,
+ * `.tox`, `.pytest_cache`, etc.), and `vendor` (Go / PHP convention)
+ * deliberately stay out of the surfaced set: every consumer expects
+ * them excluded, the silent-miss mode does not apply, and walking
+ * them shallowly for sampling (even at the cap below) would dominate
+ * discovery cost on the canonical big-monorepo profile. See AI-first
+ * "Default-exclude globs are suppression too" — the rule is honest
+ * surfacing of dropped content, not exhaustive enumeration of every
+ * default-excluded path.
+ */
+const DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES: ReadonlySet<string> = new Set([
+  "dist",
+  "build",
+  "out",
+  ".next",
+  ".nuxt",
+  ".svelte-kit",
+  ".turbo",
+  ".cache",
+  "coverage",
+  "htmlcov",
+  ".nyc_output",
+  "target",
+]);
+
+/**
+ * Per-ignored-dir cap on the file count surfaced under
+ * `defaultExcludedArtifactPaths[].fileCount`. The shallow walk that
+ * powers the field counts files in lock-step with the walker's
+ * recursion; once the count crosses this cap we stop counting (the
+ * field name is `fileCount`, not `exactFileCount`, and the cap value
+ * is the agent's signal that "this directory has ≥CAP parseable files
+ * — the silent skip is non-trivial").
+ *
+ * Picked at 5000 so a typical compiled `dist/` (a few hundred files) is
+ * counted exactly while a worst-case bundler-output directory caps out
+ * without burning unbounded I/O on a path the agent will only read for
+ * triage. The cap is not a suppression threshold — directories at or
+ * above it still surface in the warning's payload; the count is just
+ * truncated to `>= 5000` semantics by saturation.
+ */
+const DEFAULT_EXCLUDED_ARTIFACT_FILE_COUNT_CAP = 5000;
+
+/**
+ * Per-ignored-dir cap on the number of sample paths surfaced under
+ * `defaultExcludedArtifactPaths[].sampleFiles`. Three is the canonical
+ * "agent reads enough to recognize the directory shape but not enough
+ * to drown in vendor inventory" choice — the same cardinality
+ * `parseErrorTopReasons` and similar telemetry surfaces use.
+ */
+const DEFAULT_EXCLUDED_ARTIFACT_SAMPLE_CAP = 3;
+
+/**
+ * One entry in {@link DiscoveryDiagnostics.defaultExcludedArtifactPaths}.
+ * Names a directory that the discovery walker skipped because its name
+ * is in {@link DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES} AND that contains at
+ * least one parseable-extension file. The shape is the agent's pivot:
+ *
+ *   - `path` is the absolute directory path (deterministic across runs
+ *     because the walker iterates sorted dir entries).
+ *   - `fileCount` is the count of parseable-extension files reachable
+ *     under the directory, capped at
+ *     {@link DEFAULT_EXCLUDED_ARTIFACT_FILE_COUNT_CAP} so a
+ *     pathological bundler-output tree doesn't dominate discovery
+ *     time. Counts that hit the cap saturate — agents read "≥ cap"
+ *     from the field's documented bound.
+ *   - `sampleFiles` is up to
+ *     {@link DEFAULT_EXCLUDED_ARTIFACT_SAMPLE_CAP} absolute file paths
+ *     the agent can use to recognize the directory shape (canonical
+ *     bundler output vs. minified bundle vs. cached HTML, etc.) without
+ *     reading the directory itself. Sorted-ascending lexically so the
+ *     wire shape is deterministic.
+ */
+export interface DefaultExcludedArtifactPath {
+  readonly path: string;
+  readonly fileCount: number;
+  readonly sampleFiles: readonly string[];
+}
+
+/**
  * Diagnostic signals from the discovery pass that are otherwise
  * invisible to downstream consumers. Every field reports a structural
  * gap the scanner chose not to fix but the agent should know about:
@@ -239,10 +328,22 @@ export function isWellKnownTextualNoExtFilename(token: string): boolean {
  *     `sourcemap_files_excluded` warning code with `count` + `topPaths`
  *     so an agent can audit the exclusion. Sorted-ascending paths so
  *     the wire shape is deterministic across runs.
+ *   - `defaultExcludedArtifactPaths`: per-directory entries naming
+ *     every {@link DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES} match that
+ *     contained at least one parseable-extension file. Surfaced under
+ *     the dedicated `default_excluded_artifact_paths` warning so an
+ *     agent triaging "0 findings on a Next.js / Vite repo" can tell
+ *     "the scanner saw 1240 parseable files under `.next/` and
+ *     dropped them" from "the codebase is genuinely small." Per
+ *     AI-first "Default-exclude globs are suppression too" the
+ *     surface is honest enumeration of dropped content, not a
+ *     suppression channel. Sorted by directory path so the wire is
+ *     deterministic.
  */
 export interface DiscoveryDiagnostics {
   readonly skippedByExtension: Readonly<Record<string, number>>;
   readonly sourcemapFiles: readonly string[];
+  readonly defaultExcludedArtifactPaths: readonly DefaultExcludedArtifactPath[];
 }
 
 /**
@@ -252,6 +353,15 @@ export interface DiscoveryDiagnostics {
  * `DEFAULT_EXCLUDED_PATTERNS`, `.gitignore`, and user-`exclude`
  * rejections are NOT counted — those are intentional suppressions
  * surfaced elsewhere, not silent parser gaps.
+ *
+ * Build-artifact directories from {@link DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES}
+ * are surfaced separately under
+ * {@link DiscoveryDiagnostics.defaultExcludedArtifactPaths} — those are
+ * silent skips of plausibly authored output (compiled bundles, generated
+ * HTML) the agent benefits from knowing existed even though the scanner
+ * deliberately did not parse them. Distinct from the skipped-extension
+ * channel: that one names parser-routing gaps; this one names
+ * directory-level suppressions.
  */
 export async function discoverFilesWithDiagnostics(
   roots: readonly string[],
@@ -270,6 +380,7 @@ export async function discoverFilesWithDiagnostics(
   const out = new Set<string>();
   const skippedByExtension = new Map<string, number>();
   const sourcemapFiles = new Set<string>();
+  const ignoredArtifactDirs = new Set<string>();
 
   for (const raw of roots) {
     const absRoot = resolve(raw);
@@ -279,9 +390,16 @@ export async function discoverFilesWithDiagnostics(
       dirMatcher,
       skippedByExtension,
       sourcemapFiles,
+      ignoredArtifactDirs,
     );
     for (const f of found) out.add(f);
   }
+
+  // Walk each surfaced ignored-artifact-dir shallowly to count parseable
+  // files and capture sample paths. Walked AFTER the main discovery pass
+  // so the cap on file count + sample size bounds total I/O even on
+  // bundler-output trees with thousands of files.
+  const defaultExcludedArtifactPaths = await summarizeIgnoredArtifactDirs(ignoredArtifactDirs);
 
   return {
     files: [...out].sort(),
@@ -290,8 +408,127 @@ export async function discoverFilesWithDiagnostics(
         [...skippedByExtension.entries()].sort(([a], [b]) => a.localeCompare(b)),
       ),
       sourcemapFiles: [...sourcemapFiles].sort(),
+      defaultExcludedArtifactPaths,
     },
   };
+}
+
+/**
+ * Walks every surfaced ignored-artifact directory shallowly to count
+ * parseable-extension files and capture up to
+ * {@link DEFAULT_EXCLUDED_ARTIFACT_SAMPLE_CAP} sample paths. Returns one
+ * entry per directory that contained at least one parseable file; empty
+ * directories drop conservatively so the warning channel stays
+ * present-when-meaningful (the directory's mere existence isn't the
+ * silent miss — the agent already expects `dist/` to exist on most
+ * repos). Caps total I/O via
+ * {@link DEFAULT_EXCLUDED_ARTIFACT_FILE_COUNT_CAP} so a multi-thousand-
+ * file bundler tree doesn't dominate discovery latency.
+ *
+ * Entries are sorted by absolute path so the wire shape is deterministic
+ * across runs.
+ */
+async function summarizeIgnoredArtifactDirs(
+  dirs: ReadonlySet<string>,
+): Promise<readonly DefaultExcludedArtifactPath[]> {
+  const out: DefaultExcludedArtifactPath[] = [];
+  for (const dirPath of dirs) {
+    const entry = await summarizeIgnoredArtifactDir(dirPath);
+    if (entry !== null) out.push(entry);
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path));
+  return out;
+}
+
+async function summarizeIgnoredArtifactDir(
+  dirPath: string,
+): Promise<DefaultExcludedArtifactPath | null> {
+  const accumulator: ArtifactDirAccumulator = {
+    samples: [],
+    fileCount: 0,
+  };
+  // Recursive walk bounded by the count cap. We honor the same nested
+  // `DEFAULT_IGNORED_DIRS` set as the main walker so a
+  // `dist/node_modules` doesn't blow the cap on a single directory.
+  const stack: string[] = [dirPath];
+  while (stack.length > 0) {
+    if (accumulator.fileCount >= DEFAULT_EXCLUDED_ARTIFACT_FILE_COUNT_CAP) break;
+    const cur = stack.pop();
+    if (cur === undefined) break;
+    await processArtifactDir(cur, accumulator, stack);
+  }
+  if (accumulator.fileCount === 0) return null;
+  accumulator.samples.sort();
+  return {
+    path: dirPath,
+    fileCount: accumulator.fileCount,
+    sampleFiles: accumulator.samples,
+  };
+}
+
+interface ArtifactDirAccumulator {
+  readonly samples: string[];
+  fileCount: number;
+}
+
+/**
+ * Reads a single directory entry list during the artifact-dir walk and
+ * folds children into the accumulator. Subdirectories that match
+ * {@link DEFAULT_IGNORED_DIRS} are not pushed (preserving the main
+ * walker's nested-ignore semantics so a `dist/node_modules` doesn't
+ * dominate the cap); other subdirectories are pushed onto the stack.
+ * Parseable-extension files bump the count and (within the per-dir
+ * cap) contribute a sample path.
+ *
+ * Extracted from {@link summarizeIgnoredArtifactDir} so the orchestrator
+ * stays under the lint cap as the walk's branch count accretes.
+ */
+async function processArtifactDir(
+  cur: string,
+  acc: ArtifactDirAccumulator,
+  stack: string[],
+): Promise<void> {
+  // `readdir(..., { withFileTypes: true })` overload returns
+  // `Dirent<string>[]` — the default-overload type
+  // `Awaited<ReturnType<typeof readdir>>` resolves to the buffer
+  // overload, so we name the shape explicitly. Same pattern used in
+  // `src/utils/fs.ts walk`.
+  let children: Dirent<string>[];
+  try {
+    children = await readdir(cur, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const child of children) {
+    if (acc.fileCount >= DEFAULT_EXCLUDED_ARTIFACT_FILE_COUNT_CAP) return;
+    addArtifactChild(cur, child, acc, stack);
+  }
+}
+
+/**
+ * Folds a single child directory entry into the accumulator. Returns
+ * void because the caller's cap-check guards the stack-push and
+ * fileCount mutation; the helper is straight-line so the lint
+ * cognitive-complexity score stays linear in branch count.
+ */
+function addArtifactChild(
+  cur: string,
+  child: Dirent<string>,
+  acc: ArtifactDirAccumulator,
+  stack: string[],
+): void {
+  if (child.isDirectory()) {
+    if (DEFAULT_IGNORED_DIRS.has(child.name)) return;
+    stack.push(join(cur, child.name));
+    return;
+  }
+  if (!child.isFile()) return;
+  const childPath = join(cur, child.name);
+  if (!hasParseableExtension(childPath)) return;
+  acc.fileCount += 1;
+  if (acc.samples.length < DEFAULT_EXCLUDED_ARTIFACT_SAMPLE_CAP) {
+    acc.samples.push(childPath);
+  }
 }
 
 /** Resolves every input path into a flat list of parseable files. */
@@ -622,6 +859,12 @@ function prefixPattern(prefix: string, pattern: string): string {
  * `DEFAULT_EXCLUDED_PATTERNS` / `.gitignore` / user excludes are
  * deliberately not counted — they're intentional suppressions, not
  * silent parser gaps.
+ *
+ * Build-artifact directories matched by
+ * {@link DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES} are recorded in
+ * {@link ignoredArtifactDirs} so the caller can shallow-walk them for
+ * the `default_excluded_artifact_paths` warning channel without
+ * re-walking the source tree.
  */
 async function discoverOne(
   abs: string,
@@ -629,6 +872,7 @@ async function discoverOne(
   dirMatcher: GlobMatcher,
   skippedByExtension: Map<string, number>,
   sourcemapFiles: Set<string>,
+  ignoredArtifactDirs: Set<string>,
 ): Promise<readonly string[]> {
   let info: Awaited<ReturnType<typeof stat>>;
   try {
@@ -657,6 +901,17 @@ async function discoverOne(
         onRejected: (filePath) => {
           if (dirMatcher.matches(toRel(filePath, abs))) return;
           recordExtensionSkip(skippedByExtension, sourcemapFiles, filePath);
+        },
+        // Fires once per directory the walker skipped because its name
+        // is in DEFAULT_IGNORED_DIRS. We narrow to the build-artifact
+        // subset (DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES) so the warning
+        // channel surfaces canonical silent-miss vectors without
+        // burning I/O on universal cache dirs an agent already knows
+        // are excluded.
+        onIgnoredDir: (dirPath) => {
+          if (DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES.has(basename(dirPath))) {
+            ignoredArtifactDirs.add(dirPath);
+          }
         },
       },
     );

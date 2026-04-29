@@ -330,6 +330,25 @@ interface CoverageBlock {
    * files).
    */
   sourcemapFiles?: readonly string[];
+  /**
+   * Per-directory entries naming every build-artifact directory the
+   * discovery walker skipped (per
+   * {@link import("../input/discover.ts").DefaultExcludedArtifactPath})
+   * that contained at least one parseable-extension file. Drives the
+   * `default_excluded_artifact_paths` warning code + its
+   * `warningsDetails.default_excluded_artifact_paths` payload so an
+   * agent triaging "0 findings on a Next.js / Vite / Nuxt repo" can
+   * tell "the scanner saw N parseable files under `.next/` / `dist/`
+   * and dropped them" from "the codebase is genuinely small." Each
+   * entry carries `path` (absolute directory), `fileCount` (capped at
+   * the discovery cap so unbounded bundler trees don't dominate I/O),
+   * and `sampleFiles` (up to 3 absolute paths so the agent can
+   * recognize the directory shape without reading the dir itself).
+   * Sorted by directory path so the wire shape is deterministic
+   * across runs. Present-when-meaningful (omitted entirely when no
+   * matched directory contained a parseable file).
+   */
+  defaultExcludedArtifactPaths?: readonly import("../input/discover.ts").DefaultExcludedArtifactPath[];
   fragmentFileCount?: number;
   fragmentFiles?: readonly FragmentFileEntry[];
   fragmentFilesTruncated?: MetaArrayTruncationSummary;
@@ -679,6 +698,21 @@ function populateCoverageTail(
   // meaningful — omitted when the walk encountered none.
   if (discoveryDiagnostics !== undefined && discoveryDiagnostics.sourcemapFiles.length > 0) {
     coverage.sourcemapFiles = discoveryDiagnostics.sourcemapFiles;
+  }
+  // Default-excluded build-artifact directories the walker silently
+  // dropped (per the AI-first "Default-exclude globs are suppression
+  // too" doctrine). The discovery layer shallow-walks each match to
+  // count parseable files + capture sample paths so the warning
+  // payload names the silent miss without forcing the agent into a
+  // separate Read pass against `dist/` / `.next/` / etc. Drives the
+  // `default_excluded_artifact_paths` warning code. Present-when-
+  // meaningful — omitted when no matched directory contained
+  // parseable content.
+  if (
+    discoveryDiagnostics !== undefined &&
+    discoveryDiagnostics.defaultExcludedArtifactPaths.length > 0
+  ) {
+    coverage.defaultExcludedArtifactPaths = discoveryDiagnostics.defaultExcludedArtifactPaths;
   }
 }
 

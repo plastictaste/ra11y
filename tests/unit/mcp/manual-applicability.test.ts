@@ -152,6 +152,7 @@ describe("detectApplicability", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 50, ".astro": 10, ".vue": 5 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({});
@@ -161,6 +162,7 @@ describe("detectApplicability", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307, ".scss": 50, ".rst": 2 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({ ".md": 307, ".rst": 2 });
@@ -170,6 +172,7 @@ describe("detectApplicability", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 0, ".markdown": 4 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(applicability.skippedContentExtensions).toEqual({ ".markdown": 4 });
@@ -186,6 +189,7 @@ describe("detectApplicability", () => {
         ".asciidoc": 1,
       },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(Object.keys(applicability.skippedContentExtensions ?? {}).sort()).toEqual([
@@ -225,6 +229,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.1", applicability);
@@ -237,6 +242,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".rst": 2, ".md": 10, ".markdown": 5 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.2", applicability);
@@ -248,6 +254,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 1 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     const reason = irrelevanceReason("wcag22:1.2.1", applicability);
@@ -259,6 +266,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 42 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     // Sampling across the WCAG 2.2 and 2.1 prefixes to prove the caveat
@@ -276,6 +284,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 100 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     // .scss doesn't embed inline media tags — no caveat should fire.
@@ -338,6 +347,7 @@ describe("isLikelyIrrelevant stays stable across caveat rollout", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 300 },
       sourcemapFiles: [],
+      defaultExcludedArtifactPaths: [],
     };
     const applicability = detectApplicability([], diagnostics);
     expect(isLikelyIrrelevant("wcag22:1.2.1", applicability)).toBe(true);

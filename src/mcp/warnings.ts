@@ -630,7 +630,38 @@ export type ScanWarningCode =
   // whenever the parse-error count is non-zero — that code names the
   // existence of parse errors; this code names the consistency gap
   // between the parse-error surface and the per-rule coverage surface).
-  | "coverage_confidence_uniformly_high_with_parse_errors";
+  | "coverage_confidence_uniformly_high_with_parse_errors"
+  // at least one default-excluded
+  // build-artifact directory (`dist/`, `build/`, `.next/`, `.nuxt/`,
+  // `out/`, `coverage/`, `target/`, etc. per
+  // {@link import("../input/discover.ts").DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES})
+  // contained at least one parseable-extension file the discovery
+  // walker silently dropped. Without this code, an agent calling
+  // `scan_project` against a Vite / Next.js / Nuxt / Sphinx repo
+  // sees a confident-looking "0 findings on 12 files" without any
+  // signal that the compiled bundle output (`.next/static/`,
+  // `dist/assets/`, `target/site/`) carrying the page surface a
+  // user actually renders against was excluded at the directory
+  // level — the canonical "Default-exclude globs are suppression
+  // too" silent-miss shape (per `docs/kb/architecture/ai-first-consumer.md`).
+  // Surface-don't-suppress: the directory-level exclusion stays in
+  // place (walking compiled bundles is rarely what an agent wants
+  // and would dominate scan latency); the warning is the additive
+  // signal that lets the agent decide whether to point
+  // `additionalPaths` at the directory or scope down. Paired
+  // payload: `warningsDetails.default_excluded_artifact_paths`
+  // carries `{ count, paths: [{ path, fileCount, sampleFiles }] }`
+  // so the agent has the load-bearing pivot in one read — the
+  // directory path, the parseable file count under it, and a
+  // 3-sample slice to recognize the directory shape (canonical
+  // bundler output vs. minified bundle vs. cached HTML). Pairs
+  // structurally with `scanned_build_artifacts_present` — that
+  // code names build artifacts the scanner DID parse; this code
+  // names build-artifact directories the scanner deliberately did
+  // NOT parse. Both can fire on the same scan when an
+  // `additionalPaths` invocation pulls some compiled output into
+  // scope while other build directories stay excluded.
+  | "default_excluded_artifact_paths";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -1519,6 +1550,30 @@ export interface ScanWarningDetails {
     readonly topPaths: readonly string[];
   };
   /**
+   * Payload for `default_excluded_artifact_paths`. Carries the count of
+   * default-excluded build-artifact directories the discovery walker
+   * silently skipped that contained at least one parseable-extension
+   * file, plus the per-directory entries the agent uses as a triage
+   * pivot: the absolute directory path, the parseable file count under
+   * it (capped at the discovery cap so unbounded bundler trees don't
+   * dominate I/O — agents read "≥ cap" by saturation), and up to 3
+   * sample paths. The full per-directory list lives under
+   * `meta.analysisCoverage.defaultExcludedArtifactPaths` for callers
+   * that want every entry. The warning's `paths[]` slice mirrors that
+   * list at the wire-summary layer so an agent branching on the bare
+   * code can answer "which directories, how many files each, what do
+   * they look like?" without descending into `meta`. Sorted by
+   * directory path so the wire shape is deterministic across runs.
+   */
+  readonly default_excluded_artifact_paths?: {
+    readonly count: number;
+    readonly paths: readonly {
+      readonly path: string;
+      readonly fileCount: number;
+      readonly sampleFiles: readonly string[];
+    }[];
+  };
+  /**
    * Density-cap settlement for the `response_token_budget_truncated`
    * code. Without this payload, a caller seeing
    * `warnings: ["response_token_budget_truncated"]` + `files.length: 10`
@@ -2346,6 +2401,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "linked_stylesheet_not_resolved_for_contrast",
   "parser_bailed_on_non_jsx_in_tsx_route",
   "coverage_confidence_uniformly_high_with_parse_errors",
+  "default_excluded_artifact_paths",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -2520,6 +2576,9 @@ function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   if (hasTextSourceSkipped(inputs.analysisCoverage)) out.push("text_source_skipped");
   if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) out.push("binary_assets_skipped");
   if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) out.push("sourcemap_files_excluded");
+  if (hasDefaultExcludedArtifactPaths(inputs.analysisCoverage)) {
+    out.push("default_excluded_artifact_paths");
+  }
   return out;
 }
 
@@ -2981,6 +3040,85 @@ function hasBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined): 
  */
 function hasSourcemapFilesExcluded(coverage: Record<string, unknown> | undefined): boolean {
   return readSourcemapFiles(coverage).length > 0;
+}
+
+/**
+ * `default_excluded_artifact_paths` predicate: at least one entry
+ * appears under `analysisCoverage.defaultExcludedArtifactPaths` whose
+ * `fileCount > 0`. The discovery walker shallow-walks each matched
+ * directory and only surfaces entries with non-zero parseable-file
+ * counts (empty directories drop conservatively at the discovery
+ * seam), so the gate here is a list-non-empty check; the per-entry
+ * `fileCount > 0` filter stays defensive for hostile-input shapes.
+ * Same fail-soft contract as {@link readSkippedMap} — any shape
+ * mismatch returns `false`; never throws.
+ */
+function hasDefaultExcludedArtifactPaths(coverage: Record<string, unknown> | undefined): boolean {
+  return readDefaultExcludedArtifactPaths(coverage).length > 0;
+}
+
+/**
+ * Shape of a single entry under
+ * `analysisCoverage.defaultExcludedArtifactPaths`. The interface lives
+ * on the discover module; the warnings layer reads through
+ * `Record<string, unknown>` to stay decoupled from the discovery
+ * source.
+ */
+interface DefaultExcludedArtifactPathEntry {
+  readonly path: string;
+  readonly fileCount: number;
+  readonly sampleFiles: readonly string[];
+}
+
+/**
+ * Reads `defaultExcludedArtifactPaths` off the coverage block as a
+ * typed entry array. Returns an empty array on any of "no coverage
+ * block," "no field," "wrong shape," "entry is malformed (missing
+ * path / non-numeric fileCount / non-array sampleFiles)" so callers
+ * can operate uniformly without re-checking shape invariants.
+ * Filters non-string sample paths defensively and saturates fileCount
+ * to a non-negative integer — same hostile-input defense as
+ * {@link readSourcemapFiles}.
+ */
+function readDefaultExcludedArtifactPaths(
+  coverage: Record<string, unknown> | undefined,
+): readonly DefaultExcludedArtifactPathEntry[] {
+  if (coverage === undefined) return [];
+  const raw = coverage["defaultExcludedArtifactPaths"];
+  if (!Array.isArray(raw)) return [];
+  const out: DefaultExcludedArtifactPathEntry[] = [];
+  for (const entry of raw) {
+    const parsed = parseDefaultExcludedArtifactPathEntry(entry);
+    if (parsed !== null) out.push(parsed);
+  }
+  return out;
+}
+
+/**
+ * Parses one raw `defaultExcludedArtifactPaths[]` entry into the typed
+ * shape, returning `null` on any shape mismatch (entry not an object,
+ * missing path, non-numeric fileCount, non-array sampleFiles). Filters
+ * non-string sample paths defensively. Extracted from
+ * {@link readDefaultExcludedArtifactPaths} so the parent's cognitive
+ * complexity stays under the lint cap as defensive shape checks
+ * accrete.
+ */
+function parseDefaultExcludedArtifactPathEntry(
+  entry: unknown,
+): DefaultExcludedArtifactPathEntry | null {
+  if (entry === null || typeof entry !== "object") return null;
+  const rec = entry as Record<string, unknown>;
+  const path = rec["path"];
+  const fileCount = rec["fileCount"];
+  const sampleFiles = rec["sampleFiles"];
+  if (typeof path !== "string" || path.length === 0) return null;
+  if (typeof fileCount !== "number" || fileCount <= 0) return null;
+  if (!Array.isArray(sampleFiles)) return null;
+  const samples: string[] = [];
+  for (const s of sampleFiles) {
+    if (typeof s === "string" && s.length > 0) samples.push(s);
+  }
+  return { path, fileCount, sampleFiles: samples };
 }
 
 /**
@@ -3476,6 +3614,10 @@ export function computeScanWarningDetails(
     {
       code: "sourcemap_files_excluded",
       summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
+    },
+    {
+      code: "default_excluded_artifact_paths",
+      summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
     },
     {
       code: "content_files_skipped",
@@ -4123,6 +4265,39 @@ function summarizeSourcemapFilesExcluded(coverage: Record<string, unknown> | und
   return {
     count: files.length,
     topPaths: files.slice(0, SOURCEMAP_TOP_PATHS_CAP),
+  };
+}
+
+/**
+ * Builds the `default_excluded_artifact_paths` payload from the
+ * coverage block's `defaultExcludedArtifactPaths` list. Returns
+ * `undefined` when the field is absent, malformed, or empty so the
+ * dispatch table conditional-spreads the entry away (payload-vs-binary
+ * contract). The full count comes from the list length; per-entry
+ * `path`, `fileCount`, and `sampleFiles` mirror the discovery layer's
+ * shape verbatim — the discovery walker already sorts the field
+ * ascending lexically by directory path, so the wire is deterministic
+ * across runs without a re-sort here.
+ */
+function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly count: number;
+      readonly paths: readonly {
+        readonly path: string;
+        readonly fileCount: number;
+        readonly sampleFiles: readonly string[];
+      }[];
+    }
+  | undefined {
+  const entries = readDefaultExcludedArtifactPaths(coverage);
+  if (entries.length === 0) return undefined;
+  return {
+    count: entries.length,
+    paths: entries.map((e) => ({
+      path: e.path,
+      fileCount: e.fileCount,
+      sampleFiles: e.sampleFiles,
+    })),
   };
 }
 

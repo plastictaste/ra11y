@@ -45,17 +45,32 @@ export async function isDirectory(filePath: string): Promise<boolean> {
  * cleared the dir-level ignore set but failed `filter` — used by
  * discovery diagnostics to count files dropped on the parseable-
  * extension check without walking the tree twice. Directory-level
- * ignores do NOT trigger the callback; those are intentional skips
- * surfaced elsewhere.
+ * ignores do NOT trigger that callback; those are intentional skips
+ * surfaced via {@link options.onIgnoredDir} instead so an agent can
+ * tell a `dist/` carrying parseable bundle output from a `dist/` that
+ * never existed.
+ *
+ * When `options.onIgnoredDir` is supplied, it fires once per directory
+ * the walker skipped because its name was in the `ignore` set. The
+ * absolute directory path is passed so the caller can decide whether
+ * to walk it shallowly for diagnostic counting; the walker itself
+ * never recurses into the skipped subtree (preserving the existing
+ * default-ignore semantics). Dotfile directories (`.foo` that are not
+ * in the ignore set) do NOT trigger the callback — those are a separate
+ * convention orthogonal to the build-artifact suppression channel
+ * `default_excluded_artifact_paths` is meant to surface.
  */
 export async function walkFiles(
   root: string,
   filter: (filePath: string) => boolean,
   ignore: ReadonlySet<string>,
-  options: { readonly onRejected?: (filePath: string) => void } = {},
+  options: {
+    readonly onRejected?: (filePath: string) => void;
+    readonly onIgnoredDir?: (dirPath: string) => void;
+  } = {},
 ): Promise<string[]> {
   const out: string[] = [];
-  await walk(root, out, filter, ignore, options.onRejected);
+  await walk(root, out, filter, ignore, options.onRejected, options.onIgnoredDir);
   return out;
 }
 
@@ -65,6 +80,7 @@ async function walk(
   filter: (filePath: string) => boolean,
   ignore: ReadonlySet<string>,
   onRejected: ((filePath: string) => void) | undefined,
+  onIgnoredDir: ((dirPath: string) => void) | undefined,
 ): Promise<void> {
   // `readdir(..., { withFileTypes: true })` returns Dirent<string>[]; the
   // generic Awaited<ReturnType<typeof readdir>> picks up the default buffer
@@ -76,8 +92,14 @@ async function walk(
     return;
   }
   for (const entry of entries) {
-    if (ignore.has(entry.name) || entry.name.startsWith(".")) continue;
-    await handleEntry(entry, join(dir, entry.name), out, filter, ignore, onRejected);
+    if (ignore.has(entry.name)) {
+      if (entry.isDirectory() && onIgnoredDir !== undefined) {
+        onIgnoredDir(join(dir, entry.name));
+      }
+      continue;
+    }
+    if (entry.name.startsWith(".")) continue;
+    await handleEntry(entry, join(dir, entry.name), out, filter, ignore, onRejected, onIgnoredDir);
   }
 }
 
@@ -88,9 +110,10 @@ async function handleEntry(
   filter: (filePath: string) => boolean,
   ignore: ReadonlySet<string>,
   onRejected: ((filePath: string) => void) | undefined,
+  onIgnoredDir: ((dirPath: string) => void) | undefined,
 ): Promise<void> {
   if (entry.isDirectory()) {
-    await walk(full, out, filter, ignore, onRejected);
+    await walk(full, out, filter, ignore, onRejected, onIgnoredDir);
     return;
   }
   if (!entry.isFile()) return;
