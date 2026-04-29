@@ -6,7 +6,9 @@
  */
 
 import type { ParsedFile } from "../engine/scanner.ts";
+import type { Registry } from "../engine/registry/registry.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
+import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -159,6 +161,25 @@ export const coverageTool: McpTool = {
     // communicates why. The per-criterion split counters stay populated
     // so the agent still sees the shape of the attempted evaluation.
     const passRateMeaningful = files.length > 0;
+    // Q9-COVERAGE-CRITERIA-AUTOMATABLE-DRIFTS-NARROW-VS-BULK:
+    // `criteriaAutomatable` is a property of the standard module + the
+    // loaded ruleset, not of the per-scan corpus. The legacy formula
+    // (count metadata-non-manual criteria PLUS metadata-manual criteria
+    // that fired in this scan) was corpus-derived: a metadata-manual
+    // criterion satisfied by a registered rule that didn't happen to
+    // fire on a narrow `paths:` slice would count as `manual` there but
+    // promoted to `automatable` once a bulk scan fired the same rule —
+    // 32 vs 34 on identical standard/level. Per `ai-first-consumer.md`
+    // "Cross-surface count invariant," counts that name the same
+    // concept must agree on the same input. Compute the registry-derived
+    // count once per response and emit it for `criteriaAutomatable`; the
+    // per-scan `c.automatable` still drives the `clean` / `withFindings`
+    // / `untestable` lanes (which are corpus-derived by definition).
+    const automatableByRegistry = countAutomatableCriteriaByRegistry(
+      session.registry,
+      activeRules,
+      level,
+    );
     const entries = coverage.map((c) => {
       // Split by applicability first so the counts align with scan_project
       // and checklist — media-only criteria move to likelyIrrelevant
@@ -171,6 +192,7 @@ export const coverageTool: McpTool = {
         c.failingCriteria,
         criteriaWithErrorViolations,
       );
+      const registryAutomatable = automatableByRegistry.get(c.standardId) ?? c.automatable;
       return {
         standardId: c.standardId,
         // Named so the denominator is unmistakable: it's the share of
@@ -207,11 +229,17 @@ export const coverageTool: McpTool = {
         // actually populates — present-when-meaningful (no
         // `{ A: 0, AA: 0, AAA: 0 }` sentinel maps).
         criteriaByLevel: c.criteriaByLevel,
-        criteriaAutomatable: c.automatable,
+        // Standard-fixed: count of criteria a registered rule satisfies
+        // (after the active-rules config filter), level-narrowed to the
+        // requested profile. Independent of the scanned corpus — narrow
+        // and bulk scans on the same standard/level produce the same
+        // value. Closes Q9-COVERAGE-CRITERIA-AUTOMATABLE-DRIFTS-NARROW-VS-BULK.
+        criteriaAutomatable: registryAutomatable,
         criteriaAutomatablePassing: c.passing,
-        // Four-counter split for the automatable lane. Each counts one
-        // kind of thing (per CLAUDE.md §1 "Composite headline counts are
-        // dishonest"):
+        // Four-counter split for the corpus-derived evaluation of the
+        // criteria the rule library can statically address. Each counts
+        // one kind of thing (per CLAUDE.md §1 "Composite headline counts
+        // are dishonest"):
         //   - `criteriaEvaluated`: ran with eligible input (= clean +
         //     withFindings).
         //   - `criteriaClean`: ran, zero violations.
@@ -221,9 +249,13 @@ export const coverageTool: McpTool = {
         //     Tailwind-pre-build / reveal-slide vendor-bundle shape. The
         //     list rides under `untestableCriteria` (with titles) so the
         //     agent can call out what it couldn't verify.
-        // Invariant: `criteriaAutomatable === criteriaEvaluated +
-        // criteriaUntestable` and `criteriaEvaluated === criteriaClean +
-        // criteriaWithFindings`.
+        // Invariant on the corpus-derived lane:
+        // `criteriaEvaluated === criteriaClean + criteriaWithFindings`.
+        // `criteriaAutomatable` is registry-derived (see comment above)
+        // and is not necessarily equal to `criteriaEvaluated +
+        // criteriaUntestable` — a metadata-manual criterion satisfied by
+        // a registered rule that didn't fire counts in
+        // `criteriaAutomatable` but stays in the manual lane (`manualCriteria`).
         criteriaEvaluated: c.evaluated,
         criteriaClean: c.clean,
         criteriaWithFindings: c.withFindings,
@@ -629,6 +661,65 @@ function withTitles(
     }
     return { criterionId: id, title: "", level: "" };
   });
+}
+
+/**
+ * Counts criteria the loaded rule library can statically address per
+ * standard, level-narrowed to the requested profile. Registry-derived —
+ * a criterion is "automatable" iff at least one rule in `activeRules`
+ * satisfies it (directly or via the criteria-equivalence closure). The
+ * scanned corpus does not enter the predicate, so narrow vs bulk scans
+ * on identical standard/level produce identical counts.
+ *
+ * Closes Q9-COVERAGE-CRITERIA-AUTOMATABLE-DRIFTS-NARROW-VS-BULK. The old
+ * inline formula `c.automatable` from `buildCoverageReport` mixed
+ * standard metadata (criterion has `automatable !== "manual"`) with
+ * per-scan rule firings (metadata-manual criterion that emitted at
+ * least one violation in this corpus). The latter half drifted between
+ * narrow and bulk scopes whenever a rule satisfying a metadata-manual
+ * criterion fired on the bulk corpus but not the narrow one. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant," counters naming the same concept must agree on the same
+ * input — and the conceptually right input here is the standard module
+ * + the loaded ruleset, neither of which depends on the file set.
+ *
+ * Filtering aligns with `buildCoverageReport`'s level filter: criteria
+ * whose level rank exceeds the requested level are excluded so the
+ * count matches the conformance scope the agent asked for. The
+ * registry-derived count delegates to `Registry.rulesIndex.rulesFor`,
+ * which already closes over criteria equivalence — a rule satisfying
+ * `wcag22:1.4.3` covers the equivalent `section508:1194.22.c` /
+ * `en301549:9.1.4.3` for free. `activeRules` (post-config-filter rules)
+ * is intersected on top so a user who disabled a rule in
+ * `ra11y.config.ts` doesn't see that rule's criteria count as
+ * "automatable" in this configuration.
+ */
+function countAutomatableCriteriaByRegistry(
+  registry: Registry,
+  activeRules: readonly Rule[],
+  level: "A" | "AA" | "AAA",
+): ReadonlyMap<string, number> {
+  const activeRuleIds = new Set(activeRules.map((r) => r.id));
+  const maxLevel = LEVEL_RANKS[level] ?? 3;
+  const out = new Map<string, number>();
+  for (const standard of registry.standards) {
+    let count = 0;
+    for (const criterion of standard.criteria) {
+      if (criterionLevelExceeds(criterion.level, maxLevel)) continue;
+      const rulesForCriterion = registry.rulesIndex.rulesFor(criterion.id);
+      const hasActiveRule = rulesForCriterion.some((id) => activeRuleIds.has(id));
+      if (hasActiveRule) count += 1;
+    }
+    out.set(standard.id, count);
+  }
+  return out;
+}
+
+const LEVEL_RANKS: Readonly<Record<string, number>> = { A: 1, AA: 2, AAA: 3, base: 1 };
+
+function criterionLevelExceeds(criterionLevel: string, maxLevel: number): boolean {
+  const rank = LEVEL_RANKS[criterionLevel] ?? 3;
+  return rank > maxLevel;
 }
 
 /**
