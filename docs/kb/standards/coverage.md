@@ -69,7 +69,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag22:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag22:1.4.13` | Content on Hover or Focus | AA | partial | keyboard/hover-only-no-focus-mirror, tooltip/dismissable | — | **rule** |
-| `wcag22:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +9 | cross-file-click-handler-on-non-interactive | **rule** |
+| `wcag22:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +10 | cross-file-click-handler-on-non-interactive | **rule** |
 | `wcag22:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag22:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -124,7 +124,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +45 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## WCAG 2.1
@@ -164,7 +164,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:1.4.11` | Non-text Contrast | AA | partial | contrast/non-text | — | **rule** |
 | `wcag21:1.4.12` | Text Spacing | AA | partial | layout/text-spacing | — | **rule** |
 | `wcag21:1.4.13` | Content on Hover or Focus | AA | partial | keyboard/hover-only-no-focus-mirror, tooltip/dismissable | — | **rule** |
-| `wcag21:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +9 | cross-file-click-handler-on-non-interactive | **rule** |
+| `wcag21:2.1.1` | Keyboard | A | partial | aria/hidden-focus, keyboard/accesskey-duplicate +10 | cross-file-click-handler-on-non-interactive | **rule** |
 | `wcag21:2.1.2` | No Keyboard Trap | A | manual | — | no-keyboard-trap | **finder** |
 | `wcag21:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
@@ -211,7 +211,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +45 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -236,7 +236,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:1.4.3` | Contrast (Minimum) | base | partial | contrast/minimum | — | **rule** |
 | `section508:1.4.4` | Resize Text | base | partial | document/viewport-zoom | — | **rule** |
 | `section508:1.4.5` | Images of Text | base | manual | — | images-of-text | **finder** |
-| `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +9 | cross-file-click-handler-on-non-interactive | **rule** |
+| `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +10 | cross-file-click-handler-on-non-interactive | **rule** |
 | `section508:2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
 | `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
@@ -259,7 +259,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +45 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
 
 ## EN 301 549
 
@@ -289,7 +289,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.1.4.11` | Non-text Contrast | base | partial | contrast/non-text | — | **rule** |
 | `en301549:9.1.4.12` | Text Spacing | base | partial | layout/text-spacing | — | **rule** |
 | `en301549:9.1.4.13` | Content on Hover or Focus | base | partial | keyboard/hover-only-no-focus-mirror, tooltip/dismissable | — | **rule** |
-| `en301549:9.2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +9 | cross-file-click-handler-on-non-interactive | **rule** |
+| `en301549:9.2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +10 | cross-file-click-handler-on-non-interactive | **rule** |
 | `en301549:9.2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `en301549:9.2.1.4` | Character Key Shortcuts | base | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
@@ -317,5 +317,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +44 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +45 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
