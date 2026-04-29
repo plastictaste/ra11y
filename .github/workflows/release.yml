@@ -15,6 +15,7 @@ jobs:
   publish:
     name: npm publish (provenance)
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write  # for GitHub release creation
       id-token: write  # for npm provenance
@@ -56,8 +57,6 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Generate changelog excerpt
         id: changelog

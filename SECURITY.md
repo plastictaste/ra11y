@@ -23,8 +23,10 @@ ra11y is designed to minimize supply-chain risk:
 - **Narrow devDependencies.** Only TypeScript, Bun types, Biome, and a small set of documentation tools (typedoc, mermaid-cli, markdownlint-cli2).
 - **Lockfile integrity.** CI fails if `bun.lock` changed without a corresponding `package.json` change.
 - **Provenance.** npm publishes use `--provenance` so every published version has cryptographic attestation linking it to its source commit.
+- **Trusted Publishing (OIDC).** Releases authenticate to npm via short-lived OIDC tokens minted at publish time — no long-lived `NPM_TOKEN` is stored in GitHub Secrets. The trusted publisher is bound to this repo, the `release.yml` workflow, and the `release` environment.
 - **Two-factor authentication** is required on the npm account.
-- **Minimal release permissions.** The GitHub Actions release workflow has only `id-token: write` and `contents: read`.
+- **Minimal release permissions.** The GitHub Actions release workflow has `id-token: write` (for OIDC + npm provenance) and `contents: write` (for creating the GitHub release page) — nothing else.
+- **Manual release approval.** The `release` environment requires reviewer approval before each publish; an unintended tag push pauses for human confirmation.
 
 ## Network isolation
 
