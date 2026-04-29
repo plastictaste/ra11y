@@ -5,8 +5,8 @@
  * unchanged from the original inline definition.
  */
 
-import type { ParsedFile } from "../engine/scanner.ts";
 import type { Registry } from "../engine/registry/registry.ts";
+import type { ParsedFile } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
