@@ -14,8 +14,8 @@ export {
   buildAgentPlan,
   countFixes,
   countFixesByClass,
-  laneTotal,
   type FixCounts,
+  laneTotal,
 } from "./build-plan.ts";
 export { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
 export type {
