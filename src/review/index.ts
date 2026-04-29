@@ -48,6 +48,7 @@ import { finder as timing } from "./finders/timing.ts";
 import { finder as toggleButtonPressedMissing } from "./finders/toggle-button-pressed-missing.ts";
 import { finder as useOfColor } from "./finders/use-of-color.ts";
 import { finder as validationTiming } from "./finders/validation-timing.ts";
+import { finder as visuallyHiddenOnlyName } from "./finders/visually-hidden-only-name.ts";
 
 export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   captcha,
@@ -94,4 +95,5 @@ export const BUILTIN_CANDIDATE_FINDERS: readonly CandidateFinder[] = [
   toggleButtonPressedMissing,
   useOfColor,
   validationTiming,
+  visuallyHiddenOnlyName,
 ];
