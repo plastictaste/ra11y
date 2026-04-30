@@ -20,10 +20,12 @@ This indirection exists because the backlog is ~800 lines and the orchestrator w
 The orchestrator passes:
 
 ```json
-{ "maxTurns": 10, "picksPerTurn": 3 }
+{ "maxTurns": 10, "picksPerTurn": 3, "lookaheadTurns": 3 }
 ```
 
-`maxTurns` is bounded by the `/continue` hard cap (10). `picksPerTurn` is the per-turn default (typically 3); the planner may emit `picksPerTurn: 4` on individual turns that qualify as pure V-track (see rule below). Default both if unspecified.
+`maxTurns` is the orchestrator's hard cap for the invocation (≤10). `picksPerTurn` is the per-turn default (typically 3); the planner may emit `picksPerTurn: 4` on individual turns that qualify as pure V-track (see rule below). `lookaheadTurns` is the **planner's own emit budget** — the orchestrator only consumes this many turns before re-invoking the planner for a fresh slice. Default `lookaheadTurns` to 3 if unspecified. Default the others if unspecified.
+
+The lookahead/replan split exists because token-metered runs frequently get rate-limited or cut short before turn 10, and emitting a full 10-turn plan with a 30+ item `deferred[]` is wasted spend when 3-turn lookahead is enough to catch the only collision class that actually bites (turn-N+1 picks a file turn-N just landed). Re-invoking the planner mid-run is cheap; over-planning is not.
 
 ## Per-turn `picksPerTurn: 4` exception
 
@@ -83,7 +85,7 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
    ```
    The orchestrator surfaces this in the dispatch prompt so the specialist combines edits rather than overwriting. Intra-plan collisions (turn-K pick changes a file that turn-(K+1) pick also targets) also populate `collisionWith` with `"turn-<K>/<item>"`.
 
-7. **Budget to `maxTurns × picksPerTurn`** (or `maxTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. Remaining items go in `deferred`. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly.
+7. **Budget to `lookaheadTurns × picksPerTurn`** (or `lookaheadTurns × 4` when you expect multiple qualifying turns). Fill turns greedily in track order (D, M, R, F, then whichever other tracks are active). If you run out of active-track items before budget, shorter plan is fine — return it. For each turn, evaluate the pure-V-track-4 conditions above and set the turn's `picksPerTurn` to 4 or 3 accordingly. **Cap `deferred[]` at the 5 most-relevant entries** — items the next planner replan should consider first (e.g. items unblocked by closures landing this run). The exhaustive backlog is in `.claude/backlog.md`; do not enumerate it here. When more items remain beyond the lookahead window, set `more_available: true` at the top level so the orchestrator knows to replan.
 
 # Return shape
 
@@ -93,6 +95,7 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
 {
   "activeTracks": ["D", "M", "R", "F"],
   "stagedTracks": ["S", "E"],
+  "more_available": true,
   "turns": [
     {
       "n": 1,
@@ -144,6 +147,7 @@ Single JSON block, no prose. Ceiling: ~80 lines for a full 10×3 plan.
 Field contracts:
 
 - **`activeTracks` / `stagedTracks`**: from the Dispatch model line; both always present.
+- **`more_available`**: `true` when active-track items remain beyond the lookahead window (orchestrator should replan when the cached slice is exhausted); omit otherwise.
 - **`turns[].n`**: 1-indexed turn number.
 - **`turns[].picksPerTurn`**: 3 by default; 4 only when the turn passes all three pure-V-track conditions above. Must equal `turns[].picks.length`.
 - **`turns[].picks[].backlogLine`**: the 1-indexed line in `.claude/backlog.md` where the `- [ ]` item lives. Fallback pointer for the rare case where the slice is ambiguous or the specialist needs surrounding context.

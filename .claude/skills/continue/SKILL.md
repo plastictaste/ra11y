@@ -31,14 +31,15 @@ The old `/continue` walked `## Phase N` sections in order, one item at a time. T
 - **Active** (dispatch eligible): tracks flagged in `.claude/backlog.md`'s `Dispatch model` line as active — currently **D, M, R, F**.
 - **Staged** (do not dispatch): **S** (MCP sampling) and **E** (ecosystem) are deferred until after v0.2.0 ships. `/continue` ignores their items unless the Dispatch model line is updated to promote them.
 
-## Pre-dispatch planning (step 0 — once per invocation)
+## Pre-dispatch planning (step 0 — replan as needed)
 
-Before the turn loop, dispatch the `planner` subagent **once**:
+Before the turn loop, dispatch the `planner` subagent:
 
-- Pass `{ maxTurns: <$1 or 10>, picksPerTurn: 3 }`.
+- Pass `{ maxTurns: <$1 or 10>, picksPerTurn: 3, lookaheadTurns: 3 }`.
 - It reads `.claude/backlog.md` + `git log --oneline -30`, audits sequencing constraints, pre-classifies each pick to a specialist, and annotates cross-turn file collisions.
-- It returns a structured plan (≤80 lines) with `activeTracks`, `stagedTracks`, `turns[]` (each turn: up to 3 `picks` with `item`, `track`, `specialist`, `backlogLine`, `inferredFiles`, `collisionWith`), `deferred[]`, and `blocked[]`.
-- Cache the plan in main-session memory for the life of this invocation. **Do not re-read `.claude/backlog.md` during the turn loop** — the plan is authoritative. The only time the backlog file is touched during the loop is by the `integrator` subagent (backlog tickoff at end of each turn), and that happens in a separate context.
+- It returns a structured plan with `activeTracks`, `stagedTracks`, `more_available?`, `turns[]` (each turn: up to 3 `picks` with `item`, `track`, `specialist`, `backlogLine`, `inferredFiles`, `collisionWith`), `deferred[]` (capped at 5 entries), and `blocked[]`.
+- Cache the plan in main-session memory. **Do not re-read `.claude/backlog.md` during the turn loop** — the plan is authoritative. The only time the backlog file is touched during the loop is by the `integrator` subagent (backlog tickoff at end of each turn), and that happens in a separate context.
+- **Replan when the cached slice is exhausted.** When you've consumed all of `plan.turns[]` and `plan.more_available === true` and the invocation still has turn budget, re-invoke the planner with `lookaheadTurns: 3`. The fresh slice picks up where the prior one ended (the planner re-grep on `- [ ]` lines naturally excludes items closed by Closes-trailer commits earlier this run). Replanning is cheap; over-planning a 10-turn slice that the run never reaches is not.
 
 If the planner returns zero `turns`, stop and report — all active tracks are either empty, sequencing-blocked, or `[!]`-blocked.
 
@@ -96,8 +97,12 @@ discard the older side.
 </if>
 
 <if specialist-specific>
-Specialist guidance: <1-2 pointers to docs/kb/patterns/... or recent ADRs that
-govern this decision space>.
+Specialist guidance: <≤5 lines, only what is specific to this pick — pointers
+to docs/kb/patterns/... or recent ADRs, predicate-strength gotchas, the
+canonical regression case. Never restate commit discipline, scope-lock,
+verify-before-return, structured-JSON-return, or worktree rules — those auto-
+load from CLAUDE.md, dispatch-template.md, and worktree-discipline.md, and
+duplicating them inflates every dispatch prompt without value>.
 </if>
 ```
 
@@ -256,6 +261,8 @@ The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory
 **Do not block the loop on the meta-reviewer.** If the agent returns `findings[]` with structural concerns or `ledger_appended: false`, log them and continue to the next turn. The meta-reviewer is advisory; only an explicit user-blocking item from a structural flag (rare) stops the loop.
 
 **Skip the meta-reviewer when** the integrator returned `verifyOk: false` and main is in a partial state — the loop is stopping anyway, signals from a half-integrated turn are unreliable, and the orchestrator should prioritize surfacing the integrator's error to the user.
+
+**Skip the meta-reviewer on uneventful turns to control invocation token cost.** Skip when ALL of these hold: `integrator.verifyOk === true`, `integrator.skipped` and `integrator.blocked` are both empty, no specialist return contained a populated `signals[]` array, no specialist returned `branch_returned !== branch_assigned`, no agent stalled (per §3a), and the turn count since the last meta-review is `< 3`. **Force a meta-review every 3rd turn regardless** so slow-burn correlated patterns still surface in the ledger. This early-out only suppresses the call when the turn carried no observation worth correlating — the value of the agent is its cross-turn pattern detection, and three clean turns in a row carry exactly zero new evidence per turn. Track the "turns since last meta-review" counter in main-session memory alongside the dispatched-picks set.
 
 ### 5. Loop
 
