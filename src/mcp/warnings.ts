@@ -311,19 +311,6 @@ export type ScanWarningCode =
   // explicit and lets the failure path stay distinct (it surfaces as
   // `bootstrap_baseline_failed` from the partial-failure pipeline).
   | "baseline_dry_run"
-  // `bootstrap` is shipping
-  // both `suggestedConfig` (canonical) and `proposedConfig` (transition
-  // alias) in this release. Without this code, an agent reading the
-  // response sees two fields with identical contents and pays the
-  // double-payload cost on every bootstrap call without any signal that
-  // the alias is going away. The warning fires whenever `proposedConfig`
-  // is emitted so agents drop reads of the alias on the next call.
-  // Emitted alongside `proposedConfig` until the alias is removed in
-  // the next minor release; the `### Deprecated` CHANGELOG entry tracks
-  // the removal window. Surface-don't-suppress: the alias still ships
-  // unchanged; the warning is the additive signal that lets callers
-  // self-migrate without a hidden break.
-  | "proposed_config_deprecated_use_suggested_config"
   // at least one scanned `.scss`
   // file declared top-level `$variable: …;` statements but the SCSS
   // preprocessor's substitution pass produced zero literal-color
@@ -1513,7 +1500,6 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
  *     `baseline_dry_run`,
- *     `proposed_config_deprecated_use_suggested_config`,
  *     `partial_parse_files_present`,
  *     `parser_bailed_zero_findings`,
  *     `scss_unresolved_variables` (the file list it carries is
@@ -2306,7 +2292,6 @@ export interface ScanWarningDetails {
     readonly fields: readonly string[];
   };
   readonly baseline_dry_run?: BinaryPresenceMarker;
-  readonly proposed_config_deprecated_use_suggested_config?: BinaryPresenceMarker;
   readonly partial_parse_files_present?: BinaryPresenceMarker;
   readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
   readonly dist_only_scan_detected?: BinaryPresenceMarker;
@@ -2497,7 +2482,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "session_wrappers_configured_for_different_cwd",
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
-  "proposed_config_deprecated_use_suggested_config",
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
@@ -2558,7 +2542,6 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "restrict_to_paths_no_matches",
   "response_meta_truncated",
   "baseline_dry_run",
-  "proposed_config_deprecated_use_suggested_config",
   "scss_unresolved_variables",
   "vendor_css_dominates_findings",
   "scanned_minified_file",

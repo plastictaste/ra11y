@@ -448,7 +448,6 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   // belongs in the exclusively-binary set this invariant walks.
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
-  "proposed_config_deprecated_use_suggested_config",
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",

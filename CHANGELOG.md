@@ -2,6 +2,12 @@
 
 All notable changes to ra11y are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) — see `CLAUDE.md` section 14 for the ra11y-specific semver policy.
 
+## [Unreleased]
+
+### Removed
+
+- **MCP `bootstrap` response `proposedConfig` transition alias dropped; `suggestedConfig` is the only field carrying the proposed `ra11y.config.ts` body** (`src/mcp/tool-bootstrap.ts`). The 1.0.0-beta.1 release shipped both the canonical `suggestedConfig` and the transition-alias `proposedConfig` with byte-identical contents (~10KB serialize verbatim), plus a `proposed_config_deprecated_use_suggested_config` warning code so agents knew to drop their alias reads. Per [`docs/kb/architecture/ai-first-consumer.md`](./docs/kb/architecture/ai-first-consumer.md) "Sibling fields naming the same concept must use one shape," shipping two siblings holding the same value forced the agent to pick a canonical reading silently and paid ~20KB per call for no marginal signal — the deprecation warning was sufficient. Both the `proposedConfig` field and the `proposed_config_deprecated_use_suggested_config` warning code (typed slot on `ScanWarningCode` / `ScanWarningDetails` plus the `BINARY_PRESENCE_CODES` and `SCAN_WARNING_CODES` membership entries) are removed; consumers reading `response.proposedConfig` switch to `response.suggestedConfig` (identical value).
+
 ## [1.0.0-beta.1] - 2026-04-29
 
 Public API stability freeze: [ADR 0019](./docs/adr/0019-v1-api-stability.md)

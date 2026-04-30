@@ -2,10 +2,9 @@
  * Unit tests for the `bootstrap` MCP meta-tool.
  *
  * Covers:
- *   - Happy path: composition surfaces wrappers, suggestedConfig (with
- *     the `proposedConfig` transition alias carrying the identical
- *     value), scan subset, ciSnippet, and nextStep on a real fixture
- *     tree with writeBaseline defaulting to false (no file written).
+ *   - Happy path: composition surfaces wrappers, suggestedConfig,
+ *     scan subset, ciSnippet, and nextStep on a real fixture tree
+ *     with writeBaseline defaulting to false (no file written).
  *   - writeBaseline opt-in: `.ra11y-baseline.json` lands on disk at
  *     the scan root; the response's `baseline` field reports the
  *     path + entriesWritten.
@@ -30,7 +29,6 @@ import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
 interface BootstrapResponse {
   readonly wrappers: { readonly candidates: readonly unknown[] };
   readonly suggestedConfig?: string;
-  readonly proposedConfig?: string;
   readonly scan: {
     readonly filesScanned: number;
     readonly violationsCount: number;
@@ -79,7 +77,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   // Composition invariant: every top-level key the spec promises
   // must land, even on a clean codebase. Dry-run writes nothing — the
   // baseline file must NOT appear on disk when the flag is omitted.
-  it("returns wrappers, suggestedConfig (and proposedConfig alias), scan, baseline:null, ciSnippet on a clean codebase", async () => {
+  it("returns wrappers, suggestedConfig, scan, baseline:null, ciSnippet on a clean codebase", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -89,15 +87,16 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(isError).toBeUndefined();
       expect(response.wrappers).toBeTruthy();
       expect(Array.isArray(response.wrappers.candidates)).toBe(true);
-      // Canonical key is `suggestedConfig` (-
-      // DRIFT); `proposedConfig` is emitted alongside for one release
-      // as a transition alias so agents that learned the old name keep
-      // working. Both must carry the identical value.
+      // Canonical key is `suggestedConfig` — matches
+      // `propose_config.suggestedConfig` and
+      // `detect_native_wrappers.suggestedConfigSnippet`.
       expect(typeof response.suggestedConfig).toBe("string");
       expect(response.suggestedConfig).toContain('import { defineConfig } from "@ra11y/core";');
-      expect(typeof response.proposedConfig).toBe("string");
-      expect(response.proposedConfig).toContain('import { defineConfig } from "@ra11y/core";');
-      expect(response.proposedConfig).toBe(response.suggestedConfig);
+      // The former `proposedConfig` transition alias was dropped per
+      // CLAUDE.md §1 "Sibling fields naming the same concept must use
+      // one shape" — it duplicated the canonical ~10KB string verbatim
+      // on every call.
+      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.scan.violationsCount).toBe(0);
       expect(response.scan.notesCount).toBe(0);
@@ -508,7 +507,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
     (detectNativeWrappersTool as { handler: unknown }).handler = originalDetect;
   });
 
-  it("returns scan + suggestedConfig (plus proposedConfig alias) and emits bootstrap_detect_failed warning when detect rejects", async () => {
+  it("returns scan + suggestedConfig and emits bootstrap_detect_failed warning when detect rejects", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -518,8 +517,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
       expect(isError).toBeUndefined();
       expect(response.wrappers.candidates).toEqual([]);
       expect(typeof response.suggestedConfig).toBe("string");
-      expect(typeof response.proposedConfig).toBe("string");
-      expect(response.proposedConfig).toBe(response.suggestedConfig);
+      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("bootstrap_detect_failed");
@@ -528,14 +526,13 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
   });
 });
 
-describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
-  //. When the `propose_config` leg
-  // degrades (handler rejects → extractProposedConfig returns null),
-  // neither the canonical `suggestedConfig` key nor the
-  // `proposedConfig` transition alias may appear on the response —
-  // conditional-spread for both under one gate. Asserting on both
-  // absence simultaneously prevents the alias from being emitted when
-  // the canonical key is omitted (half-populated shape ambiguity).
+describe("bootstrap: suggestedConfig null-case", () => {
+  // When the `propose_config` leg degrades (handler rejects →
+  // extractProposedConfig returns null), `suggestedConfig` is omitted
+  // from the response (conditional spread per CLAUDE.md §1
+  // "Ambiguous field shapes are dishonest") and the partial-failure
+  // pipeline emits `bootstrap_propose_config_failed` so the agent can
+  // tell "leg degraded" from "no config available."
   const originalPropose = proposeConfigTool.handler;
 
   beforeEach(() => {
@@ -548,7 +545,7 @@ describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
     (proposeConfigTool as { handler: unknown }).handler = originalPropose;
   });
 
-  it("omits both suggestedConfig and proposedConfig when propose_config leg rejects", async () => {
+  it("omits suggestedConfig when propose_config leg rejects", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "index.html"),
@@ -557,63 +554,14 @@ describe("bootstrap: suggestedConfig/proposedConfig null-case parity", () => {
       const { response, isError } = await callBootstrap({ cwd: dir });
       expect(isError).toBeUndefined();
       expect(response.suggestedConfig).toBeUndefined();
-      expect(response.proposedConfig).toBeUndefined();
+      // The former `proposedConfig` transition alias was dropped per
+      // CLAUDE.md §1 "Sibling fields naming the same concept must use
+      // one shape"; guard that it never resurfaces alongside the
+      // canonical absence either.
+      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("bootstrap_propose_config_failed");
     });
-  });
-});
-
-describe("bootstrap: proposedConfig deprecation warning", () => {
-  //. `bootstrap` ships the
-  // canonical `suggestedConfig` and a transition-alias `proposedConfig`
-  // with identical contents for one release. Without a structured
-  // warning, agents have no signal that the alias is going away and
-  // pay the double-payload cost on every call. The dedicated code
-  // fires whenever `proposedConfig` is in the response so agents drop
-  // their alias reads on the next tool call. Removed in lockstep with
-  // the alias itself in the next minor release.
-  it("fires proposed_config_deprecated_use_suggested_config alongside the alias", async () => {
-    await withScratch(async (dir) => {
-      await writeFile(
-        join(dir, "index.html"),
-        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body><p>x</p></body></html>\n',
-      );
-      const { response } = await callBootstrap({ cwd: dir });
-      // Sanity: the alias is on the response.
-      expect(typeof response.proposedConfig).toBe("string");
-      expect(response.proposedConfig).toBe(response.suggestedConfig);
-      // Deprecation code rides alongside.
-      expect(response.warnings).toBeDefined();
-      expect(response.warnings).toContain("proposed_config_deprecated_use_suggested_config");
-    });
-  });
-
-  // Pair: when the propose_config leg fails and the alias is omitted,
-  // the deprecation code MUST also drop. Emitting the warning without
-  // the alias would direct agents at a non-existent migration —
-  // ambiguous-shape territory.
-  it("omits the deprecation code when proposedConfig is not emitted", async () => {
-    const originalPropose = proposeConfigTool.handler;
-    (proposeConfigTool as { handler: unknown }).handler = () => {
-      throw new Error("forced-propose-failure");
-    };
-    try {
-      await withScratch(async (dir) => {
-        await writeFile(
-          join(dir, "index.html"),
-          '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
-        );
-        const { response } = await callBootstrap({ cwd: dir });
-        expect(response.suggestedConfig).toBeUndefined();
-        expect(response.proposedConfig).toBeUndefined();
-        expect(response.warnings ?? []).not.toContain(
-          "proposed_config_deprecated_use_suggested_config",
-        );
-      });
-    } finally {
-      (proposeConfigTool as { handler: unknown }).handler = originalPropose;
-    }
   });
 });
 

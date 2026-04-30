@@ -63,7 +63,7 @@ export const bootstrapTool: McpTool = {
   def: {
     name: "bootstrap",
     description:
-      "One-shot onboarding: run `detect_native_wrappers` + `propose_config` + `scan_project` and (optionally) write a `.ra11y-baseline.json`, all in a single round-trip. Returns the wrapper candidates, the proposed ra11y.config.ts body (as `suggestedConfig`; also emitted as `proposedConfig` for one release as a transition alias), a subset of the scan payload, the baseline status, and a copy-pasteable CI snippet that wires `baseline check` into GitHub Actions.\n\nRead-only by default: `writeBaseline` is false unless the caller opts in. When `writeBaseline: true`, the tool writes `.ra11y-baseline.json` into `cwd` via the `baseline` tool's `create` mode — same on-disk shape as calling `baseline` directly. Use this once when adopting ra11y on a new codebase; prefer the individual tools for iterative work.",
+      "One-shot onboarding: run `detect_native_wrappers` + `propose_config` + `scan_project` and (optionally) write a `.ra11y-baseline.json`, all in a single round-trip. Returns the wrapper candidates, the proposed ra11y.config.ts body (as `suggestedConfig`), a subset of the scan payload, the baseline status, and a copy-pasteable CI snippet that wires `baseline check` into GitHub Actions.\n\nRead-only by default: `writeBaseline` is false unless the caller opts in. When `writeBaseline: true`, the tool writes `.ra11y-baseline.json` into `cwd` via the `baseline` tool's `create` mode — same on-disk shape as calling `baseline` directly. Use this once when adopting ra11y on a new codebase; prefer the individual tools for iterative work.",
     inputSchema: {
       type: "object",
       properties: {
@@ -147,21 +147,10 @@ export const bootstrapTool: McpTool = {
 
     const scanSubset = extractScanSubset(scan);
     const scanWarnings = readStringArray(scan, "warnings");
-    // fire the deprecation
-    // code whenever the alias is emitted (gated on suggestedConfig
-    // being non-null — same predicate as `configPair` below). Surfaces
-    // alongside the alias so agents reading the warnings channel know
-    // to drop their `proposedConfig` reads on the next call without
-    // having to diff the response shape across releases. The
-    // `### Deprecated` CHANGELOG entry tracks the removal window;
-    // when the alias goes away the emit drops with it.
-    const proposedConfigDeprecationCode: string[] =
-      suggestedConfig === null ? [] : ["proposed_config_deprecated_use_suggested_config"];
     const warnings: string[] = [
       ...scanWarnings,
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
       ...(writeBaseline ? [] : ["baseline_dry_run"]),
-      ...proposedConfigDeprecationCode,
     ];
 
     // Snippet content tracks actual baseline-existence on disk: pasting
@@ -197,18 +186,12 @@ export const bootstrapTool: McpTool = {
     });
 
     // Canonical key is `suggestedConfig` (matches `propose_config` +
-    // `detect_native_wrappers.suggestedConfigSnippet`). `proposedConfig`
-    // is emitted alongside for one release as a transition alias so
-    // agents that learned the old name keep working. Removed in the
-    // next minor release. The alias-deprecation warning code below
-    // tells the agent to
-    // drop reads of `proposedConfig` on the next call so the
-    // double-payload cost goes away ahead of the removal.
-    const configPair =
-      suggestedConfig === null ? {} : { suggestedConfig, proposedConfig: suggestedConfig };
+    // `detect_native_wrappers.suggestedConfigSnippet`). Conditional
+    // spread per CLAUDE.md §1 "Ambiguous field shapes are dishonest" —
+    // omitted when the propose_config leg degraded.
     return textResult({
       wrappers: wrappersPayload,
-      ...configPair,
+      ...(suggestedConfig === null ? {} : { suggestedConfig }),
       scan: scanSubset,
       // Conditional-spread per CLAUDE.md §1 "Ambiguous field shapes are
       // dishonest" — the field is present only when it carries a
