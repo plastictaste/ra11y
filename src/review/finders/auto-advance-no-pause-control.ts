@@ -252,7 +252,7 @@ function htmlCarouselSignal(el: HtmlElement): AutoAdvanceEvidence | null {
         kind: "carousel-data-attr",
         line: el.loc.start.line,
         column: el.loc.start.column,
-        evidence: `<${el.tagName.toLowerCase()}> with data-${getHtmlAttribute(el, "data-bs-ride") !== null ? "bs-" : ""}ride="${ride.trim()}"`,
+        evidence: `<${el.tagName.toLowerCase()}> with data-${getHtmlAttribute(el, "data-bs-ride") === null ? "" : "bs-"}ride="${ride.trim()}"`,
       };
     }
   }
@@ -440,48 +440,95 @@ function* sourceAutoAdvanceEvidence(source: string): Iterable<AutoAdvanceEvidenc
  * literal classifiers stay aligned without a circular import.
  */
 function extractDurationLiteralMs(source: string, openParen: number): number | null {
-  // Skip past the `(` then advance past the first top-level argument
-  // (the callback) until the comma, then read the duration literal.
   if (source.charCodeAt(openParen) !== 40 /* ( */) return null;
-  let i = openParen + 1;
-  let depth = 1;
-  let stringQuote = 0;
-  while (i < source.length && depth > 0) {
-    const c = source.charCodeAt(i);
-    if (stringQuote !== 0) {
-      if (c === 92 /* \ */) {
-        i += 2;
-        continue;
-      }
-      if (c === stringQuote) stringQuote = 0;
-      i++;
-      continue;
-    }
-    if (c === 39 || c === 34 || c === 96) {
-      stringQuote = c;
-      i++;
-      continue;
-    }
-    if (c === 40 || c === 91 || c === 123) {
-      depth++;
-      i++;
-      continue;
-    }
-    if (c === 41 || c === 93 || c === 125) {
-      depth--;
-      i++;
-      if (depth === 0) return null;
-      continue;
-    }
-    if (c === 44 /* , */ && depth === 1) break;
-    i++;
-  }
-  if (i >= source.length) return null;
+  const commaOffset = scanToFirstTopLevelComma(source, openParen + 1);
+  if (commaOffset === null) return null;
   // Skip the comma + whitespace; read the duration literal verbatim.
-  let j = i + 1;
+  let j = commaOffset + 1;
   while (j < source.length && isWs(source.charCodeAt(j))) j++;
-  // Capture until the next top-level comma or close-paren.
-  let k = j;
+  const argEnd = scanToArgumentEnd(source, j);
+  const raw = source.slice(j, argEnd).trim();
+  return parseDurationLiteralMs(raw);
+}
+
+/**
+ * Scan-state for the comma-finding loop. Tracking string-quote and
+ * depth in a single object keeps the per-character branches small
+ * enough for the cognitive-complexity guard while still handling
+ * commas inside nested call args / array literals / template strings
+ * correctly.
+ */
+interface CommaScanState {
+  i: number;
+  depth: number;
+  stringQuote: number;
+}
+
+/**
+ * Advance from `start` until the first top-level `,` separating the
+ * call's first arg (the callback) from its second (the duration).
+ * Returns the offset of that comma, or `null` if the call closed
+ * without one.
+ */
+function scanToFirstTopLevelComma(source: string, start: number): number | null {
+  const state: CommaScanState = { i: start, depth: 1, stringQuote: 0 };
+  while (state.i < source.length && state.depth > 0) {
+    if (advanceCommaScanString(source, state)) continue;
+    if (advanceCommaScanBracket(source, state)) {
+      if (state.depth === 0) return null;
+      continue;
+    }
+    if (source.charCodeAt(state.i) === 44 /* , */ && state.depth === 1 && state.stringQuote === 0) {
+      return state.i;
+    }
+    state.i++;
+  }
+  return null;
+}
+
+function advanceCommaScanString(source: string, state: CommaScanState): boolean {
+  if (state.stringQuote === 0) {
+    const c = source.charCodeAt(state.i);
+    if (c === 39 || c === 34 || c === 96) {
+      state.stringQuote = c;
+      state.i++;
+      return true;
+    }
+    return false;
+  }
+  const c = source.charCodeAt(state.i);
+  if (c === 92 /* \ */) {
+    state.i += 2;
+    return true;
+  }
+  if (c === state.stringQuote) state.stringQuote = 0;
+  state.i++;
+  return true;
+}
+
+function advanceCommaScanBracket(source: string, state: CommaScanState): boolean {
+  if (state.stringQuote !== 0) return false;
+  const c = source.charCodeAt(state.i);
+  if (c === 40 || c === 91 || c === 123) {
+    state.depth++;
+    state.i++;
+    return true;
+  }
+  if (c === 41 || c === 93 || c === 125) {
+    state.depth--;
+    state.i++;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Walk forward from `start` (positioned at the first non-whitespace
+ * character of the duration arg) and return the offset of the next
+ * top-level comma or close-paren — whichever ends the arg.
+ */
+function scanToArgumentEnd(source: string, start: number): number {
+  let k = start;
   let innerDepth = 0;
   while (k < source.length) {
     const c = source.charCodeAt(k);
@@ -499,8 +546,7 @@ function extractDurationLiteralMs(source: string, openParen: number): number | n
     if (c === 44 /* , */ && innerDepth === 0) break;
     k++;
   }
-  const raw = source.slice(j, k).trim();
-  return parseDurationLiteralMs(raw);
+  return k;
 }
 
 function parseDurationLiteralMs(raw: string): number | null {
@@ -549,7 +595,7 @@ function pushUnique(
 function buildReason(ev: AutoAdvanceEvidence): string {
   const lead = describeAutoAdvance(ev);
   const conjunction =
-    " — and no pause-UI signal (`aria-label*=\"pause\" i`, `id*=\"pause\" i`, `class*=\"pause\" i`, or `<button>` text containing `pause`) was found in this file";
+    ' — and no pause-UI signal (`aria-label*="pause" i`, `id*="pause" i`, `class*="pause" i`, or `<button>` text containing `pause`) was found in this file';
   const dismissalFrame =
     ". The pause control may live in a sibling file the page composes; verify by reading the consuming layout. WCAG 2.2.2 requires a user-operable mechanism (pause-on-hover alone is incidental, not operable).";
   return `${lead}${conjunction}${dismissalFrame}`;
