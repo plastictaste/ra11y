@@ -1172,4 +1172,90 @@ btn.addEventListener('click', () => save());`;
       expect(v[0]?.confidence).toBe("medium");
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Test-file substrate gate — `.test.{js,ts,jsx,tsx}`, `.spec.{...}`,
+  // and `__tests__/` / `__mocks__/` / `tests/` directory segments. The
+  // rule's narrative ("keyboard users can't activate the target") is a
+  // runtime claim about a rendered DOM; test files have no rendered
+  // consumer page, so the emission would budget the agent's attention
+  // against a runtime failure mode that doesn't apply to the substrate.
+  // The path shape is deterministic, so the gate is fact, not heuristic.
+  // ---------------------------------------------------------------------------
+  describe("test-file substrate: omits emission entirely on", () => {
+    it("`*.spec.js` with addEventListener click + querySelector target", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "save.spec.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`*.test.ts` with addEventListener click", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "save.test.ts" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`*.spec.tsx` with JSX bare-div onClick", () => {
+      const source = `const X = <div onClick={doThing}>Click</div>;`;
+      const v = runRule(rule, source, { filePath: "Comp.spec.tsx" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`*.test.jsx` with attribute-interaction grammar (data-bs-toggle)", () => {
+      const source = `const X = <div data-bs-toggle="modal">Open</div>;`;
+      const v = runRule(rule, source, { filePath: "Modal.test.jsx" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`__tests__/` segment in path", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "src/__tests__/save.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`__mocks__/` segment in path", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "src/__mocks__/save.ts" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("`tests/` segment in path", () => {
+      const source = `const X = <div onClick={doThing}>Click</div>;`;
+      const v = runRule(rule, source, { filePath: "tests/keyboard/comp.tsx" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("HTML test fixture under `tests/` segment (e.g. fixture stub)", () => {
+      const source = `<div onclick="doThing()">Click</div>`;
+      const v = runRule(rule, source, { filePath: "tests/fixtures/keyboard/click.html" });
+      expect(v).toHaveLength(0);
+    });
+  });
+
+  describe("test-file substrate: still emits when path is NOT a test file", () => {
+    it("`app.js` (no test segment) still fires the external-JS grammar", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', () => save());`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("`integrationtests.ts` (substring match without separator) still fires", () => {
+      // `tests` must be a complete path segment — `integrationtests.ts`
+      // at the root has no `tests/` segment, so the gate doesn't fire.
+      const source = `const X = <div onClick={doThing}>Click</div>;`;
+      const v = runRule(rule, source, { filePath: "src/integrationtests.tsx" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("`Comp.tsx` (no spec/test infix) still fires", () => {
+      const source = `const X = <div onClick={doThing}>Click</div>;`;
+      const v = runRule(rule, source, { filePath: "src/Comp.tsx" });
+      expect(v).toHaveLength(1);
+    });
+  });
 });

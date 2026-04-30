@@ -3,6 +3,7 @@ import {
   extensionMatches,
   hasParseableExtension,
   isStorybookStoryFile,
+  isTestFilePath,
 } from "../../../src/utils/path.ts";
 
 describe("extensionMatches", () => {
@@ -181,5 +182,57 @@ describe("isStorybookStoryFile", () => {
 
   test("is case-sensitive on the .stories / .story marker", () => {
     expect(isStorybookStoryFile("Button.Stories.tsx")).toBe(false);
+  });
+});
+
+describe("isTestFilePath", () => {
+  test("matches .test and .spec on every supported JSX/TS extension", () => {
+    expect(isTestFilePath("Button.test.tsx")).toBe(true);
+    expect(isTestFilePath("Button.test.jsx")).toBe(true);
+    expect(isTestFilePath("Button.test.ts")).toBe(true);
+    expect(isTestFilePath("Button.test.js")).toBe(true);
+    expect(isTestFilePath("Button.spec.tsx")).toBe(true);
+    expect(isTestFilePath("Button.spec.js")).toBe(true);
+  });
+
+  test("matches absolute and nested POSIX paths", () => {
+    expect(isTestFilePath("/repo/src/Button.test.tsx")).toBe(true);
+    expect(isTestFilePath("src/components/Button.spec.ts")).toBe(true);
+  });
+
+  test("matches Windows-style backslash paths", () => {
+    expect(isTestFilePath("C:\\repo\\src\\Button.test.tsx")).toBe(true);
+    expect(isTestFilePath("src\\__tests__\\Button.js")).toBe(true);
+  });
+
+  test("matches __tests__ / __mocks__ / tests as path segments", () => {
+    expect(isTestFilePath("src/__tests__/Button.js")).toBe(true);
+    expect(isTestFilePath("src/__mocks__/Button.ts")).toBe(true);
+    expect(isTestFilePath("tests/keyboard/foo.tsx")).toBe(true);
+    expect(isTestFilePath("packages/ui/src/__tests__/foo.test.tsx")).toBe(true);
+  });
+
+  test("does not match plain source files", () => {
+    expect(isTestFilePath("Button.tsx")).toBe(false);
+    expect(isTestFilePath("src/components/Button.tsx")).toBe(false);
+    expect(isTestFilePath("app.js")).toBe(false);
+    expect(isTestFilePath("index.html")).toBe(false);
+  });
+
+  test("does not match story files (those have their own predicate)", () => {
+    expect(isTestFilePath("Button.stories.tsx")).toBe(false);
+  });
+
+  test("does not match non-JSX/TS extensions with .test/.spec markers", () => {
+    expect(isTestFilePath("foo.test.md")).toBe(false);
+    expect(isTestFilePath("README.spec.css")).toBe(false);
+  });
+
+  test("requires `tests` to be a complete path segment, not a substring", () => {
+    // `integrationtests.ts` at the root has no `tests/` segment.
+    expect(isTestFilePath("integrationtests.tsx")).toBe(false);
+    expect(isTestFilePath("src/integrationtests.tsx")).toBe(false);
+    // `mytests/` is also not a segment match — only the literal `tests` segment matches.
+    expect(isTestFilePath("src/mytests/foo.ts")).toBe(false);
   });
 });

@@ -141,6 +141,50 @@ export function isStorybookStoryFile(filePath: string): boolean {
 const STORY_BASENAME_RE = /^[^.]+\.(?:stories|story)\.(?:tsx|jsx|ts|js)$/;
 
 /**
+ * True when the file path looks like a test or test-fixture source —
+ * `*.test.{js,jsx,ts,tsx}`, `*.spec.{js,jsx,ts,tsx}`, or any path
+ * containing a `__tests__` / `__mocks__` / `tests` directory segment.
+ *
+ * This is a *deterministic* path-shape predicate — the result is
+ * provable from the path string alone, no heuristic about behavior is
+ * involved. Its use is reserved for rules whose runtime narrative is
+ * meaningless on a test-file substrate (e.g.
+ * `keyboard/handler-missing` emitting "keyboard users can't activate
+ * the target" against a `*.spec.js` that has no rendered consumer
+ * page). Per the AI-first doctrine "Heuristic emission is the
+ * symmetric twin of heuristic suppression," gating emission on this
+ * predicate is *not* heuristic suppression — the path shape is fact,
+ * not guess.
+ *
+ * Both `/` and `\` separators are accepted (Windows paths). The
+ * basename match is case-sensitive on the `.test` / `.spec` marker
+ * (Vitest, Jest, Mocha, Bun all use lowercase by convention) and
+ * case-sensitive on directory segments (`__tests__`, `__mocks__`,
+ * `tests` are the canonical lowercase forms across ecosystems).
+ *
+ * `tests` matches as a path segment only — a file literally named
+ * `tests.tsx` at the repo root does NOT match. The segment match
+ * requires a separator (or path-start) before `tests` and a separator
+ * after, so `src/tests/util.ts` matches but `src/integrationtests.ts`
+ * does not.
+ */
+export function isTestFilePath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/");
+  // Basename test — `*.test.<ext>` / `*.spec.<ext>`
+  const lastSlash = normalized.lastIndexOf("/");
+  const basename = lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1);
+  if (TEST_BASENAME_RE.test(basename)) return true;
+  // Segment test — `__tests__/`, `__mocks__/`, `tests/` anywhere in the path.
+  return TEST_SEGMENT_RE.test(`/${normalized}/`);
+}
+
+/** Matches `<name>.test.<ext>` or `<name>.spec.<ext>` basenames. */
+const TEST_BASENAME_RE = /^.+\.(?:test|spec)\.(?:tsx|jsx|ts|js)$/;
+
+/** Matches `__tests__`, `__mocks__`, or `tests` as a complete path segment. */
+const TEST_SEGMENT_RE = /\/(?:__tests__|__mocks__|tests)\//;
+
+/**
  * Extension-alias table: a file extension that maps into an AST
  * shape another extension already declares. Ordered by source
  * extension; each row lists every allow-list extension that should

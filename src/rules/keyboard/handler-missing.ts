@@ -84,6 +84,18 @@
  * activates it, so it's exempt from the attribute-interaction check
  * even though the URL is degenerate. `<a>` without href is flagged
  * separately because it is not focusable at all.
+ *
+ * Test-file substrate gate: when the input file path matches a test
+ * shape (`*.test.{js,ts,jsx,tsx}`, `*.spec.{js,ts,jsx,tsx}`, or any
+ * path containing a `__tests__` / `__mocks__` / `tests` segment), the
+ * rule omits emission for the whole file. The runtime narrative
+ * (focus, Enter/Space, keyboard reachability) presumes a rendered
+ * consumer page; test files have no rendered DOM, so the message
+ * "keyboard users can't activate the target" is meaningless on this
+ * substrate. The path shape is deterministic (provable from the
+ * string alone), so the gate is the symmetric twin of "no heuristic
+ * emission" — fact, not heuristic. See `src/utils/path.ts`'s
+ * `isTestFilePath` for the predicate.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -98,6 +110,7 @@ import {
   walkJsxElements,
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, TsxModule } from "../../types/ast.ts";
+import { isTestFilePath } from "../../utils/path.ts";
 import {
   type CrossFileEnrichable,
   detectExternalScriptSrc,
@@ -215,6 +228,18 @@ export const rule = defineRule({
     ],
   },
   check(ctx) {
+    // Test-file substrate gate — `*.test.{js,ts,jsx,tsx}`,
+    // `*.spec.{...}`, and `__tests__/` / `__mocks__/` / `tests/`
+    // segments. The rule's narrative ("keyboard users can't activate
+    // the target") is a runtime claim about a rendered DOM; a test
+    // file or test fixture has no rendered consumer page, so the
+    // emission would budget the agent's attention against a runtime
+    // failure mode that doesn't apply to this substrate. The path
+    // shape is *deterministic* (provable from the string alone), so
+    // omitting on this predicate is not heuristic suppression — it's
+    // the symmetric twin of "no heuristic emission" (per AI-first
+    // doctrine), pointing at fact rather than guess.
+    if (isTestFilePath(ctx.filePath)) return;
     if (ctx.language === "html") {
       const doc = ctx.ast as HtmlDocument;
       const externalScript = detectExternalScriptSrc(doc);
@@ -252,6 +277,14 @@ export const rule = defineRule({
     ) {
       return;
     }
+    // Same test-file gate as `check()` — a `.spec.js` file with
+    // `addEventListener('click', …)` is exercising a click handler in
+    // the suite, not declaring a runtime click trigger on a rendered
+    // page. Without this gate the external-JS grammar fires on every
+    // unit test that covers a click path, narrating "keyboard users
+    // can't activate the target" against a substrate where there is
+    // no DOM in play. See the doctrine cite on `check()`.
+    if (isTestFilePath(ctx.filePath)) return;
     const siblingImport = detectSiblingModuleImport(ctx.source);
     for (const finding of findExternalJsHandlerMissing(ctx.source)) {
       const base = {
