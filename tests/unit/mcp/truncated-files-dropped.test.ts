@@ -57,7 +57,9 @@ describe("computeTruncatedFilesDroppedWarning — info-severity exclusion (count
     expect(topRulesByRule.get("keyboard/handler-missing")).toBe(1);
 
     expect(droppedPayload).toBeDefined();
-    const droppedByRule = new Map(droppedPayload?.topDroppedRules.map((r) => [r.ruleId, r.droppedCount]));
+    const droppedByRule = new Map(
+      droppedPayload?.topDroppedRules.map((r) => [r.ruleId, r.droppedCount]),
+    );
     // The two info-severity findings on `contrast/minimum` are
     // excluded — droppedCount tracks the same error+warning slice.
     expect(droppedByRule.get("contrast/minimum")).toBe(2);
@@ -71,10 +73,7 @@ describe("computeTruncatedFilesDroppedWarning — info-severity exclusion (count
     // fire (its predicate is "files-with-actionable-findings dropped",
     // matching the headline severity slice).
     const out = computeTruncatedFilesDroppedWarning([
-      {
-        path: "src/a.tsx",
-        findings: [{ ruleId: "contrast/minimum", severity: "info" }],
-      },
+      { findings: [{ ruleId: "contrast/minimum", severity: "info" }] },
     ]);
     expect(out.payload).toBeUndefined();
   });
@@ -85,7 +84,11 @@ describe("computeTruncatedFilesDroppedWarning — info-severity exclusion (count
     // per-rule `count` on the same input. This is the within-response
     // cross-field invariant the bug report on
     // `count: 3234 / droppedCount: 3327` violated.
-    const ruleIds = ["contrast/minimum", "keyboard/handler-missing", "aria/icon-child-missing-aria-hidden"];
+    const ruleIds = [
+      "contrast/minimum",
+      "keyboard/handler-missing",
+      "aria/icon-child-missing-aria-hidden",
+    ];
     const severities = ["error", "warning", "info"] as const;
     const files: { path: string; findings: { ruleId: string; severity: string }[] }[] = [];
     let seed = 7;
