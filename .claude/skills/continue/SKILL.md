@@ -228,18 +228,23 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
   "ts_end":   "<ISO timestamp now>",
   "main_sha_before": "<sha at turn start>",
   "main_sha_after":  "<sha after integrator's tickoff commit>",
+  "harness_sha": "<sha of HEAD at turn start — same as main_sha_before in the common case>",
   "planner_picks": <plan.turns[N-1].picks verbatim>,
   "specialist_returns": [
     { "branch_assigned": "<worktree-agent-X>",
       "branch_returned": "<the branch the specialist actually returned>",
       "wall_time_seconds": <int>,
+      "total_tokens": <int — from the agent return envelope when present>,
       "return": <the specialist's JSON return verbatim> }
   ],
-  "integrator_return": <the integrator's JSON return verbatim>
+  "integrator_return": <the integrator's JSON return verbatim>,
+  "turn_cost": { "total_tokens": <sum across all dispatched agents>, "wall_seconds": <ts_end - ts_start> }
 }
 ```
 
-`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's backlog tickoff commit. The agent uses the range to detect cherry-pick drops and coverage-regen misses.
+`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's backlog tickoff commit. The agent uses the range to detect cherry-pick drops and coverage-regen misses. `harness_sha` is `main_sha_before` in the common case (every harness file is committed); the meta-reviewer persists it on each ledger entry so `scripts/ab-compare-harness.ts` can group runs by harness state for token-cost A/B comparison.
+
+`total_tokens` per specialist and `turn_cost` are **present-when-meaningful**: forward them when the agent harness reported `total_tokens` in the return envelope (Bun harness does — look for `<usage>total_tokens: ...</usage>` or the equivalent structured field on each Agent return). Omit the keys entirely when unavailable — the meta-reviewer's cost-aware signals (`high_cost_uneventful_turn`, `slow_specialist`) skip cleanly when fields are absent.
 
 **Orchestrator handling of the meta-reviewer's return:**
 
@@ -256,6 +261,7 @@ The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory
 | `patch_effects[]` contains `verdict: "no_effect"` | Note the no-effect commit SHA and the original patch SHA in the turn summary. Surface in the final `/continue` report so the user sees which auto-patches earned a `git revert` review. |
 | `patch_effects[]` only carries `"too_early"` / `"effective"` / `"inconclusive"` / `"aged_out"` / `"user_reverted"` | No action — informational; the verdicts live in the ledger and shape next-turn routing. |
 | `findings[].kind: "structural_flag"` | Surface in the final `/continue` report (not the per-turn summary) so the user sees the structural concern at end-of-run. |
+| `findings[].kind: "skill_patch_proposal"` | Surface in the final `/continue` report verbatim — including the `target`, `rationale`, `proposed_change` diff text, and `rule_patch_sha`. Frame as "user approval needed: a rule-file patch (sha X) earned `no_effect`; the meta-reviewer proposes promoting enforcement to `<target>`." Do NOT auto-apply — the meta-reviewer's allowlist explicitly forbids skill-file edits, and the orchestrator must respect that boundary. The user reviews and decides whether to apply manually. |
 | `ledger_appended: false` | Surface in the per-turn summary as a warning. The next turn's occurrence counts will be off until the ledger is repaired. |
 
 **Do not block the loop on the meta-reviewer.** If the agent returns `findings[]` with structural concerns or `ledger_appended: false`, log them and continue to the next turn. The meta-reviewer is advisory; only an explicit user-blocking item from a structural flag (rare) stops the loop.

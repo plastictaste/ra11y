@@ -28,18 +28,21 @@ The orchestrator passes a turn artifact:
   "ts_end":   "2026-04-26T20:04:30Z",
   "main_sha_before": "<sha at turn start>",
   "main_sha_after":  "<sha after integrator's tickoff commit>",
+  "harness_sha": "<sha of HEAD at turn start — used to bucket A/B comparison windows>",
   "planner_picks": [ /* the slice of plan.turns[n].picks the orchestrator dispatched */ ],
   "specialist_returns": [
     { "branch_assigned": "worktree-agent-abc",
       "branch_returned": "worktree-agent-abc",
       "wall_time_seconds": 87,
+      "total_tokens": 158234,
       "return": { /* whatever JSON the specialist emitted */ } }
   ],
-  "integrator_return": { /* the integrator's JSON return */ }
+  "integrator_return": { /* the integrator's JSON return */ },
+  "turn_cost": { "total_tokens": 642000, "wall_seconds": 270 }
 }
 ```
 
-If a field is missing, treat it as a single observation worth logging — don't fabricate it.
+If a field is missing, treat it as a single observation worth logging — don't fabricate it. `total_tokens` per specialist and `turn_cost` are present-when-meaningful — the orchestrator forwards them when the harness reports them; older runs may carry neither, in which case skip the cost-aware signals in §1 rather than emitting noise. `harness_sha` is the head of `main` at turn start (captured before any specialist dispatch); it lets the A/B comparison script in `scripts/ab-compare-harness.ts` group runs by harness state.
 
 # Workflow
 
@@ -56,6 +59,8 @@ Walk the artifact and emit a normalized list of observed signals. Sources:
 - **Integrator optional `signals[]`** — pass through verbatim.
 - **Stall heuristic** — if a specialist returned without structured JSON, lacked a `sha` despite `changed: true` semantics, or wall time exceeded ~5 minutes with no commits: emit `{ code: "specialist_stall", evidence: "<branch>: <wall_time>s, return shape: <terse>" }`.
 - **Coverage-regen miss** — if any pick added a file under `src/rules/` or `src/review/finders/` (check `git diff --name-only main_sha_before..main_sha_after`) but `docs/kb/standards/coverage.md` was not modified in the same range: emit `{ code: "coverage_md_not_regenerated", evidence: "<item>: added <rule path>, coverage.md unchanged" }`.
+- **High-cost uneventful turn** (cost-aware, requires `turn_cost` in artifact) — when `turn_cost.total_tokens > 500_000` AND the turn produced zero structural signals from any of the rules above (i.e. nothing else fired): emit `{ code: "high_cost_uneventful_turn", evidence: "<turn_total_tokens> tokens / <turn_wall_seconds>s wall, no signals" }`. Used to detect runs where the meta-reviewer or integrator should be skipped more aggressively, or where a planner over-emitted lookahead. Skip if `turn_cost` is absent (older artifact shape).
+- **Slow specialist** (cost-aware, requires `total_tokens` per specialist) — for each specialist where `wall_time_seconds > 600` (10 min) AND `total_tokens > 200_000` AND the specialist's return shows `verifyPrecommit: ok` with no `blocked`: emit `{ code: "slow_specialist", evidence: "<branch>: <wall>s / <total_tokens> tokens for clean return" }`. The signal targets specialists doing exploratory work that could have been narrower (over-elaborated dispatch prompt, scope drift caught late, redundant rebases). Skip if either field is absent.
 
 Skip signals that are just role-specific noise (planner returning `deferred[]` for sequencing reasons is normal). Focus on **prediction-vs-outcome divergence** and **stop-condition tokens**.
 
@@ -148,6 +153,28 @@ Apply this decision tree:
 1. **Backlog re-open** (always, unconditional): if the integrator skipped a pick due to `cherry_pick_dropped_commits`, `branch_empty_sibling_has_work`, or any signal that suggests the work landed somewhere unexpected — re-open the corresponding `- [ ]` line in `.claude/backlog.md` if the orchestrator marked it closed (verify with `grep` first; the orchestrator does not always close prematurely). Do not re-open if the work cleanly integrated.
 
 2. **Structural flag** (back to user): if the signal indicates a class of problem the harness can't solve mechanically — repeated `classification_mismatch` on the same backlog item, `unknown_state` from the integrator, evidence of an item too large to dispatch — emit it as a `findings[].kind: "structural_flag"` in your return for the orchestrator to surface. Do not auto-patch. Also surface as a structural flag any signal where rule 0 fired (no-effect lock-out) — the user needs to know the prior patch didn't help.
+
+2a. **Skill-patch proposal** (back to user, NEVER auto-applied): rule files describe constraints; `SKILL.md` enforces them. When a rule-level patch isn't enough — the constraint exists in the rule file but the orchestration keeps violating it — the right move is to promote enforcement up the stack to `SKILL.md`. The meta-reviewer cannot make that call autonomously: SKILL.md edits change orchestration behavior, and a wrong edit can deadlock `/continue` or break integrator routing.
+
+   Emit `findings[].kind: "skill_patch_proposal"` when ALL of these hold:
+   - The signal has occurred ≥3 times in the last 20 turns (stricter than the harness-patch N≥2 gate).
+   - A prior harness patch on a `.claude/rules/*.md` file already exists for this signal AND its most recent verdict in `patch_effect[]` is `"no_effect"` (the rule-level fix didn't reduce the rate).
+   - The portability test (§5) passes for the proposed change.
+   - The proposed change targets `.claude/skills/continue/SKILL.md` or `.claude/skills/continue/dispatch-template.md` — the only two skill files in scope. (Other skills are out of scope; if the lesson points elsewhere, route to memory.)
+
+   The finding shape:
+   ```json
+   { "kind": "skill_patch_proposal",
+     "signal": "<code>",
+     "target": ".claude/skills/continue/SKILL.md",
+     "rationale": "<one paragraph: why the rule-file patch (sha <X>) didn't suffice; what about the orchestration needs to change>",
+     "proposed_change": "<verbatim diff text — the agent writes the patch text, not the patch itself>",
+     "rule_patch_sha": "<sha of the prior rule-file patch that earned no_effect>" }
+   ```
+
+   The orchestrator surfaces every `skill_patch_proposal` in `/continue`'s final report, verbatim, with a one-line "user approval needed" framing. The user reviews and decides whether to apply. **Do not write to SKILL.md or dispatch-template.md from this agent — ever.** The proposal channel is the safety boundary; auto-applying skill changes is explicitly out of allowlist (§6).
+
+   Also add a self-finding `{ code: "skill_patch_proposed", evidence: "<signal>: rule patch <sha> earned no_effect, proposing skill-level change" }` for next-turn occurrence counts.
 
 3. **Harness patch** (only when ALL of these hold):
    - Occurrence count N ≥ 2 within the last 20 turns.
@@ -293,10 +320,12 @@ echo '<json>' >> .claude/turn-history.jsonl
 Schema (single line, no embedded newlines):
 
 ```json
-{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"memory_retired":[{"file":"feedback_X.md","signal":"...","patch_sha":"...","case":"A"}],"backlog_reopens":[]},"patch_effect":[{"signal":"branch_naming_drift","patch_sha":"a833c2f4","verdict":"no_effect","pre_rate":0.30,"post_rate":0.30,"no_effect_commit":"<sha>"}]}
+{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":3,"harness_sha":"<sha at turn start>","cost":{"total_tokens":642000,"wall_seconds":270},"signals":[{"code":"...","evidence":"..."}],"co_signals":[["code_a","code_b"]],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"memory_retired":[{"file":"feedback_X.md","signal":"...","patch_sha":"...","case":"A"}],"backlog_reopens":[]},"patch_effect":[{"signal":"branch_naming_drift","patch_sha":"a833c2f4","verdict":"no_effect","pre_rate":0.30,"post_rate":0.30,"no_effect_commit":"<sha>"}]}
 ```
 
 The `writes` block records what you actually did this turn — used for cross-turn dedup and for auditing the agent's behavior. Keep evidence strings short (≤200 chars); truncate with `...` if needed.
+
+**Cost + harness-SHA fields are optional** — they ride along when the orchestrator captured them in the input artifact. When absent, omit the keys rather than emitting `null` or `0`. The A/B comparison script (`scripts/ab-compare-harness.ts`) treats entries without `harness_sha` as belonging to the most recent prior `harness_sha` window (forward-fill), so missing fields don't break the script — but cost arithmetic skips entries with no `cost.total_tokens` to avoid skewing averages with zeros.
 
 `co_signals` is **present-when-meaningful** — omit when no pairs in this turn's `signals[]` co-fired. Each entry is a 2-element array of code strings, lexicographically sorted within the pair so cross-turn pair counting is deterministic. Pre-existing ledger entries that lack `co_signals` are read by future turns as "no co-firing pairs recorded for that turn"; the §3a derivation falls back to raw `signals[]` and is correct without migration.
 
