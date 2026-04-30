@@ -61,6 +61,8 @@ bun run verify:precommit
 
 If it fails, fix the issue, make another commit, re-run. If you cannot get it green within your scope, return `blocked` with a one-line reason quoting the first failing line of output. **Do not return a `sha` for a worktree where `verify:precommit` is red** — the orchestrator's integrator would cherry-pick red commits onto `main` and discover the regression only after it's landed.
 
+**Timing-flake exemption.** If the only failures are integration tests that time out under concurrent full-verify load but pass when re-run in isolation, treat as a subprocess startup-ordering flake — not a real failure. Re-run `bun run verify:precommit` once alone (no parallel verify in other worktrees) before treating as red. If the isolation retry passes, treat as green and proceed. Signal this in your return as `signals[].code: verify_flaky_mcp_subprocess` with the test names in `evidence`, but do NOT return `blocked`. The integrator has the same exemption at final-verify time; this ensures consistent handling at the specialist pre-commit verify stage too.
+
 Your worktree is isolated, so the verify output stays in your context, not the orchestrator's. Absorb it and return a clean summary.
 
 ## 5. Structured return contract
