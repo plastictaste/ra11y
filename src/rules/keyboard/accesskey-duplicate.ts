@@ -49,7 +49,13 @@ export const rule = defineRule({
   satisfies: ["wcag22:2.1.1", "wcag21:2.1.1", "wcag22:2.1.4", "wcag21:2.1.4"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The fix is either "pick a different unused accesskey letter"
+  // (the rule has no policy on which letter to pick — depends on
+  // mnemonic value) or "remove the attribute entirely" — both
+  // content-dependent. Per AI-first doctrine "Per-call shape must
+  // agree with per-class plan tally," `verify-in-source` keeps the
+  // plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

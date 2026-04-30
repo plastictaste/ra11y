@@ -95,7 +95,15 @@ export const rule = defineRule({
   satisfies: ["wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // The Levenshtein-nearest-attribute branch (e.g. `aria-lable` →
+  // `aria-label`) could in principle produce a deterministic edit,
+  // but the no-nearest-match branch (invented attributes like
+  // `aria-foo`) produces no edit — the author must pick a
+  // replacement (or remove). Per AI-first doctrine "Per-call shape
+  // must agree with per-class plan tally," a rule whose static
+  // evidence cannot guarantee an edit on every emission is honestly
+  // `verify-in-source`, not `mechanical`.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

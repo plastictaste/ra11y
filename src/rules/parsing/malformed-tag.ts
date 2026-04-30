@@ -71,7 +71,15 @@ export const rule = defineRule({
   satisfies: ["wcag21:4.1.1"],
   severity: "warning",
   scope: "document",
-  fixClass: "mechanical",
+  // The rule computes a `nearestValidHeadingLevel` (e.g. `<h33>`
+  // → `<h3>`) but the choice of level is content-dependent (the
+  // author may have intended `<h2>` instead). Mechanically
+  // rewriting also requires updating the paired closer if the
+  // typo is on the opener (or vice versa) — risky to automate.
+  // Per AI-first doctrine "Per-call shape must agree with
+  // per-class plan tally," `verify-in-source` keeps the plan tally
+  // honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

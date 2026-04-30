@@ -56,7 +56,14 @@ export const rule = defineRule({
   satisfies: ["wcag22:3.1.2", "wcag21:3.1.2"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // Picking a correct BCP 47 tag for the cited element requires
+  // reading the visible text to know what language it is in — the
+  // scanner has no signal for "is this French, Spanish, or
+  // mistyped English." Per AI-first doctrine "Per-call shape must
+  // agree with per-class plan tally," tag the rule as
+  // `verify-in-source` so the per-class plan tally doesn't
+  // advertise an apply-now edit the per-call surface won't honor.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

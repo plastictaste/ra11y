@@ -56,7 +56,13 @@ export const rule = defineRule({
   satisfies: ["wcag21:4.1.1"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The rule offers hyphen-joined and camelCase candidates as
+  // alternatives, but the choice (and the underlying decision to
+  // rewrite vs. rename references) is content-dependent. The
+  // candidate is a starting point, not a deterministic edit. Per
+  // AI-first doctrine "Per-call shape must agree with per-class
+  // plan tally," `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

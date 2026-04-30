@@ -39,7 +39,15 @@ export const rule = defineRule({
   satisfies: ["wcag21:4.1.1", "wcag22:1.3.1", "wcag21:1.3.1", "wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The rule's own suggestion text frames two valid paths:
+  // "rename the second id to the next free suffix" OR "remove it
+  // if no aria-labelledby / aria-describedby / aria-controls /
+  // label[for] / href references it." The choice requires a
+  // cross-file or in-document reference scan the agent does and
+  // the scanner does not. Per AI-first doctrine "Per-call shape
+  // must agree with per-class plan tally," `verify-in-source`
+  // keeps the plan tally honest.
+  fixClass: "verify-in-source",
   // Every extension that routes through the HTML parser (producing
   // `language: "html"` on the AST). The runtime `ctx.language` guard
   // is the source of truth; this list mirrors the parser-dispatch

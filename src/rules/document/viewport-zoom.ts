@@ -33,7 +33,14 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.4.4", "wcag21:1.4.4"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The viewport `content` attribute is an opaque comma-separated
+  // bag of tokens (`width=`, `initial-scale=`, etc.) whose other
+  // entries the rule does not parse. Mechanically rewriting just
+  // the offending pair without preserving the user's other
+  // directives is risky. Per AI-first doctrine "Per-call shape
+  // must agree with per-class plan tally," `verify-in-source` keeps
+  // the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

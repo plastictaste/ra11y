@@ -117,7 +117,14 @@ export const rule = defineRule({
   satisfies: ["wcag22:3.1.1", "wcag21:3.1.1", "wcag22:3.1.2", "wcag21:3.1.2"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // Picking a correct BCP 47 tag for the cited element requires
+  // reading the visible text to know what language it is in — the
+  // scanner has no signal for "is this English, French, Spanish,
+  // or mistyped". Even on the empty-lang branch, the safe default
+  // (`lang="en"`) is wrong for non-English content. Per AI-first
+  // doctrine "Per-call shape must agree with per-class plan
+  // tally," `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

@@ -94,7 +94,13 @@ export const rule = defineRule({
   satisfies: ["wcag22:2.4.3", "wcag21:2.4.3"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The fix is "change `tabindex="5"` to `tabindex="0"` (include
+  // at natural position) or `tabindex="-1"` (programmatic focus
+  // only)" — content-dependent on whether the author wants the
+  // element in the natural tab order. Per AI-first doctrine
+  // "Per-call shape must agree with per-class plan tally,"
+  // `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

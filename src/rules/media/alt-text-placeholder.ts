@@ -107,7 +107,12 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.1.1", "wcag21:1.1.1"],
   severity: "warning",
   scope: "node",
-  fixClass: "mechanical",
+  // The fix is "replace the placeholder alt text with a real text
+  // alternative that describes the image" — fundamentally
+  // content-dependent (the scanner cannot describe the image). Per
+  // AI-first doctrine "Per-call shape must agree with per-class
+  // plan tally," `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   wrapperTreatsAsElement: "img",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],

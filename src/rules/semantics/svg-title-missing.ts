@@ -82,7 +82,13 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.1.1", "wcag21:1.1.1", "wcag22:4.1.2", "wcag21:4.1.2"],
   severity: "error",
   scope: "node",
-  fixClass: "mechanical",
+  // The fix is "add a `<title>` child to the SVG describing the
+  // graphic's purpose" — the title text is fundamentally
+  // content-dependent (the scanner cannot describe what an SVG
+  // depicts). Per AI-first doctrine "Per-call shape must agree
+  // with per-class plan tally," `verify-in-source` keeps the plan
+  // tally honest.
+  fixClass: "verify-in-source",
   // Standalone `.svg` files plus the markup-bearing extensions that
   // can embed inline `<svg>`. The HTML-family entries (`.html`, `.htm`)
   // alias-cover `.astro`, `.md`, `.markdown`, `.erb` via the parser

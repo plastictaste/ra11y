@@ -100,7 +100,14 @@ export const rule = defineRule({
   satisfies: ["wcag22:1.3.1", "wcag21:1.3.1", "wcag22:3.3.2", "wcag21:3.3.2"],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The fix is "add `required` (browser blocks submission and
+  // exposes the state) OR `aria-required="true"` (exposes the
+  // state without changing validation flow)" — two equally valid
+  // paths whose choice depends on the form's submission semantics
+  // the scanner cannot observe. Per AI-first doctrine "Per-call
+  // shape must agree with per-class plan tally,"
+  // `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

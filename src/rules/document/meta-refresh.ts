@@ -44,7 +44,14 @@ export const rule = defineRule({
   ],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The honest fix is "remove the meta refresh and replace with a
+  // server-side redirect or a user-activated link" — a structural
+  // decision the scanner cannot make from the meta tag alone (it
+  // doesn't know whether the user controls the server or wants a
+  // link or wants in-place updates). Per AI-first doctrine
+  // "Per-call shape must agree with per-class plan tally,"
+  // `verify-in-source` keeps the plan tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm"],
   },

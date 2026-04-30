@@ -71,7 +71,14 @@ export const rule = defineRule({
   ],
   severity: "error",
   scope: "document",
-  fixClass: "mechanical",
+  // The dangling `for` reference points at no element; the fix is
+  // either "rename the `for` to match an existing id" or "add an
+  // `id` to the intended control." Both require knowing which
+  // control the label was meant for — the scanner cannot
+  // disambiguate. Per AI-first doctrine "Per-call shape must agree
+  // with per-class plan tally," `verify-in-source` keeps the plan
+  // tally honest.
+  fixClass: "verify-in-source",
   appliesTo: {
     fileExtensions: [".html", ".htm", ".tsx", ".jsx"],
   },

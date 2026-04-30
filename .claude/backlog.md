@@ -135,7 +135,6 @@ Cross-cutting themes (≥3-of-4-site recurrence) drive the P0 items below. Items
 
 ### v0.2.0 — accepted (P0 — shape honesty / silent-failure)
 
-- [ ] **V1-SUGGEST-FIX-MECHANICAL-LANE-REMAINING-RULES** (extends Q7-SUGGEST-FIX-EDIT-LANE-UNREACHABLE) Audit and wire kind: "edit" emission for remaining ~17 rules tagged fixClass: "mechanical": document/lang-attribute, media/alt-text-missing, plus ~15 others. Either populate Violation.fix.{oldText,newText} or re-tag fixClass to verifyInSource if the edit is content-dependent. Cross-references V1-FIX-LANG-AUTOCOMPLETE-ALT-MECHANICAL-DOWNGRADE (turn 6) and V1-SUGGEST-FIX-MECHANICAL-LANE-EMIT-EDIT (turn 7).
 
 ### v0.2.0 — accepted (P1 — shape honesty)
 
