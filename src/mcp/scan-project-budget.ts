@@ -993,7 +993,7 @@ function buildSlimNextStepStructured(args: {
  * whereas narrowing to a single file would force the agent into the
  * pagination loop the slim envelope is trying to escape.
  */
-function pickNonVendorNarrowingDir(
+export function pickNonVendorNarrowingDir(
   files: readonly ScanFormatted["files"][number][],
   isVendor: (path: string) => boolean,
 ): string | undefined {
@@ -1069,7 +1069,7 @@ function topLevelDir(relPath: string): string | undefined {
  * pathHints are O(rules) and the file list is O(N), so per-file
  * predicate calls beat a fan-out into a flat set.
  */
-function buildVendorPredicate(fullMeta: Record<string, unknown>): (path: string) => boolean {
+export function buildVendorPredicate(fullMeta: Record<string, unknown>): (path: string) => boolean {
   const sba = fullMeta["scannedBuildArtifacts"];
   if (sba === undefined || sba === null || typeof sba !== "object") {
     return () => false;

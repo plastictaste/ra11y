@@ -154,4 +154,89 @@ describe("applyBulkVendorScopeDownOverride", () => {
     // Above the 5-entry inline cap, residue gets pointed at via meta.
     expect(result.prose).toContain("scannedBuildArtifacts.grouped");
   });
+
+  it("promotes structured target to scan_project restrictToPaths when a dominant non-vendor subtree exists", () => {
+    // Bulk-vendor regime fires (12 grouped basename clusters, 800
+    // files-with-findings) AND the inventory carries a clear non-
+    // vendor dominant top-level dir (`src/` with 3 authored files vs.
+    // the vendor pathHints `vendor/lib-N/`). The structured args
+    // advance from the existing `propose_config` route to the direct
+    // `scan_project` re-scan with `restrictToPaths: ["src"]` so the
+    // agent's next call directly scopes down without reading prose
+    // and without round-tripping through `propose_config`. Per the
+    // backlog item: `suggestedExcludes` is shaped for config edits;
+    // `nextStepStructured.args` should propagate the inverse — a
+    // concrete narrowing path — for the immediate next call.
+    const result = applyBulkVendorScopeDownOverride({
+      baseNextStep: BASE_NEXT_STEP,
+      buildArtifacts: {
+        metaField: { scannedBuildArtifacts: syntheticGrouped(12) },
+      },
+      totalFilesWithFindings: 800,
+      files: [
+        { path: "src/components/button.tsx", findings: [{ ruleId: "color/contrast" }] },
+        { path: "src/pages/home.tsx", findings: [{ ruleId: "alt/missing" }] },
+        { path: "src/utils/format.tsx", findings: [{ ruleId: "color/contrast" }] },
+        // vendor entry (matches the synthetic `vendor/lib-0/` pathHint)
+        // — must be excluded from the non-vendor tally.
+        { path: "vendor/lib-0/bundle.css", findings: [{ ruleId: "color/contrast" }] },
+      ] as never,
+    });
+    expect(result.structured).toEqual({
+      tool: "scan_project",
+      args: { restrictToPaths: ["src"] },
+    });
+    // Prose stays unchanged from the propose_config override — both
+    // levers are still named so the agent retains full flexibility.
+    expect(result.prose).toContain("ra11y.config.ts");
+    expect(result.prose).toContain("propose_config");
+  });
+
+  it("falls back to propose_config when every top-level dir resolves to vendor (no honest narrowing target)", () => {
+    // Bulk-vendor regime fires but the inventory itself is all-
+    // vendor: every top-level dir matches a `pathHint` prefix, so
+    // `pickNonVendorNarrowingDir` honestly returns `undefined` rather
+    // than fabricating a narrowing target on weaker evidence (per the
+    // doctrine "Heuristic emission is the symmetric twin of heuristic
+    // suppression"). The override degrades to the existing
+    // `propose_config` route — the prose still names paste-ready
+    // suggestedGlob entries for the agent to act on.
+    const result = applyBulkVendorScopeDownOverride({
+      baseNextStep: BASE_NEXT_STEP,
+      buildArtifacts: {
+        metaField: { scannedBuildArtifacts: syntheticGrouped(12) },
+      },
+      totalFilesWithFindings: 800,
+      files: [
+        // every file lives under a `vendor/lib-N/` pathHint matched
+        // by the synthetic grouped fixture — no non-vendor subtree.
+        { path: "vendor/lib-0/bundle.css", findings: [] },
+        { path: "vendor/lib-1/bundle.css", findings: [] },
+        { path: "vendor/lib-2/bundle.css", findings: [] },
+      ] as never,
+    });
+    expect(result.structured).toEqual({ tool: "propose_config", args: {} });
+  });
+
+  it("falls back to propose_config when non-vendor file inventory has no clear dominant top-level dir", () => {
+    // Bulk-vendor regime fires but the non-vendor file inventory
+    // ties at the top — two top-level dirs each carry one authored
+    // file with one finding. `pickNonVendorNarrowingDir` returns
+    // `undefined` on a clean tie (alphabetical-winner routing is the
+    // failure mode the AI-first doctrine "NextStep prioritization on
+    // truncated/bulk responses must avoid first-by-filename routing"
+    // guards against). The override degrades to `propose_config`.
+    const result = applyBulkVendorScopeDownOverride({
+      baseNextStep: BASE_NEXT_STEP,
+      buildArtifacts: {
+        metaField: { scannedBuildArtifacts: syntheticGrouped(12) },
+      },
+      totalFilesWithFindings: 800,
+      files: [
+        { path: "src/foo.tsx", findings: [{ ruleId: "color/contrast" }] },
+        { path: "lib/bar.tsx", findings: [{ ruleId: "color/contrast" }] },
+      ] as never,
+    });
+    expect(result.structured).toEqual({ tool: "propose_config", args: {} });
+  });
 });

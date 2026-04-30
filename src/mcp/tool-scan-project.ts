@@ -48,7 +48,11 @@ import {
   withViolationsByScanKind,
 } from "./scan-assembly.ts";
 import { GROUP_BY_VALUES, readGroupByParam, withByGroup } from "./scan-group-by.ts";
-import { assembleScanProjectResponse } from "./scan-project-budget.ts";
+import {
+  assembleScanProjectResponse,
+  buildVendorPredicate,
+  pickNonVendorNarrowingDir,
+} from "./scan-project-budget.ts";
 import {
   buildScanProjectReviewCandidates,
   type ScanProjectReviewCandidate,
@@ -416,6 +420,7 @@ export const scanProjectTool: McpTool = {
       baseNextStep,
       buildArtifacts,
       totalFilesWithFindings: formatted.files.length,
+      files: formatted.files,
     });
     // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
@@ -1266,6 +1271,24 @@ function buildWrapperMeta(args: {
  * findings under those vendor basenames still ship in `files[]`
  * (surface-don't-suppress); the override only changes the canonical
  * first call.
+ *
+ * When the override fires AND a dominant non-vendor top-level
+ * directory can be derived from the `files[]` inventory (the inverse
+ * of the `suggestedExcludes` / `pathHint` vendor classification), the
+ * structured target advances from the multi-step
+ * `propose_config` → re-scan flow to the direct `scan_project`
+ * `restrictToPaths: [<dir>]` re-scan. The prose still names both
+ * options (config-level exclude OR scope narrowing) so the agent
+ * keeps full flexibility; the structured args advance the directly-
+ * actionable narrower call. This addresses the suggestedExcludes-not-
+ * additionalPaths-inverse asymmetry: `suggestedExcludes` is shaped
+ * for a config-file edit, but the structured next-call should reflect
+ * the more direct lever (re-scan with narrower scope) when the
+ * scanner has the evidence to pick one. When no clear dominant non-
+ * vendor dir exists (every top dir is vendor, the inventory is empty,
+ * or the top-dir tally ties), the override degrades to the existing
+ * `propose_config` route honestly — fabricating a narrowing dir on
+ * weaker evidence is the symmetric twin of heuristic suppression.
  */
 export function applyBulkVendorScopeDownOverride(args: {
   readonly baseNextStep: { readonly prose: string; readonly structured?: NextStepStructured };
@@ -1273,8 +1296,18 @@ export function applyBulkVendorScopeDownOverride(args: {
     readonly metaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped };
   };
   readonly totalFilesWithFindings: number;
+  /**
+   * Per-file finding inventory (full or paged — both work). Drives the
+   * "promote `propose_config` route → direct `scan_project`
+   * `restrictToPaths` re-scan" structured-target promotion when a
+   * dominant non-vendor top-level dir can be derived. Optional so tests
+   * that exercise the predicate alone (without an inventory) keep the
+   * existing `propose_config` fallback shape; production call sites
+   * always thread the inventory through.
+   */
+  readonly files?: readonly ScanFormatted["files"][number][];
 }): { readonly prose: string; readonly structured?: NextStepStructured } {
-  const { baseNextStep, buildArtifacts, totalFilesWithFindings } = args;
+  const { baseNextStep, buildArtifacts, totalFilesWithFindings, files = [] } = args;
   const grouped = buildArtifacts.metaField.scannedBuildArtifacts?.grouped ?? [];
   if (
     !shouldRerouteToBulkVendorScopeDown({
@@ -1284,7 +1317,7 @@ export function applyBulkVendorScopeDownOverride(args: {
   ) {
     return baseNextStep;
   }
-  return bulkVendorScopeDownNextStep({
+  const overridden = bulkVendorScopeDownNextStep({
     topGroupHints: grouped.map((g) => ({
       basename: g.basename,
       count: g.count,
@@ -1293,6 +1326,21 @@ export function applyBulkVendorScopeDownOverride(args: {
     groupedTotal: grouped.length,
     totalFilesWithFindings,
   });
+  // Promote the structured target from `propose_config` → re-scan to
+  // the direct `scan_project` re-scan when a dominant non-vendor top-
+  // level directory can be derived. The prose is unchanged — it
+  // already names both levers; the agent reads the structured field
+  // to advance directly. The `propose_config` fallback stays when no
+  // narrowing target is honestly derivable.
+  const isVendor = buildVendorPredicate({
+    scannedBuildArtifacts: buildArtifacts.metaField.scannedBuildArtifacts,
+  });
+  const narrowing = pickNonVendorNarrowingDir(files, isVendor);
+  if (narrowing === undefined) return overridden;
+  return {
+    prose: overridden.prose,
+    structured: { tool: "scan_project", args: { restrictToPaths: [narrowing] } },
+  };
 }
 
 /**
