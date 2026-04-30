@@ -22,6 +22,7 @@ import type {
   ReviewConfidence,
 } from "../types/review.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
@@ -1050,7 +1051,7 @@ export const checklistTool: McpTool = {
       jsInnerHtmlPatternSamples,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
-    return textResult({
+    const fullResponse: Record<string, unknown> = {
       summary,
       items: page.items,
       totalCandidates: page.totalCandidates,
@@ -1072,7 +1073,23 @@ export const checklistTool: McpTool = {
       // scan_project / coverage / scan_file on the same input.
       ...analysisCoverageField,
       ...warningsFragment,
-    });
+    };
+    // last-resort
+    // hard-ceiling guard. After every other clip pass settled (paging,
+    // per-criterion clamp, meta-array cap), the assembled response can
+    // still be over the MCP host's ~25 k-token wall on bulk-vendor
+    // corpora — the verbose `items[]` * `analysisCoverage` *
+    // `meta.filesByExtension` envelope inflates independent of the
+    // per-criterion fan. When the post-build envelope crosses the hard
+    // ceiling, degrade to the minimum-honest envelope rather than
+    // letting the host drop the response (which reads to the agent as
+    // "tool never ran" — the canonical
+    // oversize-success-is-ambiguous-failure shape per doctrine). Per
+    // "Per-tool lane and warning-set classification must agree" — same
+    // warning code (`response_dropped_files_oversize`) and same
+    // byte-arithmetic payload as `scan_project` / `scan_file`.
+    const budgeted = applyChecklistBudget({ response: fullResponse });
+    return textResult(budgeted.response);
   },
 };
 

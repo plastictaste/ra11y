@@ -12,6 +12,7 @@ import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { applyCoverageBudget } from "./coverage-budget.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
@@ -583,7 +584,7 @@ export const coverageTool: McpTool = {
             level: strParam(params, "level"),
           })
         : {};
-      return textResult({
+      const fullResponse: Record<string, unknown> = {
         ...entry,
         ...nextStep,
         // `coverage` runs a real
@@ -601,7 +602,24 @@ export const coverageTool: McpTool = {
         ...analysisCoverageField,
         ...metaField,
         ...warnings,
-      });
+      };
+      // last-resort
+      // hard-ceiling guard. After every other clip pass settled
+      // (per-rule-coverage cap, meta-array cap), the assembled
+      // response can still be over the MCP host's ~25 k-token wall on
+      // bulk-vendor corpora — `meta.perRuleCoverage` (one row per
+      // loaded rule) * `analysisCoverage.fragmentFiles` *
+      // `meta.filesByExtension` inflates independent of any single
+      // surface's cap. When the post-build envelope crosses the hard
+      // ceiling, degrade to the minimum-honest envelope rather than
+      // letting the host drop the response (the canonical
+      // oversize-success-is-ambiguous-failure shape per doctrine).
+      // Per "Per-tool lane and warning-set classification must agree"
+      // — same warning code (`response_dropped_files_oversize`) and
+      // same byte-arithmetic payload as `scan_project` / `scan_file`
+      // / `checklist`.
+      const budgeted = applyCoverageBudget({ response: fullResponse });
+      return textResult(budgeted.response);
     }
     return textResult(entries);
   },
