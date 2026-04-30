@@ -140,6 +140,28 @@ interface CoverageBody {
   // already ship.
   readonly actionableManualItems: number;
   readonly untargetedCriteria: number;
+  // Structured `summary` dict — mirrors `checklist.summary`'s key
+  // shape so an agent reading `summary.actionable.criteria` /
+  // `summary.untargetedCriteria` / `summary.likelyIrrelevant` /
+  // `summary.automatedCoverage` resolves the same path on either
+  // tool. Pre-fix this field shipped as a prose string while
+  // `checklist.summary` shipped as a dict — same field name on
+  // sibling tools, two shapes, the canonical "Sibling fields naming
+  // the same concept must use one shape" failure mode in
+  // `docs/kb/architecture/ai-first-consumer.md`. Prose lives at
+  // `summary.headline`.
+  readonly summary: {
+    readonly actionable: { readonly criteria: number };
+    readonly untargetedCriteria: number;
+    readonly likelyIrrelevant: number;
+    readonly automatedCoverage: {
+      readonly standardId: string;
+      readonly criteriaWithRulesAllClean: number;
+      readonly criteriaWithoutEligibleInputs: number;
+      readonly automatedCriteriaPassRate?: number;
+    };
+    readonly headline: string;
+  };
   // Canonical field name is `criterionId` — matches
   // `checklist.items[].criterionId` and the namespaced-id convention
   // (`wcag22:1.4.3`) used elsewhere. The legacy `id` alias was dropped;
@@ -176,6 +198,79 @@ interface ChecklistBody {
 }
 
 describe("ADR 0010 — coverage and checklist stay consistent across the shared boundary", () => {
+  it("ships `summary` as a structured dict on both surfaces with mirrored keys", async () => {
+    // Cross-surface field-shape invariant: an agent reading
+    // `summary.actionable.criteria`, `summary.untargetedCriteria`,
+    // `summary.likelyIrrelevant`, and `summary.automatedCoverage`
+    // gets the same path resolution on both tools. Pre-fix
+    // `coverage.summary` shipped as a prose string while
+    // `checklist.summary` shipped as a dict — same field name on
+    // sibling tools, two shapes — the canonical "Sibling fields
+    // naming the same concept must use one shape" failure mode in
+    // `docs/kb/architecture/ai-first-consumer.md`. Reading
+    // `coverage.summary.actionableManualItems` returned `undefined`
+    // while the same path on checklist returned the populated count.
+    //
+    // Cross-surface count invariant ("Cross-surface count
+    // invariant"): the structured numbers must agree on identical
+    // cwd. `summary.actionable.criteria` here equals
+    // `summary.actionable.criteria` there; `summary.untargetedCriteria`
+    // here equals `summary.untargetedCriteria` there.
+    const dir = await makeFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "coverage", { cwd: dir }),
+      toolCall(3, "checklist", { cwd: dir }),
+    ]);
+    const coverage = body<CoverageBody>(responses[1]);
+    const checklist = body<ChecklistBody>(responses[2]);
+
+    // Shape parity: both `summary` blocks are objects (not strings).
+    expect(typeof coverage.summary).toBe("object");
+    expect(typeof checklist.summary).toBe("object");
+
+    // `actionable.criteria` is the cross-tool canonical count — must
+    // resolve identically by both name AND value on either tool.
+    expect(coverage.summary.actionable.criteria).toBe(
+      checklist.summary.actionable.criteria,
+    );
+    // The structured count must also equal the sibling top-level
+    // scalar on coverage (no internal disagreement within the same
+    // response).
+    expect(coverage.summary.actionable.criteria).toBe(coverage.actionableManualItems);
+
+    // `summary.untargetedCriteria` mirrors across tools.
+    expect(coverage.summary.untargetedCriteria).toBe(
+      checklist.summary.untargetedCriteria,
+    );
+    // And mirrors the sibling top-level scalar on coverage.
+    expect(coverage.summary.untargetedCriteria).toBe(coverage.untargetedCriteria);
+
+    // `summary.likelyIrrelevant` (count) mirrors across tools.
+    expect(coverage.summary.likelyIrrelevant).toBe(
+      checklist.summary.likelyIrrelevant,
+    );
+
+    // `summary.automatedCoverage` mirrors checklist's split — two
+    // non-overlapping counters; same standardId on both surfaces.
+    expect(coverage.summary.automatedCoverage.standardId).toBe(
+      // checklist's automatedCoverage may flatten to a single object
+      // (single-standard path) — the structural test suffices on the
+      // standardId field.
+      coverage.standardId,
+    );
+    expect(typeof coverage.summary.automatedCoverage.criteriaWithRulesAllClean).toBe(
+      "number",
+    );
+    expect(
+      typeof coverage.summary.automatedCoverage.criteriaWithoutEligibleInputs,
+    ).toBe("number");
+
+    // Headline (prose) is demoted alongside the structured fields —
+    // load-bearing for human readers but never the only access path.
+    expect(typeof coverage.summary.headline).toBe("string");
+  });
+
   it("agrees on untargeted and likelyIrrelevant scalars for the same scan", async () => {
     const dir = await makeFixture();
     const responses = await mcpSession([

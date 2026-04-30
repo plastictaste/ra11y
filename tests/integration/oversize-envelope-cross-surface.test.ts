@@ -78,7 +78,21 @@ function buildOversizeCoverageResponse(): Record<string, unknown> {
     standardId: "wcag22",
     actionableManualItems: 1,
     untargetedCriteria: 0,
-    summary: "1/1 evaluated",
+    // Structured `summary` dict mirrors `checklist.summary`'s shape.
+    // The slim envelope spreads `original` first, so the dict rides
+    // through unchanged.
+    summary: {
+      actionable: { criteria: 1 },
+      untargetedCriteria: 0,
+      likelyIrrelevant: 0,
+      automatedCoverage: {
+        standardId: "wcag22",
+        criteriaWithRulesAllClean: 1,
+        criteriaWithoutEligibleInputs: 0,
+        automatedCriteriaPassRate: 100,
+      },
+      headline: "1/1 evaluated",
+    },
     nextStep: "Call checklist.",
     nextStepStructured: { tool: "checklist", args: { cwd: "/tmp/x" } },
     scanned: { kind: "project", root: "/tmp/x" },

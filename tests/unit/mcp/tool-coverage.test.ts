@@ -65,7 +65,24 @@ interface CoverageEnvelope {
   readonly automatedCriteriaPassRate?: number;
   readonly criteriaTotalForProfile?: number;
   readonly criteriaByLevel?: Record<string, number>;
-  readonly summary?: string;
+  // Structured `summary` dict — mirrors `checklist.summary`'s shape
+  // so `summary.actionable.criteria` resolves identically across both
+  // tools. Pre-fix shipped as a prose string (the old shape forced an
+  // agent reading `summary.actionableManualItems` on coverage to get
+  // `undefined` while the same path on checklist returned the
+  // populated count). The prose now rides as `summary.headline`.
+  readonly summary?: {
+    readonly actionable: { readonly criteria: number };
+    readonly untargetedCriteria: number;
+    readonly likelyIrrelevant: number;
+    readonly automatedCoverage: {
+      readonly standardId: string;
+      readonly criteriaWithRulesAllClean: number;
+      readonly criteriaWithoutEligibleInputs: number;
+      readonly automatedCriteriaPassRate?: number;
+    };
+    readonly headline: string;
+  };
 }
 
 function parseEnvelope(text: string): CoverageEnvelope {
@@ -179,8 +196,18 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     const data = parseEnvelope(result.content[0].text);
     expect(data.warnings).toContain("scanned_zero_files");
     expect(data).not.toHaveProperty("automatedCriteriaPassRate");
-    expect(typeof data.summary).toBe("string");
-    expect(data.summary).not.toMatch(/\(\d+%\)/);
+    // structured `summary` dict — `headline` (the prose) drops the
+    // `(N%)` tail on a zero-file scan since the percentage is
+    // materially meaningless without a denominator. The
+    // `automatedCoverage` sub-block also omits `automatedCriteriaPassRate`
+    // under present-when-meaningful semantics so the two surfaces
+    // agree.
+    expect(typeof data.summary).toBe("object");
+    expect(typeof data.summary?.headline).toBe("string");
+    expect(data.summary?.headline).not.toMatch(/\(\d+%\)/);
+    expect(data.summary?.automatedCoverage).not.toHaveProperty(
+      "automatedCriteriaPassRate",
+    );
     // Structural signal the agent can still read —
     // criteriaTotalForProfile stays populated so the shape of what
     // *would* have been evaluated is visible (clamps only the

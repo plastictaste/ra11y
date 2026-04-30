@@ -52,7 +52,21 @@ function buildSyntheticCoverageResponse(
     likelyIrrelevantCriteria: [],
     failingAutomatedCriteria: [],
     warningAutomatedCriteria: [],
-    summary: "40/40 evaluated automatable criteria passing.",
+    // Structured `summary` dict mirrors `checklist.summary`'s shape.
+    // The slim envelope spreads `original` first, so the dict survives
+    // verbatim.
+    summary: {
+      actionable: { criteria: 5 },
+      untargetedCriteria: 5,
+      likelyIrrelevant: 0,
+      automatedCoverage: {
+        standardId: "wcag22",
+        criteriaWithRulesAllClean: 40,
+        criteriaWithoutEligibleInputs: 0,
+        automatedCriteriaPassRate: 100,
+      },
+      headline: "40/40 evaluated automatable criteria passing.",
+    },
     nextStep: "Call checklist for actionable items.",
     nextStepStructured: { tool: "checklist", args: { cwd: options.cwd ?? "/tmp/test" } },
     scanned: { kind: "project", root: options.cwd ?? "/tmp/test" },

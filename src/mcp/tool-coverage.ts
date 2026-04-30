@@ -349,38 +349,66 @@ export const coverageTool: McpTool = {
         // preserved without flattening the severity distinction.
         failingAutomatedCriteria: withTitles(failingErrorIds, session),
         warningAutomatedCriteria: withTitles(warningOnlyIds, session),
-        // drop the `(N%)` tail when
-        // the scan evaluated zero files — the `%` is cosmetically
-        // precise but materially meaningless. Pair with the
-        // `automatedCriteriaPassRate` omission above so the summary
-        // and the structured field agree; the `scanned_zero_files`
-        // warning code still fires at the response level.
+        // Structured summary dict — mirrors `checklist.summary`'s key
+        // shape so an agent that reads `summary.actionable.criteria`
+        // / `summary.untargetedCriteria` / `summary.likelyIrrelevant`
+        // on either surface gets the same path resolution. Pre-fix
+        // this field shipped as a prose string while
+        // `checklist.summary` shipped as a dict — same field name on
+        // sibling tools, two shapes — the canonical "Sibling fields
+        // naming the same concept must use one shape" failure mode in
+        // `docs/kb/architecture/ai-first-consumer.md`. An agent
+        // reading `coverage.summary.actionableManualItems` got
+        // `undefined` while the same path on checklist returned the
+        // populated count.
         //
-        // Surface both manual-review counters as separate quantities
-        // — never summed into a single composite headline. Previously
-        // the prose read
-        // `${withCandidates.length + untargeted.length} of ${c.total}
-        // criteria in ${c.standardId} need manual review` and the
-        // composite repeated the dishonest shape the structured field
-        // (also dropped) carried. Agents read the prose first; an
-        // ambient composite there silently re-budgets the same way the
-        // `criteriaManualReviewRequired` field did. Surface the two
-        // numbers as discrete clauses ("`A` actionable items, `B`
-        // untargeted criteria") so the categorical difference between
-        // grounded-with-file:line and bare-criterion prompts is visible
-        // in the sentence itself.
-        summary: passRateMeaningful
-          ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
-            `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
-            `Manual review in ${c.standardId}: ${withCandidates.length} actionable items (criteria with grounded candidates), ` +
-            `${untargeted.length} untargeted criteria (no candidates the finders could ground), ` +
-            `out of ${c.total} criteria in scope` +
-            `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}. ` +
-            `Run the 'checklist' tool for evaluation prompts.`
-          : `No files scanned — automated pass rate is not meaningful. ` +
-            `Manual review in ${c.standardId}: 0 actionable items, ${untargeted.length} untargeted criteria, ` +
-            `out of ${c.total} criteria in scope (would apply once sources are present). ` +
-            `See the \`scanned_zero_files\` warning for why the scan root matched no parseable files.`,
+        // The prose previously carried under `summary` is demoted to
+        // `summary.headline` so human-readable output isn't lost; the
+        // agent's structured access path is the dict body. The
+        // `(N%)` tail is dropped from `headline` on a zero-file scan
+        // (cosmetically precise but materially meaningless) — pair
+        // with the `automatedCriteriaPassRate` omission above so the
+        // headline and the structured field agree; the
+        // `scanned_zero_files` warning code still carries the reason.
+        //
+        // `actionable.criteria` is the cross-tool canonical count
+        // (matches `scan_project.plan.actionableManualItems`,
+        // `checklist.summary.actionable.criteria`, and the sibling
+        // `actionableManualItems` scalar on this same coverage entry).
+        // `automatedCoverage` mirrors checklist's split — two
+        // non-overlapping counters (`criteriaWithRulesAllClean` /
+        // `criteriaWithoutEligibleInputs`), never summed into a
+        // single composite rate per CLAUDE.md §1 "Composite headline
+        // counts are dishonest." `automatedCriteriaPassRate` rides
+        // alongside under present-when-meaningful semantics so the
+        // legacy headline ratio stays accessible for callers that
+        // want it (omitted on zero-file scans alongside the
+        // top-level field).
+        summary: {
+          actionable: { criteria: withCandidates.length },
+          untargetedCriteria: untargeted.length,
+          likelyIrrelevant: likelyIrrelevant.length,
+          automatedCoverage: {
+            standardId: c.standardId,
+            criteriaWithRulesAllClean: c.clean,
+            criteriaWithoutEligibleInputs: c.untestable,
+            ...(passRateMeaningful
+              ? { automatedCriteriaPassRate: c.automatedPassRate }
+              : {}),
+          },
+          headline: passRateMeaningful
+            ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
+              `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
+              `Manual review in ${c.standardId}: ${withCandidates.length} actionable items (criteria with grounded candidates), ` +
+              `${untargeted.length} untargeted criteria (no candidates the finders could ground), ` +
+              `out of ${c.total} criteria in scope` +
+              `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}. ` +
+              `Run the 'checklist' tool for evaluation prompts.`
+            : `No files scanned — automated pass rate is not meaningful. ` +
+              `Manual review in ${c.standardId}: 0 actionable items, ${untargeted.length} untargeted criteria, ` +
+              `out of ${c.total} criteria in scope (would apply once sources are present). ` +
+              `See the \`scanned_zero_files\` warning for why the scan root matched no parseable files.`,
+        },
       };
     });
 

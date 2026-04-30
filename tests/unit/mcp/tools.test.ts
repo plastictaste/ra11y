@@ -2858,7 +2858,27 @@ describe("MCP tool: coverage", () => {
       criteriaAutomatable: number;
       actionableManualItems: number;
       untargetedCriteria: number;
-      summary: string;
+      // Structured `summary` dict — mirrors `checklist.summary` so an
+      // agent reading `summary.actionable.criteria` /
+      // `summary.untargetedCriteria` / `summary.likelyIrrelevant` on
+      // either tool gets the same path resolution. Pre-fix this field
+      // shipped as a prose string while `checklist.summary` shipped as
+      // a dict — the canonical "Sibling fields naming the same concept
+      // must use one shape" failure mode in
+      // `docs/kb/architecture/ai-first-consumer.md`. Prose lives at
+      // `summary.headline`.
+      summary: {
+        actionable: { criteria: number };
+        untargetedCriteria: number;
+        likelyIrrelevant: number;
+        automatedCoverage: {
+          standardId: string;
+          criteriaWithRulesAllClean: number;
+          criteriaWithoutEligibleInputs: number;
+          automatedCriteriaPassRate?: number;
+        };
+        headline: string;
+      };
     };
     expect(data.standardId).toBe("wcag22");
     expect(typeof data.automatedCriteriaPassRate).toBe("number");
@@ -2878,12 +2898,25 @@ describe("MCP tool: coverage", () => {
     expect(typeof data.untargetedCriteria).toBe("number");
     expect(data.actionableManualItems + data.untargetedCriteria).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
-    expect(data.summary).toContain("Manual review");
-    // The summary string surfaces the two counts as separate clauses,
-    // never composed — pin both numbers appear so a future drift back
-    // to a composite phrase fails here.
-    expect(data.summary).toContain("actionable items");
-    expect(data.summary).toContain("untargeted criteria");
+    // Structured summary dict — every leg the agent reads matches
+    // checklist's keys exactly. `actionable.criteria` is the canonical
+    // cross-tool count (matches `actionableManualItems` sibling and
+    // `checklist.summary.actionable.criteria` on identical cwd).
+    expect(typeof data.summary).toBe("object");
+    expect(data.summary.actionable.criteria).toBe(data.actionableManualItems);
+    expect(data.summary.untargetedCriteria).toBe(data.untargetedCriteria);
+    expect(typeof data.summary.likelyIrrelevant).toBe("number");
+    expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
+    expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");
+    expect(typeof data.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe(
+      "number",
+    );
+    // Headline (prose) still names the two split counts as separate
+    // clauses — pin both phrases appear so a future drift back to a
+    // composite phrase fails here.
+    expect(data.summary.headline).toContain("Manual review");
+    expect(data.summary.headline).toContain("actionable items");
+    expect(data.summary.headline).toContain("untargeted criteria");
     // Must NOT expose overallAutomatedCoverage — that ratio reads as failure
     // ("54%") when it actually measures a property of the rule library.
     expect((data as Record<string, unknown>).overallAutomatedCoverage).toBeUndefined();
