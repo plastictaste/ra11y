@@ -16,8 +16,9 @@ The `/bench` skill automates the workflow:
 | 2026-04-19 | 343bd30 | 10-files-1k-loc | 5.2 | 100 | -94.8% | v1.0 baseline |
 | 2026-04-19 | 343bd30 | 100-files-10k-loc | 28.5 | 500 | -94.3% | v1.0 baseline |
 | 2026-04-19 | 343bd30 | 1000-files-100k-loc | 272.3 | 3000 | -90.9% | v1.0 baseline |
+| 2026-04-30 | a85df82 | 4000-files-400k-loc-vendor-heavy | 3406.6 | 25000 | -86.4% | scenario added (median of 3 iterations, bun scripts/bench.ts); ceiling row per CLAUDE.md §11 |
 
-Scenarios mirror the budget table in CLAUDE.md § 11 (`cold-start`, `10-files-1k-loc`, `100-files-10k-loc`, `1000-files-100k-loc`). `ms` is the median sample; `margin` is median-minus-budget as a percentage of budget (negative = headroom). The v1.0 baseline row anchors regressions — future `/bench` runs append rows here so deltas are visible over time.
+Scenarios mirror the budget table in CLAUDE.md § 11 (`cold-start`, `10-files-1k-loc`, `100-files-10k-loc`, `1000-files-100k-loc`, `4000-files-400k-loc-vendor-heavy`). `ms` is the median sample; `margin` is median-minus-budget as a percentage of budget (negative = headroom). The v1.0 baseline row anchors regressions — future `/bench` runs append rows here so deltas are visible over time. The 4000-file row is the documented ceiling per CLAUDE.md § 11; below the ceiling, scope-down via `additionalPaths` or `scan_diff` is the recommended path.
 
 ## Regressions and fixes
 
