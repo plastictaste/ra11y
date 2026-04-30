@@ -358,7 +358,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Truncation reporters disagree
 
-- [ ] **Q13-TRUNCATION-REPORTERS-OVERLAP-META-FIELDS-DROPPED** Three truncation reporters ship overlapping fields-dropped lists in the same response: `response_meta_truncated.fields` names 2 fields, `response_dropped_files_oversize.metaFieldsDropped` names 9, plus `metaArrayTruncated: true` is a third top-level scalar with no companion enumeration. Each reporter is internally well-formed; the agent cannot answer "what is the canonical list of dropped fields here?" without cross-referencing all three and picking a winner. Fix: one canonical truncation reporter per scope (meta-level / files-level / arrays-level); the others link via `seeAlso: "<canonical-warning-code>"` rather than enumerate independently; if `metaArrayTruncated` exists as a top-level scalar it points to the warning that owns the detail. Per AI-first doctrine "Truncation reporters must reconcile across warnings."
 
 ### Reason / severity / priority / confidence channel mismatch
 

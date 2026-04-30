@@ -207,6 +207,20 @@ function buildSlimCoverageEnvelope(args: {
   // Pass-through every top-level field that survives the slim. Spread
   // the original first so the scalar counters + `summary` + `scanned`
   // ride through, then overwrite the slim-relevant fields.
+  //
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+  // must reconcile across warnings": no third top-level scalar reporter
+  // for the slim's meta drop. The canonical reporter is
+  // `warningsDetails.response_dropped_files_oversize.metaFieldsDropped[]`
+  // — it ALREADY enumerates exactly which top-level meta keys the slim
+  // builder discarded. A sibling boolean (the previous
+  // `metaFieldDropped: true`) that named the same event with no
+  // companion enumeration forced an agent reading the response to
+  // reconcile two reporters silently — the silent-miss failure mode the
+  // doctrine bullet calls out. The `truncated: true` flag still rides
+  // (it's the canonical `files: []` / per-rule-fans dropped sentinel
+  // shared with `scan_project` slim), and the warning channel owns the
+  // per-field detail.
   const slim: Record<string, unknown> = {
     ...original,
     nextStep: SLIM_NEXT_STEP_PROSE,
@@ -215,7 +229,6 @@ function buildSlimCoverageEnvelope(args: {
     warningsDetails: merged.warningsDetails,
     meta: slimMeta,
     truncated: true as const,
-    metaFieldDropped: true as const,
   };
   // Drop the verbose per-criterion / per-rule fans the slim path
   // discards. Each `delete` is independent — no field is load-bearing

@@ -122,7 +122,13 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     expect(slim.criteriaClean).toBe(40);
     expect(slim.summary).toBeDefined();
     expect(slim.truncated).toBe(true);
-    expect(slim.metaFieldDropped).toBe(true);
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Truncation
+    // reporters must reconcile across warnings": no third top-level
+    // scalar reporter — the canonical meta-drop detail rides on
+    // `warningsDetails.response_dropped_files_oversize.metaFieldsDropped`
+    // (asserted below). A sibling boolean would force the agent to
+    // reconcile two reporters describing the same event.
+    expect(slim.metaFieldDropped).toBeUndefined();
     // Per-criterion / per-rule fans dropped — agent recovers via
     // narrower scope or a checklist call.
     expect(slim.untargetedCriteriaList).toBeUndefined();
