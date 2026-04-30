@@ -948,6 +948,110 @@ describe("per-rule coverage end-to-end", () => {
     expect(altTextRow!.coverageConfidenceReason).not.toBe("scss-unresolved-variables");
   });
 
+  // SCSS-partial-input per-rule confidence downgrade — doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Heuristic-mislabeled meta
+  // sub-fields are dishonest" + "Parser-failure invalidates per-file
+  // confidence." When a `_*.scss` file declares top-level `&` parent-
+  // references, the SCSS preprocessor emits a "no parent selector"
+  // parse error — but the file is intentionally a fragment of another
+  // file (meant to be `@use`d / `@import`ed by a sibling that wraps
+  // the content in a parent rule). Routing the bail through
+  // `parseErrorFiles[]` would tell the agent to "fix the parse error"
+  // when the correct narrative is "this is a partial, route around it"
+  // — same shape as HTML fragment-input, peer of the existing
+  // `fragment-input-no-document-envelope` reason.
+  it("downgrades color-token-driven rules to medium with scss-partial-input reason when an SCSS partial declaring top-level `&` is scanned", () => {
+    // Fixture: one SCSS partial (`_buttons.scss`) declaring `&.active`
+    // and `&:hover` parent-references — the canonical Bootstrap-style
+    // partial shape — plus one HTML page so the scan has a non-SCSS
+    // substrate too. The SCSS file MUST NOT land in `parseErrorFiles[]`
+    // (the AI-first goal), and color-token-driven rules whose
+    // extension gate matches `.scss` MUST downgrade with
+    // `coverageConfidenceReason: "scss-partial-input"`.
+    const buttonsScss =
+      "&.active {\n  color: #fff;\n  background: #0d6efd;\n}\n&:hover {\n  background: #0a58ca;\n}\n";
+    const indexHtml = `<!doctype html><html lang="en"><head><title>p</title></head><body><main><h1>p</h1></main></body></html>`;
+    const files = [
+      scssFile("theme/_buttons.scss", buttonsScss),
+      htmlFile("site/index.html", indexHtml),
+    ];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    // Color-token-driven rules whose extension gate includes `.css`
+    // (the SCSS adapter emits a CSS AST so `.css`-gated rules match
+    // `.scss` files via the alias chain). Must downgrade because the
+    // parent SCSS file's selector chain is unobservable here and the
+    // rule's evidence horizon is bounded by the partial-shape input.
+    const cssRuleIds = ["contrast/minimum", "contrast/enhanced"] as const;
+    for (const ruleId of cssRuleIds) {
+      const row = adjustedRows.find((r) => r.ruleId === ruleId);
+      expect(row).toBeDefined();
+      expect(row!.coverageConfidence).toBe("medium");
+      expect(row!.coverageConfidenceReason).toBe("scss-partial-input");
+      // `reason` is non-empty so the agent reading meta gets a prose
+      // pointer alongside the structured code.
+      expect(row!.reason).toBeDefined();
+      expect(row!.reason!.length).toBeGreaterThan(0);
+    }
+
+    // Counter-axis: rules whose extension gate excludes `.css`/`.scss`
+    // (e.g. `media/alt-text-missing` is HTML-only) MUST NOT carry the
+    // SCSS partial reason. The adjuster's match gate on
+    // `appliesTo.fileExtensions` is the load-bearing invariant: only
+    // rules whose substrate the partial file is part of get
+    // downgraded.
+    const altTextRow = adjustedRows.find((r) => r.ruleId === "media/alt-text-missing");
+    expect(altTextRow).toBeDefined();
+    expect(altTextRow!.coverageConfidenceReason).not.toBe("scss-partial-input");
+
+    // Cross-surface invariant with the parse-error narrative: the
+    // SCSS partial file MUST NOT land in `analysisCoverage.parseErrorFiles[]`.
+    // The whole point of the Q10 closure is to suppress the dangling-
+    // `&` parse error from `parseErrorFiles[]` so the agent reads
+    // "this is a partial, route around it" framing rather than "fix
+    // the parse error" framing.
+    const analysisCoverage = response.meta["analysisCoverage"] as
+      | { readonly parseErrorFiles?: readonly { readonly path: string }[] }
+      | undefined;
+    const parseErrorPaths = (analysisCoverage?.parseErrorFiles ?? []).map((e) => e.path);
+    expect(parseErrorPaths).not.toContain("theme/_buttons.scss");
+  });
+
   // Per-rule per-file (NOT corpus-wide) parse-error degradation —
   // doctrine source: docs/kb/architecture/ai-first-consumer.md
   // "Parser-failure invalidates per-file confidence." Before this fix,

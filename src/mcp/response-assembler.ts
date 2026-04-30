@@ -98,6 +98,10 @@ import {
   partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
+import {
+  applyScssPartialInputAdjustment,
+  detectScssPartialFiles,
+} from "./scss-partial-adjustment.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
@@ -529,6 +533,19 @@ export function assembleScanFamilyResponse(
   // envelope is unobservable here. Parse-error / SCSS precedence is
   // honored: a row already at `"low"` keeps its existing reason.
   const fragmentFiles = detectFragmentFiles(parsedFiles);
+  // SCSS-partial-input adjustment (Q10) — companion of the
+  // fragment-input HTML adjustment on the SCSS axis. When a `_*.scss`
+  // file declares top-level `&` parent-references, it is intentionally
+  // a fragment of another file; the SCSS preprocessor's dangling-`&`
+  // verdict is correct in isolation but mislabels authorial intent.
+  // Excluded from `parseErrorFiles[]` upstream; downgrades per-rule
+  // confidence to `"medium"` with
+  // `coverageConfidenceReason: "scss-partial-input"` here so the agent
+  // reading per-rule coverage gets the structural signal without the
+  // parse-error narrative routing them toward "fix the parse error."
+  // Parse-error / SCSS-unresolved / fragment precedence is honored: a
+  // row already carrying a non-partial reason keeps it.
+  const scssPartialFiles = detectScssPartialFiles(parsedFiles);
   const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     parsedFiles,
@@ -547,6 +564,12 @@ export function assembleScanFamilyResponse(
     activeRules,
     new Set(fragmentFiles),
   );
+  const scssPartialAdjusted = applyScssPartialInputAdjustment(
+    fragmentInputAdjusted,
+    parsedFiles,
+    activeRules,
+    new Set(scssPartialFiles),
+  );
   // Disambiguate `eligible === 0` extension-gated rows by stamping
   // `subkind: "extension-absent" | "extension-present-but-out-of-scope"`.
   // The caller pre-computed `extensionsPresentAtRoot` from a bounded
@@ -554,7 +577,7 @@ export function assembleScanFamilyResponse(
   // point is to detect what scope filters pruned. Skipped (no-op) on
   // surfaces without a cwd-rooted scope (`scan_file` explicit paths).
   const adjustedPerRuleCoverage = applyExtensionPresentSubkindAdjustment(
-    fragmentInputAdjusted,
+    scssPartialAdjusted,
     activeRules,
     input.extensionsPresentAtRoot,
   );

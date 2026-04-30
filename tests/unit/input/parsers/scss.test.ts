@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { parseScss } from "../../../../src/input/parsers/scss.ts";
 import {
+  hasTopLevelAmpersandSelector,
   hasTopLevelScssVariableDeclaration,
+  hasUnderscorePrefixedBasename,
+  isScssPartialSource,
   sanitizeSelectorForMessage,
   scssVariableDeclarationsLikelyUnresolved,
 } from "../../../../src/input/parsers/scss-internals.ts";
@@ -479,6 +482,87 @@ describe("sanitizeSelectorForMessage", () => {
 
   it("leaves short selectors unchanged", () => {
     expect(sanitizeSelectorForMessage("&.foo")).toBe("&.foo");
+  });
+});
+
+describe("hasUnderscorePrefixedBasename", () => {
+  it("matches `_partial.scss`", () => {
+    expect(hasUnderscorePrefixedBasename("_partial.scss")).toBe(true);
+  });
+  it("matches a partial under a directory", () => {
+    expect(hasUnderscorePrefixedBasename("theme/_buttons.scss")).toBe(true);
+  });
+  it("matches a partial under a deeply nested directory", () => {
+    expect(hasUnderscorePrefixedBasename("src/styles/components/_card.scss")).toBe(true);
+  });
+  it("does not match a non-underscored basename even if its parent dir starts with `_`", () => {
+    expect(hasUnderscorePrefixedBasename("_layouts/default.scss")).toBe(false);
+  });
+  it("does not match a plain non-partial filename", () => {
+    expect(hasUnderscorePrefixedBasename("theme.scss")).toBe(false);
+  });
+  it("normalizes windows-style backslash separators", () => {
+    expect(hasUnderscorePrefixedBasename("theme\\_card.scss")).toBe(true);
+  });
+});
+
+describe("hasTopLevelAmpersandSelector", () => {
+  it("returns true when source declares `&.foo { ... }` at top level", () => {
+    const source = "&.modifier {\n  color: red;\n}\n";
+    expect(hasTopLevelAmpersandSelector(source)).toBe(true);
+  });
+  it("returns true on a `&:hover` parent-reference selector", () => {
+    expect(hasTopLevelAmpersandSelector("&:hover { color: blue; }")).toBe(true);
+  });
+  it("returns true on a multi-piece `&.alpha, &.beta` selector", () => {
+    expect(hasTopLevelAmpersandSelector("&.alpha, &.beta { color: red; }")).toBe(true);
+  });
+  it("returns false when `&` only appears nested under a parent rule", () => {
+    const source = ".btn {\n  &.active { color: red; }\n}\n";
+    expect(hasTopLevelAmpersandSelector(source)).toBe(false);
+  });
+  it("returns false on a plain CSS file with no `&` token", () => {
+    expect(hasTopLevelAmpersandSelector(".btn { color: red; }")).toBe(false);
+  });
+  it("returns false when `&` is inside a string literal", () => {
+    expect(hasTopLevelAmpersandSelector(`.x { content: "& foo"; }`)).toBe(false);
+  });
+  it("returns false when `&` is inside a block comment", () => {
+    expect(hasTopLevelAmpersandSelector("/* & not a selector */ .btn { color: red; }")).toBe(false);
+  });
+});
+
+describe("isScssPartialSource", () => {
+  // Two-signal AND predicate — both must be present to classify as a
+  // Sass partial whose dangling-`&` parse error should route to
+  // `coverageConfidenceReason: "scss-partial-input"` rather than to
+  // `parseErrorFiles[]`.
+  it("classifies `_buttons.scss` declaring `&.active` as a partial", () => {
+    const source = "&.active {\n  color: red;\n}\n";
+    expect(isScssPartialSource("_buttons.scss", source)).toBe(true);
+  });
+  it("classifies a nested-path partial with `&` selectors", () => {
+    const source = "&:hover { color: blue; }";
+    expect(isScssPartialSource("theme/components/_card.scss", source)).toBe(true);
+  });
+  it("does NOT classify an underscored filename without dangling `&` (sole signal)", () => {
+    // `_helpers.scss` declaring only standalone classes parses cleanly
+    // standalone. The convention says it's a partial, but the parse-
+    // error narrative is irrelevant here — the file produces no
+    // dangling-`&` error to suppress, so the classification doesn't
+    // fire and the file rides through normal coverage.
+    const source = ".helper { color: red; }";
+    expect(isScssPartialSource("_helpers.scss", source)).toBe(false);
+  });
+  it("does NOT classify a non-underscored filename even with `&` selectors (sole signal)", () => {
+    // A dangling `&` in a non-partial file is a real authoring bug the
+    // user should see surfaced as a parse error.
+    const source = "&.broken { color: red; }";
+    expect(isScssPartialSource("buttons.scss", source)).toBe(false);
+  });
+  it("does NOT classify when `&` only appears nested (well-formed SCSS)", () => {
+    const source = ".btn { &.active { color: red; } }";
+    expect(isScssPartialSource("_buttons.scss", source)).toBe(false);
   });
 });
 

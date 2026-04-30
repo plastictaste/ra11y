@@ -733,6 +733,26 @@ export interface PerRuleCoverage {
    *     the agent at the cited file so the parent template is the next
    *     read. Pairs with the `analysisCoverage.fragmentFiles` list so
    *     the agent can cross-reference which files are fragments.
+   *   - `"scss-partial-input"` — at least one `.scss` file matching
+   *     the rule's extension gate is a Sass partial: basename starts
+   *     with `_` AND the source declares a top-level `&` parent-
+   *     reference selector (`&.foo { … }`, `&:hover { … }`). These
+   *     are intentionally fragments — the file is meant to be `@use`d /
+   *     `@import`ed by a sibling that wraps the content in a parent
+   *     rule. The SCSS preprocessor's dangling-`&` verdict is correct
+   *     in isolation but wrong about the file's authorial intent. The
+   *     SCSS partial peer of `fragment-input-no-document-envelope`:
+   *     parsed substrate, rule ran, evidence horizon bounded by the
+   *     fragment-of-another-file shape. Confidence drops to `"medium"`
+   *     so a clean tally on a partial doesn't read as `"high"` the
+   *     rule could not honestly establish — the parent SCSS file's
+   *     selector chain is unobservable here. Per backlog Q10 closure
+   *     and AI-first doctrine "Heuristic-mislabeled meta sub-fields
+   *     are dishonest": the parser bail surfaces under a
+   *     classification reason rather than as a hard
+   *     `parseErrorFiles[]` entry, so the agent reading per-rule
+   *     coverage gets the structural signal without the parse-error
+   *     narrative routing them toward "fix the parse error."
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
@@ -751,7 +771,8 @@ export interface PerRuleCoverage {
     | "file-parse-error"
     | "partial-parse"
     | "scss-unresolved-variables"
-    | "fragment-input-no-document-envelope";
+    | "fragment-input-no-document-envelope"
+    | "scss-partial-input";
   /**
    * Discriminator for an `eligible === 0` extension-gated row,
    * differentiating two structurally distinct gaps the original

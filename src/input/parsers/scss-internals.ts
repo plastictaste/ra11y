@@ -491,3 +491,151 @@ function ruleHasResolvedColor(declarations: readonly { readonly value: string }[
   }
   return false;
 }
+
+/**
+ * True when the source contains at least one selector that begins with a
+ * `&` parent-reference at the top level (no enclosing rule). The SCSS
+ * `&` is the parent-selector placeholder; in a partial designed to be
+ * `@use`d / `@import`ed by a sibling file, a top-level `&.modifier` /
+ * `&:hover` selector is the canonical "this file is a fragment of
+ * another rule" shape — there's no parent here, but downstream the
+ * partial's content is wrapped in one.
+ *
+ * Detection: a `&` token that appears in a top-level selector position
+ * — i.e. before a `{` opening a rule body, with no enclosing brace
+ * before it. Cheap regex over the raw source after stripping strings
+ * and block comments. Also catches `@mixin` / `@function` siblings that
+ * declare top-level reusable selectors with `&`.
+ *
+ * Used by {@link isScssPartialSource} alongside the basename check to
+ * classify SCSS partials whose preprocessor pass would otherwise emit a
+ * dangling-`&` parse error. The doctrine: a `_*.scss` file declaring
+ * top-level `&.foo` is intentionally a fragment, not a parse error;
+ * the parser's "no parent selector" verdict is correct in isolation
+ * but wrong about the file's authorial intent.
+ */
+export function hasTopLevelAmpersandSelector(source: string): boolean {
+  // Walk the source one char at a time, tracking brace depth, and look
+  // for a `&` outside any block. Skip over strings and block comments.
+  let depth = 0;
+  let i = 0;
+  while (i < source.length) {
+    const skipped = skipScssTriviaAt(source, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const c = source[i];
+    if (c === "{") {
+      depth += 1;
+    } else if (c === "}") {
+      depth = Math.max(0, depth - 1);
+    } else if (c === "&" && depth === 0) {
+      // Confirm this `&` is in a selector context: it must be followed
+      // (eventually, after whitespace / identifier chars) by a `{`
+      // rather than e.g. `&&` inside an expression. If we hit `{`
+      // first, this is a selector.
+      if (scanForSelectorOrTerminator(source, i + 1) === "{") return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+/**
+ * If `pos` is the start of a string literal, block comment, or `//`
+ * line comment, returns the offset immediately after the trivia.
+ * Otherwise returns `pos` unchanged. Centralizes the SCSS trivia-skip
+ * logic shared by {@link hasTopLevelAmpersandSelector} and
+ * {@link scanForSelectorOrTerminator} so both walkers stay under the
+ * cognitive-complexity cap.
+ */
+function skipScssTriviaAt(source: string, pos: number): number {
+  const c = source[pos];
+  if (c === '"' || c === "'") return skipStringFrom(source, pos, c);
+  if (c === "/" && source[pos + 1] === "*") return skipBlockCommentFrom(source, pos);
+  if (c === "/" && source[pos + 1] === "/") return findLineEnd(source, pos);
+  return pos;
+}
+
+/**
+ * Looks ahead from `start` for the next non-trivia structural delimiter:
+ * `{` (selector context) or `;` (statement terminator). Returns the
+ * character class that resolves first or `null` on EOF / encountering
+ * a `}`. Skips strings and block comments via {@link skipScssTriviaAt}.
+ * Helper for {@link hasTopLevelAmpersandSelector}'s `&` disambiguation.
+ */
+function scanForSelectorOrTerminator(source: string, start: number): "{" | ";" | null {
+  let i = start;
+  while (i < source.length) {
+    const skipped = skipScssTriviaAt(source, i);
+    if (skipped !== i) {
+      i = skipped;
+      continue;
+    }
+    const c = source[i];
+    if (c === "{") return "{";
+    if (c === ";") return ";";
+    if (c === "}") return null;
+    i += 1;
+  }
+  return null;
+}
+
+/**
+ * True when `filePath`'s basename starts with `_` — the SCSS / Sass
+ * convention marking a partial meant to be `@use`d / `@import`ed by a
+ * sibling file rather than compiled standalone. Pure path inspection;
+ * normalizes `\` to `/` for windows-style inputs.
+ *
+ * Half of the two-signal predicate {@link isScssPartialSource}: the
+ * basename alone is a soft convention (a `_helpers.scss` declaring only
+ * standalone classes is still a partial in convention but parses cleanly
+ * standalone), and the AND-conjunction with the dangling-`&` signal is
+ * what makes the classification honest — same shape as the AI-first
+ * doctrine "Heuristic-mislabeled meta sub-fields are dishonest" rule:
+ * the label must be provable from the code, not guessed.
+ */
+export function hasUnderscorePrefixedBasename(filePath: string): boolean {
+  if (filePath.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  const basename = lastSlash === -1 ? normalized : normalized.slice(lastSlash + 1);
+  return basename.startsWith("_");
+}
+
+/**
+ * True when the file is structurally an SCSS partial whose authorial
+ * intent is "compose this fragment into another file's rule body" —
+ * the canonical case the SCSS preprocessor's dangling-`&` parse error
+ * mislabels as a hard parse failure.
+ *
+ * Two-signal AND predicate (per backlog Q10 spec):
+ *   1. Basename starts with `_` — the Sass partial-file convention.
+ *   2. Source contains at least one top-level `&` parent-reference
+ *      selector — concrete evidence the file is meant to be wrapped in
+ *      a parent rule before compilation.
+ *
+ * Both signals must be present. The basename alone is a soft
+ * convention (`_helpers.scss` may declare only standalone selectors
+ * and parse cleanly); the dangling-`&` alone may appear in a malformed
+ * non-partial file the user would want flagged as a parse error. The
+ * conjunction names the exact shape the parser bails on AND the user
+ * intended as a partial.
+ *
+ * Doctrine source: docs/kb/architecture/ai-first-consumer.md
+ *   - "Heuristic-mislabeled meta sub-fields are dishonest" — the
+ *     classification has to be provable from the code, not guessed.
+ *   - "Parser-failure invalidates per-file confidence" — the
+ *     companion rule on the per-rule confidence axis: when this
+ *     predicate fires, the parser bail propagates as
+ *     `coverageConfidenceReason: "scss-partial-input"` rather than as
+ *     a hard `parseErrorFiles[]` entry.
+ *
+ * @param filePath the file's relative or absolute path
+ * @param source the raw SCSS source text
+ */
+export function isScssPartialSource(filePath: string, source: string): boolean {
+  if (!hasUnderscorePrefixedBasename(filePath)) return false;
+  return hasTopLevelAmpersandSelector(source);
+}

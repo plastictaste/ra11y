@@ -23,6 +23,7 @@
  */
 
 import type { ParsedFile } from "../engine/scanner.ts";
+import { isScssPartialSource } from "../input/parsers/scss-internals.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
@@ -138,6 +139,17 @@ export function partitionParseStateFiles(
   for (const f of files) {
     if (f.ast.errors.length === 0) continue;
     if (isBuildArtifact(f.filePath, f.source)) continue;
+    // SCSS partials (Q10): a `_*.scss` file declaring top-level `&`
+    // parent-references is intentionally a fragment of another file,
+    // not a hard parse error. The dangling-`&` verdict is correct in
+    // isolation but mislabels authorial intent — and the lookahead
+    // routes the per-rule confidence downgrade through
+    // `applyScssPartialInputAdjustment` rather than through this
+    // partition. Excluding here keeps the file out of `parseErrorFiles`
+    // / `partialParseFiles` (so the agent doesn't read "fix the parse
+    // error" framing) while preserving the substrate-level signal on
+    // the per-rule layer.
+    if (isScssPartialSource(f.filePath, f.source)) continue;
     if (findingFilePaths?.has(f.filePath)) partialParse.add(f.filePath);
     else parseError.add(f.filePath);
   }

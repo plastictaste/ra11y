@@ -254,7 +254,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Parser routing + coverage gaps
 
-- [ ] **Q10-SCSS-PARTIALS-MISLABELED-AS-PARSE-ERROR-NOT-FRAGMENT** SCSS partials (`_*.scss` declaring `&.foo` selectors intended for inclusion in another file) ship as `parseErrorFiles` rather than fragment-classified, inflating parse-error counts and routing the agent toward "fix the parse error" instead of "this is a fragment, route around it." Fix: classify SCSS partials (`_`-prefixed basename + presence of dangling `&` parent-references) as fragments; add a `scss_partial_input` reason on per-rule confidence rather than treating the bail as a hard parse error. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
 
 
 ### Per-rule / per-finding confidence drift

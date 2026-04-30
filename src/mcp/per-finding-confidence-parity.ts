@@ -157,11 +157,12 @@ function snakeCase(code: string): string {
  * finding's own file-path membership in the corresponding parse-state
  * set. Other reason codes (rule-family
  * `cross_file_*_not_attempted_by_rule` variants,
- * `scss_unresolved_variables`, `fragment_input_no_document_envelope`)
- * describe a corpus-level limitation on the rule's evidence model and
- * propagate to every finding the rule emitted on this scan; these two
- * describe a per-file parse failure and only apply to findings on the
- * specific file that failed to parse.
+ * `scss_unresolved_variables`, `fragment_input_no_document_envelope`,
+ * `scss_partial_input`) describe a corpus-level limitation on the
+ * rule's evidence model and propagate to every finding the rule
+ * emitted on this scan; these two describe a per-file parse failure
+ * and only apply to findings on the specific file that failed to
+ * parse.
  *
  * Doctrine source: docs/kb/architecture/ai-first-consumer.md
  *   "Per-finding confidence must reflect per-rule coverage limitations."

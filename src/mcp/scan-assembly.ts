@@ -849,7 +849,7 @@ function adjustRowForFragmentInput(
  * the rare path where a `perRuleCoverage` row references a rule that
  * was filtered out between scanner-emit and meta-assembly.
  */
-function countMatchingFiles(rule: Rule | undefined, pool: readonly ParsedFile[]): number {
+export function countMatchingFiles(rule: Rule | undefined, pool: readonly ParsedFile[]): number {
   if (rule === undefined) return 0;
   const extensions = rule.appliesTo?.fileExtensions;
   if (!extensions || extensions.length === 0) return pool.length;
@@ -916,7 +916,8 @@ export function sumFindingsEmitted(rows: readonly PerRuleCoverage[]): number {
  * Pure over its inputs — the call site supplies the already-adjusted
  * rows (after {@link applyParseErrorAdjustment} +
  * {@link applyScssUnresolvedVariablesAdjustment} +
- * {@link applyFragmentInputAdjustment} have run). The check is a
+ * {@link applyFragmentInputAdjustment} +
+ * {@link applyScssPartialInputAdjustment} have run). The check is a
  * one-pass scan; an empty rows array returns `true` (vacuously
  * uniform-high), but the warning emission gates on a non-empty
  * `parseErrorFiles` list at the call site so a clean scan with no rows

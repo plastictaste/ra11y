@@ -102,6 +102,7 @@
 import { walkJsxElements } from "../engine/ast-helpers.ts";
 import { classifyFragment, type FragmentClassificationSignals } from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
+import { isScssPartialSource } from "../input/parsers/scss-internals.ts";
 import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
@@ -1136,6 +1137,19 @@ function isPhpFile(filePath: string): boolean {
 function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void {
   if (file.ast.errors.length === 0) return;
   if (isBuildArtifact(file.filePath, file.source)) return;
+  // SCSS partials (Q10 — backlog
+  // `Q10-SCSS-PARTIALS-MISLABELED-AS-PARSE-ERROR-NOT-FRAGMENT`): a
+  // `_*.scss` file declaring a top-level `&` parent-reference is
+  // intentionally a fragment of another file, not a hard parse error.
+  // Excluding from `parseErrorFiles[]` keeps the agent's narrative
+  // honest — "this is a partial, route around it" — and routes the
+  // substrate signal through the
+  // `coverageConfidenceReason: "scss-partial-input"` per-rule
+  // downgrade in `applyScssPartialInputAdjustment` instead. The
+  // build-artifact precedent above models the same shape: a file with
+  // a stronger upstream classification doesn't double-emit under the
+  // less-informative parse-error narrative.
+  if (isScssPartialSource(file.filePath, file.source)) return;
   const headError = file.ast.errors[0];
   const triggerToken = headError?.triggerToken;
   // 1-based line where the head parse error fired — the natural
