@@ -96,7 +96,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // CLAUDE.md §1 "Sibling fields naming the same concept must use
       // one shape" — it duplicated the canonical ~10KB string verbatim
       // on every call.
-      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
+      expect((response as unknown as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.scan.violationsCount).toBe(0);
       expect(response.scan.notesCount).toBe(0);
@@ -517,7 +517,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
       expect(isError).toBeUndefined();
       expect(response.wrappers.candidates).toEqual([]);
       expect(typeof response.suggestedConfig).toBe("string");
-      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
+      expect((response as unknown as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.scan.filesScanned).toBeGreaterThan(0);
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("bootstrap_detect_failed");
@@ -558,7 +558,7 @@ describe("bootstrap: suggestedConfig null-case", () => {
       // CLAUDE.md §1 "Sibling fields naming the same concept must use
       // one shape"; guard that it never resurfaces alongside the
       // canonical absence either.
-      expect((response as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
+      expect((response as unknown as Record<string, unknown>)["proposedConfig"]).toBeUndefined();
       expect(response.warnings).toBeDefined();
       expect(response.warnings).toContain("bootstrap_propose_config_failed");
     });
