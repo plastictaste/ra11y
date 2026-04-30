@@ -28,7 +28,7 @@ import {
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
-import { applyCorpusParseErrorRateAdjustment } from "./corpus-parse-error-rate-adjustment.ts";
+import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
@@ -41,7 +41,6 @@ import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
 import {
   applyFragmentInputAdjustment,
-  applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
@@ -756,20 +755,14 @@ export async function runScanAndFormat(
   // pruned by `additionalPaths` / `exclude` / `.gitignore` / default
   // build-dir skips, in which case the agent should broaden scope
   // rather than narrow `additionalPaths` further.
-  // Cascade order: parse-error → corpus-rate → scss-unresolved →
-  // fragment-input → extension-subkind. The corpus-rate pass reads
-  // the `byFile[]` array the parse-error pass populates, so the two
-  // must run consecutively in that order. See
-  // {@link buildSharedPerRuleCoverageMeta} for the shared cascade
-  // documentation; this `tools-helpers` chain mirrors it because
-  // the cwd-rooted `applyExtensionSubkindFromRoot` walk is async and
-  // can't be threaded through the synchronous shared helper.
+  // Cascade mirrors {@link buildSharedPerRuleCoverageMeta}: parse-error
+  // → corpus-rate (reads byFile[] from the previous pass) → scss-
+  // unresolved → fragment-input → extension-subkind. This chain stays
+  // here because the cwd-rooted walk is async.
   const adjustedPerRuleCoverage = await applyExtensionSubkindFromRoot(
     applyFragmentInputAdjustment(
       applyScssUnresolvedVariablesAdjustment(
-        applyCorpusParseErrorRateAdjustment(
-          applyParseErrorAdjustment(perRuleCoverage, files, activeRules, violationFilePaths),
-        ),
+        applyParseErrorAndCorpusRate(perRuleCoverage, files, activeRules, violationFilePaths),
         files,
         activeRules,
         new Set(scssUnresolvedFiles),

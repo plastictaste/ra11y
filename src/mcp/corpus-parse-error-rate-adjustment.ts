@@ -54,7 +54,10 @@
  * matches in the rule's gate) pass through unchanged.
  */
 
+import type { ParsedFile } from "../engine/scanner.ts";
+import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
+import { applyParseErrorAdjustment } from "./parse-error-adjustment.ts";
 
 /**
  * Minimum `filesEligible` count required before the corpus-rate
@@ -162,6 +165,25 @@ export function applyCorpusParseErrorRateAdjustment(
  * `filesEvaluated`), and `byFile.length` is the parse-error +
  * partial-parse intersection with that gate.
  */
+/**
+ * Convenience composite that runs the per-file parse-error adjuster
+ * followed by the corpus-aggregation pass in one call. Sequencing is
+ * load-bearing — the corpus adjuster reads the `byFile[]` array the
+ * per-file pass populates. Exported so consumers that don't need to
+ * inspect the intermediate state (e.g. the cascade in
+ * `tools-helpers.ts`) can chain through one call instead of two.
+ */
+export function applyParseErrorAndCorpusRate(
+  rows: readonly PerRuleCoverage[],
+  files: readonly ParsedFile[],
+  activeRules: readonly Rule[],
+  findingFilePaths: ReadonlySet<string> | undefined,
+): readonly PerRuleCoverage[] {
+  return applyCorpusParseErrorRateAdjustment(
+    applyParseErrorAdjustment(rows, files, activeRules, findingFilePaths),
+  );
+}
+
 function adjustRowForCorpusRate(row: PerRuleCoverage): PerRuleCoverage {
   if (row.skipReason === "gated_by_level") return row;
   if (row.coverageConfidence !== "high") return row;
