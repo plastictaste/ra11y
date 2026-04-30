@@ -1254,7 +1254,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // avoid first-by-filename routing" guards against, extended to
     // "must avoid routing back to the failed surface."
     expect(body.nextStepStructured?.tool).not.toBe("scan_project");
-    expect(["scan_file", "coverage"]).toContain(body.nextStepStructured?.tool);
+    const routedTool = body.nextStepStructured?.tool;
+    expect(routedTool).toBeDefined();
+    expect(["scan_file", "coverage"]).toContain(routedTool as string);
     // The structured args are non-empty — addressable narrowing for
     // scan_file (`path`) or addressable scope for coverage (`cwd`).
     expect(body.nextStepStructured?.args).toBeDefined();

@@ -28,6 +28,10 @@ import {
 } from "./reference-guide.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
+import {
+  buildSlimNextStepStructured,
+  SLIM_NEXT_STEP_PROSE,
+} from "./scan-project-slim-next-step.ts";
 import type { McpSession } from "./session.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import { analyzeTopContributor } from "./token-budget-contributor.ts";
@@ -643,8 +647,8 @@ function buildSlimScanProjectEnvelope(args: {
     nextStep: SLIM_NEXT_STEP_PROSE,
     nextStepStructured: buildSlimNextStepStructured({
       formatted,
-      fullMeta,
       params,
+      isVendor: buildVendorPredicate(fullMeta),
     }),
     warnings: finalWarnings,
     warningsDetails: finalWarningsDetails,
@@ -891,133 +895,6 @@ function trimStringArrayOnDetailSlot(
   const trimmed = arr.slice(0, slot.cap);
   next[slot.code] = { ...(payload as Record<string, unknown>), [slot.arrayKey]: trimmed };
   return { fieldPath: slot.fieldPath, shown: trimmed.length, total: arr.length };
-}
-
-/**
- * Prose for the slim envelope's nextStep. Names the recovery the
- * agent needs to perform: the response shape itself signals "I had
- * to drop the per-file findings to fit," and the agent's next move
- * is to call back with a narrower scope so the next response can
- * carry the per-file detail. We name three concrete narrowing knobs
- * — `cwd`, `additionalPaths`, `restrictToPaths` — so the agent can
- * pick the one that matches its triage intent without re-reading
- * tool docs. The `summaryOnly` mode is referenced as the future
- * lighter-weight path so the
- * agent knows the doc surface is evolving.
- */
-const SLIM_NEXT_STEP_PROSE =
-  "The full response was over the MCP host's token ceiling, so per-file findings were dropped to keep the envelope routable. " +
-  "The structured next-call routes to a different surface (`scan_file` on the top-impact non-vendor file, or `coverage` for the manual-review angle) " +
-  "rather than re-issuing `scan_project` against the same scope that just over-flowed. " +
-  "Alternatively re-call `scan_project` with a narrower scope to recover the full file detail: pass a tighter `cwd` (a single subdirectory), " +
-  "use `restrictToPaths` to scope to a specific file set, or use `additionalPaths` to scan only a few targeted paths. " +
-  "For a bulk-corpus first-pass, prefer the upcoming `summaryOnly` mode when it lands.";
-
-/**
- * Structured nextStep for the slim envelope. Points at a DIFFERENT
- * surface than `scan_project` — routing back to the tool that just
- * blew the host envelope is the canonical "NextStep prioritization on
- * truncated/bulk responses" doctrine miss: the agent following the
- * structured next-call lands on the same surface that failed, the
- * scope-down knobs the prior shape carried (`restrictToPaths` to the
- * dominant non-vendor top-level dir, byte-derived `limit`) still
- * exercised the same envelope budget that just couldn't fit. The
- * recovery surface must be a different tool with addressable narrowing
- * args, not the failing tool with cosmetically narrower args. Two
- * routing arms close the matrix:
- *
- *   1. **Top non-vendor file exists** → `scan_file` with
- *      `args: { path: <highest-finding-count source file> }`. The
- *      file is picked from `formatted.files[]` (full pre-drop list),
- *      excluding paths the build-artifact classifier flagged as
- *      vendor. Highest `findings.length` wins on a strict majority;
- *      a clean tie collapses into the fallback. `scan_file` is the
- *      single-file findings surface — it carries its own paging
- *      and per-file slim envelope, so it cannot inherit the same
- *      bulk-corpus blow-up.
- *
- *   2. **No non-vendor file** (every file vendor-classified, file
- *      list empty, or top-finding tie) → `coverage` with
- *      `args: { cwd: <caller's cwd> }`. Coverage is the manual-
- *      review-half angle: it returns the criteria-coverage matrix
- *      and `manualWithCandidates`, none of which goes through the
- *      per-file files[] envelope. Echoing `cwd` here is honest
- *      because we're crossing tool surfaces — `cwd` on `coverage`
- *      lands on a different code path than `cwd` on `scan_project`.
- *
- * The prior shape routed `scan_project` with `restrictToPaths` or a
- * byte-derived `limit` cap; both still left the agent on the same
- * tool that just transport-failed.
- */
-function buildSlimNextStepStructured(args: {
-  readonly formatted: ScanFormatted;
-  readonly fullMeta: Record<string, unknown>;
-  readonly params: Record<string, unknown>;
-}): {
-  readonly tool: string;
-  readonly args: Record<string, unknown>;
-} {
-  const { formatted, fullMeta, params } = args;
-  const isVendor = buildVendorPredicate(fullMeta);
-  const topFile = pickTopNonVendorFile(formatted.files, isVendor);
-  if (topFile !== undefined) {
-    return { tool: "scan_file", args: { path: topFile } };
-  }
-  // No addressable single-file target — pivot to `coverage` for the
-  // manual-review half. Coverage takes `cwd` and returns the
-  // criteria-coverage matrix without going through the files[]
-  // envelope that the slim path just had to drop. Read `cwd` off the
-  // caller's params; when absent (server-spawned default), omit it
-  // and let the coverage handler resolve its own root — coverage's
-  // own cwd-resolution path mirrors scan_project's host-root
-  // fallback, so the structured args stay forward-progressing.
-  const cwd = typeof params["cwd"] === "string" ? (params["cwd"] as string) : undefined;
-  return {
-    tool: "coverage",
-    args: cwd === undefined ? {} : { cwd },
-  };
-}
-
-/**
- * Picks the single non-vendor file with the highest `findings.length`
- * from `formatted.files[]` (full pre-drop inventory). Returns the
- * relative path; `undefined` when no non-vendor file exists OR every
- * non-vendor file has zero findings AND the inventory is empty, OR
- * the top finding count ties between two files (alphabetical-winner
- * routing is the failure mode the AI-first doctrine "NextStep
- * prioritization on truncated/bulk responses must avoid first-by-
- * filename routing" guards against).
- *
- * "Top-impact subtree" in the backlog wording maps to "the file with
- * the most rule fires" — narrowing to that file gives the agent the
- * highest concentration of actionable findings on the recovery call.
- * On zero-finding non-vendor inventories (a clean scan that
- * over-flowed on meta-bloat alone), the helper returns the first
- * such file only when the inventory has exactly one entry — any
- * longer list resolves to a tie and falls through to the coverage
- * fallback rather than fabricating a winner on weaker evidence.
- */
-export function pickTopNonVendorFile(
-  files: readonly ScanFormatted["files"][number][],
-  isVendor: (path: string) => boolean,
-): string | undefined {
-  let topPath: string | undefined;
-  let topCount = -1;
-  let tie = false;
-  for (const file of files) {
-    if (isVendor(file.path)) continue;
-    const count = file.findings.length;
-    if (count > topCount) {
-      topPath = file.path;
-      topCount = count;
-      tie = false;
-    } else if (count === topCount) {
-      tie = true;
-    }
-  }
-  if (topPath === undefined) return undefined;
-  if (tie) return undefined;
-  return topPath;
 }
 
 /**
