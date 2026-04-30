@@ -133,7 +133,7 @@ Why: without isolation, every agent shares the main-session working tree. When a
 
 **Dispatch envelope:**
 
-- Send all 3 Agent calls in a single assistant message with multiple tool-use content blocks — in parallel, not serially.
+- **Send EVERY Agent call for the turn in ONE assistant message with multiple tool-use content blocks.** Sending pick 1 alone, then picks 2+3 together, then continuing is the canonical orchestration error — Agent calls in successive messages execute serially, doubling wall time. The 2026-04-29 turn 1 lost ~16 min to a one-message slip; prior runs lost more. Before pressing send on the first Agent call, audit: are all parallel-eligible picks of this turn included? If not, add them. The only Agent calls that legitimately run on their own message are (a) the integrator (step 4, after all specialists return) and (b) a single redispatched stalled pick (step 3a, after stall detection).
 - Every call to a parallel item uses `isolation: "worktree"`.
 - Main-session items (scripts / docs/adr / release) run inline in the shared tree and count toward the 3-call budget. When a main-session item is in-flight, no other parallel Agent may dispatch that turn — the shared tree is not isolated and a parallel worktree-based agent branching from HEAD would miss the main-session's in-flight changes.
 
