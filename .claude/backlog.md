@@ -271,8 +271,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### scan_file surface gaps
 
-- [ ] **Q10-SCAN-FILE-NO-TRUNCATION-NO-OVERSIZE-PROTECTION** `scan_file` has no `limit`/`offset`/`restrictToPaths` and no oversize-success protection; a single dense HTML file produces 68k–84k character responses that blow the host token cap, returning only a transport error with no `truncated` flag, no warning, no minimum-honest envelope. Same silent failure mode as `scan_project` but worse because there's no scope-down lever. Fix: add `limit`/`offset`/`maxBytes` parameters; pre-serialization size estimator; minimum-honest envelope fallback (drop `findings[]` body, keep `meta + warnings + nextStep`) when the post-clip envelope still exceeds the host cap. Per AI-first doctrine "Oversize-success is ambiguous failure" — extends Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION to the scan_file surface.
-
 ### Considered and rejected (per CLAUDE.md §1)
 
 - **AAA→AA promotion of `navigation/link-target-blank-announcement`** — A scanner finding asked for AA-level emission of the rule (citing field evidence of unflagged `<a target="_blank">` patterns). Rejected: WCAG 3.2.5 is normatively AAA. Spec-correct closure already named in Q9-RULE-LINK-TARGET-BLANK-NEVER-FIRES — the AA-axis ask would be spec-incorrect emission and the deterministic escape hatch (source-level pragma) covers the rare case where the agent decides the rule should fire. The Q10-LINK-TARGET-BLANK-APPLIESTO-EXCLUDES-ERB-MD-RESIDUE row above is the legitimate fix (extend AAA-eligible extensions to match `parseModeByExtension`), separable from the level-axis question.

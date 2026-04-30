@@ -33,6 +33,7 @@ import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
+import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedFile } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
@@ -41,6 +42,7 @@ import {
   errorResult,
   type McpTool,
   type McpToolResult,
+  numParam,
   resolveStandards,
   strParam,
   textResult,
@@ -89,6 +91,21 @@ export const scanFileTool: McpTool = {
           type: "boolean",
           description:
             "When true, the response includes the full `meta.perRuleCoverage[]` array (per-rule coverage rows with concentration / parse-error confidence reasons; at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) plus the `analysisCoverage` block with parse-error and opaque-component details, plus `rulesEligibleByExtension` so you can verify which rules were eligible to run on this file's type. The scan-confidence telemetry (`rulesEvaluated`, `filesWithAnyRuleEvaluated` / `filesWithZeroRuleEvaluation`, `rulesNotEvaluatedDueToInputType`) stays inline at every verbosity. Off by default to keep per-file responses bounded on dense HTML; enable when triaging which rules ran on this file.",
+        },
+        limit: {
+          type: "number",
+          description:
+            "Maximum number of findings to include in the response. Defaults to 200 — typical pages produce well under this so the cap is a no-op for most calls. Dense HTML pages (e.g. component-library entry-points with 600+ findings) cross the MCP host token ceiling without paging; when the inventory exceeds `limit`, the response carries `truncated: true` + `nextOffset: N` and `totalFindings: <full count>` so the caller can page via `offset`. Pass `0` to disable paging entirely.",
+        },
+        offset: {
+          type: "number",
+          description:
+            "Starting index into the full findings list. Defaults to 0. Use with `limit` + the `nextOffset` from a previous truncated response to iterate.",
+        },
+        maxBytes: {
+          type: "number",
+          description:
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset.",
         },
         metaMode: metaModeSchema,
       },
@@ -233,18 +250,32 @@ export const scanFileTool: McpTool = {
       configSearchBase,
     });
 
-    return textResult(
-      buildScanFileResponse({
-        assembled: overlayed,
-        parsed,
-        projectConfig,
-        configSearchBase,
-        scanFileCwd,
-        params,
-        session,
-        activeRules: collected.activeRules,
-      }),
-    );
+    const fullResponse = buildScanFileResponse({
+      assembled: overlayed,
+      parsed,
+      projectConfig,
+      configSearchBase,
+      scanFileCwd,
+      params,
+      session,
+      activeRules: collected.activeRules,
+    });
+    // Q10-SCAN-FILE-NO-TRUNCATION-NO-OVERSIZE-PROTECTION: page the
+    // findings list via `limit` / `offset`, then run the oversize-
+    // envelope guard on the post-paging shape. Symmetric to the
+    // scan_project token-density + slim-envelope chain — agents
+    // calling scan_file on a dense single page (the canonical
+    // motivating regression: 600+ findings on one component-library
+    // entry-point) get a routable response instead of a host
+    // transport drop. Per AI-first doctrine "Oversize-success is
+    // ambiguous failure."
+    const budgeted = applyScanFileBudget({
+      limit: numParam(params, "limit"),
+      offset: numParam(params, "offset"),
+      maxBytes: numParam(params, "maxBytes"),
+      response: fullResponse,
+    });
+    return textResult(budgeted.response);
   },
 };
 

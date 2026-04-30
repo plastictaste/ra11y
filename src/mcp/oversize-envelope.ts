@@ -121,6 +121,18 @@ export interface OversizeEnvelopeInput {
    * not fit.
    */
   readonly totalFilesWithFindings: number;
+  /**
+   * Top-level array key the helper reads off `original` to count the
+   * entries the slim builder is being asked to drop. Defaults to
+   * `"files"` for the scan_project / scan / scan_diff family whose
+   * wire shape carries grouped per-file buckets. `scan_file` ships a
+   * flat `findings[]` instead of the per-file fan, so it passes
+   * `arrayKey: "findings"` and the `droppedFileCountFromRequestedLimit`
+   * payload field then counts findings rather than file buckets — the
+   * doctrine semantics are identical (entries the slim path discarded
+   * to fit under the ceiling), only the unit changes.
+   */
+  readonly arrayKey?: string;
 }
 
 /**
@@ -190,15 +202,19 @@ export function guardOversizeEnvelope(input: OversizeEnvelopeInput): OversizeEnv
   if (measured <= ceiling) {
     return { response: input.original, triggered: false, preDropBytes: measured };
   }
-  // Over ceiling: count the file entries the slim builder is being
+  // Over ceiling: count the entries the slim builder is being
   // asked to drop so the warningsDetails payload carries the honest
-  // arithmetic. Defaults to 0 if `files` isn't an array (the slim
-  // builder still runs — the slim shape is owned by the caller, not
-  // this helper). This is the post-density-cap remnant — the
+  // arithmetic. Defaults to 0 if the named array isn't present (the
+  // slim builder still runs — the slim shape is owned by the caller,
+  // not this helper). This is the post-density-cap remnant — the
   // `totalFilesWithFindings` field carries the pre-cap denominator
-  // so the agent can size the actual inventory.
-  const filesField = input.original["files"];
-  const droppedFileCountFromRequestedLimit = Array.isArray(filesField) ? filesField.length : 0;
+  // so the agent can size the actual inventory. `arrayKey` is the
+  // wire field the helper reads — `files` for the scan-family fan,
+  // `findings` for `scan_file`'s flat shape (see the field's docblock
+  // on `OversizeEnvelopeInput.arrayKey`).
+  const arrayKey = input.arrayKey ?? "files";
+  const arrayField = input.original[arrayKey];
+  const droppedFileCountFromRequestedLimit = Array.isArray(arrayField) ? arrayField.length : 0;
   const reason: OversizeEnvelopeReason = {
     preDropBytes: measured,
     hardCeilingBytes: ceiling,
