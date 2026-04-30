@@ -444,9 +444,7 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 - **Q9-RULE-LINK-TARGET-BLANK-NEVER-FIRES** (related) — +0 recurrences this round, but Q13-GATED-BY-LEVEL-RULES-IN-PER-RULE-COVERAGE-AT-LOW captures a related visibility-in-coverage axis.
 - **Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION** — +2 recurrences: post-clip envelope still over host cap on 2 corpora; closure work still in flight per Q9 row.
 - **Q10-META-TRUNCATED-FIELD-NAME-RETAINED-WHEN-GUTTED** — +3 recurrences: `meta` retained while 8-9 sub-fields silently dropped; 67 keys remain after a corpus-level truncation pass, no per-field sentinels (CSS-framework, static-site, bulk-template).
-- **Q10-SUGGEST-FIX-VENDOR-REDIRECT-COMPOUNDS-MISLABEL** — +1 recurrence: `vendorContext.redirectTo: "consumer-override"` on a candidate where the vendor classification fired on banner-comment evidence; new shape-axis captured in Q13-VENDOR-CONTEXT-REDIRECTTO-UNDOCUMENTED-CONTRACT.
 - **Q11-BULK-CATALOG-SUGGESTEDEXCLUDES-NOT-ADDITIONALPATHS-INVERSE** — +1 recurrence: bulk-template `nextStepStructured.args: {}` echoes failing `cwd` despite `bulk_catalog_detected.suggestedExcludes` being populated; new sub-axis (Q13-NEXTSTEP-STRUCTURED-ARGS-EMPTY-OBJECT) captures the empty-object case directly.
-- **Q12-SCANNED-BUILD-ARTIFACTS-VENDORLIBRARIES-PARALLEL-SURFACES** — +0 recurrences this round; shape unchanged across corpora, closure pending.
 
 ### Considered and rejected (per CLAUDE.md §1)
 
