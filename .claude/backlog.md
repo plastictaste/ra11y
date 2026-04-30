@@ -329,8 +329,6 @@ Field-test follow-ups from a 4-corpus probe (CSS framework + static-site generat
 
 ### Vendor-classification schema split
 
-- [ ] **Q12-SCANNED-BUILD-ARTIFACTS-VENDORLIBRARIES-PARALLEL-SURFACES** `scannedBuildArtifacts` ships TWO concurrent vendor-classification surfaces in the same response: `scannedBuildArtifacts.ungrouped[]` (path/min-infix-based, e.g. `html5shiv.min.js` + `respond.min.js`) AND `scannedBuildArtifacts.vendorLibraries[]` (registry/version-based, e.g. `_normalize.scss` 7.0.0). Both classify "vendor" but the schema splits them, leaving an agent reading `scannedBuildArtifacts` to do its own union. The split is also asymmetric across surfaces — `vendorLibraries` rides only on `scan_project`, not on `coverage` or `checklist`. Closure: merge into a single `scannedBuildArtifacts.classified[]` array with a `classification` discriminator (`min-infix` | `path-prefix` | `vendor-library-version-detected`); deprecate the split via the alias table; populate identically on every surface that emits `scannedBuildArtifacts`. Per AI-first doctrine "Composite headline counts are dishonest" extended to vendor-classification fan-out (one concept = one shape) AND "Cross-surface count invariant" (warning + classification telemetry on identical cwd must agree across project-rooted tools). Pairs with Q9-BULK-WARNINGS-NOT-CROSS-SURFACE on the propagation axis.
-
 ### 2026-04-26 round recurrences (folded onto existing Q9/Q10/Q11 rows)
 
 Each line: `<row id> — N recurrences observed in this round, evidence summary`. Replays of the 4-corpora probe; items below recurred without behavior change against the same Q9/Q10/Q11 closure framing.

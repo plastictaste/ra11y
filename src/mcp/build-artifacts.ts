@@ -4,16 +4,20 @@
  *
  * Surfaces as `meta.scannedBuildArtifacts: BuildArtifactsGrouped` on
  * `scan_project` responses — a *labelled* grouped view, not a
- * filter. Each entry pairs the `path` with a confidence-graded
- * {@link BuildArtifactClassification} so the consuming agent can
- * triage without re-reading every flagged file. Findings on these
- * files still appear in `files`; the meta entry tells the agent
- * "this finding sits on a generated file, and here is *which
- * predicate* the scanner matched on (with what confidence)." The
- * on-wire shape collapses ≥3-entry same-basename clusters into
- * `grouped[i]` rows with paste-ready `suggestedGlob`s; sub-threshold
- * entries stay in `ungrouped` with their `{ path, classification,
- * signal }` records intact. See {@link groupBuildArtifactsByBasename}.
+ * filter. Each row carries the `path` paired with a
+ * confidence-graded {@link BuildArtifactClassification} so the
+ * consuming agent can triage without re-reading every flagged file.
+ * Findings on these files still appear in `files`; the meta entry
+ * tells the agent "this finding sits on a generated file, and here
+ * is *which predicate* the scanner matched on (with what
+ * confidence)." The on-wire shape collapses ≥3-entry same-basename
+ * clusters into `grouped[i]` rows with paste-ready `suggestedGlob`s;
+ * sub-threshold per-file classifications and banner-detected
+ * vendor-library identifications ride together under `classified[]`
+ * with a {@link ClassificationKind} discriminator (`min-infix` |
+ * `path-prefix` | `vendor-library-version-detected`) naming the
+ * predicate family that fired. See
+ * {@link groupBuildArtifactsByBasename}.
  *
  * History: the previous shape shipped a `reason: BuildArtifactReason`
  * token (`"minified"`, `"hashed-filename"`, `"dist-path"`,
@@ -201,8 +205,16 @@
  * without re-running our classifier.
  */
 
+import { type ClassifiedArtifact, mergeClassifiedRows } from "./build-artifacts-classified.ts";
 import { computeLineStats } from "./build-artifacts-line-stats.ts";
 import { isAuthoredSvgFont, isSvgPath } from "./build-artifacts-svg-font.ts";
+import type {
+  BuildArtifactClassification,
+  BuildArtifactClassificationResult,
+  BuildArtifactSignal,
+  DetectedVendorLibrary,
+  ScannedBuildArtifact,
+} from "./build-artifacts-types.ts";
 import {
   detectSourcemapPointerToMin,
   detectVendorCopyrightBanner,
@@ -212,33 +224,22 @@ import {
 } from "./build-artifacts-vendor-distribution.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 
-/**
- * Confidence-graded classification emitted on
- * `ScannedBuildArtifact.classification`. The `definite-*` prefix is
- * reserved for predicates whose verdict is provable from the path
- * or the live scan set alone (`.min.` infix in the basename, paired
- * `.map` sibling); `likely-*` covers the heuristic predicates
- * (corroborated long-line probe, hex-segment basename, build-dir
- * segment, tailwind escape selector) that fire on authored content
- * with non-trivial frequency. The agent reading
- * `classification` budgets per the prefix — `definite-*` means
- * "skip per-file investigation, route to vendor exclude," `likely-*`
- * means "investigate to confirm before routing." See the file-level
- * comment block for the per-variant predicate, the failure modes
- * each one had under the previous deterministic-sounding `reason`
- * shape, and the
- * paired {@link BuildArtifactSignal} that carries the underlying
- * evidence.
- */
-export type BuildArtifactClassification =
-  | "definite-min-infix"
-  | "definite-sourcemap-paired"
-  | "definite-vendor-distribution"
-  | "likely-minified-by-line-stats"
-  | "likely-hashed-bundle"
-  | "likely-bundler-output-dir"
-  | "likely-compiled-tailwind"
-  | "likely-vendor-distribution";
+// Type definitions for the four shared classifier types
+// (`BuildArtifactClassification`, `BuildArtifactSignal`,
+// `ScannedBuildArtifact`, `BuildArtifactClassificationResult`,
+// `DetectedVendorLibrary`) live in `./build-artifacts-types.ts`,
+// extracted so both this module and the Q12 merger
+// (`./build-artifacts-classified.ts`) can import them without
+// triggering the cycle checker. Re-export here so downstream
+// consumers reading "the build-artifact module" from
+// `./build-artifacts.ts` get the full surface.
+export type {
+  BuildArtifactClassification,
+  BuildArtifactClassificationResult,
+  BuildArtifactSignal,
+  DetectedVendorLibrary,
+  ScannedBuildArtifact,
+} from "./build-artifacts-types.ts";
 
 /**
  * Returns true when `classification` is a `definite-*` variant —
@@ -253,129 +254,6 @@ export function isDefiniteBuildArtifactClassification(
   classification: BuildArtifactClassification,
 ): boolean {
   return classification.startsWith("definite-");
-}
-
-/**
- * Per-entry deterministic explanation of *which* predicate fired for
- * a {@link BuildArtifactClassification}. The doctrine bar is
- * "provable from the code" — every variant below names a predicate
- * that already runs inside {@link classifyBuildArtifactDetailed}, so
- * the agent reading the response can verify the verdict without re-
- * running our classifier or guessing what we matched on. Per
- * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
- * meta sub-fields are dishonest" (+
- *), this is the structured
- * evidence record that makes the {@link BuildArtifactClassification}
- * label auditable: when the classification carries a `likely-` prefix,
- * the signal explains *why* the heuristic fired so the agent can
- * dismiss the false-positive shape (single long `calc()` line,
- * `bootstrap.css` test fixture, authored `dist/` directory) by
- * reading the evidence rather than re-opening the file.
- *
- * Numeric `value` / `threshold` siblings appear ONLY on signals where
- * the predicate is itself a numeric comparison (the long-line probe).
- * Path-based signals carry the matched substring as `value` so the
- * agent can grep for it directly. The conditional-spread doctrine
- * applies: callers spread `value`/`threshold` only when the producing
- * predicate emitted them.
- *
- * Variants, paired one-to-one with the predicates inside
- * {@link classifyBuildArtifact}:
- *
- *   - `min-infix` — the basename matches {@link MIN_INFIX_RE}; `value`
- *     is the matched basename so the agent can confirm the literal
- *     `.min.` substring.
- *   - `hex-segment-in-basename` — the basename matches
- *     {@link HASHED_FILENAME_RE}; `value` is the matched hex segment
- *     (without flanking dots) so the agent can grep for it.
- *   - `build-dir-segment` — a {@link BUILD_DIR_MARKERS} entry sits in
- *     the path; `value` is the matched marker (e.g. `dist/`).
- *   - `tailwind-escape-selector` — the source matches
- *     {@link TAILWIND_ESCAPED_SELECTOR}; `value` is the matched
- *     substring (the first hit) so the agent can locate it.
- *   - `max-line-length-exceeds-threshold` — the long-line probe fired
- *     AND a second-tier corroborator (`median` line length, or `ratio`
- *     of long lines) also fired. `value` is the longest line length
- *     observed, `threshold` is {@link MINIFIED_LINE_THRESHOLD},
- *     `corroborator` names which conjunct of
- *     {@link hasLongMinifiedLineCorroborated} carried the verdict.
- *   - `sibling-map-file` — a paired `.map` file is in the scanned
- *     set; `value` is the sibling map's path so the agent can grep
- *     for both halves of the pair.
- *   - `sibling-min-file` — a sibling `.min.<ext>` file is in the
- *     scanned set with the matching directory + basename stem;
- *     `value` is the sibling minified path. Carries the
- *     `definite-vendor-distribution` classification — the file at
- *     hand IS the readable source paired with the minified twin.
- *   - `sourcemap-pointer-min` — the source contains a
- *     `//# sourceMappingURL=…min….map` (or `//@`) pointer naming a
- *     minified-sibling sourcemap; `value` is the matched comment
- *     so the agent can grep for it. Carries
- *     `definite-vendor-distribution`.
- *   - `vendor-banner-version` — the source's first non-blank line
- *     matched a curated vendor-library banner; `value` is
- *     `<library>` or `<library> v<version>` so the agent can confirm
- *     the verdict by reading the banner. Carries
- *     `likely-vendor-distribution`.
- *   - `vendor-copyright-banner` — the leading 1024 chars carry a
- *     `/*!` bang-comment opener paired with one of the curated
- *     license / copyright tokens (Copyright, License, Released
- *     under, MIT, Apache, GPL, BSD). `value` is the matched banner
- *     opener trimmed to ≤120 chars. Fires for vendor distributions
- *     not on the curated `VENDOR_LIBRARY_BANNERS` table whose banner
- *     still follows the publishing convention. Carries
- *     `likely-vendor-distribution`.
- */
-export type BuildArtifactSignal =
-  | { readonly kind: "min-infix"; readonly value: string }
-  | { readonly kind: "hex-segment-in-basename"; readonly value: string }
-  | { readonly kind: "build-dir-segment"; readonly value: string }
-  | { readonly kind: "tailwind-escape-selector"; readonly value: string }
-  | {
-      readonly kind: "max-line-length-exceeds-threshold";
-      readonly value: number;
-      readonly threshold: number;
-      readonly corroborator: "median" | "ratio";
-    }
-  | { readonly kind: "sibling-map-file"; readonly value: string }
-  | { readonly kind: "sibling-min-file"; readonly value: string }
-  | { readonly kind: "sourcemap-pointer-min"; readonly value: string }
-  | { readonly kind: "vendor-banner-version"; readonly value: string }
-  | { readonly kind: "vendor-copyright-banner"; readonly value: string };
-
-/**
- * One classified artifact entry. On `scan_project`, these records
- * ride inside the grouped envelope —
- * `meta.scannedBuildArtifacts.ungrouped[]` — for any sub-threshold
- * basenames that didn't form a group of ≥
- * {@link BASENAME_GROUP_THRESHOLD}. The agent reads `classification`
- * (with its `definite-*` / `likely-*` confidence prefix —
- *) to budget per-file
- * investigation and reads `signal` to verify *which* predicate
- * fired. The paired `path` is
- * the same path the rest of the response uses (root-relative POSIX
- * after the grouper's relativization), so a caller can join against
- * the `files[]` bucket directly.
- */
-export interface ScannedBuildArtifact {
-  readonly path: string;
-  readonly classification: BuildArtifactClassification;
-  readonly signal: BuildArtifactSignal;
-}
-
-/**
- * Detailed per-file classification result returned by
- * {@link classifyBuildArtifactDetailed}: pairs the
- * {@link BuildArtifactClassification} verdict with the deterministic
- * {@link BuildArtifactSignal} that fired, so callers can surface
- * both the confidence-graded label and its evidence on
- * {@link ScannedBuildArtifact}. The convenience predicate
- * {@link classifyBuildArtifact} returns just the classification for
- * callers that only need the verdict.
- */
-export interface BuildArtifactClassificationResult {
-  readonly classification: BuildArtifactClassification;
-  readonly signal: BuildArtifactSignal;
 }
 
 /**
@@ -933,7 +811,7 @@ function detectSiblingArtifact(
  * Minimum number of paths that share a basename before the grouping
  * helper collapses them into one `{ basename, count, pathHint,
  * suggestedGlob, classifications }` entry. Below the threshold the entries
- * stay in the `ungrouped` array so a single-file basename doesn't get
+ * land in `classified[]` so a single-file basename doesn't get
  * collapsed to an overreaching `**\/<name>` glob. Matches the
  * `EXCLUDE_GLOB_COLLAPSE_THRESHOLD` used by `tool-propose-config.ts`
  * for top-level directory collapsing — same doctrine (three-entry
@@ -960,12 +838,14 @@ export const BASENAME_GROUP_THRESHOLD = 3;
  * of the group (plus any future same-basename file that lands under
  * the same prefix).
  *
- * Zero information loss vs. the flat form: the ungrouped sibling
- * field retains every sub-threshold entry as
- * `{ path, classification, signal }` records, and `count` on a
- * group equals the number of absorbed paths — the agent can
- * reconstruct the per-path view by reading the group + the ungrouped
- * list together.
+ * Zero information loss vs. the flat form: the `classified[]`
+ * sibling field retains every sub-threshold entry as a
+ * `{ path, classifications: [...] }` row carrying the original
+ * `{ classification, signal }` evidence under each
+ * `kind: "min-infix" | "path-prefix"` classification entry, and
+ * `count` on a group equals the number of absorbed paths — the
+ * agent can reconstruct the per-path view by reading the group +
+ * the classified list together.
  */
 export interface BuildArtifactGroup {
   readonly basename: string;
@@ -974,6 +854,18 @@ export interface BuildArtifactGroup {
   readonly classifications: readonly BuildArtifactClassification[];
   readonly suggestedGlob: string;
 }
+
+// Q12 merge surface: types ({@link ClassificationKind},
+// {@link ClassificationEntry}, {@link ClassifiedArtifact}) and
+// merger helper ({@link mergeClassifiedRows}) live in
+// `./build-artifacts-classified.ts`. Re-export the types here so
+// downstream consumers reading "the build-artifact module" from
+// `./build-artifacts.ts` get the full shape from one import site.
+export type {
+  ClassificationEntry,
+  ClassificationKind,
+  ClassifiedArtifact,
+} from "./build-artifacts-classified.ts";
 
 /**
  * Grouped shape emitted on `meta.scannedBuildArtifacts`, replacing
@@ -984,108 +876,114 @@ export interface BuildArtifactGroup {
  * one `{ basename, count, pathHint, suggestedGlob, classifications }` row
  * so a scan with 301 artifact paths across one `dist/bootstrap/`
  * tree surfaces as ~5 actionable group rows plus any
- * unclustered residue under `ungrouped`.
+ * unclustered residue under `classified`.
+ *
+ * Q12: the previous parallel `ungrouped[]` (build-artifact classifier
+ * residue) and `vendorLibraries[]` (banner detector) surfaces were
+ * merged into a single `classified[]` keyed on path, with the
+ * predicate family lifted onto each entry as
+ * {@link ClassificationKind}. Two parallel "vendor classification"
+ * surfaces was the canonical "Cross-surface count invariant" violation
+ * the doctrine warns against — agents reading
+ * `meta.scannedBuildArtifacts` had to union the two lists themselves
+ * to triage a path.
  *
  * Deterministic ordering:
  *   - `grouped` sorted by `count` descending, ties broken by
  *     `basename` alphabetical — the agent sees the densest basename
  *     first, and same-count groups appear in a stable order across
  *     runs.
- *   - `ungrouped` sorted by `path` alphabetical — stable across
+ *   - `classified` sorted by `path` alphabetical — stable across
  *     runs even if the underlying scanner reorders discovery.
  */
 export interface BuildArtifactsGrouped {
   readonly grouped: readonly BuildArtifactGroup[];
-  readonly ungrouped: readonly ScannedBuildArtifact[];
+  readonly classified: readonly ClassifiedArtifact[];
   /**
-   * Q-SHARED-META-ARRAY-BUDGET-CAP: present only when `ungrouped`
+   * Q-SHARED-META-ARRAY-BUDGET-CAP: present only when `classified`
    * was trimmed to its head slice ({@link META_ARRAY_CAP} entries).
    * `shown` always equals the cap; `total` is the pre-cap length so
    * the agent can reconstruct the gap. Grouped entries are already
    * compact (one row per ≥3-entry basename cluster), so only the
-   * `ungrouped` tail grows linearly with input and needs capping.
+   * `classified` tail grows linearly with input and needs capping.
    */
-  readonly ungroupedTruncated?: MetaArrayTruncationSummary;
-  /**
-   * per-file vendor-library
-   * identifications drawn from first-line banner-comment matching
-   * against a curated list of well-known libraries (Bootstrap, jQuery,
-   * Font Awesome, Animate.css, Modernizr, normalize.css, reset.css,
-   * fancyBox, jQuery UI). Surfaces orthogonally to the existing
-   * `grouped` / `ungrouped` build-artifact classifier — a file matching
-   * a banner is almost always also a build artifact, but the
-   * `vendorLibraries` field answers "which library" while
-   * `grouped` / `ungrouped` answer "is this generated bytes."
-   *
-   * Conditional-spread on emptiness per the present-when-meaningful
-   * rule: omitted entirely when no banner matched any scanned file.
-   * The agent reading a populated `vendorLibraries` can route triage
-   * to a `propose_config` exclude for the named library tree without
-   * having to open each file to confirm the verdict.
-   *
-   * Sorted by `path` ascending so output is deterministic across runs.
-   * Same paths may also appear under `grouped` / `ungrouped`; the
-   * three lists are not partitions of one another.
-   */
-  readonly vendorLibraries?: readonly DetectedVendorLibrary[];
+  readonly classifiedTruncated?: MetaArrayTruncationSummary;
 }
 
 /**
- * Collapses a flat {@link ScannedBuildArtifact} list into the
- * grouped-by-basename shape surfaced on
+ * Collapses a flat {@link ScannedBuildArtifact} list (plus an
+ * optional banner-detected {@link DetectedVendorLibrary} list) into
+ * the grouped-by-basename shape surfaced on
  * `meta.scannedBuildArtifacts`. Groups form only when ≥
  * {@link BASENAME_GROUP_THRESHOLD} paths share a basename — below
- * that, the entries stay in `ungrouped` so a lone `bootstrap.css`
+ * that, the entries land in `classified[]` so a lone `bootstrap.css`
  * doesn't collapse to an overreaching `**\/bootstrap.css` glob.
+ *
+ * Q12: the previous output shape exposed `ungrouped[]` (per-file
+ * build-artifact residue) and `vendorLibraries[]` (banner
+ * identifications) as parallel surfaces, leaving the agent to union
+ * the two when triaging a path. The merged shape lifts the
+ * predicate family onto each entry as
+ * {@link ClassificationKind} (`min-infix` | `path-prefix` |
+ * `vendor-library-version-detected`) so a path that qualifies under
+ * multiple predicates rides as one row carrying multiple
+ * `classifications[]` entries.
  *
  * Every `pathHint` and `suggestedGlob` is root-relative POSIX so the
  * agent can paste them verbatim into a `propose_config` exclude
  * entry — matches the precedent set by `tool-propose-config.ts` and
  * the `Q-SHARED-PROPOSE-CONFIG-RELATIVE-PATHS` relativization pass.
- * `ungrouped` entries carry the same root-relative POSIX `path` form
- * so the two halves of the output agree on path shape.
+ * `classified[]` entries carry the same root-relative POSIX `path`
+ * form so every surface of the output agrees on path shape.
  *
  * Input ordering does not affect output: `grouped` sorts by count
- * desc then basename asc, `ungrouped` sorts by path asc. Emptiness
- * is honest — `grouped` and `ungrouped` can both be empty on a clean
- * scan, and the caller (`tool-scan-project.ts`) conditional-spreads
- * the whole `scannedBuildArtifacts` meta field on total emptiness so
+ * desc then basename asc, `classified` sorts by path asc. Emptiness
+ * is honest — `grouped` and `classified` can both be empty on a
+ * clean scan, and the caller conditional-spreads the whole
+ * `scannedBuildArtifacts` meta field on total emptiness so
  * downstream consumers see "no field" rather than
- * `{ grouped: [], ungrouped: [] }`.
+ * `{ grouped: [], classified: [] }`.
  */
 export function groupBuildArtifactsByBasename(
   entries: readonly ScannedBuildArtifact[],
   root: string,
+  vendorLibraries: readonly DetectedVendorLibrary[] = [],
 ): BuildArtifactsGrouped {
-  if (entries.length === 0) {
-    return { grouped: [], ungrouped: [] };
+  if (entries.length === 0 && vendorLibraries.length === 0) {
+    return { grouped: [], classified: [] };
   }
   const buckets = bucketByBasename(entries, root);
   const { grouped, ungroupedRaw } = partitionBuckets(buckets);
-  // Deterministic sort: grouped by count desc then basename asc;
-  // ungrouped by path asc. Stable across runs even when the scanner
-  // re-orders its discovery pass.
+  // Deterministic sort: grouped by count desc then basename asc.
+  // Stable across runs even when the scanner re-orders discovery.
   grouped.sort((a, b) => {
     if (b.count !== a.count) return b.count - a.count;
     return a.basename.localeCompare(b.basename);
   });
-  const ungroupedSorted = [...ungroupedRaw].sort((a, b) => a.path.localeCompare(b.path));
-  // Q-SHARED-META-ARRAY-BUDGET-CAP: `ungrouped` is the linear-with-
+  const classifiedFull = mergeClassifiedRows(ungroupedRaw, vendorLibraries, root);
+  // Q-SHARED-META-ARRAY-BUDGET-CAP: `classified` is the linear-with-
   // input tail — a website-templates scan observed 148KB of these
-  // entries. `grouped` rows are already compact (one per ≥3-entry
-  // basename cluster), so only the tail needs capping. Count-level
-  // signal is preserved via the caller's `present` bit plus the
-  // `ungroupedTruncated: { shown, total }` sibling below.
-  const capped = capMetaArray(ungroupedSorted);
+  // entries under the prior `ungrouped` field name. `grouped` rows
+  // are already compact (one per ≥3-entry basename cluster), so
+  // only the tail needs capping. Count-level signal is preserved via
+  // the caller's `present` bit plus the `classifiedTruncated:
+  // { shown, total }` sibling below.
+  const capped = capMetaArray(classifiedFull);
   const base: {
     grouped: readonly BuildArtifactGroup[];
-    ungrouped: readonly ScannedBuildArtifact[];
+    classified: readonly ClassifiedArtifact[];
   } = {
     grouped,
-    ungrouped: capped.values,
+    classified: capped.values,
   };
-  return capped.truncated === undefined ? base : { ...base, ungroupedTruncated: capped.truncated };
+  return capped.truncated === undefined ? base : { ...base, classifiedTruncated: capped.truncated };
 }
+
+// Q12 merge helpers (`mergeClassifiedRows`,
+// `buildArtifactClassificationEntry`, `classificationKindFor`) and
+// their helper-internal `relativizeToPosixForMerge` live in
+// `./build-artifacts-classified.ts`. Extracted to keep this file
+// inside the per-file effective-line cap.
 
 /**
  * Relativize every entry against the scan root and bucket by
@@ -1257,10 +1155,12 @@ function dedupeClassificationsSorted(
  * per-file vendor-library identification
  * derived from first-line banner-comment matching against a curated list of
  * well-known libraries. Surfaces as the additive
- * `meta.scannedBuildArtifacts.vendorLibraries: DetectedVendorLibrary[]` field
- * so an agent reading "43 contrast findings on `bootstrap.min.css`" can tell
- * the file is a known vendor distribution and route triage to a
- * `propose_config` exclude rather than attempting per-finding fixes.
+ * `meta.scannedBuildArtifacts.classified[]` rows whose
+ * `classifications[]` carries a `kind: "vendor-library-version-detected"`
+ * entry, so an agent reading "43 contrast findings on
+ * `bootstrap.min.css`" can tell the file is a known vendor
+ * distribution and route triage to a `propose_config` exclude
+ * rather than attempting per-finding fixes.
  *
  * Doctrine bar — "labeled buckets are only honest when provable from the code"
  * (see `docs/kb/architecture/ai-first-consumer.md`). The banner-comment
@@ -1285,12 +1185,11 @@ function dedupeClassificationsSorted(
  * agent reading a `DetectedVendorLibrary` without a `version` knows the
  * library was identified but the version was not in the banner; it does
  * not have to disambiguate "unknown" from "version 0".
+ *
+ * The structural type lives in `./build-artifacts-types.ts` (extracted
+ * to break the cycle with the merger module); we re-export it from
+ * this file's top-level type re-export.
  */
-export interface DetectedVendorLibrary {
-  readonly path: string;
-  readonly library: string;
-  readonly version?: string;
-}
 
 /**
  * One curated banner-comment pattern for {@link detectVendorLibraries}.
@@ -1496,8 +1395,8 @@ function firstNonBlankLine(source: string): string | null {
  * answer "which library is it." Adding a vendor-library label does
  * NOT alter the existing classifier verdict.
  *
- * Output is sorted by `path` ascending so wire output is deterministic
- * across runs (matches the convention used by `ungrouped` in
+ * Output is sorted by `path` ascending so output is deterministic
+ * across runs (matches the convention used by `classified` in
  * {@link groupBuildArtifactsByBasename}). Returns an empty array (not
  * `null`, not `[null]`) when no banners match — the caller spreads on
  * `length > 0` per the present-when-meaningful rule.

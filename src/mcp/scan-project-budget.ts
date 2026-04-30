@@ -1051,14 +1051,19 @@ function topLevelDir(relPath: string): string | undefined {
 
 /**
  * Builds the `(path: string) => boolean` vendor predicate from
- * `meta.scannedBuildArtifacts`. Combines `ungrouped[].path` exact
- * matches (sub-threshold artifact entries) with a directory-prefix
- * match against `grouped[].pathHint` (basename clusters with a shared
- * parent dir) — a `formatted.files[].path` is considered vendor when
- * (a) it appears in `ungrouped`, OR (b) some `grouped[].pathHint` is a
- * directory ancestor of the file, OR (c) it equals a `pathHint`
- * directory exactly (unlikely on file inputs, kept for defensive
- * symmetry).
+ * `meta.scannedBuildArtifacts`. Combines `classified[].path` exact
+ * matches (sub-threshold artifact + banner-detected entries) with a
+ * directory-prefix match against `grouped[].pathHint` (basename
+ * clusters with a shared parent dir) — a `formatted.files[].path` is
+ * considered vendor when (a) it appears in `classified[]`, OR (b)
+ * some `grouped[].pathHint` is a directory ancestor of the file, OR
+ * (c) it equals a `pathHint` directory exactly (unlikely on file
+ * inputs, kept for defensive symmetry).
+ *
+ * Q12: previously walked the parallel `ungrouped[]` and
+ * `vendorLibraries[]` surfaces; the merged `classified[]` shape
+ * carries every path either predicate identified, so the union now
+ * happens upstream and this helper reads the single field.
  *
  * Returns a predicate that always returns `false` when
  * `scannedBuildArtifacts` is absent or shaped unexpectedly — defensive
@@ -1075,7 +1080,7 @@ export function buildVendorPredicate(fullMeta: Record<string, unknown>): (path: 
     return () => false;
   }
   const sbaObj = sba as Record<string, unknown>;
-  const exact = collectUngroupedPaths(sbaObj["ungrouped"]);
+  const exact = collectClassifiedArtifactPaths(sbaObj["classified"]);
   const groupedPrefixes = collectGroupedPathHints(sbaObj["grouped"]);
   if (exact.size === 0 && groupedPrefixes.length === 0) {
     return () => false;
@@ -1084,16 +1089,16 @@ export function buildVendorPredicate(fullMeta: Record<string, unknown>): (path: 
 }
 
 /**
- * Walks `meta.scannedBuildArtifacts.ungrouped[]` and collects each
+ * Walks `meta.scannedBuildArtifacts.classified[]` and collects each
  * entry's `path` into a Set for O(1) exact-match lookups. Skips entries
  * that aren't object-shaped or whose `path` is missing/empty —
  * defensive narrowing matches the rest of this module's `Record<string,
  * unknown>` reads on the fullMeta object.
  */
-function collectUngroupedPaths(ungrouped: unknown): Set<string> {
+function collectClassifiedArtifactPaths(classified: unknown): Set<string> {
   const exact = new Set<string>();
-  if (!Array.isArray(ungrouped)) return exact;
-  for (const entry of ungrouped) {
+  if (!Array.isArray(classified)) return exact;
+  for (const entry of classified) {
     if (!entry || typeof entry !== "object") continue;
     const path = (entry as Record<string, unknown>)["path"];
     if (typeof path === "string" && path.length > 0) {

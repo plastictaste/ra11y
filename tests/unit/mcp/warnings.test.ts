@@ -2297,12 +2297,12 @@ describe("computeScanWarnings — response_meta_truncated", () => {
       filesByExtension: undefined,
       metaArrayTruncatedFields: [
         "analysisCoverage.fragmentFiles",
-        "scannedBuildArtifacts.ungrouped",
+        "scannedBuildArtifacts.classified",
       ],
     });
     expect(out.warnings).toContain("response_meta_truncated");
     expect(out.warningsDetails?.response_meta_truncated).toEqual({
-      fields: ["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.ungrouped"],
+      fields: ["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.classified"],
     });
   });
 });

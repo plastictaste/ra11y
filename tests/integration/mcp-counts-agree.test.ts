@@ -491,14 +491,14 @@ async function makeBuildArtifactParseErrorFixture(): Promise<string> {
 interface BuildArtifactGroupShape {
   readonly basename: string;
 }
-interface BuildArtifactUngroupedShape {
+interface BuildArtifactClassifiedShape {
   readonly path: string;
 }
 interface ScanBodyForArtifactInvariant {
   readonly meta?: {
     readonly scannedBuildArtifacts?: {
       readonly grouped?: readonly BuildArtifactGroupShape[];
-      readonly ungrouped?: readonly BuildArtifactUngroupedShape[];
+      readonly classified?: readonly BuildArtifactClassifiedShape[];
     };
     readonly analysisCoverage?: {
       readonly parseErrorFiles?: readonly { readonly path: string }[];
@@ -515,13 +515,13 @@ describe("MCP invariant: parseErrorFiles ∩ scannedBuildArtifacts is empty", ()
       toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
     ]);
     const scanBody = body<ScanBodyForArtifactInvariant>(responses[1]);
-    const ungrouped = scanBody.meta?.scannedBuildArtifacts?.ungrouped ?? [];
+    const classified = scanBody.meta?.scannedBuildArtifacts?.classified ?? [];
     const grouped = scanBody.meta?.scannedBuildArtifacts?.grouped ?? [];
-    const buildArtifactPaths = new Set<string>(ungrouped.map((e) => e.path));
+    const buildArtifactPaths = new Set<string>(classified.map((e) => e.path));
     // Sanity: at least one of the seeded `.min.js` paths landed in the
-    // build-artifact list (either `ungrouped` directly or grouped by
-    // basename — three same-basename peers don't always cluster, but
-    // every one carries `.min.` in the basename and triggers the
+    // build-artifact list (either `classified[]` directly or grouped
+    // by basename — three same-basename peers don't always cluster,
+    // but every one carries `.min.` in the basename and triggers the
     // `definite-min-infix` predicate). A 0/0 result here would mean
     // the classifier missed the fixture and the disjointness check
     // would pass vacuously.
@@ -547,8 +547,8 @@ describe("MCP invariant: parseErrorFiles ∩ scannedBuildArtifacts is empty", ()
       }
     }
     // Tighter form: the intersection of build-artifact paths (when the
-    // classifier put them in `ungrouped` rather than collapsing to a
-    // group) and parse-error paths is empty.
+    // classifier put them in `classified[]` rather than collapsing to
+    // a group) and parse-error paths is empty.
     for (const p of buildArtifactPaths) {
       expect(parseErrorPaths.has(p)).toBe(false);
       expect(partialParsePaths.has(p)).toBe(false);

@@ -1,6 +1,6 @@
 /**
  * Cap for path-list meta arrays that grow linearly with scanner
- * inputs — `meta.scannedBuildArtifacts.ungrouped` and
+ * inputs — `meta.scannedBuildArtifacts.classified` and
  * `meta.analysisCoverage.fragmentFiles` (the path-identity arrays
  * that don't aggregate cleanly into a reason rollup). The
  * `parseErrorFiles` / `partialParseFiles` arrays were moved out of
@@ -13,19 +13,21 @@
  *
  * Q-SHARED-META-ARRAY-BUDGET-CAP: a full-root website-templates scan
  * returned 315KB where 281KB (89%) was `meta`, split almost entirely
- * between ~148KB of `scannedBuildArtifacts.ungrouped` entries and
- * ~121KB of `parseErrorFiles` / `partialParseFiles`. Both arrays grow
- * linearly with input, so a large-site scan overruns the MCP host
- * token ceiling even at `limit: 1` / `minSeverity: error` — the
- * agent-facing response became unusable on the exact codebases where
- * scan-confidence telemetry matters most.
+ * between ~148KB of `scannedBuildArtifacts.classified` entries (then
+ * named `ungrouped`, pre-Q12) and ~121KB of `parseErrorFiles` /
+ * `partialParseFiles`. Both arrays grow linearly with input, so a
+ * large-site scan overruns the MCP host token ceiling even at
+ * `limit: 1` / `minSeverity: error` — the agent-facing response
+ * became unusable on the exact codebases where scan-confidence
+ * telemetry matters most.
  *
  * Cap value picked at {@link META_ARRAY_CAP}=50 by working backward
  * from the wire-size budget the agent host tolerates (~100KB total
  * response) against the observed per-entry density:
  *
- *   - `scannedBuildArtifacts.ungrouped` entries are `{ path, reason }`
- *     pairs averaging ~110 chars. 50 entries ≈ 5.5KB.
+ *   - `scannedBuildArtifacts.classified` entries carry a `path` and
+ *     a `classifications[]` array of `{ kind, classification, signal }`
+ *     entries averaging ~140 chars/row. 50 entries ≈ 7KB.
  *   - `fragmentFiles` is a string[] averaging ~60 chars/entry.
  *     50 entries ≈ 3KB.
  *
@@ -147,11 +149,13 @@ const META_ARRAY_TRUNCATION_ENTRIES: ReadonlyArray<{
     truncationKey: "fragmentFilesTruncated",
     fieldPath: "analysisCoverage.fragmentFiles",
   },
-  // `meta.scannedBuildArtifacts.ungroupedTruncated`
+  // `meta.scannedBuildArtifacts.classifiedTruncated` (Q12: previously
+  // `ungroupedTruncated`, paired with the legacy `ungrouped[]` field
+  // that's now folded into the merged `classified[]` surface).
   {
     container: "scannedBuildArtifacts",
-    truncationKey: "ungroupedTruncated",
-    fieldPath: "scannedBuildArtifacts.ungrouped",
+    truncationKey: "classifiedTruncated",
+    fieldPath: "scannedBuildArtifacts.classified",
   },
   // `meta.perRuleCoverage[]` — root-level array (no enclosing
   // container). Under `verboseMeta: true` the per-rule-coverage rows

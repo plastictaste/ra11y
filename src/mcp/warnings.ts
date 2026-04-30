@@ -283,13 +283,13 @@ export type ScanWarningCode =
   // together — this code requires `filesBeforeRestrict > 0`.
   | "restrict_to_paths_no_matches"
   // Q-SHARED-META-ARRAY-BUDGET-CAP: at least one of the path-list
-  // meta arrays (`scannedBuildArtifacts.ungrouped`,
+  // meta arrays (`scannedBuildArtifacts.classified`,
   // `analysisCoverage.parseErrorFiles`,
   // `analysisCoverage.partialParseFiles`,
   // `analysisCoverage.fragmentFiles`) exceeded
   // {@link META_ARRAY_CAP} entries and was trimmed to its head
   // slice. Without this code, a large-site response where the
-  // ungrouped list trimmed from 1,200 to 50 is indistinguishable
+  // classified list trimmed from 1,200 to 50 is indistinguishable
   // from one where everything fit — the agent reading the meta
   // cannot tell whether the displayed list is the full signal or
   // the prefix of a much larger one. The paired `*Truncated:
@@ -436,9 +436,11 @@ export type ScanWarningCode =
   // Predicate is two-part and both parts are deterministic (per
   // CLAUDE.md §1 "Labeled buckets are only honest when provable from
   // the code"): (a) the file appears in
-  // `meta.scannedBuildArtifacts.vendorLibraries[]` — banner-detected,
-  // not path-heuristic; see `detectVendorLibraries` in
-  // `./build-artifacts.ts`; (b) one rule emitted ≥ floor findings on
+  // `meta.scannedBuildArtifacts.classified[]` carrying a
+  // `kind: "vendor-library-version-detected"` classification entry
+  // — banner-detected, not path-heuristic; see
+  // `detectVendorLibraries` in `./build-artifacts.ts`; (b) one rule
+  // emitted ≥ floor findings on
   // that file. The two parts together name the "library author
   // emitted N similar selectors, our rule fires once per selector"
   // shape; either alone is not sufficient (a 27-finding spike on
@@ -933,7 +935,7 @@ export interface WarningInputs {
   readonly scannedMinifiedFiles?: readonly string[];
   /**
    * Q-SHARED-META-ARRAY-BUDGET-CAP: dotted field paths of every sibling
-   * meta array (`scannedBuildArtifacts.ungrouped`,
+   * meta array (`scannedBuildArtifacts.classified`,
    * `analysisCoverage.fragmentFiles`, etc.) whose head-slice cap
    * actually trimmed something during response assembly. Drives the
    * `response_meta_truncated` code AND its payload-bearing
@@ -970,7 +972,9 @@ export interface WarningInputs {
    * caller-supplied list of
    * `(ruleId, file, findingCount, library)` tuples that satisfy both
    * predicate halves: (a) `file` is banner-identified as a vendor
-   * library (per `meta.scannedBuildArtifacts.vendorLibraries[]`), AND
+   * library (per a
+   * `meta.scannedBuildArtifacts.classified[].classifications[]`
+   * entry of `kind: "vendor-library-version-detected"`), AND
    * (b) `findingCount` for `ruleId` on `file` clears
    * {@link ANIMATION_LIB_GUARD_FINDING_FLOOR}. Drives the
    * `animation_library_without_reduced_motion_guard` code + its

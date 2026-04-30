@@ -96,13 +96,13 @@ describe("hasMetaArrayTruncation", () => {
     ).toBe(true);
   });
 
-  it("returns true when scannedBuildArtifacts carries ungroupedTruncated", () => {
+  it("returns true when scannedBuildArtifacts carries classifiedTruncated", () => {
     expect(
       hasMetaArrayTruncation({
         scannedBuildArtifacts: {
           grouped: [],
-          ungrouped: [],
-          ungroupedTruncated: { shown: 50, total: 120 },
+          classified: [],
+          classifiedTruncated: { shown: 50, total: 120 },
         },
       }),
     ).toBe(true);
@@ -156,16 +156,16 @@ describe("getTruncatedMetaArrayFields", () => {
     ).toEqual(["analysisCoverage.fragmentFiles"]);
   });
 
-  it("returns the dotted field path of scannedBuildArtifacts.ungrouped when its cap fired", () => {
+  it("returns the dotted field path of scannedBuildArtifacts.classified when its cap fired", () => {
     expect(
       getTruncatedMetaArrayFields({
         scannedBuildArtifacts: {
           grouped: [],
-          ungrouped: [],
-          ungroupedTruncated: { shown: 50, total: 120 },
+          classified: [],
+          classifiedTruncated: { shown: 50, total: 120 },
         },
       }),
-    ).toEqual(["scannedBuildArtifacts.ungrouped"]);
+    ).toEqual(["scannedBuildArtifacts.classified"]);
   });
 
   it("returns both paths in table-declared order when both arrays trimmed (deterministic wire shape)", () => {
@@ -174,11 +174,11 @@ describe("getTruncatedMetaArrayFields", () => {
         analysisCoverage: { fragmentFilesTruncated: { shown: 50, total: 75 } },
         scannedBuildArtifacts: {
           grouped: [],
-          ungrouped: [],
-          ungroupedTruncated: { shown: 50, total: 120 },
+          classified: [],
+          classifiedTruncated: { shown: 50, total: 120 },
         },
       }),
-    ).toEqual(["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.ungrouped"]);
+    ).toEqual(["analysisCoverage.fragmentFiles", "scannedBuildArtifacts.classified"]);
   });
 
   it("returns the bare path 'perRuleCoverage' for root-level perRuleCoverageTruncated sibling", () => {
@@ -202,15 +202,15 @@ describe("getTruncatedMetaArrayFields", () => {
         analysisCoverage: { fragmentFilesTruncated: { shown: 50, total: 75 } },
         scannedBuildArtifacts: {
           grouped: [],
-          ungrouped: [],
-          ungroupedTruncated: { shown: 50, total: 120 },
+          classified: [],
+          classifiedTruncated: { shown: 50, total: 120 },
         },
         perRuleCoverage: [],
         perRuleCoverageTruncated: { shown: 50, total: 130 },
       }),
     ).toEqual([
       "analysisCoverage.fragmentFiles",
-      "scannedBuildArtifacts.ungrouped",
+      "scannedBuildArtifacts.classified",
       "perRuleCoverage",
     ]);
   });
@@ -219,7 +219,7 @@ describe("getTruncatedMetaArrayFields", () => {
     expect(
       getTruncatedMetaArrayFields({
         analysisCoverage: { parseErrorFileCount: 3 },
-        scannedBuildArtifacts: { grouped: [], ungrouped: [] },
+        scannedBuildArtifacts: { grouped: [], classified: [] },
       }),
     ).toEqual([]);
   });

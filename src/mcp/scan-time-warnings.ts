@@ -50,6 +50,8 @@ import type { Violation } from "../types/violation.ts";
 import {
   type BuildArtifactsGrouped,
   collectBuildArtifacts,
+  type DetectedVendorLibrary,
+  detectVendorLibraries,
   groupBuildArtifactsByBasename,
   type ScannedBuildArtifact,
 } from "./build-artifacts.ts";
@@ -234,11 +236,36 @@ interface DerivedBuildArtifactSignals {
   readonly jsRoutedThroughTsxSucceededCount: number;
 }
 
+/**
+ * Adapts the parsed-file shape (`{ filePath, source, ast }`) to the
+ * `{ filePath, source }` pair the {@link detectVendorLibraries}
+ * batch helper expects. Pure passthrough; extracted so the call
+ * site at {@link deriveBuildArtifactSignals} stays a single
+ * expression.
+ */
+function detectVendorLibrariesForFiles(
+  files: readonly ParsedFile[],
+): readonly DetectedVendorLibrary[] {
+  return detectVendorLibraries(files.map((f) => ({ filePath: f.filePath, source: f.source })));
+}
+
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
   const buildArtifactEntries = collectBuildArtifacts(inputs.parsedFiles);
-  const grouped = groupBuildArtifactsByBasename(buildArtifactEntries, inputs.root);
+  // Q12: vendor-library banner detection runs alongside the per-file
+  // build-artifact classifier and the two surfaces merge into the
+  // unified `meta.scannedBuildArtifacts.classified[]` shape via
+  // {@link groupBuildArtifactsByBasename}. Cross-surface tools
+  // (scan_project, scan_file, checklist, coverage) all derive their
+  // build-artifact meta through this helper, so the merge happens
+  // uniformly per the AI-first "Cross-surface count invariant"
+  // doctrine — every consumer reads the same shape on identical
+  // input.
+  const vendorLibraries = detectVendorLibrariesForFiles(inputs.parsedFiles);
+  const grouped = groupBuildArtifactsByBasename(buildArtifactEntries, inputs.root, vendorLibraries);
   const buildArtifactsMetaField: { readonly scannedBuildArtifacts?: BuildArtifactsGrouped } =
-    buildArtifactEntries.length > 0 ? { scannedBuildArtifacts: grouped } : {};
+    buildArtifactEntries.length > 0 || vendorLibraries.length > 0
+      ? { scannedBuildArtifacts: grouped }
+      : {};
 
   const scssUnresolvedVariableFiles = detectScssUnresolvedVariableFiles(inputs.parsedFiles);
   const perFileFindings = groupViolationsByFile(inputs.violations);
@@ -252,7 +279,6 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     )
     .map((e) => e.path);
 
-  const vendorLibraries = grouped.vendorLibraries ?? [];
   const animationLibraryGuardCandidates = computeAnimationLibraryGuardCandidates({
     vendorLibraries,
     files: perFileFindings,

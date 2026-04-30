@@ -39,7 +39,7 @@ function syntheticGrouped(count: number): BuildArtifactsGrouped {
       classifications: ["likely-bundler-output-dir" as const],
       suggestedGlob: `**/vendor-${i}.css`,
     })),
-    ungrouped: [],
+    classified: [],
   };
 }
 
@@ -142,7 +142,7 @@ describe("applyBulkVendorScopeDownOverride", () => {
           suggestedGlob: `**/extra-${i}.css`,
         })),
       ],
-      ungrouped: [],
+      classified: [],
     };
     const result = applyBulkVendorScopeDownOverride({
       baseNextStep: BASE_NEXT_STEP,

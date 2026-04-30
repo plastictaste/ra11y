@@ -297,7 +297,7 @@ describe("scan_file warning-channel parity with scan_project on the same `.min.c
       readonly meta?: {
         readonly scannedBuildArtifacts?: {
           readonly grouped?: readonly unknown[];
-          readonly ungrouped?: readonly unknown[];
+          readonly classified?: readonly unknown[];
         };
       };
     }
@@ -310,5 +310,111 @@ describe("scan_file warning-channel parity with scan_project on the same `.min.c
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: minPath })]);
     const env = body<MetaEnvelope>(responses[1]);
     expect(env.meta?.scannedBuildArtifacts).toBeDefined();
+  });
+
+  // Q12: vendor-library banner detection and the per-file build-artifact
+  // classifier produced two parallel surfaces (`ungrouped[]` +
+  // `vendorLibraries[]`). The merged shape lifts both into
+  // `classified[]` keyed on path with a `kind` discriminator. A
+  // fixture triggering both predicates on the same path must surface
+  // a single row carrying both classifications (no collapse to the
+  // strongest predicate, no parallel sibling list).
+  it("scan_project merges vendor-library + min-infix classifications onto one classified[] row", async () => {
+    interface MetaEnvelope {
+      readonly meta?: {
+        readonly scannedBuildArtifacts?: {
+          readonly grouped?: readonly unknown[];
+          readonly classified?: readonly {
+            readonly path: string;
+            readonly classifications: readonly {
+              readonly kind: string;
+              readonly classification?: string;
+              readonly library?: string;
+              readonly version?: string;
+            }[];
+          }[];
+          readonly vendorLibraries?: unknown;
+          readonly ungrouped?: unknown;
+        };
+      };
+    }
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-q12-merge-"));
+    // Bootstrap distribution shape: `.min.` infix in the basename
+    // (fires `definite-min-infix`) AND a curated banner on the first
+    // line (fires `vendor-library-version-detected`). Single file so
+    // the basename clustering threshold doesn't fire and the merge
+    // happens in `classified[]`, not `grouped[]`.
+    const bootstrapMin = `/*! Bootstrap v5.3.0 (https://getbootstrap.com/) */\n.btn{color:#fff}\n`;
+    await writeFile(join(dir, "bootstrap.min.css"), bootstrapMin);
+    // A clean page so filesScanned > 0 keeps `meta` riding.
+    await writeFile(join(dir, "page.html"), `<!doctype html><html><body></body></html>`);
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+    ]);
+    const env = body<MetaEnvelope>(responses[1]);
+    const sba = env.meta?.scannedBuildArtifacts;
+    expect(sba).toBeDefined();
+    // Q12 invariant: legacy parallel surfaces must be absent.
+    expect(sba?.vendorLibraries).toBeUndefined();
+    expect(sba?.ungrouped).toBeUndefined();
+    // Find the bootstrap row in classified[] and verify it carries
+    // BOTH classifications.
+    const bootstrapRow = sba?.classified?.find((r) => r.path.endsWith("bootstrap.min.css"));
+    expect(bootstrapRow).toBeDefined();
+    const kinds = (bootstrapRow?.classifications ?? []).map((c) => c.kind);
+    expect(kinds).toContain("min-infix");
+    expect(kinds).toContain("vendor-library-version-detected");
+    // The banner-detected entry must carry the library + version.
+    const vendorEntry = bootstrapRow?.classifications.find(
+      (c) => c.kind === "vendor-library-version-detected",
+    );
+    expect(vendorEntry?.library).toBe("bootstrap");
+    expect(vendorEntry?.version).toBe("5.3.0");
+  });
+
+  // Q12 cross-surface invariant: every project-rooted tool that emits
+  // `meta.scannedBuildArtifacts` (only `scan_project` + `scan_file`
+  // currently stamp the meta field; checklist + coverage emit the
+  // paired warning channel via the shared helper) must populate
+  // `classified[]` identically on identical input.
+  it("scan_project and scan_file populate classified[] identically on the same vendor file", async () => {
+    interface SbaEnvelope {
+      readonly meta?: {
+        readonly scannedBuildArtifacts?: {
+          readonly classified?: readonly {
+            readonly path: string;
+            readonly classifications: readonly { readonly kind: string }[];
+          }[];
+        };
+      };
+    }
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-q12-parity-"));
+    const filePath = join(dir, "jquery.min.js");
+    // jQuery distribution shape: banner + `.min.` infix.
+    const jquerySource = `/*! jQuery v3.6.0 | (c) OpenJS Foundation */\n!function(e){}(window);\n`;
+    await writeFile(filePath, jquerySource);
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+      toolCall(3, "scan_file", { path: filePath }),
+    ]);
+    const projEnv = body<SbaEnvelope>(responses[1]);
+    const fileEnv = body<SbaEnvelope>(responses[2]);
+    const projRow = projEnv.meta?.scannedBuildArtifacts?.classified?.find((r) =>
+      r.path.endsWith("jquery.min.js"),
+    );
+    const fileRow = fileEnv.meta?.scannedBuildArtifacts?.classified?.find((r) =>
+      r.path.endsWith("jquery.min.js"),
+    );
+    expect(projRow).toBeDefined();
+    expect(fileRow).toBeDefined();
+    // Same kind set on both surfaces — silent drift is the doctrine
+    // failure mode this invariant exists to prevent.
+    const projKinds = new Set((projRow?.classifications ?? []).map((c) => c.kind));
+    const fileKinds = new Set((fileRow?.classifications ?? []).map((c) => c.kind));
+    expect([...projKinds].sort()).toEqual([...fileKinds].sort());
+    expect(projKinds.has("min-infix")).toBe(true);
+    expect(projKinds.has("vendor-library-version-detected")).toBe(true);
   });
 });

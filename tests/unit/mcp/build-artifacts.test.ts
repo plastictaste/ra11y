@@ -1523,32 +1523,42 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
         suggestedGlob: "dist/**/bootstrap.css",
       },
     ]);
-    expect(out.ungrouped).toEqual([]);
+    expect(out.classified).toEqual([]);
   });
 
-  it("keeps sub-threshold same-basename entries in `ungrouped` with classifications + signals preserved", () => {
+  it("keeps sub-threshold same-basename entries in `classified[]` with kind + classification + signal preserved", () => {
     // Two paths share a basename but fall below the grouping
-    // threshold. Zero information loss: the full `{ path,
-    // classification, signal }` record survives under `ungrouped` so
-    // an agent can still read both the per-path classification and
-    // the deterministic predicate evidence
-    //.
+    // threshold. Zero information loss: the full
+    // `{ kind, classification, signal }` record survives under each
+    // `classified[i].classifications[]` entry so an agent can read
+    // the predicate family, the per-path classification, AND the
+    // deterministic predicate evidence.
     const entries = [
       mkEntry("/root/dist/a.min.css", "definite-min-infix"),
       mkEntry("/root/dist/other/a.min.css", "definite-min-infix"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
-    expect(out.ungrouped).toEqual([
+    expect(out.classified).toEqual([
       {
         path: "dist/a.min.css",
-        classification: "definite-min-infix",
-        signal: { kind: "min-infix", value: "a.min.css" },
+        classifications: [
+          {
+            kind: "min-infix",
+            classification: "definite-min-infix",
+            signal: { kind: "min-infix", value: "a.min.css" },
+          },
+        ],
       },
       {
         path: "dist/other/a.min.css",
-        classification: "definite-min-infix",
-        signal: { kind: "min-infix", value: "a.min.css" },
+        classifications: [
+          {
+            kind: "min-infix",
+            classification: "definite-min-infix",
+            signal: { kind: "min-infix", value: "a.min.css" },
+          },
+        ],
       },
     ]);
   });
@@ -1570,17 +1580,17 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
     ]);
   });
 
-  it("sorts ungrouped entries by path alphabetical", () => {
+  it("sorts classified entries by path alphabetical", () => {
     // Three distinct singletons below threshold — each enters
-    // `ungrouped` and the output sorts deterministically regardless
-    // of input order.
+    // `classified[]` and the output sorts deterministically
+    // regardless of input order.
     const entries = [
       mkEntry("/root/z/one.css", "likely-bundler-output-dir"),
       mkEntry("/root/a/two.css", "likely-bundler-output-dir"),
       mkEntry("/root/m/three.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.ungrouped.map((e) => e.path)).toEqual(["a/two.css", "m/three.css", "z/one.css"]);
+    expect(out.classified.map((e) => e.path)).toEqual(["a/two.css", "m/three.css", "z/one.css"]);
   });
 
   it("dedupes and sorts `classifications` when members of one group carry multiple classifier verdicts", () => {
@@ -1635,9 +1645,9 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
   it("returns an empty envelope on zero input (honest shape on clean scans)", () => {
     // The caller conditional-spreads the whole meta field on
     // presence (`buildArtifacts.present`), so this function itself
-    // returns `{ grouped: [], ungrouped: [] }` when called with no
+    // returns `{ grouped: [], classified: [] }` when called with no
     // entries — no sentinel `null`, no thrown error.
-    expect(groupBuildArtifactsByBasename([], "/root")).toEqual({ grouped: [], ungrouped: [] });
+    expect(groupBuildArtifactsByBasename([], "/root")).toEqual({ grouped: [], classified: [] });
   });
 
   it("drops paths that escape the scan root (meaningless as exclude entries)", () => {
@@ -1651,9 +1661,9 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
       mkEntry("/root/dist/a/b.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    const allPaths = [...out.grouped.map((g) => g.basename), ...out.ungrouped.map((e) => e.path)];
+    const allPaths = [...out.grouped.map((g) => g.basename), ...out.classified.map((e) => e.path)];
     expect(allPaths).not.toContain("a.css");
-    expect(out.ungrouped.map((e) => e.path)).toEqual(["dist/a/b.css"]);
+    expect(out.classified.map((e) => e.path)).toEqual(["dist/a/b.css"]);
   });
 
   it("normalizes Windows-style backslashes in paths to POSIX separators", () => {
@@ -1688,40 +1698,139 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
   });
 });
 
-// Q-SHARED-META-ARRAY-BUDGET-CAP: `ungrouped` is the tail of the
+// Q12: vendor-library banner detection and the per-file build-artifact
+// classifier produced two parallel surfaces (`ungrouped[]` +
+// `vendorLibraries[]`) that an agent had to union when triaging a
+// path. The merged shape lifts both into `classified[]` with a `kind`
+// discriminator; a path firing both predicates rides as one row
+// carrying multiple `classifications[]` entries — predicate evidence
+// is never collapsed.
+describe("groupBuildArtifactsByBasename — Q12 merged classified[] shape", () => {
+  it("folds banner-detected vendor libraries into classified[] under kind: vendor-library-version-detected", () => {
+    // No build-artifact entries; only a banner identification. The
+    // vendor library still rides in `classified[]` so the agent
+    // reads one list rather than chasing a separate vendorLibraries
+    // sibling.
+    const out = groupBuildArtifactsByBasename([], "/root", [
+      { path: "/root/vendor/jquery.js", library: "jquery", version: "3.6.0" },
+    ]);
+    expect(out.grouped).toEqual([]);
+    expect(out.classified).toEqual([
+      {
+        path: "vendor/jquery.js",
+        classifications: [
+          {
+            kind: "vendor-library-version-detected",
+            library: "jquery",
+            version: "3.6.0",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("omits version when the banner did not carry a parseable version slot (animate.css canonical case)", () => {
+    const out = groupBuildArtifactsByBasename([], "/root", [
+      { path: "/root/vendor/animate.css", library: "animate.css" },
+    ]);
+    expect(out.classified).toEqual([
+      {
+        path: "vendor/animate.css",
+        classifications: [{ kind: "vendor-library-version-detected", library: "animate.css" }],
+      },
+    ]);
+  });
+
+  it("lists multiple classifications when both predicates fire on the same path (no collapse to strongest)", () => {
+    // Bootstrap distribution at `bootstrap.min.css` qualifies under
+    // both the `definite-min-infix` predicate AND a banner match.
+    // Per AI-first doctrine "list multiple signals — do NOT collapse
+    // to the strongest one," both ride.
+    const entries = [mkEntry("/root/vendor/bootstrap.min.css", "definite-min-infix")];
+    const vendorLibraries = [
+      { path: "/root/vendor/bootstrap.min.css", library: "bootstrap", version: "5.3.0" },
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root", vendorLibraries);
+    expect(out.grouped).toEqual([]);
+    expect(out.classified).toEqual([
+      {
+        path: "vendor/bootstrap.min.css",
+        classifications: [
+          {
+            kind: "min-infix",
+            classification: "definite-min-infix",
+            signal: { kind: "min-infix", value: "bootstrap.min.css" },
+          },
+          {
+            kind: "vendor-library-version-detected",
+            library: "bootstrap",
+            version: "5.3.0",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("path-prefix kind covers every non-min build-artifact classification", () => {
+    // Path-anchored (bundler-output-dir) and content-shape (compiled-
+    // tailwind, vendor-distribution) classifications all land under
+    // `kind: "path-prefix"`. The paired `classification` field
+    // preserves the specific predicate so auditability isn't lost.
+    const entries = [mkEntry("/root/dist/x/app.css", "likely-bundler-output-dir")];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    expect(out.classified[0]?.classifications[0]).toEqual({
+      kind: "path-prefix",
+      classification: "likely-bundler-output-dir",
+      signal: { kind: "build-dir-segment", value: "dist/" },
+    });
+  });
+
+  it("drops vendor-library entries whose path escapes the scan root", () => {
+    // Symmetric to the `..`-relative escape behavior of the build-
+    // artifact bucketing — a banner identification on a path
+    // outside the root is meaningless as an exclude entry, so the
+    // merger drops it rather than surfacing a `..`-prefixed path.
+    const out = groupBuildArtifactsByBasename([], "/root", [
+      { path: "/outside/vendor/jquery.js", library: "jquery" },
+    ]);
+    expect(out.classified).toEqual([]);
+  });
+});
+
+// Q-SHARED-META-ARRAY-BUDGET-CAP: `classified` is the tail of the
 // grouped shape — it held hundreds of sub-threshold entries on the
 // website-templates scan that motivated the cap (148KB of the 281KB
-// meta block). The cap trims the *list* head-first (alphabetical,
-// deterministic) while `ungroupedTruncated: { shown, total }` names
-// the settlement.
-describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-BUDGET-CAP)", () => {
-  it("caps ungrouped at 50 entries and emits ungroupedTruncated with the pre-cap total", () => {
+// meta block, then under the prior `ungrouped` field name). The cap
+// trims the *list* head-first (alphabetical, deterministic) while
+// `classifiedTruncated: { shown, total }` names the settlement.
+describe("groupBuildArtifactsByBasename — classified cap (Q-SHARED-META-ARRAY-BUDGET-CAP)", () => {
+  it("caps classified at 50 entries and emits classifiedTruncated with the pre-cap total", () => {
     // 120 unique basenames (no clusters form) → every entry lands in
-    // `ungrouped`, which must cap to 50 with a sibling summary.
+    // `classified[]`, which must cap to 50 with a sibling summary.
     const entries = Array.from({ length: 120 }, (_, i) =>
       mkEntry(`/root/dist/f${String(i).padStart(3, "0")}.css`, "likely-bundler-output-dir"),
     );
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped).toEqual([]);
-    expect(out.ungrouped.length).toBe(50);
-    expect(out.ungroupedTruncated).toEqual({ shown: 50, total: 120 });
+    expect(out.classified.length).toBe(50);
+    expect(out.classifiedTruncated).toEqual({ shown: 50, total: 120 });
     // Head is alphabetical — stable across runs.
-    expect(out.ungrouped[0]?.path).toBe("dist/f000.css");
-    expect(out.ungrouped[49]?.path).toBe("dist/f049.css");
+    expect(out.classified[0]?.path).toBe("dist/f000.css");
+    expect(out.classified[49]?.path).toBe("dist/f049.css");
   });
 
-  it("omits ungroupedTruncated when the list fits under the cap", () => {
+  it("omits classifiedTruncated when the list fits under the cap", () => {
     const entries = Array.from({ length: 10 }, (_, i) =>
       mkEntry(`/root/dist/f${i}.css`, "likely-bundler-output-dir"),
     );
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.ungrouped.length).toBe(10);
-    expect(out.ungroupedTruncated).toBeUndefined();
+    expect(out.classified.length).toBe(10);
+    expect(out.classifiedTruncated).toBeUndefined();
   });
 
   it("grouped rows stay compact and uncapped — the cap is a tail-only concern", () => {
     // 60 entries sharing one basename → one grouped row (compact by
-    // definition), ungrouped stays empty. The cap doesn't fire and
+    // definition), classified stays empty. The cap doesn't fire and
     // the grouped row's count stays honest.
     const entries = Array.from({ length: 60 }, (_, i) =>
       mkEntry(`/root/d${i}/bootstrap.css`, "likely-bundler-output-dir"),
@@ -1729,8 +1838,8 @@ describe("groupBuildArtifactsByBasename — ungrouped cap (Q-SHARED-META-ARRAY-B
     const out = groupBuildArtifactsByBasename(entries, "/root");
     expect(out.grouped.length).toBe(1);
     expect(out.grouped[0]?.count).toBe(60);
-    expect(out.ungrouped).toEqual([]);
-    expect(out.ungroupedTruncated).toBeUndefined();
+    expect(out.classified).toEqual([]);
+    expect(out.classifiedTruncated).toBeUndefined();
   });
 });
 
