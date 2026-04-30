@@ -1730,6 +1730,83 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     ]);
   });
 
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Empty
+  // `warningsDetails.<code>: {}` is dishonest" — the warning code
+  // declares the parser-level transformation ran, the payload names
+  // which files contributed so the agent can scope without re-walking
+  // the file set. Mirrors the
+  // `template_files_parsed_as_literal: { files, extensions }` shape so
+  // agents reading both warnings on the same scan don't have to learn
+  // two payload shapes.
+  it("emits a `php_islands_stripped` payload with fileCount + topFiles + extensions when the coverage block names contributing files", () => {
+    const details = computeScanWarningDetails(["php_islands_stripped"], {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        phpIslandsStripped: true,
+        phpIslandsStrippedFiles: [
+          "/proj/index.php",
+          "/proj/templates/header.phtml",
+          "/proj/admin.php",
+        ],
+      },
+      filesByExtension: { ".php": 2, ".phtml": 1 },
+    });
+    expect(details.php_islands_stripped?.fileCount).toBe(3);
+    // Sorted alphabetically — coverage layer pre-sorts so the head is
+    // deterministic across runs.
+    expect(details.php_islands_stripped?.topFiles).toEqual([
+      "/proj/index.php",
+      "/proj/templates/header.phtml",
+      "/proj/admin.php",
+    ]);
+    // Both dialects represented — agent can branch on substrate.
+    expect(details.php_islands_stripped?.extensions).toEqual([".php", ".phtml"]);
+  });
+
+  it("caps `php_islands_stripped.topFiles` at 5 entries on a PHP-heavy corpus, preserves fileCount", () => {
+    // Mirrors the bulk-PHP corpus shape where every file ran through
+    // `parsePhp`'s island-stripping pass: `fileCount` carries the full
+    // signal; `topFiles` is a head slice bounded so the wire stays
+    // small. Same cap pattern as
+    // `js_innerhtml_template_literal_unparsed.fileSamples`.
+    const fullList = Array.from({ length: 12 }, (_, i) => `/proj/page${String(i).padStart(2, "0")}.php`);
+    const details = computeScanWarningDetails(["php_islands_stripped"], {
+      filesScanned: 12,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        phpIslandsStripped: true,
+        phpIslandsStrippedFiles: fullList,
+      },
+      filesByExtension: { ".php": 12 },
+    });
+    expect(details.php_islands_stripped?.fileCount).toBe(12);
+    expect(details.php_islands_stripped?.topFiles.length).toBe(5);
+    expect(details.php_islands_stripped?.topFiles).toEqual(fullList.slice(0, 5));
+    expect(details.php_islands_stripped?.extensions).toEqual([".php"]);
+  });
+
+  it("`php_islands_stripped` falls through to the disambiguating sentinel when the coverage block omits the file list (legacy / pre-payload callers)", () => {
+    // Defensive branch: a caller that fired the warning but didn't
+    // thread the per-file evidence onto the coverage block — the
+    // dispatch table's fall-through stamps the
+    // `summarizer_inputs_unavailable` sentinel rather than `{}`, per
+    // the doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+    const details = computeScanWarningDetails(["php_islands_stripped"], {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { phpIslandsStripped: true },
+      filesByExtension: { ".php": 3 },
+    });
+    expect(details.php_islands_stripped).toEqual({
+      truncated: true,
+      reason: "summarizer_inputs_unavailable",
+    });
+  });
+
   it("emits both payloads with disjoint extension sets when both codes fire on a heterogeneous corpus", () => {
     const codes = ["text_source_skipped", "binary_assets_skipped"] as const;
     const details = computeScanWarningDetails(codes, {

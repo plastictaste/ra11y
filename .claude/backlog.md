@@ -353,7 +353,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Empty / dishonest warning payloads
 
-- [ ] **Q13-PHP-ISLANDS-STRIPPED-EMPTY-DETAILS** `php_islands_stripped` warning fires with empty `{}` details payload denying the agent any way to triage which files had server-template islands stripped or how many. Fix: populate with `{fileCount: <count>, topFiles: [...], extensions: [...]}` analogous to `js_innerhtml_template_literal_unparsed`; alternatively omit when no actionable evidence is available. Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
 - [ ] **Q13-SCAN-FILE-CLEAN-ON-UNPARSEABLE-NO-ZERO-OUTPUT-WARNING** `scan_file` on a non-JSX `.js` configuration object literal that the tsx parser can't model returns `nextStep: "Automated checks clean"` with `0 findings, 0 actionable` — framing reads as conformance-clean but the file content was unparseable so "clean" is indistinguishable from "never analyzed." No `parser_bailed_zero_findings` or `tool_ran_on_zero_parseable_input` warning emitted. Fix: emit a structured warning code (`scan_file_parser_bail_zero_findings` or similar) when zero findings ride alongside a parser-bail diagnostic on the same input; reuse the per-rule coverage `parseErrorFiles` plumbing as the trigger. Per AI-first doctrine "Zero-output success is ambiguous failure."
 
 ### Ambiguous / empty-when-meaningful field shapes

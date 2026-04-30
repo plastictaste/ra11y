@@ -1098,6 +1098,40 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
     });
 
+    // Per-file evidence backing the
+    // `warningsDetails.php_islands_stripped: { fileCount, topFiles, extensions }`
+    // payload — the boolean is the gate the warnings-layer predicate
+    // reads, this list is the per-file evidence the warnings module
+    // turns into a populated payload (closing the doctrine "Empty
+    // `warningsDetails.<code>: {}` is dishonest" silent-miss shape).
+    it("lifts every contributing .php / .phtml path onto `phpIslandsStrippedFiles`, sorted alphabetically", () => {
+      const adminPhp = htmlFile("admin.php", "<?php require_once 'auth.php'; ?>\n<p>admin</p>");
+      const indexPhp = htmlFile("index.php", "<?= $title ?>\n<p>home</p>");
+      const headerPhtml = htmlFile("templates/header.phtml", "<title><?= $h ?></title>");
+      // Pure HTML .php — `phpIslandsStripped` stays off and the path
+      // does not enter the per-file list either.
+      const staticPhp = htmlFile("static.php", "<!DOCTYPE html><html><body>hi</body></html>");
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [staticPhp, indexPhp, adminPhp, headerPhtml],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
+      expect(analysisCoverage?.["phpIslandsStrippedFiles"]).toEqual([
+        "admin.php",
+        "index.php",
+        "templates/header.phtml",
+      ]);
+    });
+
+    it("omits `phpIslandsStrippedFiles` entirely when no scanned file ran PHP-island stripping (present-when-meaningful)", () => {
+      const purePhp = htmlFile("static.php", "<!DOCTYPE html>\n<html><body>hi</body></html>\n");
+      const { analysisCoverage } = buildAnalysisCoverage([purePhp], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+      expect(analysisCoverage?.["phpIslandsStrippedFiles"]).toBeUndefined();
+    });
+
     it("flags phpIslandsStripped on a .phtml file with `<?= … ?>` short-echo", () => {
       const phtmlPage = htmlFile(
         "templates/header.phtml",

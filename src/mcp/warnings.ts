@@ -2145,7 +2145,40 @@ export interface ScanWarningDetails {
         readonly extensions: readonly string[];
       }
     | BinaryPresenceMarker;
-  readonly php_islands_stripped?: BinaryPresenceMarker;
+  /**
+   * Payload for `php_islands_stripped`. Names the parsed `.php` /
+   * `.phtml` files whose source contained at least one PHP island
+   * opener (`<?php`, `<?=`, `<?`) and therefore ran through the
+   * {@link import("../input/parsers/php.ts").parsePhp} adapter's
+   * island-stripping pass. Mirrors the
+   * `template_files_parsed_as_literal` shape — agents reading both
+   * warnings on the same scan don't have to learn two payload shapes.
+   *
+   * - `fileCount` — total number of PHP-extension files in the scan
+   *   that contained islands. Carries the full count even when
+   *   `topFiles` is capped at the head slice so an agent triaging
+   *   "is the PHP island substrate two files or two hundred?" can
+   *   branch on the scalar without descending into the array.
+   * - `topFiles` — sorted-ascending head slice capped at
+   *   {@link PHP_ISLANDS_TOP_FILES_CAP} so the wire payload stays
+   *   bounded on PHP-heavy corpora. Same cap pattern as
+   *   `sourcemap_files_excluded.topPaths` and
+   *   `default_excluded_artifact_paths.sampleFiles`.
+   * - `extensions` — unique lowercased file extensions across the
+   *   contributing path set, sorted alphabetically. Distinguishes
+   *   `.php` (server-page) from `.phtml` (PEAR / classic template) so
+   *   the agent can disambiguate which substrate dialect drove the
+   *   warning without re-deriving from `topFiles`.
+   *
+   * Per the AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires; the bare
+   * `{}` shape was the previous regression this payload closes.
+   */
+  readonly php_islands_stripped?: {
+    readonly fileCount: number;
+    readonly topFiles: readonly string[];
+    readonly extensions: readonly string[];
+  };
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
@@ -2370,7 +2403,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "root_source_defaulted",
   "tailwind_detected_css_undercounted",
   "template_files_parsed_as_literal",
-  "php_islands_stripped",
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
@@ -3693,6 +3725,10 @@ export function computeScanWarningDetails(
       summarize: () => summarizeParseErrors(inputs.analysisCoverage),
     },
     {
+      code: "php_islands_stripped",
+      summarize: () => summarizePhpIslandsStripped(inputs.analysisCoverage),
+    },
+    {
       code: "scanned_build_artifacts_present",
       summarize: () => summarizeScannedBuildArtifacts(inputs.scannedBuildArtifactsSummary),
     },
@@ -4355,6 +4391,64 @@ function summarizeSourcemapFilesExcluded(coverage: Record<string, unknown> | und
   return {
     count: files.length,
     topPaths: files.slice(0, SOURCEMAP_TOP_PATHS_CAP),
+  };
+}
+
+/**
+ * Hard cap on the head slice of contributing PHP file paths surfaced
+ * on `warningsDetails.php_islands_stripped.topFiles`. Five mirrors
+ * {@link INLINE_HTML_FILE_SAMPLES_CAP} so the wire payload stays
+ * bounded on PHP-heavy corpora — the full count is preserved on the
+ * `fileCount` scalar regardless.
+ */
+const PHP_ISLANDS_TOP_FILES_CAP = 5;
+
+/**
+ * Builds the `php_islands_stripped` payload from the coverage block's
+ * `phpIslandsStrippedFiles` list. Returns `undefined` when the field
+ * is absent, malformed, or empty so the dispatch table falls through
+ * to the disambiguating fall-through marker (the warning code's
+ * predicate guarantees at least one PHP-extension file ran the
+ * stripping pass when the code fired, but the helper stays defensive).
+ *
+ * `fileCount` carries the full count off the path-list length (not
+ * capped); `topFiles` is a sorted-ascending head slice capped at
+ * {@link PHP_ISLANDS_TOP_FILES_CAP} entries — the accumulator already
+ * sorts the list ascending lexically, so the head is deterministic
+ * across runs without a re-sort here. `extensions` carries the unique
+ * lowercased file extensions across the contributing path set so an
+ * agent triaging a `.php` + `.phtml` mixed scan can branch on dialect
+ * without re-deriving from `topFiles`. Mirrors
+ * {@link summarizeTemplateFilesParsedAsLiteral}'s `{ files, extensions }`
+ * shape so agents reading both warnings on the same scan don't have
+ * to learn two payload shapes.
+ */
+function summarizePhpIslandsStripped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly fileCount: number;
+      readonly topFiles: readonly string[];
+      readonly extensions: readonly string[];
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const raw = coverage["phpIslandsStrippedFiles"];
+  if (!Array.isArray(raw)) return undefined;
+  const files: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0) files.push(entry);
+  }
+  if (files.length === 0) return undefined;
+  const extSet = new Set<string>();
+  for (const path of files) {
+    const dot = path.lastIndexOf(".");
+    if (dot === -1) continue;
+    const ext = path.slice(dot).toLowerCase();
+    if (ext.length > 1) extSet.add(ext);
+  }
+  return {
+    fileCount: files.length,
+    topFiles: files.slice(0, PHP_ISLANDS_TOP_FILES_CAP),
+    extensions: [...extSet].sort(),
   };
 }
 
