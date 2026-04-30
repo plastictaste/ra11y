@@ -17,6 +17,7 @@ import {
   shouldRerouteToPerRuleNarrowing,
 } from "./next-step.ts";
 import {
+  deriveSlimLimitFromBytes,
   guardOversizeEnvelope,
   type OversizeEnvelopeReason,
   oversizeEnvelopeWarningsField,
@@ -644,6 +645,7 @@ function buildSlimScanProjectEnvelope(args: {
     nextStepStructured: buildSlimNextStepStructured({
       formatted,
       fullMeta,
+      reason,
     }),
     warnings: finalWarnings,
     warningsDetails: finalWarningsDetails,
@@ -936,42 +938,58 @@ const SLIM_NEXT_STEP_PROSE =
  *      narrower target than the failing call.
  *
  * When no non-vendor target can be derived (every file in the inventory
- * sits on a vendor path, or the file list is empty), ship `args: {}`.
- * That signals "the tool can't guess — agent picks." Honestly absent
- * args beat an args set that re-issues the failing call.
+ * sits on a vendor path, or the file list is empty), the prior shape
+ * shipped `args: {}` — but that's the canonical "Ambiguous field shapes
+ * are dishonest" failure: the prose recommends three concrete narrowing
+ * knobs (`cwd`, `additionalPaths`, `restrictToPaths`) but the structured
+ * form provides no callable arg payload. Per the doctrine bullet, the
+ * fallback now ships `limit: <derived>` computed from the byte
+ * arithmetic the slim path already knows: how many file entries would
+ * have fit at the per-file byte rate observed on this scan. That
+ * gives the agent a directly-applicable arg even when the scanner has
+ * no honest narrowing dir to recommend — the limit cap differs from
+ * the failing call (the failing call took the caller's `limit`, almost
+ * always larger than the byte-derived ceiling).
+ *
+ * The derivation: `floor(droppedFileCountFromRequestedLimit *
+ * (hardCeilingBytes / preDropBytes) * 0.7)`, clamped to ≥ 1. The 0.7
+ * safety factor accounts for the per-file payload bloating beyond
+ * average on the next call (the rules that fired densely on this scan
+ * may fire densely again); 70% is conservative enough that the next
+ * envelope is unlikely to re-trip the slim guard but loose enough to
+ * carry meaningful per-file detail. Floor at 1 because `limit: 0` would
+ * be a hung call.
  *
  * Prose still names the same three narrowing knobs (`cwd`,
  * `additionalPaths`, `restrictToPaths`) so the agent keeps full
- * flexibility; the structured args advance one of them with a
- * scanner-derived candidate.
+ * flexibility; the structured args advance one of them (or the limit
+ * fallback) with a scanner-derived candidate.
  */
 function buildSlimNextStepStructured(args: {
   readonly formatted: ScanFormatted;
   readonly fullMeta: Record<string, unknown>;
+  readonly reason: OversizeEnvelopeReason;
 }): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
-  const { formatted, fullMeta } = args;
+  const { formatted, fullMeta, reason } = args;
   const isVendor = buildVendorPredicate(fullMeta);
   const narrowing = pickNonVendorNarrowingDir(formatted.files, isVendor);
-  if (narrowing !== undefined) {
-    return {
-      tool: "scan_project",
-      args: { restrictToPaths: [narrowing] },
-    };
-  }
-  // No non-vendor narrowing target found — ship empty args rather than
-  // echo the caller's `cwd` (which would re-issue the failing call).
-  // The prose still names the three narrowing knobs; the agent picks.
-  // We deliberately do NOT propagate the caller's `cwd` here: passing
-  // it back as `args.cwd` would re-issue the same scope that just
-  // produced the over-ceiling response, defeating the purpose of the
-  // slim envelope.
-  return {
-    tool: "scan_project",
-    args: {},
-  };
+  // No non-vendor narrowing target found → fall back to a byte-derived
+  // `limit` cap from `reason` (per-file byte rate × 0.7 safety) so the
+  // structured args carry a directly-applicable knob rather than the
+  // prior empty `args: {}` (the canonical "Ambiguous field shapes are
+  // dishonest" failure for this slot). On degenerate byte inputs the
+  // helper returns `undefined`; the final fallback is `limit: 1`, the
+  // smallest honest forward-progress arg. We deliberately do NOT
+  // propagate the caller's `cwd` — that would re-issue the failing
+  // scope.
+  const argsField =
+    narrowing === undefined
+      ? { limit: deriveSlimLimitFromBytes(reason) ?? 1 }
+      : { restrictToPaths: [narrowing] };
+  return { tool: "scan_project", args: argsField };
 }
 
 /**

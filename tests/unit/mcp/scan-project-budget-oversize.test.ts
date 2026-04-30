@@ -19,6 +19,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { deriveSlimLimitFromBytes } from "../../../src/mcp/oversize-envelope.ts";
 import { assembleScanProjectResponse } from "../../../src/mcp/scan-project-budget.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import type { ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
@@ -263,11 +264,20 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(structured.args.cwd).toBeUndefined();
   });
 
-  it("ships empty args when every file in the inventory is vendor-classified", () => {
+  it("ships byte-derived `limit` when every file in the inventory is vendor-classified", () => {
     // All-vendor edge case: no non-vendor narrowing target exists, so
-    // the args degrade to `{}` rather than echo the caller's cwd. The
-    // agent reads the prose and picks a recovery knob; the structured
-    // form does NOT re-issue the failing call.
+    // the structured args fall back to a byte-derived `limit` cap
+    // rather than the prior empty `args: {}` (which was the canonical
+    // "Ambiguous field shapes are dishonest" failure for this slot —
+    // the prose recommended three concrete narrowing knobs while the
+    // structured form gave the agent no callable arg). The derived
+    // limit comes from the byte arithmetic the slim path already
+    // measured: how many file entries would have fit at the per-file
+    // byte rate observed on this scan, scaled by the conservative
+    // safety factor. The agent reads the prose for the three narrowing
+    // knobs (cwd / additionalPaths / restrictToPaths) AND has a copy-
+    // verbatim `limit` arg for the case where the scanner can't honestly
+    // pick a narrower target.
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
@@ -335,8 +345,22 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       args: Record<string, unknown>;
     };
     expect(structured.tool).toBe("scan_project");
-    expect(structured.args).toEqual({});
+    // Empty `args: {}` retention is the canonical "Ambiguous field
+    // shapes are dishonest" failure for the structured next-call slot
+    // when the prose recommends concrete narrowing. The fallback ships
+    // a byte-derived `limit` cap so the structured form carries a
+    // directly-applicable knob rather than an empty object.
+    expect(structured.args).not.toEqual({});
     expect(structured.args.cwd).toBeUndefined();
+    expect(structured.args.restrictToPaths).toBeUndefined();
+    // `limit` is the only field the byte fallback populates.
+    expect(typeof structured.args.limit).toBe("number");
+    expect(structured.args.limit as number).toBeGreaterThanOrEqual(1);
+    // Sanity: the derived limit must be strictly smaller than the
+    // pre-drop file count — otherwise the agent following the
+    // structured args verbatim would re-issue the same scope.
+    const totalFilesWithFindings = response.totalFilesWithFindings as number;
+    expect(structured.args.limit as number).toBeLessThan(totalFilesWithFindings + 1);
   });
 
   it("preserves prior warning codes (density-cap chain) and stamps `truncated: true` on the slim envelope", () => {
@@ -945,5 +969,87 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(warnings).not.toContain("truncated_files_dropped");
     const details = response.warningsDetails as Record<string, unknown>;
     expect(details.truncated_files_dropped).toBeUndefined();
+  });
+});
+
+describe("deriveSlimLimitFromBytes — byte-arithmetic derivation for slim envelope", () => {
+  it("returns floor(droppedCount * (ceiling/preDrop) * 0.7), clamped at 1", () => {
+    // Canonical case: pre-drop bytes 200_000, ceiling 96_000, dropped
+    // 100 files. Ratio = 0.48; derived = floor(100 * 0.48 * 0.7) = 33.
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 200_000,
+      hardCeilingBytes: 96_000,
+      droppedFileCountFromRequestedLimit: 100,
+      totalFilesWithFindings: 100,
+    });
+    expect(result).toBe(33);
+  });
+
+  it("clamps to 1 when the derivation would round to 0", () => {
+    // Severely over-budget case: 1 file in the response but pre-drop
+    // bytes wildly exceed the ceiling. The derivation rounds to 0
+    // (1 * tiny ratio * 0.7 < 1), so the clamp to 1 protects against
+    // a `limit: 0` arg that would hang the next call.
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 1_000_000,
+      hardCeilingBytes: 96_000,
+      droppedFileCountFromRequestedLimit: 1,
+      totalFilesWithFindings: 5000,
+    });
+    expect(result).toBe(1);
+  });
+
+  it("returns undefined when preDropBytes is zero (degenerate input)", () => {
+    // Defensive: the byte-source upstream is also defensive on
+    // malformed inputs; this matches that posture. The caller falls
+    // back to `limit: 1` rather than emitting empty args.
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 0,
+      hardCeilingBytes: 96_000,
+      droppedFileCountFromRequestedLimit: 10,
+      totalFilesWithFindings: 100,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined when hardCeilingBytes is zero (degenerate input)", () => {
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 200_000,
+      hardCeilingBytes: 0,
+      droppedFileCountFromRequestedLimit: 10,
+      totalFilesWithFindings: 100,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined when droppedFileCountFromRequestedLimit is zero", () => {
+    // No files in the failing response means there's nothing to
+    // anchor the per-file byte rate to — the derivation can't
+    // produce a meaningful limit. Caller falls back to limit: 1.
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 200_000,
+      hardCeilingBytes: 96_000,
+      droppedFileCountFromRequestedLimit: 0,
+      totalFilesWithFindings: 100,
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("derives a strictly smaller limit than the failing scope's file count", () => {
+    // Invariant: the derived limit must always be smaller than the
+    // dropped file count that anchors it (otherwise the structured
+    // args would re-issue the failing scope at the same density).
+    // The 0.7 safety factor enforces this for any over-ceiling
+    // ratio < 1/0.7 ≈ 1.43; the slim path only fires when
+    // preDropBytes > hardCeilingBytes (ratio < 1), so the invariant
+    // holds for every case the slim path can produce.
+    const result = deriveSlimLimitFromBytes({
+      preDropBytes: 100_000,
+      hardCeilingBytes: 96_000,
+      droppedFileCountFromRequestedLimit: 100,
+      totalFilesWithFindings: 100,
+    });
+    expect(result).toBeDefined();
+    expect(result as number).toBeLessThan(100);
   });
 });

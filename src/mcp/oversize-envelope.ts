@@ -295,3 +295,50 @@ export function oversizeEnvelopeWarningsField(args: {
 function serializeLength(value: unknown): number {
   return JSON.stringify(value).length;
 }
+
+/**
+ * Derives a per-page `limit` cap from the slim envelope's byte
+ * arithmetic. Returns `floor(droppedFileCountFromRequestedLimit *
+ * (hardCeilingBytes / preDropBytes) * SLIM_LIMIT_SAFETY_FACTOR)`,
+ * clamped to ≥ 1, OR `undefined` when the inputs are degenerate
+ * (`preDropBytes === 0`, `hardCeilingBytes === 0`, or
+ * `droppedFileCountFromRequestedLimit === 0` — the slim path
+ * normally measures non-zero bytes, but the helper stays defensive
+ * because the byte sources upstream are also defensive on
+ * malformed inputs).
+ *
+ * Used by the slim envelope's `nextStepStructured` builder to
+ * populate `args.limit` when no honest non-vendor narrowing dir can
+ * be derived from the file inventory. Without this fallback, the
+ * structured next-call would ship `args: {}` while the prose
+ * recommends three concrete narrowing knobs — the canonical
+ * "Ambiguous field shapes are dishonest" failure for the structured
+ * slot.
+ *
+ * The safety factor is a presentation choice (per-file payload may
+ * bloat on the next call), not a suppression — the full inventory
+ * still ships on the recovery call, just with smaller pages. Exported
+ * so unit tests pin the derivation under wire fixtures.
+ */
+export function deriveSlimLimitFromBytes(reason: OversizeEnvelopeReason): number | undefined {
+  const { preDropBytes, hardCeilingBytes, droppedFileCountFromRequestedLimit } = reason;
+  if (preDropBytes <= 0) return undefined;
+  if (hardCeilingBytes <= 0) return undefined;
+  if (droppedFileCountFromRequestedLimit <= 0) return undefined;
+  const ratio = hardCeilingBytes / preDropBytes;
+  const derived = Math.floor(droppedFileCountFromRequestedLimit * ratio * SLIM_LIMIT_SAFETY_FACTOR);
+  return Math.max(1, derived);
+}
+
+/**
+ * Conservative multiplier on the byte-ratio slim-limit derivation.
+ * 70% leaves headroom for per-file payloads that bloat beyond the
+ * average observed on the failing scan (the rules that fired densely
+ * on this scan may fire densely again on the recovery call), so the
+ * next envelope is unlikely to re-trip the slim guard. Looser than
+ * 0.5 (which would over-shrink and force the agent into a per-page
+ * pagination loop on responses that would have fit at 0.6) and
+ * tighter than 0.9 (which would risk re-tripping the slim guard on
+ * the recovery call).
+ */
+const SLIM_LIMIT_SAFETY_FACTOR = 0.7;
