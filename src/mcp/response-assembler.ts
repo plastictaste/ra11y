@@ -68,6 +68,7 @@ import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import {
   buildPerRuleLimitationMap,
+  buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
 } from "./per-finding-confidence-parity.ts";
 import { buildSharedPerRuleCoverageMeta } from "./per-rule-coverage-shared.ts";
@@ -87,6 +88,7 @@ import {
 import {
   buildScanMeta,
   buildScanPlan,
+  detectFragmentFiles,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   isPerRuleCoverageUniformlyHigh,
@@ -623,18 +625,26 @@ export function assembleScanFamilyResponse(
   // `couldBeWrongBecause` axis. No-op fast path when no rule is
   // degraded (object identity stable on the common case).
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  // File-scoped gate: the substrate codes `file_parse_error` and
-  // `partial_parse` describe a per-file parse failure, not a corpus-
-  // level evidence limitation. The propagation helper attaches them
-  // only to findings whose file is in the corresponding parse-state
-  // set. The same partitioning fed `applyParseErrorAdjustment` above —
-  // sharing the predicate keeps the per-rule and per-finding layers
-  // honest about the same file.
-  const parseStateFiles = partitionParseStateFiles(parsedFiles, violationFilePaths);
+  // File-scoped gate: the substrate codes `file_parse_error` /
+  // `partial_parse` / `fragment_input_no_document_envelope` describe
+  // per-file substrate properties, not corpus-level evidence
+  // limitations. The propagation helper attaches each only to findings
+  // whose file is in the corresponding substrate set. The parse-state
+  // partition feeds the parse codes; the fragment file list (computed
+  // via the shared classifier in `src/engine/layout-partial.ts`,
+  // mirroring `analysisCoverage.fragmentFiles[]`) feeds the fragment
+  // code so the per-rule downgrade and per-finding propagation see
+  // the same file set — preventing the rule-internal vs meta-level
+  // disagreement Q13 names (a finding on a full `.html` document
+  // carrying `fragment_input_no_document_envelope` while the meta
+  // surface lists only an unrelated markdown-residue file).
   fileEntries = enrichFindingsWithPerRuleLimitations(
     fileEntries,
     perRuleLimitations,
-    parseStateFiles,
+    buildSubstrateFiles(
+      partitionParseStateFiles(parsedFiles, violationFilePaths),
+      detectFragmentFiles(parsedFiles),
+    ),
   );
   // Per-finding confidence parity, per-FILE axis (sibling of the per-
   // RULE pass above). Doctrine source: docs/kb/architecture/ai-first-

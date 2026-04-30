@@ -153,36 +153,71 @@ function snakeCase(code: string): string {
 }
 
 /**
+ * Substrate sets on {@link ParseStateFiles} a file-scoped code can
+ * gate against. Each entry in {@link FILE_SCOPED_SUBSTRATE_CODES}
+ * names one of these so the helper looks up the right file set.
+ */
+type FileScopedSubstrateSet = "parseError" | "partialParse" | "fragment";
+
+/**
  * File-scoped substrate codes whose propagation must gate on the
- * finding's own file-path membership in the corresponding parse-state
+ * finding's own file-path membership in the corresponding substrate
  * set. Other reason codes (rule-family
  * `cross_file_*_not_attempted_by_rule` variants,
- * `scss_unresolved_variables`, `fragment_input_no_document_envelope`,
- * `scss_partial_input`) describe a corpus-level limitation on the
- * rule's evidence model and propagate to every finding the rule
- * emitted on this scan; these two describe a per-file parse failure
- * and only apply to findings on the specific file that failed to
- * parse.
+ * `scss_unresolved_variables`, `scss_partial_input`) describe a
+ * corpus-level limitation on the rule's evidence model and propagate
+ * to every finding the rule emitted on this scan; the codes named
+ * here describe a per-file substrate property and only apply to
+ * findings on files that carry it.
  *
  * Doctrine source: docs/kb/architecture/ai-first-consumer.md
  *   "Per-finding confidence must reflect per-rule coverage limitations."
  *
  * Without the gate, a rule whose gate matched both a clean file and a
- * parse-errored file (and emitted findings on both) would attach the
- * substrate code to every finding from the rule, including the one on
- * the cleanly-parsed file — corpus-wide rather than file-scoped. The
- * clean-file finding would then read as "low-confidence because the
- * parser failed" when the parser actually cleared on its file.
+ * substrate-affected file (and emitted findings on both) would attach
+ * the substrate code to every finding from the rule, including the
+ * one on the unaffected file — corpus-wide rather than file-scoped.
+ * The unaffected-file finding would then carry a substrate code that
+ * contradicts the file's actual classification on
+ * `meta.analysisCoverage` (the canonical Q13 case: a finding on a
+ * full `.html` document carrying `fragment_input_no_document_envelope`
+ * while `meta.analysisCoverage.fragmentFiles[]` lists only an
+ * unrelated markdown-residue file). The shared classifier in
+ * `src/engine/layout-partial.ts` is the single source of truth for
+ * fragment classification; the `fragment` set passed in here is
+ * `analysisCoverage.fragmentFiles`'s file list, so the per-rule
+ * downgrade and the per-finding propagation see the same set.
+ *
+ * The map keys each file-scoped code to the substrate-set name on
+ * {@link ParseStateFiles} that gates it. Codes not in this map
+ * propagate corpus-wide.
  */
-const FILE_SCOPED_PARSE_STATE_CODES = new Set<string>(["file_parse_error", "partial_parse"]);
+const FILE_SCOPED_SUBSTRATE_CODES: ReadonlyMap<string, FileScopedSubstrateSet> = new Map<
+  string,
+  FileScopedSubstrateSet
+>([
+  ["file_parse_error", "parseError"],
+  ["partial_parse", "partialParse"],
+  ["fragment_input_no_document_envelope", "fragment"],
+]);
 
 /**
- * Optional file-path sets the propagation helper consults to gate the
- * `file_parse_error` / `partial_parse` substrate codes on file
- * membership. Both sets are populated by
- * {@link import("./scan-assembly.ts").partitionParseStateFiles} so the
+ * Optional file-path sets the propagation helper consults to gate
+ * file-scoped substrate codes on file membership. The parse-state
+ * sets are populated by
+ * {@link import("./parse-error-adjustment.ts").partitionParseStateFiles}
+ * and the fragment set by
+ * {@link import("./scan-assembly.ts").detectFragmentFiles}, so the
  * per-rule adjuster and the per-finding propagation share the same
- * predicate.
+ * predicate via the shared classifier in
+ * `src/engine/layout-partial.ts`.
+ *
+ * `fragment` is optional so legacy / fixture callers that don't
+ * populate it stay backward-compatible — when absent, the helper
+ * treats it as the empty set, so `fragment_input_no_document_envelope`
+ * never re-attaches to a finding whose file isn't a known fragment
+ * (the per-finding code stays as the rule emitted it; corpus-wide
+ * propagation stops at this code).
  *
  * Caller passes `undefined` (or omits the argument) to keep the
  * pre-gate behavior — the helper then propagates every code corpus-
@@ -193,6 +228,21 @@ const FILE_SCOPED_PARSE_STATE_CODES = new Set<string>(["file_parse_error", "part
 export interface ParseStateFiles {
   readonly parseError: ReadonlySet<string>;
   readonly partialParse: ReadonlySet<string>;
+  readonly fragment?: ReadonlySet<string>;
+}
+
+/**
+ * Convenience constructor: combines a `partitionParseStateFiles`
+ * result with a fragment file list (typically from
+ * `detectFragmentFiles`) into a {@link ParseStateFiles}. Lets call
+ * sites use a single line at the propagation seam without inlining
+ * the spread + `new Set(...)` boilerplate.
+ */
+export function buildSubstrateFiles(
+  parsed: { readonly parseError: ReadonlySet<string>; readonly partialParse: ReadonlySet<string> },
+  fragmentFiles: readonly string[],
+): ParseStateFiles {
+  return { ...parsed, fragment: new Set(fragmentFiles) };
 }
 
 /**
@@ -208,10 +258,11 @@ export interface ParseStateFiles {
  * codes would force the agent to dedupe on read.
  *
  * File-scoped gate: when the propagated code is in
- * {@link FILE_SCOPED_PARSE_STATE_CODES} AND `parseStateFiles` is
+ * {@link FILE_SCOPED_SUBSTRATE_CODES} AND `parseStateFiles` is
  * supplied, the helper attaches the code only to findings whose file
- * path is in `parseError ∪ partialParse`. Other codes (rule-family
- * cross-file limitations, scss-unresolved-variables, fragment-input)
+ * path is in the corresponding substrate set (`parseError` /
+ * `partialParse` / `fragment`). Other codes (rule-family cross-file
+ * limitations, scss-unresolved-variables, scss-partial-input)
  * describe a corpus-level evidence limitation and propagate to every
  * finding the rule emitted, regardless of file.
  *
@@ -226,15 +277,15 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
   if (perRuleLimitations.size === 0) return fileEntries;
   let mutatedAny = false;
   const out = fileEntries.map((file) => {
-    const fileScopedParseStateCodeAllowed = isFileInParseStateSets(file.path, parseStateFiles);
     let bucketMutated = false;
     const findings = file.findings.map((finding) => {
       const code = perRuleLimitations.get(finding.ruleId);
       if (code === undefined) return finding;
-      // File-scoped gate: parse-state codes only attach to findings on
-      // files in `parseError ∪ partialParse`. Other codes (corpus-level
-      // evidence limitations) propagate unconditionally.
-      if (FILE_SCOPED_PARSE_STATE_CODES.has(code) && !fileScopedParseStateCodeAllowed) {
+      // File-scoped gate: codes named in `FILE_SCOPED_SUBSTRATE_CODES`
+      // attach only to findings whose file path is in the named
+      // substrate set. Other codes (corpus-level evidence limitations)
+      // propagate unconditionally.
+      if (!isFileInSubstrateSetForCode(file.path, code, parseStateFiles)) {
         return finding;
       }
       const existing = finding.couldBeWrongBecause;
@@ -255,16 +306,31 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
 }
 
 /**
- * Returns whether the given file path is in either parse-state set.
- * When the caller didn't supply `parseStateFiles` (legacy / fixture
- * test paths that don't thread the parsed-file partition through),
- * returns `true` so the helper falls back to the pre-gate corpus-wide
- * propagation — additive over the existing call shape.
+ * True when the propagation gate allows attaching `code` to a finding
+ * on `path`:
+ *   - Codes not in {@link FILE_SCOPED_SUBSTRATE_CODES} bypass the gate
+ *     (corpus-wide propagation).
+ *   - File-scoped codes require `parseStateFiles` AND `path` membership
+ *     in the named substrate set. When `parseStateFiles` is omitted
+ *     entirely, falls back to the pre-gate corpus-wide propagation so
+ *     legacy / fixture callers stay backward-compatible. When
+ *     `parseStateFiles` is supplied but the named set is `undefined`
+ *     (e.g. `fragment` left out by a caller that doesn't thread the
+ *     fragment-files list), the gate denies — the safer half of the
+ *     asymmetric failure modes (no false attribution of a substrate
+ *     code).
  */
-function isFileInParseStateSets(
+function isFileInSubstrateSetForCode(
   path: string,
+  code: string,
   parseStateFiles: ParseStateFiles | undefined,
 ): boolean {
+  const setName = FILE_SCOPED_SUBSTRATE_CODES.get(code);
+  if (setName === undefined) return true;
   if (parseStateFiles === undefined) return true;
-  return parseStateFiles.parseError.has(path) || parseStateFiles.partialParse.has(path);
+  if (setName === "fragment") {
+    return parseStateFiles.fragment !== undefined && parseStateFiles.fragment.has(path);
+  }
+  if (setName === "parseError") return parseStateFiles.parseError.has(path);
+  return parseStateFiles.partialParse.has(path);
 }

@@ -34,6 +34,7 @@ import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import {
   buildPerRuleLimitationMap,
+  buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
 } from "./per-finding-confidence-parity.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
@@ -786,16 +787,17 @@ export async function runScanAndFormat(
   // the agent needs to triage with rides on the `couldBeWrongBecause`
   // axis. No-op fast path when no rule is degraded.
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  // File-scoped gate: the substrate codes `file_parse_error` and
-  // `partial_parse` only attach to findings whose file is in the
-  // corresponding parse-state set — the same partitioning that fed
-  // `applyParseErrorAdjustment` above, so per-rule and per-finding
-  // layers stay honest about the same file.
-  const parseStateFiles = partitionParseStateFiles(files, violationFilePaths);
+  // File-scoped gate: substrate codes (`file_parse_error`,
+  // `partial_parse`, `fragment_input_no_document_envelope`) attach
+  // only to findings on files in the named substrate set, so per-rule
+  // and per-finding layers stay honest about the same file. The
+  // `fragment` set mirrors `analysisCoverage.fragmentFiles[]` (shared
+  // classifier in `src/engine/layout-partial.ts`) so a finding on a
+  // full `.html` document never inherits the fragment code.
   const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
     fileEntries,
     perRuleLimitations,
-    parseStateFiles,
+    buildSubstrateFiles(partitionParseStateFiles(files, violationFilePaths), fragmentFiles),
   );
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
