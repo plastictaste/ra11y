@@ -57,19 +57,38 @@ export interface TruncatedFilesDroppedResult {
  * loose shape is `Record<string, unknown>` from the upstream
  * pre-trim accumulator.
  *
+ * Severity filter — info-severity findings are skipped so the per-
+ * rule `droppedCount` axis aligns with the headline `plan.topRules[].count`
+ * axis (which {@link import("./scan-assembly.ts").computeTopRules}
+ * computes against the same error+warning slice). Without the
+ * filter, an info-bearing rule like `contrast/minimum` (which emits
+ * `severity: "info"` on hedged-uncertainty branches) would land a
+ * `droppedCount` exceeding its headline `count` whenever the dropped
+ * subset carried info findings — a within-response cross-field
+ * count drift that violates the "Cross-surface count invariant"
+ * doctrine bullet at the per-response level. Keeping both axes on
+ * the same severity slice means the agent can read
+ * `topRules[ruleId].count` minus `topDroppedRules[ruleId].droppedCount`
+ * as the surviving on-wire emission count for that rule with no
+ * cross-axis disambiguation.
+ *
  * @param droppedFiles — file inventory the caller is dropping. The
  *   helper iterates `findings[]` on each entry to build the per-rule
- *   tally.
+ *   tally; entries missing `severity` (loose shape) are kept (the
+ *   typed shape always populates it, so the only `undefined`-severity
+ *   case is hand-authored test fixtures predating this filter).
  *
  * @returns `{ payload }` where `payload` is the spreadable
  *   `warningsDetails.truncated_files_dropped` value when at least
- *   one dropped finding was rule-tagged, or `undefined` when the
- *   dropped subset carried no findings (caller suppresses both the
- *   code and the payload to avoid the "Ambiguous field shapes are
- *   dishonest" failure mode).
+ *   one dropped non-info finding was rule-tagged, or `undefined` when
+ *   the dropped subset carried no error/warning findings (caller
+ *   suppresses both the code and the payload to avoid the "Ambiguous
+ *   field shapes are dishonest" failure mode).
  */
 export function computeTruncatedFilesDroppedWarning(
-  droppedFiles: readonly { readonly findings?: readonly { readonly ruleId?: string }[] }[],
+  droppedFiles: readonly {
+    readonly findings?: readonly { readonly ruleId?: string; readonly severity?: string }[];
+  }[],
 ): TruncatedFilesDroppedResult {
   const droppedFindings = collectDroppedFindings(droppedFiles);
   if (droppedFindings.length === 0) return { payload: undefined };
@@ -118,10 +137,17 @@ export function spliceTruncatedFilesDropped(
  * Internal: flattens the dropped-file subset's findings into a
  * `{ ruleId }` list for {@link truncatedFilesDroppedDetailsField}.
  * Pure over the input — skips findings whose `ruleId` is missing or
- * non-string.
+ * non-string, and skips info-severity findings so the per-rule
+ * `droppedCount` axis matches the error+warning slice
+ * {@link import("./scan-assembly.ts").computeTopRules} uses for
+ * `plan.topRules[].count`. See the
+ * {@link computeTruncatedFilesDroppedWarning} docblock for the
+ * cross-field invariant rationale.
  */
 function collectDroppedFindings(
-  droppedFiles: readonly { readonly findings?: readonly { readonly ruleId?: string }[] }[],
+  droppedFiles: readonly {
+    readonly findings?: readonly { readonly ruleId?: string; readonly severity?: string }[];
+  }[],
 ): readonly { readonly ruleId: string }[] {
   const out: { readonly ruleId: string }[] = [];
   for (const file of droppedFiles) {
@@ -129,6 +155,7 @@ function collectDroppedFindings(
     for (const finding of findings) {
       const ruleId = finding.ruleId;
       if (typeof ruleId !== "string" || ruleId.length === 0) continue;
+      if (finding.severity === "info") continue;
       out.push({ ruleId });
     }
   }
