@@ -57,55 +57,11 @@ bun run build              # Transpile src/ → dist/
 
 ## 5. Project layout
 
-```
-ra11y/
-├── .claude/                 # Autonomous infrastructure
-│   ├── settings.json        # Hook wiring
-│   ├── backlog.md           # Persistent to-do list — /continue reads this
-│   ├── agents/              # Subagent definitions
-│   ├── skills/              # Skills (folders with SKILL.md + supporting files)
-│   ├── rules/               # Path-scoped rules loaded on demand
-│   └── hooks/               # TypeScript hook scripts run by bun
-├── src/
-│   ├── index.ts             # Public programmatic API entry (re-exports from src/api/)
-│   ├── cli.ts               # Binary entry (thin wrapper over src/cli/)
-│   ├── types/               # Single source of truth for shared types
-│   ├── engine/              # Scanner machinery (scanner, rule-runner, registries)
-│   ├── standards/           # WCAG 2.2, 2.1, Section 508, EN 301 549
-│   ├── rules/               # Rules organized by domain
-│   ├── input/               # Parsers (tsx, html, css, tailwind) + file discovery
-│   ├── output/              # Formatters (terminal, json, sarif, junit, html, markdown, agent) + theme
-│   │   └── agent-response/  # Shared AI-first response builder — consumed by MCP + CLI --format agent
-│   ├── reports/             # Structured reports (coverage, vpat, certification, checklist)
-│   ├── mcp/                 # MCP server (JSON-RPC over stdio) + tool handlers
-│   │   ├── prompts/         # Built-in prompt templates (audit, fix, triage)
-│   │   └── resources/       # ra11y-kb:// resource index + readers
-│   ├── review/              # Review candidate ranking
-│   │   └── finders/         # Per-criterion manual-review candidate generators
-│   ├── config/              # Config loading + validation (ra11y.config.ts, pragmas)
-│   ├── api/                 # Public API (defineRule, defineStandard, defineConfig, defineFormatter)
-│   ├── cli/                 # CLI internals
-│   │   └── commands/        # Per-command handlers (scan, coverage, vpat, checklist, …)
-│   └── utils/               # Zero-dep primitives (ansi, args, glob, contrast, string-width, logger)
-├── tests/                   # Mirrors src/; plus integration, snapshot, cli, fuzz, golden, fixtures
-├── docs/                    # User docs + architecture + ADRs + indexed KB (docs/kb/)
-├── examples/                # Precommit, CI, plugin examples
-└── scripts/                 # All .ts, run with bun (guards, generators, bench)
-```
+Top-level: `src/` (engine + rules + standards + parsers + output + mcp + review + reports + config + api + cli + utils), `tests/`, `docs/`, `scripts/`, `.claude/`, `examples/`. Full annotated tree: `@docs/kb/architecture/project-layout.md`.
 
 ## 6. The three-layer model
 
-```
-  Standards (WCAG 2.2, 2.1, Section 508, EN 301 549)
-       ▲  declares
-  Criteria (wcag22:1.4.3, section508:1194.22.c, en301549:9.1.4.3)
-       ▲  satisfies: Criterion[]
-  Rules (contrast/minimum, alt-text/missing, focus/visible)
-```
-
-Accessibility standards overlap massively. A contrast check satisfies WCAG 1.4.3 AA, Section 508 §1194.22(c), and EN 301 549 9.1.4.3. Separating *what to check* (rules) from *why it matters* (criteria) from *which framework cares* (standards) kills duplication. At registry init, the engine walks every loaded standard's `equivalentTo` field and builds a reciprocal index, so thin standards (Section 508, EN 301 549) get full coverage for free via equivalence.
-
-Full walkthrough: `@docs/kb/architecture/three-layer-model.md` and `@docs/kb/architecture/rule-engine.md`.
+Standards → Criteria → Rules. One rule can `satisfies` criteria across multiple standards (a contrast rule covers WCAG 1.4.3 AA, Section 508 §1194.22(c), and EN 301 549 9.1.4.3). At registry init, the engine walks every loaded standard's `equivalentTo` field and builds a reciprocal index. Full walkthrough: `@docs/kb/architecture/three-layer-model.md` and `@docs/kb/architecture/rule-engine.md`.
 
 ## 7. Workflow shortcuts
 
@@ -213,18 +169,16 @@ Rule coverage matrix for v0.1.0 lives in `@docs/kb/standards/wcag22.md` — ever
 
 ## 14. Common mistakes
 
-Mistakes specific to consumer-model / MCP response shape design live in `@docs/kb/architecture/ai-first-consumer.md` and the path-scoped rule at `.claude/rules/mcp-response-shapes.md`. This list covers the rest:
+Consumer-model / MCP response shape mistakes live in `@docs/kb/architecture/ai-first-consumer.md` (path-scoped via `.claude/rules/mcp-response-shapes.md`). The rest:
 
-- Adding a dependency "just for this one thing." → implement in `src/utils/`.
-- Generic fix suggestions. → inspect surrounding AST nodes and produce context-aware text.
-- Touching engine code when adding a rule. → rules are content; the engine is stable.
-- Patching a test to make it pass. → the WCAG spec is source of truth. Fix whichever is wrong.
-- Using `Bun.file()` or similar in `src/`. → Node-compatible APIs only in `src/`. Bun-specific usage stays in tests/scripts/hooks.
-- Skipping `/verify`. → precommit hooks catch it, but develop the habit.
-- `// @ts-ignore`. → fix the type.
-- Committing without a WCAG citation in the rule header. → CI rejects.
-- Hardcoding inventory counts in docs ("49 rules", "four standards"). → these rot between releases. Name the items that matter or point at the canonical source (`tools/list`, `src/rules/index.ts`). Specific counts belong only in changelog entries, release notes, or generated reports where the date/version anchors them.
-- Writing behavior-rehearsal unit tests for a real-world bug. → "the ranker orders alphabetically on ties", "the cap returns 5 entries when given 10" — these re-assert the code you just wrote and need to change every time you refactor; they catch typos, not regressions in behavior the user cares about. A test earns its keep when it encodes either (a) an invariant that survives refactors ("every pragma declaration has a line number") or (b) a real-world failure mode with a sanitized repro. For (b), **land the snippet under `tests/fixtures/real-world/<case>/` before writing the fix** (see § 7 bug-fix workflow). Fixtures survive internal rewrites; behavior-rehearsal unit tests for the same bug do not.
+- Adding a dependency "just for this one thing" → implement in `src/utils/`.
+- Generic fix suggestions → inspect surrounding AST and produce context-aware text.
+- Touching engine code when adding a rule → rules are content; the engine is stable.
+- Patching a test to make it pass → WCAG is source of truth; fix whichever is wrong.
+- `Bun.file()` etc. in `src/` → Node-compatible APIs only in `src/`; Bun-only fine in tests/scripts/hooks.
+- Skipping `/verify`, `// @ts-ignore`, committing a rule without a WCAG citation → all rejected.
+- Hardcoding inventory counts in docs ("49 rules") → they rot; point at the canonical source (`tools/list`, `src/rules/index.ts`).
+- Behavior-rehearsal unit tests ("the ranker orders alphabetically on ties") → they catch typos, not regressions. Encode invariants that survive refactors, or land a sanitized real-world fixture under `tests/fixtures/real-world/<case>/` before writing the fix (see § 7).
 
 ## 15. When in doubt
 
