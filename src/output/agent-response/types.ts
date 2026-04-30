@@ -418,13 +418,15 @@ export interface AgentReviewCandidate {
   /**
    * Sibling structured payload to {@link AgentReviewCandidate#vendorPathHint}
    * — carries the vendor-path-shape evidence as a discriminated
-   * `signal` plus a stable `redirectTo: "consumer-override"` enum the
-   * agent reads to learn the dismissal direction. Mirrors
-   * `ReviewCandidate.vendorContext` on the source-of-truth shape and
-   * the field of the same name on the `suggest_fix` response, so an
-   * agent reads the same direction across the manual-review and
-   * apply-fix lanes. Present-when-meaningful — omitted on
-   * authored-source candidates.
+   * `signal` (`vendor-bundle-basename` vs. `minified-shape`) naming
+   * which path-shape predicate fired. Mirrors
+   * `ReviewCandidate.vendorContext` on the source-of-truth shape so
+   * the agent reads the same evidence across the manual-review
+   * surfaces. The dismissal recommendation ("override the failing
+   * concern in your own code") lives on the `suggest_fix` response's
+   * own `VendorContext` shape, which carries actionable prose
+   * alongside its primary/alternative fix lanes. Present-when-
+   * meaningful — omitted on authored-source candidates.
    */
   readonly vendorContext?: ReviewCandidateVendorContext;
   /**

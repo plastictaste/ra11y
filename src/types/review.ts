@@ -102,20 +102,28 @@ export type ReviewCandidateVendorSignal =
   | { readonly kind: "minified-shape" };
 
 /**
- * Wire shape for {@link ReviewCandidate#vendorContext}. Carries a
- * deterministic `signal` plus a stable `redirectTo` enum the agent
- * reads to learn what dismissal direction the response is recommending.
+ * Wire shape for {@link ReviewCandidate#vendorContext}. Carries the
+ * deterministic `signal` naming which vendor-path-shape predicate
+ * fired (`vendor-bundle-basename` or `minified-shape`) — the agent
+ * reads the discriminator and inspects the cited file to confirm the
+ * classification.
  *
- * `redirectTo: "consumer-override"` mirrors the value used by the
- * `suggest_fix` surface's `VendorContext` (see
- * `src/mcp/suggest-fix-vendor-context.ts`) so an agent that has
- * already learned the term on the suggest_fix lane reads the same
- * direction here. Currently a single-value enum; future redirects
- * (e.g. `"upstream-bug-report"`) would extend the union.
+ * Strictly evidence — the field is additive context, never a routing
+ * instruction. Sibling fields on the same response already carry the
+ * "what next?" signal: `vendorPathHint: true` is the typed boolean,
+ * `scanKind: "buildArtifact"` (when present on the same scope) names
+ * the lane, and the per-item priority downgrade in the checklist
+ * surface (`tool-checklist.ts` `priorityFor()`) reads the field's
+ * presence to drop attention budget when every grounded candidate
+ * carries it. The dismissal direction the agent acts on — "override
+ * the failing concern in your own code rather than edit this file" —
+ * is documented on the `suggest_fix` surface's separate `VendorContext`
+ * (see `src/mcp/suggest-fix-vendor-context.ts`), which carries its own
+ * `redirectTo` enum alongside `primary.approach` prose; consumers who
+ * need the override recommendation call that lane.
  */
 export interface ReviewCandidateVendorContext {
   readonly signal: ReviewCandidateVendorSignal;
-  readonly redirectTo: "consumer-override";
 }
 
 /**
@@ -273,10 +281,14 @@ export interface ReviewCandidate {
    * Sibling — and stronger — to {@link ReviewCandidate#vendorPathHint}:
    * `vendorPathHint` is the typed boolean signal an agent reads to know
    * the file is third-party code; `vendorContext` adds the structured
-   * dismissal direction (`redirectTo: "consumer-override"`) so the
-   * agent sees the same recommendation the `suggest_fix` surface
-   * carries on its own `vendorContext` shape (consumer-override over
-   * in-vendor-edit; see `src/mcp/suggest-fix-vendor-context.ts`).
+   * `signal` discriminator (`vendor-bundle-basename` vs.
+   * `minified-shape`) naming which path-shape predicate fired so the
+   * agent reads the same evidence the finder did. The dismissal
+   * recommendation ("override the failing concern in your own code
+   * rather than edit this file") lives on the `suggest_fix` surface's
+   * own `VendorContext` shape (see
+   * `src/mcp/suggest-fix-vendor-context.ts`), which carries the
+   * actionable prose alongside its primary/alternative fix lanes.
    *
    * Surfaced through to the checklist surface, where the per-item
    * `priorityFor()` ranker downgrades item priority from `"high"` to

@@ -767,14 +767,13 @@ describe("review/timing", () => {
 
   describe("vendorContext (priority-honesty axis on vendor-pathed candidates)", () => {
     // Sibling structured payload to vendorPathHint: carries the same
-    // vendor-path-shape evidence plus a stable `redirectTo:
-    // "consumer-override"` enum so the checklist surface's per-item
-    // priority ranker can downgrade attention budget when every
-    // grounded candidate sits on a vendor / build-output file. Per
-    // doctrine "Reason / priority / fix-description must agree" — a
-    // reason that concedes "minified file" cannot ride at `priority:
-    // high`. The candidate stays surfaced (surface-don't-suppress);
-    // the priority axis flexes.
+    // vendor-path-shape evidence as a discriminated `signal` so the
+    // checklist surface's per-item priority ranker can downgrade
+    // attention budget when every grounded candidate sits on a vendor /
+    // build-output file. Per doctrine "Reason / priority /
+    // fix-description must agree" — a reason that concedes "minified
+    // file" cannot ride at `priority: high`. The candidate stays
+    // surfaced (surface-don't-suppress); the priority axis flexes.
 
     it("emits vendorContext on a canonical vendor-bundle filename", () => {
       const out = runFinder(finder, `setTimeout(function(){},2000);`, {
@@ -783,7 +782,6 @@ describe("review/timing", () => {
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit?.vendorContext).toEqual({
         signal: { kind: "vendor-bundle-basename" },
-        redirectTo: "consumer-override",
       });
     });
 
@@ -798,7 +796,6 @@ describe("review/timing", () => {
       });
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit?.vendorContext?.signal.kind).toBe("vendor-bundle-basename");
-      expect(hit?.vendorContext?.redirectTo).toBe("consumer-override");
     });
 
     it("emits vendorContext with kind=minified-shape on a non-vendor minified file", () => {
@@ -814,7 +811,6 @@ describe("review/timing", () => {
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit?.vendorContext).toEqual({
         signal: { kind: "minified-shape" },
-        redirectTo: "consumer-override",
       });
     });
 
@@ -847,14 +843,15 @@ describe("review/timing", () => {
     it("populates vendorContext alongside vendorPathHint (sibling fields)", () => {
       // Both fields ride on the same candidate when a vendor-path
       // predicate fires — vendorPathHint is the typed boolean signal,
-      // vendorContext adds the structured `redirectTo` enum. Neither
-      // is a substitute for the other; the agent reads either.
+      // vendorContext adds the discriminated `signal` naming which
+      // predicate fired. Neither is a substitute for the other; the
+      // agent reads either.
       const out = runFinder(finder, `setTimeout(function(){},2000);`, {
         filePath: "vendor/jquery-1.10.2.js",
       });
       const hit = out.find((c) => c.reason.includes("setTimeout"));
       expect(hit?.vendorPathHint).toBe(true);
-      expect(hit?.vendorContext?.redirectTo).toBe("consumer-override");
+      expect(hit?.vendorContext?.signal.kind).toBe("vendor-bundle-basename");
     });
 
     it("does not attach vendorContext to <meta http-equiv='refresh'> candidates", () => {

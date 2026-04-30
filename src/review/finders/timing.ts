@@ -263,16 +263,16 @@ function emitJsCandidates(
   const vendorPathHint =
     isVendorBundleBasename(ctx.filePath) || isMinifiedForEnrichment(ctx.filePath, ctx.source);
   // Sibling structured field — `vendorContext` carries the same
-  // vendor-path-shape evidence as `vendorPathHint` but adds the
-  // dismissal-direction enum (`redirectTo: "consumer-override"`) so
-  // the candidate-priority ranker on the checklist surface can
-  // honestly downgrade attention budget when every grounded
-  // candidate points at vendor / build-output code. Per AI-first
-  // doctrine "Reason / priority / fix-description must agree across
-  // all three channels": a reason that concedes "minified file"
-  // cannot ride at the same `priority: high` as a candidate
-  // pointing at hand-authored source. The candidate stays at the
-  // same `confidence: "medium"`; the priority axis is the
+  // vendor-path-shape evidence as `vendorPathHint` but in a
+  // discriminated `signal` shape (`vendor-bundle-basename` vs.
+  // `minified-shape`) so the candidate-priority ranker on the
+  // checklist surface can honestly downgrade attention budget when
+  // every grounded candidate points at vendor / build-output code.
+  // Per AI-first doctrine "Reason / priority / fix-description must
+  // agree across all three channels": a reason that concedes
+  // "minified file" cannot ride at the same `priority: high` as a
+  // candidate pointing at hand-authored source. The candidate stays
+  // at the same `confidence: "medium"`; the priority axis is the
   // attention-budget channel that needs to flex on this signal.
   const vendorContext = buildVendorContext(ctx.filePath, ctx.source);
   const durationFields = buildDurationFields(duration);

@@ -34,11 +34,11 @@
  * companion to the reason-text clause: when the cited file matches
  * either the vendor-bundle-basename predicate above or the minified-
  * shape predicate in `timing-minified.ts`, the helper returns a
- * `ReviewCandidateVendorContext` carrying `redirectTo:
- * "consumer-override"`. The checklist surface uses the field to
- * downgrade item priority when every grounded candidate ships it,
- * matching the doctrine line "Reason / priority / fix-description
- * must agree across all three channels."
+ * `ReviewCandidateVendorContext` carrying a `signal` discriminator
+ * naming which predicate fired. The checklist surface uses the field's
+ * presence to downgrade item priority when every grounded candidate
+ * ships it, matching the doctrine line "Reason / priority /
+ * fix-description must agree across all three channels."
  */
 
 import type { ReviewCandidateVendorContext } from "../../types/review.ts";
@@ -203,25 +203,23 @@ function vendorBasenameOf(filePath: string): string {
  * from `src/mcp/build-artifacts.ts` so the finder layer stays
  * decoupled from the MCP layer (`src/review/` is a content layer).
  *
- * Always pairs with `redirectTo: "consumer-override"` — the only
- * dismissal direction this signal supports. Future redirects (e.g.
- * `"upstream-bug-report"`) would extend the wire enum.
+ * Carries `signal` only — the dismissal direction ("override the
+ * failing concern in your own code rather than edit this file") is
+ * documented on the `suggest_fix` surface's `VendorContext` shape
+ * (`src/mcp/suggest-fix-vendor-context.ts`), where it pairs with
+ * `primary.approach` prose. The review-candidate field is structured
+ * evidence the agent reads to confirm the classification, not an
+ * in-band routing instruction.
  */
 export function buildVendorContext(
   filePath: string,
   source: string,
 ): ReviewCandidateVendorContext | null {
   if (isVendorBundleBasename(filePath)) {
-    return {
-      signal: { kind: "vendor-bundle-basename" },
-      redirectTo: "consumer-override",
-    };
+    return { signal: { kind: "vendor-bundle-basename" } };
   }
   if (isMinifiedForEnrichment(filePath, source)) {
-    return {
-      signal: { kind: "minified-shape" },
-      redirectTo: "consumer-override",
-    };
+    return { signal: { kind: "minified-shape" } };
   }
   return null;
 }

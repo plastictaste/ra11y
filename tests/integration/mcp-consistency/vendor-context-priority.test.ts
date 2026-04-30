@@ -6,11 +6,12 @@
  * fix-description must agree across all three channels", a candidate
  * whose cited file matches a vendor-path-shape predicate (canonical
  * vendor-bundle basename, `.min.` infix, single-line minified shape)
- * carries a `vendorContext: { signal, redirectTo: "consumer-override" }`
- * payload. The framing concedes the dismissal direction is "override
- * the failing concern in your own code rather than edit this file" —
- * which is fundamentally different work from a candidate pointing at
- * hand-authored source.
+ * carries a `vendorContext: { signal }` payload naming which path-
+ * shape predicate fired. The framing concedes the dismissal direction
+ * is "override the failing concern in your own code rather than edit
+ * this file" (documented on the `suggest_fix` surface's separate
+ * `VendorContext` shape) — which is fundamentally different work
+ * from a candidate pointing at hand-authored source.
  *
  * The agent budgets against priority; when every grounded candidate
  * sits on a vendor / build-output file, the priority signal must
@@ -47,7 +48,6 @@ interface JsonRpcResponse {
 
 interface VendorContextPayload {
   readonly signal: { readonly kind: string };
-  readonly redirectTo: string;
 }
 
 interface ChecklistCandidate {
@@ -113,10 +113,9 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     const dir = await mkdtemp(join(tmpdir(), "ra11y-vendor-2-2-1-"));
     // Canonical vendor-bundle basename — `isVendorBundleBasename`
     // fires; every emitted setTimeout candidate carries
-    // `vendorContext: { signal: { kind: "vendor-bundle-basename" },
-    // redirectTo: "consumer-override" }`. 2.2.1 is Level A, so the
-    // un-downgraded priority would be "high"; the vendor-context
-    // downgrade must drop it to "medium".
+    // `vendorContext: { signal: { kind: "vendor-bundle-basename" } }`.
+    // 2.2.1 is Level A, so the un-downgraded priority would be "high";
+    // the vendor-context downgrade must drop it to "medium".
     await writeFile(
       join(dir, "jquery-1.10.2.js"),
       `function tick(){ setTimeout(function(){ tick(); }, 2000); }\n`,
@@ -129,9 +128,9 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     expect(item.candidates.length).toBeGreaterThan(0);
     // Every grounded candidate carries the vendorContext payload.
     expect(item.candidates.every((c) => c.vendorContext !== undefined)).toBe(true);
-    expect(item.candidates.every((c) => c.vendorContext?.redirectTo === "consumer-override")).toBe(
-      true,
-    );
+    expect(
+      item.candidates.every((c) => c.vendorContext?.signal.kind === "vendor-bundle-basename"),
+    ).toBe(true);
     // Priority downgrade kicks in.
     expect(item.priority).not.toBe("high");
     expect(["medium", "low"]).toContain(item.priority);

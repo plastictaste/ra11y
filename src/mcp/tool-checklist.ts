@@ -147,9 +147,9 @@ interface ChecklistCandidateOut {
   readonly vendorPathHint?: boolean;
   /**
    * Sibling structured payload to `vendorPathHint` — carries the
-   * vendor-path-shape evidence as a discriminated `signal` plus a
-   * stable `redirectTo: "consumer-override"` enum the agent reads
-   * to learn the dismissal direction. Drives the per-item priority
+   * vendor-path-shape evidence as a discriminated `signal`
+   * (`vendor-bundle-basename` vs. `minified-shape`) naming which
+   * path-shape predicate fired. Drives the per-item priority
    * downgrade in `priorityFor()`: when every grounded candidate
    * carries `vendorContext`, the item priority drops from `"high"`
    * to `"medium"` so the attention budget matches the framing the
@@ -157,11 +157,13 @@ interface ChecklistCandidateOut {
    * file — match at byte col …" cannot honestly ride at the same
    * priority as a candidate pointing at hand-authored source).
    *
-   * Mirrors the `vendorContext` field on the `suggest_fix` surface
-   * (`src/mcp/suggest-fix-vendor-context.ts`) — same `redirectTo`
-   * enum, same dismissal direction — so the agent reads the same
-   * recommendation across the manual-review and apply-fix lanes.
-   * Present-when-meaningful per CLAUDE.md §1.
+   * The dismissal recommendation ("override the failing concern in
+   * your own code") lives on the `suggest_fix` surface's separate
+   * `VendorContext` shape (`src/mcp/suggest-fix-vendor-context.ts`),
+   * which carries the actionable prose alongside its
+   * primary/alternative fix lanes; this field is structured evidence
+   * the agent reads to confirm the classification, not an in-band
+   * routing instruction. Present-when-meaningful per CLAUDE.md §1.
    */
   readonly vendorContext?: ReviewCandidateVendorContext;
   /**
@@ -339,11 +341,11 @@ function wcagPrincipleFor(standardId: string, localId: string): WcagPrinciple | 
  * basename or a minified-shape predicate — see
  * `buildVendorContext` in `src/review/finders/timing.ts`), the item
  * is not work the page author can act on in their own source. The
- * dismissal direction is "override the failing concern in your own
- * code" rather than "edit the vendor file." Same doctrine line as
- * the hedging branch — the priority signal must agree with the
- * `vendorContext.redirectTo` framing the candidate already carries.
- * Drop to "medium" so the attention budget matches.
+ * dismissal direction the agent acts on — "override the failing
+ * concern in your own code rather than edit the vendor file" — lives
+ * on the `suggest_fix` surface's separate `VendorContext` shape;
+ * this priority drop just keeps the attention-budget signal honest
+ * with the framing the candidate already concedes. Drop to "medium".
  */
 function priorityFor(
   level: string,

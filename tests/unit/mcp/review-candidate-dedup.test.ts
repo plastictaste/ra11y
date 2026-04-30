@@ -194,7 +194,6 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
         candidate("wcag22:2.2.1", "vendor lib timer", 5, 4, {
           vendorContext: {
             signal: { kind: "vendor-bundle-basename" },
-            redirectTo: "consumer-override",
           },
         }),
       ],

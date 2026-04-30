@@ -28,7 +28,6 @@ import type {
 
 const VENDOR_CONTEXT: ReviewCandidateVendorContext = {
   signal: { kind: "vendor-bundle-basename" },
-  redirectTo: "consumer-override",
 };
 
 const PREDICATE_CONCEDED: ReviewCandidatePredicateConceded = {
