@@ -43,7 +43,7 @@ import type {
   Severity,
   Violation,
 } from "../types/violation.ts";
-import { computeFindingId } from "../utils/finding-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { runFindersForFile } from "./candidate-runner.ts";
 import { mergeCoFiringRules } from "./cofire-merge.ts";
@@ -415,7 +415,7 @@ function invokeOneProjectRule(
     if (Array.isArray(maybe)) for (const v of maybe) sink.push(v);
   } catch (err) {
     // Project crashes don't have a specific file — use an empty
-    // source so the findingId still carries (ruleId, "") but the
+    // source so the findingGroupId still carries (ruleId, "") but the
     // normalized-line-text component is stable regardless of which
     // file triggered.
     out.push(projectRuleCrashViolation(rule.id, err));
@@ -434,6 +434,12 @@ function invokeOneProjectRule(
 function projectRuleCrashViolation(ruleId: string, err: unknown): Violation {
   const severity: Severity = "error";
   const findingId = computeFindingId({
+    ruleId: "internal/rule-crash",
+    filePath: "",
+    line: 1,
+    column: 1,
+  });
+  const findingGroupId = computeFindingGroupId({
     ruleId: "internal/rule-crash",
     filePath: "",
     source: "",
@@ -456,6 +462,7 @@ function projectRuleCrashViolation(ruleId: string, err: unknown): Violation {
     message: `Project-scope rule '${ruleId}' crashed: ${err instanceof Error ? err.message : String(err)}`,
     suggestion: `This is a ra11y bug in rule '${ruleId}', not a problem with your code. Please file an issue with the stack trace if you can reproduce it.`,
     findingId,
+    findingGroupId,
     groupKey,
   };
 }

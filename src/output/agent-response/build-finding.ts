@@ -253,6 +253,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
 
   return {
     findingId: v.findingId,
+    findingGroupId: v.findingGroupId,
     groupKey: v.groupKey,
     ruleId: v.ruleId,
     fixClass: v.fixClass,

@@ -55,6 +55,7 @@ function contrastViolation(overrides: {
       overrides.message ??
       "'.btn-primary' has color contrast ratio 2.30:1 against its background — WCAG 2.2 1.4.3 requires 4.5:1 for normal text.",
     findingId: `fid-${overrides.filePath}-${overrides.line ?? 42}`,
+    findingGroupId: `gid-${overrides.filePath}-${overrides.line ?? 42}`,
     groupKey: "gk-contrast",
     ...(overrides.patternId !== undefined && { patternId: overrides.patternId }),
   };

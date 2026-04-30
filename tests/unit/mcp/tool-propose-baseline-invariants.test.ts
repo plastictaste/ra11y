@@ -18,7 +18,7 @@ interface ProposeBaselineResponse {
   readonly proposed: readonly {
     readonly filePath: string;
     readonly ruleId: string;
-    readonly findingId: string;
+    readonly findingGroupId: string;
     readonly reason: string;
     readonly rationaleKey: string;
   }[];
@@ -129,7 +129,7 @@ describe("propose_baseline: precedence + invariants", () => {
     });
   });
 
-  it("populates a non-empty findingId on every proposed entry", async () => {
+  it("populates a non-empty findingGroupId on every proposed entry", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "page.html"),
@@ -138,8 +138,8 @@ describe("propose_baseline: precedence + invariants", () => {
       const body = await callTool(dir);
       expect(body.proposed.length).toBeGreaterThan(0);
       for (const entry of body.proposed) {
-        expect(typeof entry.findingId).toBe("string");
-        expect(entry.findingId.length).toBeGreaterThan(0);
+        expect(typeof entry.findingGroupId).toBe("string");
+        expect(entry.findingGroupId.length).toBeGreaterThan(0);
       }
     });
   });

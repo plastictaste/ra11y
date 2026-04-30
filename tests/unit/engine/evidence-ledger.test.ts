@@ -68,6 +68,7 @@ function mkViolation(criteria: readonly string[], findingId = "aaaa11112222"): V
     location: { filePath: "f.tsx", line: 1, column: 1 },
     message: "x",
     findingId,
+    findingGroupId: "gid000000000",
     groupKey: "gk0000000000",
   };
 }

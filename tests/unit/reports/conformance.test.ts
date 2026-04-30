@@ -70,6 +70,7 @@ function mkViolation(criterionId: string, findingId = "aaaa11112222"): Violation
     location: { filePath: "f.tsx", line: 1, column: 1 },
     message: "x",
     findingId,
+    findingGroupId: `gid-${findingId}`,
     groupKey: "gk0000000000",
   };
 }

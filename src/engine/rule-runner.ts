@@ -12,7 +12,7 @@
 import type { Ast } from "../types/ast.ts";
 import type { EmittedViolation, FixClass, Language, Rule } from "../types/rule.ts";
 import type { Severity, Violation } from "../types/violation.ts";
-import { computeFindingId } from "../utils/finding-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { maybePatternId } from "../utils/pattern-id.ts";
@@ -222,6 +222,43 @@ function collectReturn(maybe: readonly Violation[] | undefined, sink: EmittedVio
 }
 
 /**
+ * Computes the two identity tokens stamped onto every per-file
+ * Violation: per-emission `findingId` (line + column scoped, what
+ * `suggest_fix` resolves against) and cross-run `findingGroupId`
+ * (line-drift resilient, what baselines and scan_diff key on).
+ *
+ * `variantKey` disambiguates sub-variant emits from the same rule at
+ * the same `(filePath, line, column)` — e.g. `navigation/link-
+ * descriptive-text` firing both "generic-phrase" and "duplicate-name"
+ * on one anchor. Conditional spread per exactOptionalPropertyTypes:
+ * `finding-id.ts` folds the key into the hash only when present + non-
+ * empty, so rules that don't opt in preserve a stable token shape.
+ */
+function computeBothIds(
+  emitted: EmittedViolation,
+  ruleId: string,
+  filePath: string,
+  source: string,
+): { findingId: string; findingGroupId: string } {
+  const variantSpread = emitted.variantKey ? { variantKey: emitted.variantKey } : {};
+  const findingId = computeFindingId({
+    ruleId,
+    filePath,
+    line: emitted.location.line,
+    column: emitted.location.column,
+    ...variantSpread,
+  });
+  const findingGroupId = computeFindingGroupId({
+    ruleId,
+    filePath,
+    source,
+    line: emitted.location.line,
+    ...variantSpread,
+  });
+  return { findingId, findingGroupId };
+}
+
+/**
  * Builds the final Violation record from the rule's emitted form.
  * Rules don't know their own file path — the engine owns that fact —
  * so we stamp it here. This also lets a rule emit with `filePath: ""`
@@ -243,19 +280,7 @@ function stampViolation(
   source: string,
   ast: Ast,
 ): Violation {
-  // `variantKey` disambiguates sub-variant emits from the same rule at
-  // the same `(filePath, line)` (e.g. navigation/link-descriptive-text
-  // firing both "generic-phrase" and "duplicate-name" on one anchor).
-  // Conditional spread per exactOptionalPropertyTypes: finding-id.ts
-  // folds the key into the hash only when present + non-empty, so
-  // rules that don't opt in preserve their existing `findingId`s.
-  const findingId = computeFindingId({
-    ruleId,
-    filePath,
-    source,
-    line: emitted.location.line,
-    ...(emitted.variantKey ? { variantKey: emitted.variantKey } : {}),
-  });
+  const { findingId, findingGroupId } = computeBothIds(emitted, ruleId, filePath, source);
   const groupKey = computeGroupKey({
     ruleId,
     shape: shapeAtLocation(ast, emitted.location.line, emitted.location.column),
@@ -280,6 +305,7 @@ function stampViolation(
     ...(typeof emitted.decline === "number" ? { decline: emitted.decline } : {}),
     message: emitted.message,
     findingId,
+    findingGroupId,
     groupKey,
     ...(patternId !== undefined && { patternId }),
     ...(emitted.suggestion !== undefined && { suggestion: emitted.suggestion }),
@@ -375,6 +401,12 @@ function ruleCrashViolation(
   const findingId = computeFindingId({
     ruleId: "internal/rule-crash",
     filePath,
+    line: 1,
+    column: 1,
+  });
+  const findingGroupId = computeFindingGroupId({
+    ruleId: "internal/rule-crash",
+    filePath,
     source,
     line: 1,
   });
@@ -396,6 +428,7 @@ function ruleCrashViolation(
     message: `Rule '${ruleId}' crashed: ${message}`,
     suggestion: `This is a ra11y bug in rule '${ruleId}', not a problem with your code. Please file an issue with the stack trace if you can reproduce it.`,
     findingId,
+    findingGroupId,
     groupKey,
   };
 }

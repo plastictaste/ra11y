@@ -134,8 +134,9 @@ const CO_FIRE_PAIRS: readonly CoFirePair[] = [
  *   - The secondary's Violation is dropped from the output.
  *
  * Other Violation fields stay on the primary unchanged. The primary's
- * `severity`, `message`, `suggestion`, `fix`, `findingId`, `groupKey`,
- * and `fixClass` are preserved — folding the secondary does not
+ * `severity`, `message`, `suggestion`, `fix`, `findingId`,
+ * `findingGroupId`, `groupKey`, and `fixClass` are preserved — folding
+ * the secondary does not
  * synthesize a new identity; the agent reads the same primary record
  * with a wider `criteria` array.
  *

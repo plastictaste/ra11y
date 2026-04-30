@@ -29,6 +29,7 @@ import type { AgentFinding } from "../../../src/output/agent-response/types.ts";
 function finding(overrides: Partial<AgentFinding> & Pick<AgentFinding, "ruleId">): AgentFinding {
   return {
     findingId: overrides.findingId ?? "abc123",
+    findingGroupId: overrides.findingGroupId ?? "group-id-abc",
     groupKey: overrides.groupKey ?? "group-abc",
     fixClass: "guidance",
     criteria: ["wcag22:1.1.1"],

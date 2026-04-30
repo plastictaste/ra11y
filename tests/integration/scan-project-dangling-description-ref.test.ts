@@ -37,6 +37,7 @@ function buildFinding(
 ): AgentFinding {
   return {
     findingId: overrides.findingId ?? "abc123",
+    findingGroupId: overrides.findingGroupId ?? "gid123",
     groupKey: overrides.groupKey ?? "g1",
     fixClass: "guidance",
     criteria: ["wcag22:1.1.1"],

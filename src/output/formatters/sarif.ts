@@ -197,13 +197,15 @@ function violationToSarifResult(violation: Violation): SarifResult {
     message: { text: violation.message },
     locations: [buildPrimaryLocation(violation)],
     partialFingerprints: {
-      // Reuse the Violation's stable findingId — GitHub code scanning
+      // Reuse the Violation's `findingGroupId` — GitHub code scanning
       // uses this to deduplicate the same violation across runs. The
-      // findingId is line-number-drift resilient by design (hashes the
-      // normalized text of the violation line, not the line number
-      // itself), so an unrelated edit above the violation won't
-      // invalidate GitHub's dedup key.
-      primary: violation.findingId,
+      // `findingGroupId` is line-number-drift resilient by design
+      // (hashes the normalized text of the violation line, not the
+      // line number itself), so an unrelated edit above the violation
+      // won't invalidate GitHub's dedup key. The per-emission
+      // `findingId` would NOT be appropriate here — it includes the
+      // line number, so any line drift would invalidate dedup.
+      primary: violation.findingGroupId,
       // Secondary key groups findings that share a rule + AST shape
       // across files (docs/adr/0008-violation-group-key.md). GitHub
       // uses secondary fingerprints as a fallback when `primary`

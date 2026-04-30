@@ -11,12 +11,16 @@
  *
  * Shape contract (AI-first doctrine, `docs/kb/architecture/ai-first-consumer.md`):
  *
- *   - `proposed: Array<{filePath, ruleId, findingId, reason, rationaleKey}>`
- *     — one entry per current violation, deterministic. Each entry
- *     reuses the existing stable `findingId` so an agent can cross-
- *     reference against `scan_project` output without re-deriving it.
- *     The per-entry `rationaleKey` is a short SHA-256 truncation
- *     pointing into the top-level `rationales` map (below).
+ *   - `proposed: Array<{filePath, ruleId, findingGroupId, reason, rationaleKey}>`
+ *     — one entry per current cross-run-stable group, deterministic.
+ *     Each entry reuses the line-drift-resilient `findingGroupId` so
+ *     an agent can cross-reference against `scan_project` output, and
+ *     so the entry persisted to `.ra11y-baseline.json` matches on
+ *     subsequent runs even after surrounding code drift. (Per-emission
+ *     addressability — what `suggest_fix` resolves against — lives on
+ *     `findingId`, which is NOT the baseline key.) The per-entry
+ *     `rationaleKey` is a short SHA-256 truncation pointing into the
+ *     top-level `rationales` map (below).
  *   - `rationales: { [rationaleKey]: string }` — hoisted prose keyed by
  *     12-hex truncated SHA-256. Identical rationales across entries
  *     (the common `unclassified` case, where every entry would ship the
@@ -195,17 +199,20 @@ export const proposeBaselineTool: McpTool = {
       designMatcher,
     });
 
-    // Dedupe by `findingId` — first-seen wins, order preserved. A stable
-    // `findingId` is a 12-hex SHA-256 truncation of the finding group
-    // key (see); multiple `Violation` objects collapsing to
-    // the same id represent the same finding, not separate ones. Emitting
-    // duplicates inflates `counts.unclassified` and would persist dup
-    // entries to `.ra11y-baseline.json` if `baseline mode:"create"` ran
-    // against this proposal.
+    // Dedupe by `findingGroupId` — first-seen wins, order preserved.
+    // The `findingGroupId` is the cross-run-stable token baselines key
+    // on (line-drift resilient); multiple `Violation` objects sharing
+    // one group id represent the same baseline-level decision, not
+    // separate ones. Emitting duplicates inflates `counts.unclassified`
+    // and would persist dup entries to `.ra11y-baseline.json` if
+    // `baseline mode:"create"` ran against this proposal. (Note: per-
+    // emission `findingId` is now distinct for every emission per the
+    // addressability invariant — using it for dedup here would defeat
+    // the purpose; `findingGroupId` is the right axis.)
     const seen = new Set<string>();
     const dedupedRaw = rawProposed.filter((e) => {
-      if (seen.has(e.findingId)) return false;
-      seen.add(e.findingId);
+      if (seen.has(e.findingGroupId)) return false;
+      seen.add(e.findingGroupId);
       return true;
     });
 

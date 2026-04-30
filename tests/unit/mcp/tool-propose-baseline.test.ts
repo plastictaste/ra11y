@@ -20,7 +20,7 @@ import { proposeBaselineTool } from "../../../src/mcp/tool-propose-baseline.ts";
 interface ProposedEntry {
   readonly filePath: string;
   readonly ruleId: string;
-  readonly findingId: string;
+  readonly findingGroupId: string;
   readonly reason:
     | "wrapper-undetected"
     | "third-party-html"
@@ -282,20 +282,24 @@ describe("propose_baseline: wrapper-undetected", () => {
   });
 });
 
-describe("propose_baseline: dedupe by findingId", () => {
+describe("propose_baseline: dedupe by findingGroupId", () => {
   // Regression: bootstrap scan of a real external codebase observed
-  // four `proposed[]` entries sharing `findingId c841a8fbf136` at
-  // `tooltip.html` (tooltip/dismissable fires once per interactive
-  // element carrying `title`, and identical line-context hashes for
-  // co-located violations collapse to the same findingId). Identical
-  // id = same finding, so `proposed[]` must emit it once — otherwise
-  // `counts.unclassified` inflates and `baseline mode:"create"` would
-  // persist duplicate entries to `.ra11y-baseline.json`.
+  // four `proposed[]` entries sharing `findingGroupId c841a8fbf136`
+  // at `tooltip.html` (tooltip/dismissable fires once per interactive
+  // element carrying `title`, and identical line-text hashes for
+  // co-located violations collapse to the same `findingGroupId`).
+  // Identical group id = same baseline-level decision, so `proposed[]`
+  // must emit it once — otherwise `counts.unclassified` inflates and
+  // `baseline mode:"create"` would persist duplicate entries to
+  // `.ra11y-baseline.json`.
   //
   // Synthetic stream: three `<button title="…">` on a single line
-  // share the same (ruleId, filePath, ±3-line source window) and
-  // therefore the same findingId; the handler must dedupe to one.
-  it("collapses violations that share a findingId to a single proposed entry", async () => {
+  // share the same (ruleId, filePath, normalized-line-text) and
+  // therefore the same findingGroupId; the handler must dedupe to
+  // one. (Per-emission `findingId` is now distinct for every emission
+  // per the addressability invariant — but the baseline lane keys on
+  // group identity, not per-emission identity.)
+  it("collapses violations that share a findingGroupId to a single proposed entry", async () => {
     await withScratch(async (dir) => {
       // Titles are kept distinct from visible text so the
       // tooltip/dismissable rule actually fires — the title-equals-
@@ -308,21 +312,23 @@ describe("propose_baseline: dedupe by findingId", () => {
       const body = await callTool(dir);
       const tooltipEntries = body.proposed.filter((e) => e.ruleId === "tooltip/dismissable");
       expect(tooltipEntries.length).toBeGreaterThan(0);
-      const findingIds = tooltipEntries.map((e) => e.findingId);
-      const unique = new Set(findingIds);
-      // All three violations collapse to one findingId (same line-context
-      // hash) — so after dedup we emit exactly one entry, not three.
-      expect(unique.size).toBe(findingIds.length);
-      expect(findingIds.length).toBe(1);
+      const groupIds = tooltipEntries.map((e) => e.findingGroupId);
+      const unique = new Set(groupIds);
+      // All three violations collapse to one findingGroupId (same
+      // line-text hash) — so after dedup we emit exactly one entry,
+      // not three.
+      expect(unique.size).toBe(groupIds.length);
+      expect(groupIds.length).toBe(1);
     });
   });
 
   // Invariant guard: under any scan, `proposed[]` must never emit two
-  // entries with the same findingId. Sum of counts already equals
-  // `proposed.length` (invariants test); combined with this check, the
-  // response is now internally consistent — each finding contributes
-  // exactly once to exactly one reason bucket.
-  it("never emits two proposed entries with the same findingId", async () => {
+  // entries with the same findingGroupId. Sum of counts already
+  // equals `proposed.length` (invariants test); combined with this
+  // check, the response is now internally consistent — each
+  // group-level baseline decision contributes exactly once to
+  // exactly one reason bucket.
+  it("never emits two proposed entries with the same findingGroupId", async () => {
     await withScratch(async (dir) => {
       // Mix of fixture shapes likely to produce a range of findings so
       // the invariant is exercised across rules.
@@ -335,7 +341,7 @@ describe("propose_baseline: dedupe by findingId", () => {
         '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
       );
       const body = await callTool(dir);
-      const ids = body.proposed.map((e) => e.findingId);
+      const ids = body.proposed.map((e) => e.findingGroupId);
       expect(new Set(ids).size).toBe(ids.length);
     });
   });

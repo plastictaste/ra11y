@@ -13,8 +13,8 @@ import type { compileGlobs } from "../utils/glob.ts";
 /**
  * Length of the truncated SHA-256 digest used to key the `rationales`
  * hoist map. Matches the format used elsewhere in the MCP surface
- * (`findingId`, `referenceGuide.fixDescriptions[ruleId][hash]`) so the
- * short-hex token shape is consistent across the response.
+ * (`findingGroupId`, `referenceGuide.fixDescriptions[ruleId][hash]`)
+ * so the short-hex token shape is consistent across the response.
  */
 const RATIONALE_KEY_LENGTH = 12;
 
@@ -47,7 +47,16 @@ const THIRD_PARTY_MIN_SUFFIXES: readonly string[] = [".min.html", ".min.js", ".m
 export interface ProposedEntry {
   readonly filePath: string;
   readonly ruleId: string;
-  readonly findingId: string;
+  /**
+   * Cross-run-stable baseline key (the line-drift-resilient
+   * `Violation.findingGroupId`, NOT the per-emission `findingId`).
+   * This is what `.ra11y-baseline.json` will store on `baseline mode:
+   * "create"` and what subsequent runs will match against. Per AI-
+   * first doctrine "Per-finding identifiers must be addressable, not
+   * collision-prone," `findingId` is the per-emission address; the
+   * baseline is a group-level decision keyed on `findingGroupId`.
+   */
+  readonly findingGroupId: string;
   readonly reason: BaselineReason;
   /**
    * Short stable key (12-hex SHA-256 truncation) into the top-level
@@ -79,7 +88,7 @@ export interface ReasonCounts {
 interface RawProposedEntry {
   readonly filePath: string;
   readonly ruleId: string;
-  readonly findingId: string;
+  readonly findingGroupId: string;
   readonly reason: BaselineReason;
   readonly rationale: string;
 }
@@ -125,7 +134,7 @@ export function buildProposedEntries(args: {
     out.push({
       filePath,
       ruleId: v.ruleId,
-      findingId: v.findingId,
+      findingGroupId: v.findingGroupId,
       reason: reason.code,
       rationale: reason.rationale,
     });
@@ -147,8 +156,8 @@ export function buildProposedEntries(args: {
  * multiple findings flagging the same wrapper).
  *
  * The shape mirrors `referenceGuide.fixDescriptions[ruleId][hash]` and
- * `findingId`: 12-hex-char truncated SHA-256 keys, so agents recognize
- * the short-hex-token format across the MCP surface.
+ * `findingGroupId`: 12-hex-char truncated SHA-256 keys, so agents
+ * recognize the short-hex-token format across the MCP surface.
  *
  * Insertion order into `rationales` follows first-seen across entries —
  * stable across scans with the same inputs, so snapshots stay clean.
@@ -172,7 +181,7 @@ export function hoistRationales(raw: readonly RawProposedEntry[]): {
     entries.push({
       filePath: r.filePath,
       ruleId: r.ruleId,
-      findingId: r.findingId,
+      findingGroupId: r.findingGroupId,
       reason: r.reason,
       rationaleKey: key,
     });

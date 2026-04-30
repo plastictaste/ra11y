@@ -105,6 +105,7 @@ function mkViolation(ruleId: string): Violation {
     location: { filePath: "a.css", line: 1, column: 1 },
     message: "test",
     findingId: `${ruleId}-fid`,
+    findingGroupId: `${ruleId}-gid`,
     groupKey: `${ruleId}-gk`,
   };
 }
@@ -118,6 +119,7 @@ function mkViolationAt(ruleId: string, filePath: string): Violation {
     location: { filePath, line: 1, column: 1 },
     message: "test",
     findingId: `${ruleId}-${filePath}-fid`,
+    findingGroupId: `${ruleId}-${filePath}-gid`,
     groupKey: `${ruleId}-gk`,
   };
 }
@@ -131,6 +133,7 @@ function mkViolationWithClass(ruleId: string, filePath: string, classEvidence: s
     location: { filePath, line: 1, column: 1 },
     message: "test",
     findingId: `${ruleId}-${filePath}-${classEvidence}-fid`,
+    findingGroupId: `${ruleId}-${filePath}-${classEvidence}-gid`,
     groupKey: `${ruleId}-gk`,
     classEvidence,
   };

@@ -72,6 +72,7 @@ function mkViolation(ruleId: string): Violation {
     location: { filePath: "a.tsx", line: 1, column: 1 },
     message: "test",
     findingId: "test",
+    findingGroupId: "test-gid",
     groupKey: "test",
   };
 }

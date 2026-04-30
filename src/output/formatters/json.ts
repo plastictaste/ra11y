@@ -23,6 +23,10 @@ export const jsonFormatter = defineFormatter({
         durationMs: Math.round(result.durationMs),
         violations: result.violations.map((v) => ({
           findingId: v.findingId,
+          // Cross-run-stable identity — line-drift resilient. Sibling
+          // of `findingId` (which is per-emission unique). Baselines
+          // and `scan_diff` match on this token.
+          findingGroupId: v.findingGroupId,
           // Stable group identity — see docs/adr/0008-violation-group-key.md.
           groupKey: v.groupKey,
           ruleId: v.ruleId,

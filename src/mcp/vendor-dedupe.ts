@@ -14,7 +14,8 @@
  * independently — same selector, same ratio, same colors — so one canonical
  * finding explodes into 174 indistinguishable rows. Agents have no
  * affordance for "dismiss this across every sibling copy"; each finding
- * carries a distinct `findingId`. This helper keys off the basename so
+ * carries a distinct `findingId` (and a distinct per-line `findingId`
+ * even within one file). This helper keys off the basename so
  * cross-directory same-basename duplicates collapse to one, while
  * legitimately distinct files (e.g. two different projects each with
  * `styles.css`) remain separate because they have different *contents*

@@ -140,8 +140,10 @@ export const scanDiffTool: McpTool = {
 /**
  * Baseline mode — the original `scan_diff` behavior, preserved as the
  * default. Loads a baseline snapshot and returns findings whose
- * `findingId` isn't in that snapshot, plus the set of baseline entries
- * whose `findingId` is no longer present in the scan (resolved).
+ * `findingGroupId` isn't in that snapshot, plus the set of baseline
+ * entries whose `findingGroupId` is no longer present in the scan
+ * (resolved). Per-emission `findingId` is NOT the baseline key —
+ * baselines stay line-drift resilient by keying on `findingGroupId`.
  */
 async function handleBaselineMode(
   params: Record<string, unknown>,
@@ -561,13 +563,14 @@ function mergeFilesByPath<T extends { readonly filePath: string }>(
 
 /**
  * Walks the formatted `files` output from `runScanAndFormat` and keeps
- * only findings whose `findingId` isn't already in the baseline. Uses
- * the scanner-stamped `findingId` directly — no reconstruction needed
- * because `buildAgentFinding` surfaces the same token the baseline file
- * keyed on when it was written. Returns the filtered files (path +
- * findings), the total new-finding count, and the set of every
- * `findingId` the scan produced — the caller intersects that set with
- * the baseline to compute which baseline entries are now resolved.
+ * only findings whose `findingGroupId` isn't already in the baseline.
+ * Uses the scanner-stamped `findingGroupId` directly — no reconstruction
+ * needed because `buildAgentFinding` surfaces the same token the
+ * baseline file keyed on when it was written. Returns the filtered
+ * files (path + findings), the total new-finding count, and the set of
+ * every `findingGroupId` the scan produced — the caller intersects
+ * that set with the baseline to compute which baseline entries are now
+ * resolved.
  */
 function filterToNewFindings(
   files: ScanFormatted["files"],
@@ -609,10 +612,10 @@ function filterToNewFindings(
  *
  * Shape mirrors the baseline entry's identifying fields (minus the
  * opaque `hash`). Line numbers aren't carried by baseline entries —
- * baselines key on the line-drift-resilient `findingId`, not a raw
- * line — so `line` is not part of this type. Matches the shape already
- * surfaced by `baseline` mode: "check" (`resolvedEntries`) so agents
- * get the same identity fields from either tool.
+ * baselines key on the line-drift-resilient `findingGroupId`, not a
+ * raw line — so `line` is not part of this type. Matches the shape
+ * already surfaced by `baseline` mode: "check" (`resolvedEntries`) so
+ * agents get the same identity fields from either tool.
  */
 export interface ResolvedFinding {
   readonly filePath: string;
@@ -622,8 +625,9 @@ export interface ResolvedFinding {
 
 /**
  * Computes the resolved set: baseline entries whose fingerprint hash
- * does not appear in the set of `findingId`s produced by the current
- * scan. Preserves baseline-file order for stable output across runs.
+ * does not appear in the set of `findingGroupId`s produced by the
+ * current scan. Preserves baseline-file order for stable output
+ * across runs.
  */
 function resolvedFromBaseline(
   baselineEntries: readonly BaselineEntry[],
@@ -640,8 +644,12 @@ function resolvedFromBaseline(
 function hashOfFormattedFinding(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
-  const findingId = f["findingId"];
-  if (typeof findingId === "string" && findingId.length > 0) return findingId;
+  // Baselines are keyed on the cross-run-stable `findingGroupId`
+  // (line-drift resilient). Per-emission `findingId` is NOT the
+  // baseline key — using it here would invalidate the baseline match
+  // on any unrelated edit that shifts the violation's line number.
+  const findingGroupId = f["findingGroupId"];
+  if (typeof findingGroupId === "string" && findingGroupId.length > 0) return findingGroupId;
   return null;
 }
 

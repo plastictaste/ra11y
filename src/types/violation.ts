@@ -180,20 +180,46 @@ export interface Violation {
     readonly column?: number;
   };
   /**
-   * Stable identity for the finding — the same opaque token across
-   * re-runs of the same scan, so an agent can verify "did my edit
-   * close finding X?" by exact identity rather than fuzzy `(file,
-   * line, ruleId)` matching. Survives line-number drift inside the
-   * file when unrelated code is inserted above the violation, and
-   * survives edits to ANY line other than the violation's own
+   * Per-emission unique address — the token `suggest_fix(findingId)`
+   * and source-level disable pragmas resolve against. Every emission
+   * within a single scan response gets a distinct id, even when two
+   * findings share the same rule + file + line text (the prior
+   * single-token design collapsed those into one id, breaking
+   * addressability).
+   *
+   * Computed as `sha256(ruleId, relativeFilePath, line, column,
+   * variantKey?)` truncated to 12 hex chars. See
+   * `src/utils/finding-id.ts` for the exact recipe. Required on
+   * every Violation — if a call site needs to synthesize one, use
+   * `computeFindingId`.
+   *
+   * For cross-run identity (baselines, scan_diff), use
+   * {@link findingGroupId} — that token is line-drift resilient,
+   * `findingId` is not.
+   */
+  readonly findingId: string;
+  /**
+   * Cross-run-stable identity. The same opaque token across re-runs
+   * of the same scan even when an unrelated edit shifts the
+   * violation's line number — baselines and `scan_diff` match on
+   * this token, not on `findingId`.
+   *
+   * Hashes `(ruleId, relativeFilePath, normalizedLineText,
+   * variantKey?)`; line NUMBER is deliberately NOT in the input so
+   * inserting code above the violation does not invalidate the
+   * baseline entry. Two emissions of the same rule whose violation
+   * lines hold byte-identical text collapse to one
+   * `findingGroupId` — the dedup behavior baselines and propose-
+   * baseline depend on. For per-emission addressability use
+   * {@link findingId}, which always distinguishes those emissions.
    *
    * Computed as `sha256(ruleId, relativeFilePath, normalizedLineText,
    * variantKey?)` truncated to 12 hex chars. See
    * `src/utils/finding-id.ts` for the exact recipe. Required on
    * every Violation — if a call site needs to synthesize one, use
-   * `computeFindingId`.
+   * `computeFindingGroupId`.
    */
-  readonly findingId: string;
+  readonly findingGroupId: string;
   /**
    * Stable grouping key for findings that share a rule and an AST
    * shape. Sibling of `findingId` with opposite polarity: `findingId`

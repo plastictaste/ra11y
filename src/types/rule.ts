@@ -307,31 +307,34 @@ export interface ProjectContext {
 
 /**
  * What a rule returns via `ctx.emit()`. The engine owns `ruleId`,
- * `criteria`, `findingId`, `groupKey`, and `fixClass` — rules don't
- * know those. `findingId` is derived from the stamped ruleId + relative
- * filePath + the normalized text of the violation line, so it can only
- * be computed after the engine has attached the filePath to the
- * emitted location. `groupKey` is derived from the stamped ruleId +
- * the normalized AST shape the engine resolves from the emitted
- * location (see docs/adr/0008-violation-group-key.md). `fixClass` is
- * a Rule-level property (see docs/adr/0007-violation-fix-class-metadata.md),
+ * `criteria`, `findingId`, `findingGroupId`, `groupKey`, and `fixClass`
+ * — rules don't know those. `findingId` is derived from the stamped
+ * ruleId + relative filePath + line + column (per-emission unique by
+ * construction); `findingGroupId` is derived from the stamped ruleId +
+ * relative filePath + the normalized text of the violation line (line-
+ * drift resilient, the cross-run baseline key). Both can only be
+ * computed after the engine has attached the filePath to the emitted
+ * location. `groupKey` is derived from the stamped ruleId + the
+ * normalized AST shape the engine resolves from the emitted location
+ * (see docs/adr/0008-violation-group-key.md). `fixClass` is a Rule-
+ * level property (see docs/adr/0007-violation-fix-class-metadata.md),
  * stamped onto every Violation at emit time.
  *
  * `variantKey` is an engine-internal hash-disambiguator for rules that
  * emit more than one kind of finding against the same file:line. It is
- * folded into the `findingId` hash and then dropped — it does NOT
- * appear on the final Violation on the wire. A rule like
- * `navigation/link-descriptive-text` satisfies multiple WCAG criteria
- * and can legitimately fire both a "not descriptive" AND a "duplicate
- * name across distinct hrefs" finding on the same anchor: without a
- * variant key the two collapse to the same `findingId` and the agent's
- * suppress + dedup flows silently merge them
- * Rules that only emit one kind of finding per site leave the field
- * unset.
+ * folded into BOTH the `findingId` and `findingGroupId` hashes and
+ * then dropped — it does NOT appear on the final Violation on the
+ * wire. A rule like `navigation/link-descriptive-text` satisfies
+ * multiple WCAG criteria and can legitimately fire both a "not
+ * descriptive" AND a "duplicate name across distinct hrefs" finding on
+ * the same anchor: without a variant key the two collapse to the same
+ * `findingGroupId` and the agent's suppress + dedup flows silently
+ * merge them. Rules that only emit one kind of finding per site leave
+ * the field unset.
  */
 export type EmittedViolation = Omit<
   Violation,
-  "ruleId" | "criteria" | "findingId" | "groupKey" | "fixClass"
+  "ruleId" | "criteria" | "findingId" | "findingGroupId" | "groupKey" | "fixClass"
 > & {
   readonly variantKey?: string;
 };

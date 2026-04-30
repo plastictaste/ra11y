@@ -111,8 +111,11 @@ async function writeEmptyBaseline(path: string): Promise<void> {
 /**
  * Seed a baseline from the tool's own output. Starts with an empty
  * baseline so every finding surfaces as "new", extracts each
- * findingId, then rewrites the baseline with those hashes so a
- * follow-up call sees zero delta.
+ * `findingGroupId` (the cross-run-stable token baselines key on —
+ * NOT per-emission `findingId`, which is line+column scoped and
+ * would invalidate the baseline match on any unrelated edit), then
+ * rewrites the baseline with those hashes so a follow-up call sees
+ * zero delta.
  */
 async function seedBaseline(
   dir: string,
@@ -122,11 +125,15 @@ async function seedBaseline(
   const fresh = await callHandler(new McpSession(), { cwd: dir, baselinePath: baselineFile });
   const success = fresh.body as BaselineBody;
   const entries: Array<{ hash: string; ruleId: string; filePath: string; message: string }> = [];
+  const seen = new Set<string>();
   for (const file of success.newViolations) {
     for (const finding of file.findings) {
       const raw = finding as unknown as Record<string, unknown>;
+      const hash = String(raw["findingGroupId"]);
+      if (seen.has(hash)) continue;
+      seen.add(hash);
       entries.push({
-        hash: String(raw["findingId"]),
+        hash,
         ruleId: String(raw["ruleId"]),
         filePath: file.path,
         message: String(raw["message"] ?? ""),

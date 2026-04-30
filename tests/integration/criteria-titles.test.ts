@@ -176,6 +176,7 @@ describe("criteriaTitles — end-to-end alignment", () => {
     // than emitting `criteriaTitles: []` as a lying placeholder.
     const synthetic = {
       findingId: "deadbeef0000",
+      findingGroupId: "deadbeef0002",
       groupKey: "deadbeef0001",
       ruleId: "internal/rule-crash",
       fixClass: "verify-in-source" as const,

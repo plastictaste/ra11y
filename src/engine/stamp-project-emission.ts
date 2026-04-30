@@ -16,7 +16,7 @@
 import type { Ast } from "../types/ast.ts";
 import type { EmittedViolation, Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
-import { computeFindingId } from "../utils/finding-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { maybePatternId } from "../utils/pattern-id.ts";
 import { describeNodeShape, findTargetNodeAtLocation } from "./ast-helpers.ts";
@@ -35,9 +35,16 @@ export function stampProjectEmission(
   const findingId = computeFindingId({
     ruleId: rule.id,
     filePath: em.location.filePath,
+    line: em.location.line,
+    column: em.location.column,
+    // Conditional spread per exactOptionalPropertyTypes; see rule-runner.ts.
+    ...(em.variantKey ? { variantKey: em.variantKey } : {}),
+  });
+  const findingGroupId = computeFindingGroupId({
+    ruleId: rule.id,
+    filePath: em.location.filePath,
     source: sourcesByPath.get(em.location.filePath) ?? "",
     line: em.location.line,
-    // Conditional spread per exactOptionalPropertyTypes; see rule-runner.ts.
     ...(em.variantKey ? { variantKey: em.variantKey } : {}),
   });
   const groupKey = computeGroupKey({
@@ -54,6 +61,7 @@ export function stampProjectEmission(
     location: em.location,
     message: em.message,
     findingId,
+    findingGroupId,
     groupKey,
     ...(patternId !== undefined && { patternId }),
     ...(em.suggestion !== undefined && { suggestion: em.suggestion }),

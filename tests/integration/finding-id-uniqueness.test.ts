@@ -73,6 +73,64 @@ function describeCollisions(
   return colliding.join("\n");
 }
 
+describe("Violation.findingId — per-emission addressability invariant", () => {
+  it("repeated byte-identical line text across distinct (line, column) tuples gets distinct findingIds", () => {
+    // The canonical regression: a real scan_file response shipped 20
+    // distinct findingIds where each id covered 2-12 separate
+    // file:line locations within the same response — e.g. one id
+    // covered lines 36, 48, 60, 87, 103, 119, 135, 166, 175, 184,
+    // 193, 202. The line-text-keyed hash collapsed every emission
+    // sharing one rule + path + identical-line-text into the same
+    // id, breaking `suggest_fix(findingId)` addressability and
+    // letting an agent's id-keyed suppress silently silence sibling
+    // lines it never read.
+    //
+    // Per AI-first doctrine "Per-finding identifiers must be
+    // addressable, not collision-prone," `findingId` must include
+    // the location coordinate (line + column) in its hash input so
+    // every emission in a response gets a distinct id. Cross-run
+    // dedup / baseline matching moved to `findingGroupId` which
+    // remains line-text-keyed (line-drift resilient).
+    //
+    // Synthetic shape: an HTML page with N copies of the same
+    // missing-alt `<img>` tag on different lines — N findings
+    // emitted, each must carry its own `findingId`.
+    const source = `<!doctype html><html lang="en"><body>
+<img src="a.png">
+<img src="a.png">
+<img src="a.png">
+<img src="a.png">
+<img src="a.png">
+<img src="a.png">
+</body></html>`;
+    const { result } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files: [htmlFile("page.html", source)],
+    });
+    const altMissing = result.violations.filter((v) => v.ruleId === "media/alt-text-missing");
+    expect(altMissing.length).toBe(6);
+    const findingIds = altMissing.map((v) => v.findingId);
+    // Six emissions → six distinct findingIds, even though every
+    // violation line holds byte-identical text.
+    expect(new Set(findingIds).size).toBe(findingIds.length);
+    // Sanity: per-emission ids vary by line — no two of the six
+    // findings are silently aliased to the same address.
+    for (let i = 0; i < altMissing.length; i++) {
+      for (let j = i + 1; j < altMissing.length; j++) {
+        expect(altMissing[i]?.findingId).not.toBe(altMissing[j]?.findingId);
+      }
+    }
+    // Cross-run identity (`findingGroupId`) DOES collapse here by
+    // design — line text is byte-identical, so a baseline keyed on
+    // group id treats this whole cluster as one decision (the
+    // existing dedup contract baselines depend on).
+    const findingGroupIds = altMissing.map((v) => v.findingGroupId);
+    expect(new Set(findingGroupIds).size).toBe(1);
+  });
+});
+
 describe("Violation.findingId — cross-rule uniqueness invariant on a single scan", () => {
   it("placeholder-as-label cluster: 6 visually-grouped sibling inputs share one id only when collapsed", () => {
     // Repro: a sign-up form with six near-identical inputs each

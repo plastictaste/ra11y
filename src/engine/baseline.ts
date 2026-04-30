@@ -16,21 +16,24 @@
  *   - update: run a scan, rewrite the file with the current set,
  *             removing violations that have been fixed
  *
- * Cross-run identity: baselines are matched by `Violation.findingId`
- * — the same opaque token the scanner stamps on every finding. The
- * findingId is computed from `(ruleId, relativeFilePath,
- * normalizedLineText, variantKey?)` and is resilient to line-number
- * drift within the file, so edits to any line other than the
- * violation's own don't invalidate its baseline entry. See
- * `src/utils/finding-id.ts` for the recipe.
+ * Cross-run identity: baselines are matched by
+ * `Violation.findingGroupId` — the line-drift-resilient token the
+ * scanner stamps on every finding. The `findingGroupId` is computed
+ * from `(ruleId, relativeFilePath, normalizedLineText, variantKey?)`
+ * so edits to any line other than the violation's own don't
+ * invalidate its baseline entry. See `src/utils/finding-id.ts` for
+ * the recipe and the rationale for splitting per-emission `findingId`
+ * (the suggest_fix address) from cross-run `findingGroupId` (the
+ * baseline key).
  *
  * Legacy note: baseline files generated before v0.2.0 used a
  * `sha1(ruleId + filePath + message)` fingerprint. The `fingerprintOf`
  * helper below still computes that value so `scan_diff` can consume
  * pre-existing baselines during the transition, but new writes stamp
- * `findingId` into the `hash` field. Bumping `BASELINE_VERSION` would
- * force regeneration; for now we accept the silent identity change
- * since `hash` is an opaque token and the file still round-trips.
+ * `findingGroupId` into the `hash` field. Bumping `BASELINE_VERSION`
+ * would force regeneration; for now we accept the silent identity
+ * change since `hash` is an opaque token and the file still round-
+ * trips.
  */
 
 import { createHash } from "node:crypto";
@@ -86,20 +89,23 @@ export interface BaselinePruneResult {
 
 /**
  * Returns the stable cross-run identity of a violation. Baselines key
- * by this value — the same `findingId` the scanner stamps on every
- * finding. Line-number drift within the file does not change it; see
+ * by this value — the `findingGroupId` the scanner stamps on every
+ * finding (line-drift resilient by hashing the normalized text of the
+ * violation line, not the line number). For per-emission addressability
+ * (suggest_fix, source-level disable pragma) use `findingId`; see
  * `src/utils/finding-id.ts`.
  */
 export function fingerprint(violation: Violation): string {
-  return violation.findingId;
+  return violation.findingGroupId;
 }
 
 /**
  * Legacy component-level fingerprint kept so callers that still
  * operate on `(ruleId, filePath, message)` tuples (e.g. MCP
  * scan_diff's formatted-finding path) can compute the same value we
- * used before the `findingId` switch. New call sites should prefer
- * `Violation.findingId` directly; this helper exists for back-compat.
+ * used before the `findingGroupId` switch. New call sites should
+ * prefer `Violation.findingGroupId` directly; this helper exists for
+ * back-compat.
  */
 export function fingerprintOf(ruleId: string, filePath: string, message: string): string {
   const canonical = [ruleId, normalizeFilePath(filePath), message].join("\u0000");

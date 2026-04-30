@@ -386,6 +386,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
     // signal.
     const hollow: AgentFinding = {
       findingId: "f0",
+      findingGroupId: "fg0",
       groupKey: "g0",
       ruleId: "synthetic/rule",
       fixClass: "guidance",
@@ -412,6 +413,7 @@ describe("AgentFix shape invariant — direct-construction corner case", () => {
     // surfaces it rather than a field report.
     const hollow: AgentFinding = {
       findingId: "f0",
+      findingGroupId: "fg0",
       groupKey: "g0",
       ruleId: "synthetic/rule",
       fixClass: "guidance",

@@ -106,13 +106,24 @@ export interface AgentFix {
 
 export interface AgentFinding {
   /**
-   * Stable identity — lets agents verify "did my edit close finding
-   * X?" by exact ID rather than (file, line, ruleId) fuzzy match that
-   * breaks on line-number drift. Disambiguated from `ruleId` /
-   * `groupKey` by the `Id` suffix. Derived from
+   * Per-emission unique address. The token `suggest_fix(findingId)`
+   * and source-level disable pragmas resolve against — every emission
+   * within a single response carries a distinct id, so addressing one
+   * never silently aliases a sibling. Disambiguated from `ruleId` /
+   * `groupKey` / `findingGroupId` by the `Id` suffix. Derived from
    * `Violation.findingId` — see `src/utils/finding-id.ts`.
    */
   readonly findingId: string;
+  /**
+   * Cross-run-stable identity — sibling of `findingId` with opposite
+   * polarity. Hashes the normalized text of the violation line rather
+   * than `(line, column)`, so an unrelated edit above the violation
+   * does not invalidate the token. Baselines and `scan_diff` match on
+   * this. Two emissions of the same rule against byte-identical line
+   * text collapse here — that's the dedup behavior baselines depend
+   * on; if you need to distinguish those emissions, use `findingId`.
+   */
+  readonly findingGroupId: string;
   /**
    * Stable group identity — same rule firing on AST-equivalent nodes
    * across files all share this key. Lets agents batch one fix across

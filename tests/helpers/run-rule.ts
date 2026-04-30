@@ -23,7 +23,7 @@ import {
 import type { Ast } from "../../src/types/ast.ts";
 import type { EmittedViolation, Language, ProjectContext, Rule } from "../../src/types/rule.ts";
 import type { Violation } from "../../src/types/violation.ts";
-import { computeFindingId } from "../../src/utils/finding-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../../src/utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../../src/utils/group-key.ts";
 
 export interface RunRuleOptions {
@@ -116,6 +116,13 @@ function shapeViolation(
   const findingId = computeFindingId({
     ruleId: rule.id,
     filePath: effectivePath,
+    line: v.location.line,
+    column: v.location.column,
+    ...(v.variantKey ? { variantKey: v.variantKey } : {}),
+  });
+  const findingGroupId = computeFindingGroupId({
+    ruleId: rule.id,
+    filePath: effectivePath,
     source,
     line: v.location.line,
     ...(v.variantKey ? { variantKey: v.variantKey } : {}),
@@ -140,6 +147,7 @@ function shapeViolation(
     ...(typeof v.decline === "number" ? { decline: v.decline } : {}),
     message: v.message,
     findingId,
+    findingGroupId,
     groupKey,
     ...(v.suggestion !== undefined && { suggestion: v.suggestion }),
     ...(v.fix !== undefined && { fix: v.fix }),

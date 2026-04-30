@@ -24,7 +24,7 @@
 
 import type { Ast, JsxElement, TsxModule } from "../types/ast.ts";
 import type { Violation } from "../types/violation.ts";
-import { computeFindingId } from "../utils/finding-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { describeNodeShape, findTargetNodeAtLocation } from "./ast-helpers.ts";
 import {
@@ -192,6 +192,12 @@ function buildInheritedViolation(
   const findingId = computeFindingId({
     ruleId: source.ruleId,
     filePath: site.filePath,
+    line: site.line,
+    column: site.column,
+  });
+  const findingGroupId = computeFindingGroupId({
+    ruleId: source.ruleId,
+    filePath: site.filePath,
     source: file?.source ?? "",
     line: site.line,
   });
@@ -212,6 +218,7 @@ function buildInheritedViolation(
       ...(source.location.column !== undefined && { column: source.location.column }),
     },
     findingId,
+    findingGroupId,
     groupKey,
     // Forward the source finding's `patternId` — an inherited finding
     // describes the same canonicalized pattern as its source site, so

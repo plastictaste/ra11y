@@ -42,6 +42,7 @@ function violationWithFixPaths(overrides?: Partial<Violation>): Violation {
     message: "Click handler without keyboard equivalent.",
     suggestion: "Add onKeyDown handler alongside onClick.",
     findingId: "abc123def456",
+    findingGroupId: "abc123def457",
     groupKey: "def456abc123",
     fixPaths: {
       primary: {
@@ -67,6 +68,7 @@ function violationGuidanceOnly(overrides?: Partial<Violation>): Violation {
     message: "Interactive element lacks keyboard handler.",
     suggestion: "Review the surrounding context and add keyboard support.",
     findingId: "abc123def456",
+    findingGroupId: "abc123def457",
     groupKey: "def456abc123",
     ...overrides,
   };
@@ -235,6 +237,7 @@ describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean br
       message: "Click handler without keyboard equivalent.",
       suggestion: "Add onKeyDown handler alongside onClick.",
       findingId: `id-${line}`,
+      findingGroupId: `gid-${line}`,
       groupKey: `gk-${line}`,
     };
   }
@@ -894,6 +897,7 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       message: "'.btn:focus' removes the focus outline without a replacement indicator.",
       suggestion: TAILWIND_SUGGESTION,
       findingId: "fff111",
+      findingGroupId: "fff112",
       groupKey: "ggg222",
       ...overrides,
     };
