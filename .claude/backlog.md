@@ -432,8 +432,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Empty / dishonest warning payloads
 
-- [ ] **Q14-PARSER-BAILED-WARNING-FIRES-ON-CLEAN-PARSE** `parser_bailed_on_non_jsx_in_tsx_route` ships in `warnings[]` on a `scan_file` of a plain-JS file where 86 rules fired and `perRuleCoverage[].coverageConfidence` is uniformly `high` — the warning fires false-positive (the parser did not bail) and the empty `{}` payload denies any disambiguation. Closure: gate emission on actual bail evidence (parseErrorFiles entry + zero rules fired); when no bail occurred, suppress the warning. Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest" + "Routing skips that drop content."
-
 ### Ambiguous / empty-when-meaningful field shapes
 
 ### Cross-surface drift (counts + warnings + lane)

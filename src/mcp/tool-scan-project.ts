@@ -630,25 +630,41 @@ function readMetaNumber(meta: Record<string, unknown>, key: string): number {
 }
 
 /**
- * Counts `.js` files in `parsedFiles` that recorded zero parse errors
- * after routing through the TSX parser — canonical content-drop hazard
- * the AI-first doctrine names ("the parser bails on relational
- * expressions read as JSX"). Drives the
- * `parser_bailed_on_non_jsx_in_tsx_route` warning code on the
- * `scan_project` surface; same predicate as the shared scan-time-
- * warnings aggregator in `scan-time-warnings.ts` so the cross-surface
- * count invariant holds. Extracted as a helper so
- * `buildBaseWarningsForScanProject` stays under the cognitive-
- * complexity cap.
+ * Collects `.js` files in `parsedFiles` where the routed TSX parser
+ * recorded one or more parse errors AND the post-scan formatted files
+ * carry no findings on that file — i.e. the routing decision actually
+ * dropped content. Drives the `parser_bailed_on_non_jsx_in_tsx_route`
+ * warning code on the `scan_project` surface; same predicate as the
+ * shared scan-time-warnings aggregator in `scan-time-warnings.ts` so
+ * the cross-surface count invariant holds.
+ *
+ * The earlier predicate counted "successfully parsed `.js` files" (zero
+ * errors), which surfaced the warning even on clean parses where 86
+ * rules fired and `perRuleCoverage` was uniformly `high`. The doctrine
+ * bullet "Empty `warningsDetails.<code>: {}` is dishonest" + "Routing
+ * skips that drop content" together require actual bail evidence; the
+ * conjunction (extension + parse-error + zero findings) is the per-file
+ * analogue of the project-shape `parser_bailed_zero_findings` code.
+ * Extracted as a helper so `buildBaseWarningsForScanProject` stays
+ * under the cognitive-complexity cap.
  */
-function countJsRoutedThroughTsxSucceeded(parsedFiles: readonly ParsedFile[]): number {
-  let count = 0;
+function collectParserBailedJsTsxRouteFiles(
+  parsedFiles: readonly ParsedFile[],
+  formattedFiles: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+): readonly string[] {
+  const findingBearingPaths = new Set<string>();
+  for (const f of formattedFiles) {
+    if (f.findings.length > 0) findingBearingPaths.add(f.path);
+  }
+  const out: string[] = [];
   for (const file of parsedFiles) {
     if (!file.filePath.toLowerCase().endsWith(".js")) continue;
-    if (file.ast.errors.length > 0) continue;
-    count += 1;
+    if (file.ast.errors.length === 0) continue;
+    if (findingBearingPaths.has(file.filePath)) continue;
+    out.push(file.filePath);
   }
-  return count;
+  out.sort();
+  return out;
 }
 
 /**
@@ -963,13 +979,16 @@ function buildBaseWarningsForScanProject(args: {
   // twin of suppression" doctrine.
   const linkedStylesheetsUnresolvedForContrast =
     detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
-  // Count `.js` files successfully routed through the TSX parser —
-  // canonical content-drop hazard the doctrine names. Drives
-  // `parser_bailed_on_non_jsx_in_tsx_route`. Same predicate as the
-  // shared scan-time-warnings aggregator (extension match +
-  // `ast.errors.length === 0`); extracted into a helper so the
+  // Collect `.js` files where the TSX parser bailed AND zero rules
+  // fired against the file — actual content-drop evidence the doctrine
+  // names. Drives `parser_bailed_on_non_jsx_in_tsx_route`. Same
+  // predicate as the shared scan-time-warnings aggregator (extension +
+  // parse-error + zero findings); extracted into a helper so the
   // orchestrator's cognitive complexity stays under the lint cap.
-  const jsRoutedThroughTsxSucceededCount = countJsRoutedThroughTsxSucceeded(parsedFiles);
+  const parserBailedJsTsxRouteFiles = collectParserBailedJsTsxRouteFiles(
+    parsedFiles,
+    formatted.files,
+  );
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -1042,13 +1061,14 @@ function buildBaseWarningsForScanProject(args: {
     // headline doctrine) so the value is not on `meta` and we
     // accumulate locally instead.
     totalFindings: formatted.files.reduce((acc, f) => acc + f.findings.length, 0),
-    // Surface the `.js` → tsx routing decision so an agent reading
-    // the response can decide whether to spot-check the routed files
-    // (see `parser_bailed_on_non_jsx_in_tsx_route` on the warnings
-    // union for the doctrine framing). Pass the raw count regardless;
-    // the warning predicate gates emission on `count > 0` so a zero
-    // value naturally drops without an additional ternary here.
-    jsRoutedThroughTsxSucceededCount,
+    // Surface the `.js` → tsx routing decision when actual bail
+    // evidence is present (parse errors + zero findings on the file).
+    // Drives `parser_bailed_on_non_jsx_in_tsx_route` and its
+    // `warningsDetails.<code>.files` payload. Conditional-spread keeps
+    // the input absent when no `.js` file met the conjunction so the
+    // warning predicate drops conservatively per the doctrine bullet
+    // "Empty `warningsDetails.<code>: {}` is dishonest."
+    ...(parserBailedJsTsxRouteFiles.length === 0 ? {} : { parserBailedJsTsxRouteFiles }),
     // pre-computed cross-check for
     // `coverage_confidence_uniformly_high_with_parse_errors`. The
     // warning fires only when this boolean is `true` AND

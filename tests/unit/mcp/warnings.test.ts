@@ -685,46 +685,67 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("parser_bailed_zero_findings");
   });
 
-  it("fires `parser_bailed_on_non_jsx_in_tsx_route` when at least one `.js` file successfully parsed via the tsx route", () => {
-    // The doctrine names the routing decision itself (regardless of
-    // outcome) as the canonical content-drop hazard — a clean parse on
-    // a `.js` file may have silently dropped findings via the parser's
-    // "JSX-or-comparison" gate without recording a parse error.
+  it("fires `parser_bailed_on_non_jsx_in_tsx_route` when the bailed-file list is non-empty — actual bail evidence (parse errors + zero findings on the file)", () => {
+    // The doctrine names the conjunction of bail evidence and zero
+    // findings on the file as the routing-skip hazard — the routing
+    // decision alone (a clean `.js` parse) is NOT bail evidence and
+    // surfacing the warning on it would be heuristic emission.
     const codes = computeScanWarnings({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: { ".js": 5, ".tsx": 37 },
-      jsRoutedThroughTsxSucceededCount: 5,
+      parserBailedJsTsxRouteFiles: ["lib/foo.js", "lib/bar.js"],
     });
     expect(codes).toContain("parser_bailed_on_non_jsx_in_tsx_route");
   });
 
-  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the count is zero", () => {
+  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the bailed-file list is empty", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: { ".tsx": 42 },
-      jsRoutedThroughTsxSucceededCount: 0,
+      parserBailedJsTsxRouteFiles: [],
     });
     expect(codes).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
   });
 
-  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the count is undefined (drops conservatively without evidence)", () => {
+  it("does NOT fire `parser_bailed_on_non_jsx_in_tsx_route` when the bailed-file list is undefined (drops conservatively without evidence)", () => {
     const codes = computeScanWarnings({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: { ".js": 5 },
-      // no jsRoutedThroughTsxSucceededCount — derivative tools that
-      // don't enumerate the parsed-file list should never speculatively
-      // fire the routing-telemetry code.
+      // no parserBailedJsTsxRouteFiles — derivative tools that don't
+      // enumerate the parsed-file list + violations should never
+      // speculatively fire the routing-telemetry code.
     });
     expect(codes).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
+  });
+
+  it("populates `warningsDetails.parser_bailed_on_non_jsx_in_tsx_route.files` with the bailed-file list — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — when the warning fires, the agent must be able to
+    // see which files to scope around. The graduated shape carries the
+    // sorted file list verbatim.
+    const inputs = {
+      filesScanned: 42,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 2, ".tsx": 40 },
+      parserBailedJsTsxRouteFiles: ["lib/bar.js", "lib/foo.js"],
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("parser_bailed_on_non_jsx_in_tsx_route");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.parser_bailed_on_non_jsx_in_tsx_route).toEqual({
+      files: ["lib/bar.js", "lib/foo.js"],
+    });
   });
 
   it("fires `coverage_confidence_uniformly_high_with_parse_errors` when parse errors exist AND every per-rule row reports uniform high confidence with no byFile overrides", () => {

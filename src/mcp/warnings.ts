@@ -1125,21 +1125,23 @@ export interface WarningInputs {
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
-   * Count of `.js` files in the scan that successfully parsed via the
-   * in-house TSX parser (i.e. the dispatcher routed `.js` → tsx and the
-   * parser produced an AST without recording any `ParseError`s on that
-   * file). Drives the `parser_bailed_on_non_jsx_in_tsx_route` warning
-   * code — fires when the count is > 0. Pass `0` or omit when no `.js`
-   * files were scanned or every routed `.js` file recorded a parse
-   * error (the failure case is captured by the broader
-   * `parse_errors_present` family + `parser_bailed_zero_findings`).
-   * Telemetry-only; the warning surfaces the routing decision so the
-   * agent can decide whether to spot-check or scope a follow-up.
-   * Sourced from the parsed-file list at the scan-time-warnings seam
-   * (extension match + `ast.errors.length === 0`); the warnings module
-   * stays pure over its inputs.
+   * Sorted list of `.js` files where the TSX parser bailed (recorded
+   * one or more parse errors) AND zero rules fired against the file.
+   * Drives the `parser_bailed_on_non_jsx_in_tsx_route` warning code —
+   * fires when the list is non-empty. The conjunction (bail evidence +
+   * zero findings) is the per-file analogue of the project-shape
+   * `parser_bailed_zero_findings` predicate; together they cover the
+   * two scopes at which the routing skip silently drops content. Pass
+   * an empty list or omit when no routed `.js` file met the
+   * conjunction — the warning code drops conservatively without
+   * evidence, per the doctrine bullet "Empty `warningsDetails.<code>:
+   * {}` is dishonest." The list also drives the warning's payload
+   * (`warningsDetails.parser_bailed_on_non_jsx_in_tsx_route.files`) so
+   * an agent reading the code knows which files to scope around.
+   * Sourced from the parsed-file list + violations at the scan-time-
+   * warnings seam; the warnings module stays pure over its inputs.
    */
-  readonly jsRoutedThroughTsxSucceededCount?: number;
+  readonly parserBailedJsTsxRouteFiles?: readonly string[];
   /**
    * `true` when at least one file is in
    * `analysisCoverage.parseErrorFiles[]` AND every row of the assembled
@@ -2381,7 +2383,21 @@ export interface ScanWarningDetails {
     readonly htmlFiles: readonly string[];
     readonly topUnresolvedHrefs: readonly string[];
   };
-  readonly parser_bailed_on_non_jsx_in_tsx_route?: BinaryPresenceMarker;
+  /**
+   * Payload for `parser_bailed_on_non_jsx_in_tsx_route`. Carries the
+   * sorted list of `.js` files where the TSX parser bailed AND zero
+   * rules fired — the actual bail evidence the warning code names.
+   * Without this payload the agent cannot triage which files to scope
+   * around or re-route through a JS-aware parser; an empty `{}`
+   * shipped under this code was the canonical false-positive shape the
+   * doctrine bullet "Empty `warningsDetails.<code>: {}` is dishonest"
+   * names directly. The list ships verbatim from
+   * {@link WarningInputs.parserBailedJsTsxRouteFiles} — no top-N cap
+   * because the per-file conjunction (parse-error + zero findings) is
+   * already a narrow subset of the parsed-file list and the agent
+   * needs every file to make a routing decision.
+   */
+  readonly parser_bailed_on_non_jsx_in_tsx_route?: { readonly files: readonly string[] };
   readonly coverage_confidence_uniformly_high_with_parse_errors?: BinaryPresenceMarker;
   /**
    * Payload for `scan_file_parser_bail_no_findings`. Carries the
@@ -2515,7 +2531,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
   "dist_only_scan_detected",
-  "parser_bailed_on_non_jsx_in_tsx_route",
   "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
 
@@ -3075,16 +3090,24 @@ function hasLinkedStylesheetsUnresolvedForContrast(
 
 /**
  * Predicate for `parser_bailed_on_non_jsx_in_tsx_route`. Returns `true`
- * when the caller-supplied count of `.js` files that successfully
- * parsed via the TSX parser is > 0. Drops conservatively when the
- * field is absent (derivative tools that don't enumerate parsed files
- * never speculatively fire the code). Pure over its input; the
- * extension-and-parse-success cross-reference lives at the scan-time-
- * warnings seam where the parsed-file list is available.
+ * when the caller-supplied list of `.js` files where the TSX parser
+ * bailed (recorded errors) AND zero rules fired is non-empty. Drops
+ * conservatively when the field is absent (derivative tools that don't
+ * enumerate parsed files never speculatively fire the code). Pure over
+ * its input; the extension + parse-error + zero-findings conjunction
+ * lives at the scan-time-warnings seam where the parsed-file list and
+ * the violations are both available.
+ *
+ * The earlier predicate fired on every clean `.js` parse (routing
+ * decision alone), which surfaced the warning even when 86 rules had
+ * fired and `perRuleCoverage` was uniformly `high` — a false-positive
+ * the doctrine bullet "Empty `warningsDetails.<code>: {}` is dishonest"
+ * names directly. The current shape requires actual bail evidence so
+ * the warning is honest at every fire.
  */
 function jsRoutedThroughTsxSucceeded(inputs: WarningInputs): boolean {
-  const count = inputs.jsRoutedThroughTsxSucceededCount;
-  return typeof count === "number" && count > 0;
+  const files = inputs.parserBailedJsTsxRouteFiles;
+  return Array.isArray(files) && files.length > 0;
 }
 
 /**
@@ -3679,15 +3702,15 @@ type ScanMetaWarningArgs = {
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
-   * Pass-through for the count of `.js` files successfully parsed via
-   * the TSX parser. See
-   * {@link WarningInputs.jsRoutedThroughTsxSucceededCount}. Threaded
+   * Pass-through for the sorted list of `.js` files where the TSX
+   * parser bailed AND zero rules fired. See
+   * {@link WarningInputs.parserBailedJsTsxRouteFiles}. Threaded
    * explicitly because the predicate requires per-file inspection of
-   * the parsed-file list (extension match + zero-error AST), which
-   * lives at the scan-time-warnings seam — the warnings module stays
-   * pure over its inputs.
+   * the parsed-file list + violations (extension + parse-error + no
+   * findings on that file), which lives at the scan-time-warnings seam
+   * — the warnings module stays pure over its inputs.
    */
-  readonly jsRoutedThroughTsxSucceededCount?: number;
+  readonly parserBailedJsTsxRouteFiles?: readonly string[];
   /**
    * Pass-through for the cross-check that drives
    * `coverage_confidence_uniformly_high_with_parse_errors`. See
@@ -3744,7 +3767,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "jsInnerHtmlDeclinedCount",
   "jsInnerHtmlFileSamples",
   "linkedStylesheetsUnresolvedForContrast",
-  "jsRoutedThroughTsxSucceededCount",
+  "parserBailedJsTsxRouteFiles",
   "perRuleCoverageUniformlyHighWithParseErrors",
   "scanFileParserBailNoFindings",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
@@ -3909,6 +3932,10 @@ export function computeScanWarningDetails(
     {
       code: "scan_file_parser_bail_no_findings",
       summarize: () => summarizeScanFileParserBailNoFindings(inputs.scanFileParserBailNoFindings),
+    },
+    {
+      code: "parser_bailed_on_non_jsx_in_tsx_route",
+      summarize: () => summarizeParserBailedOnNonJsxInTsxRoute(inputs.parserBailedJsTsxRouteFiles),
     },
   ];
   // warnings-details schema discipline: index payload helpers by
@@ -4370,6 +4397,23 @@ function summarizeJsInnerHtmlTemplateLiteralUnparsed(
  * so the wire payload stays bounded even when many files contributed.
  */
 const INLINE_HTML_FILE_SAMPLES_CAP = 5;
+
+/**
+ * Builds the `parser_bailed_on_non_jsx_in_tsx_route` payload from the
+ * caller-supplied list of `.js` files where the TSX parser bailed AND
+ * zero rules fired. Returns `undefined` when the list is absent or
+ * empty — both states indicate the predicate did not honestly fire and
+ * surfacing an empty `{}` payload would lie about the evidence per
+ * the doctrine bullet "Empty `warningsDetails.<code>: {}` is dishonest."
+ * Pure shape-builder; the conjunction (extension + parse-error +
+ * zero-findings) is computed at the scan-time-warnings seam.
+ */
+function summarizeParserBailedOnNonJsxInTsxRoute(
+  files: WarningInputs["parserBailedJsTsxRouteFiles"],
+): NonNullable<ScanWarningDetails["parser_bailed_on_non_jsx_in_tsx_route"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  return { files };
+}
 
 /**
  * Builds the `linked_stylesheet_not_resolved_for_contrast` payload from

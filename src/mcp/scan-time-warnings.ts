@@ -243,7 +243,7 @@ interface DerivedBuildArtifactSignals {
     readonly pattern: string;
   }[];
   readonly linkedStylesheetsUnresolvedForContrast: LinkedStylesheetsUnresolvedForContrast;
-  readonly jsRoutedThroughTsxSucceededCount: number;
+  readonly parserBailedJsTsxRouteFiles: readonly string[];
 }
 
 /**
@@ -371,13 +371,24 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     inputs.parsedFiles,
   );
 
-  // Count `.js` files successfully routed through the TSX parser —
-  // canonical content-drop hazard the AI-first doctrine names ("the
-  // parser bails on relational expressions read as JSX"). The `.js` →
-  // tsx aliasing is invisible to a caller reading the response, so
-  // surfacing the routing decision lets the agent decide whether to
-  // spot-check the file or scope around it.
-  const jsRoutedThroughTsxSucceededCount = countJsRoutedThroughTsxSucceeded(inputs.parsedFiles);
+  // Collect `.js` files where the TSX parser bailed (recorded one or
+  // more parse errors) AND zero rules fired against the file — i.e. the
+  // routing decision actually dropped content. The doctrine bullet
+  // "Empty `warningsDetails.<code>: {}` is dishonest" + "Routing skips
+  // that drop content" together require the predicate to gate on
+  // observed bail evidence, not the routing decision alone: a clean
+  // `.js` parse where 86 rules fired is not a content-drop hazard, and
+  // surfacing the warning anyway both lies about the evidence and ships
+  // an empty `{}` payload an agent has no way to triage. The
+  // conjunction (bail evidence + zero findings on the file) mirrors the
+  // shape of `parser_bailed_zero_findings` at the per-file granularity
+  // the routing-telemetry code names. Reuses `findingBearingPaths`
+  // (built above for the inline-HTML cross-reference) — same set both
+  // predicates need.
+  const parserBailedJsTsxRouteFiles = collectParserBailedJsTsxRouteFiles(
+    inputs.parsedFiles,
+    findingBearingPaths,
+  );
 
   return {
     buildArtifactEntries,
@@ -396,7 +407,7 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     totalFindings,
     jsInnerHtmlFileSamples,
     linkedStylesheetsUnresolvedForContrast,
-    jsRoutedThroughTsxSucceededCount,
+    parserBailedJsTsxRouteFiles,
   };
 }
 
@@ -432,32 +443,46 @@ export function combineTemplateLiteralFiles(
 }
 
 /**
- * Counts files in the parsed-file list whose extension is `.js` (case-
- * insensitive) AND whose AST recorded zero parse errors. The `.js`
- * extension is the only `.js`-family extension routed by
+ * Collects `.js` files (case-insensitive extension match) where the
+ * routed TSX parser recorded one or more parse errors AND zero rules
+ * fired against the file. This is the actual bail evidence the
+ * `parser_bailed_on_non_jsx_in_tsx_route` warning names; the routing
+ * decision alone (which fires on every clean `.js` parse) is NOT bail
+ * evidence and surfacing the warning on it would be heuristic emission
+ * per the doctrine.
+ *
+ * The `.js` extension is the only `.js`-family extension routed by
  * {@link import("./session.ts").McpSession.parseFile} through the TSX
  * parser today (`.mjs` / `.cjs` are not in
  * {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS}); broadening
  * the predicate to those would silently fire the warning on file shapes
- * that never reach the parser. Pure over its input — the per-tool
- * caller threads `parsedFiles` and the count is computed once at the
- * aggregator seam.
+ * that never reach the parser.
  *
- * The `errors.length === 0` filter narrows the predicate to
- * "successfully parsed" — files in the parse-error / partial-parse
- * buckets are already covered by `parse_errors_present` and
- * `parser_bailed_zero_findings`. The doctrine framing is "the routing
- * decision is itself the silent-miss hazard"; a clean parse on a `.js`
- * file is the case the existing parse-error codes can't surface.
+ * The conjunction (`ast.errors.length > 0` AND no entry in
+ * `findingBearingPaths`) is the per-file analogue of the
+ * `parser_bailed_zero_findings` project-shape predicate. Files with
+ * partial-parse evidence (errors present + some findings) are excluded:
+ * the agent already has rule-level signal those rules fired and the
+ * existing `partial_parse_files_present` code names that case. Files
+ * with clean parses (no errors) are also excluded — there is no
+ * routing-side content-drop to surface, by design.
+ *
+ * Returns the sorted list of file paths so the wire payload is
+ * deterministic across runs. Pure over its inputs.
  */
-function countJsRoutedThroughTsxSucceeded(parsedFiles: readonly ParsedFile[]): number {
-  let count = 0;
+function collectParserBailedJsTsxRouteFiles(
+  parsedFiles: readonly ParsedFile[],
+  findingBearingPaths: ReadonlySet<string>,
+): readonly string[] {
+  const out: string[] = [];
   for (const file of parsedFiles) {
     if (!file.filePath.toLowerCase().endsWith(".js")) continue;
-    if (file.ast.errors.length > 0) continue;
-    count += 1;
+    if (file.ast.errors.length === 0) continue;
+    if (findingBearingPaths.has(file.filePath)) continue;
+    out.push(file.filePath);
   }
-  return count;
+  out.sort();
+  return out;
 }
 
 /**
@@ -547,9 +572,9 @@ function buildWarningsFieldInputs(
       : {
           linkedStylesheetsUnresolvedForContrast: derived.linkedStylesheetsUnresolvedForContrast,
         }),
-    ...(derived.jsRoutedThroughTsxSucceededCount === 0
+    ...(derived.parserBailedJsTsxRouteFiles.length === 0
       ? {}
-      : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
+      : { parserBailedJsTsxRouteFiles: derived.parserBailedJsTsxRouteFiles }),
     ...uniformlyHighInput(inputs.perRuleCoverageUniformlyHighWithParseErrors),
     ...scanFileParserBailInput(inputs.scanFileParserBailNoFindings),
   };
