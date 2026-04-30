@@ -205,9 +205,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(typeof data.summary).toBe("object");
     expect(typeof data.summary?.headline).toBe("string");
     expect(data.summary?.headline).not.toMatch(/\(\d+%\)/);
-    expect(data.summary?.automatedCoverage).not.toHaveProperty(
-      "automatedCriteriaPassRate",
-    );
+    expect(data.summary?.automatedCoverage).not.toHaveProperty("automatedCriteriaPassRate");
     // Structural signal the agent can still read —
     // criteriaTotalForProfile stays populated so the shape of what
     // *would* have been evaluated is visible (clamps only the

@@ -392,9 +392,7 @@ export const coverageTool: McpTool = {
             standardId: c.standardId,
             criteriaWithRulesAllClean: c.clean,
             criteriaWithoutEligibleInputs: c.untestable,
-            ...(passRateMeaningful
-              ? { automatedCriteriaPassRate: c.automatedPassRate }
-              : {}),
+            ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
           },
           headline: passRateMeaningful
             ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +

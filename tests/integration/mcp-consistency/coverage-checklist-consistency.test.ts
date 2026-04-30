@@ -231,25 +231,19 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // `actionable.criteria` is the cross-tool canonical count — must
     // resolve identically by both name AND value on either tool.
-    expect(coverage.summary.actionable.criteria).toBe(
-      checklist.summary.actionable.criteria,
-    );
+    expect(coverage.summary.actionable.criteria).toBe(checklist.summary.actionable.criteria);
     // The structured count must also equal the sibling top-level
     // scalar on coverage (no internal disagreement within the same
     // response).
     expect(coverage.summary.actionable.criteria).toBe(coverage.actionableManualItems);
 
     // `summary.untargetedCriteria` mirrors across tools.
-    expect(coverage.summary.untargetedCriteria).toBe(
-      checklist.summary.untargetedCriteria,
-    );
+    expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
     // And mirrors the sibling top-level scalar on coverage.
     expect(coverage.summary.untargetedCriteria).toBe(coverage.untargetedCriteria);
 
     // `summary.likelyIrrelevant` (count) mirrors across tools.
-    expect(coverage.summary.likelyIrrelevant).toBe(
-      checklist.summary.likelyIrrelevant,
-    );
+    expect(coverage.summary.likelyIrrelevant).toBe(checklist.summary.likelyIrrelevant);
 
     // `summary.automatedCoverage` mirrors checklist's split — two
     // non-overlapping counters; same standardId on both surfaces.
@@ -259,12 +253,8 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
       // standardId field.
       coverage.standardId,
     );
-    expect(typeof coverage.summary.automatedCoverage.criteriaWithRulesAllClean).toBe(
-      "number",
-    );
-    expect(
-      typeof coverage.summary.automatedCoverage.criteriaWithoutEligibleInputs,
-    ).toBe("number");
+    expect(typeof coverage.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");
+    expect(typeof coverage.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe("number");
 
     // Headline (prose) is demoted alongside the structured fields —
     // load-bearing for human readers but never the only access path.

@@ -2908,9 +2908,7 @@ describe("MCP tool: coverage", () => {
     expect(typeof data.summary.likelyIrrelevant).toBe("number");
     expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
     expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");
-    expect(typeof data.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe(
-      "number",
-    );
+    expect(typeof data.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe("number");
     // Headline (prose) still names the two split counts as separate
     // clauses — pin both phrases appear so a future drift back to a
     // composite phrase fails here.
