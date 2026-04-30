@@ -355,6 +355,29 @@ export function groupByFile(
  * reads `findings` out of `violations` + source out of `parsedFiles`
  * because both are already on the orchestrator's stack.
  */
+/**
+ * Decides whether the assembler should ship a deduped
+ * `reviewCandidates[]` array, applying the per-candidate priority +
+ * confidence resolver via the shared
+ * {@link import("./review-candidate-priority.ts").resolvePriorityForCandidate}
+ * helper. Extracted from {@link assembleScanFamilyResponse} so the
+ * ternary + `?? new Map()` fallback don't push the orchestrator
+ * function over the cognitive-complexity cap. Returns `undefined`
+ * when the caller opted out (the surface is omitted entirely);
+ * returns the deduped array otherwise (which may itself be empty
+ * — the assembler's outer conditional-spread suppresses an empty
+ * payload).
+ */
+function maybeDedupeReviewCandidates(args: {
+  readonly options: ScanFamilyResponseOptions;
+  readonly reviewCandidates: readonly ReviewCandidate[];
+  readonly criterionLevels: ReadonlyMap<string, string> | undefined;
+}): readonly DedupedReviewCandidate[] | undefined {
+  const { options, reviewCandidates, criterionLevels } = args;
+  if (options.includeReviewCandidates !== true) return undefined;
+  return dedupeReviewCandidatesForSingleFile(reviewCandidates, criterionLevels ?? new Map());
+}
+
 function buildAssemblerWarningsField(args: {
   readonly meta: Record<string, unknown>;
   readonly violations: readonly Violation[];
@@ -670,16 +693,14 @@ export function assembleScanFamilyResponse(
   const ruleCoverage = buildRuleCoverageDerivative(adjustedPerRuleCoverage, violations);
 
   // (7) Review candidates — opt-in dedupe at the single-file level.
-  // Threads the caller-supplied `criterionLevels` map through to the
-  // dedup helper so per-candidate `priority` resolves against the
-  // strongest-attention level among the union of `criteria`. Empty-
-  // map fallback keeps legacy fixture callers (which don't thread
-  // standards) working — the resolver downgrades to the no-level
-  // base when the lookup misses.
-  const includeReview = options.includeReviewCandidates === true;
-  const dedupedCandidates = includeReview
-    ? dedupeReviewCandidatesForSingleFile(reviewCandidates, criterionLevels ?? new Map())
-    : undefined;
+  // Threading happens inside {@link maybeDedupeReviewCandidates} so the
+  // ternary + `?? new Map()` fallback don't bump this orchestrator
+  // function over the cognitive-complexity cap.
+  const dedupedCandidates = maybeDedupeReviewCandidates({
+    options,
+    reviewCandidates,
+    criterionLevels,
+  });
 
   // (8) Warnings channel — extracted to keep this orchestrator's
   // cognitive complexity inside the lint cap as new signals accrete.

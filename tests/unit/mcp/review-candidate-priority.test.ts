@@ -73,7 +73,9 @@ describe("resolvePriorityForCandidate — downgrade gates", () => {
     expect(
       resolvePriorityForCandidate({
         level: "AA",
-        evidence: { reason: "if this is a standalone single-page file the criterion may not apply" },
+        evidence: {
+          reason: "if this is a standalone single-page file the criterion may not apply",
+        },
       }),
     ).toBe("medium");
   });
@@ -116,9 +118,9 @@ describe("candidateHedges — token list", () => {
   });
 
   it("matches 'verify…before'", () => {
-    expect(
-      candidateHedges({ reason: "verify the inheritance chain before relying on this" }),
-    ).toBe(true);
+    expect(candidateHedges({ reason: "verify the inheritance chain before relying on this" })).toBe(
+      true,
+    );
   });
 
   it("matches 'if this is'", () => {

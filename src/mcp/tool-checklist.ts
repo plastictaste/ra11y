@@ -24,7 +24,6 @@ import type {
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
-import { candidateHedges } from "./review-candidate-priority.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import {
@@ -35,6 +34,7 @@ import {
 } from "./manual-applicability.ts";
 import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { candidateHedges } from "./review-candidate-priority.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";

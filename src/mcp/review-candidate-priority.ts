@@ -157,19 +157,19 @@ export function strongestAttentionLevel(
   criteria: readonly string[],
   criterionLevels: ReadonlyMap<string, string>,
 ): string | undefined {
-  let saw_aa = false;
-  let saw_aaa = false;
+  let sawAA = false;
+  let sawAAA = false;
   let other: string | undefined;
   for (const id of criteria) {
     const level = criterionLevels.get(id);
     if (level === undefined) continue;
     if (level === "A") return "A";
-    if (level === "AA") saw_aa = true;
-    else if (level === "AAA") saw_aaa = true;
+    if (level === "AA") sawAA = true;
+    else if (level === "AAA") sawAAA = true;
     else if (other === undefined) other = level;
   }
-  if (saw_aa) return "AA";
-  if (saw_aaa) return "AAA";
+  if (sawAA) return "AA";
+  if (sawAAA) return "AAA";
   return other;
 }
 
@@ -202,7 +202,9 @@ export function highestCandidateConfidence(
  * without coupling the dedup module to the standards registry.
  */
 export function buildCriterionLevelMap(
-  standards: readonly { readonly criteria: readonly { readonly id: string; readonly level: string }[] }[],
+  standards: readonly {
+    readonly criteria: readonly { readonly id: string; readonly level: string }[];
+  }[],
 ): ReadonlyMap<string, string> {
   const out = new Map<string, string>();
   for (const s of standards) {

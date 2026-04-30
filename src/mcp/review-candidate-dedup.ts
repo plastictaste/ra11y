@@ -52,8 +52,8 @@ import type {
 } from "../types/review.ts";
 import {
   highestCandidateConfidence,
-  resolvePriorityForCandidate,
   type ReviewCandidatePriority,
+  resolvePriorityForCandidate,
   strongestAttentionLevel,
 } from "./review-candidate-priority.ts";
 
@@ -418,9 +418,8 @@ function materializeDedupedCandidate(
   // lower-signal. Confidences is non-empty by construction (every
   // source candidate seeded one entry); the fallback narrows the
   // type for downstream consumers.
-  const confidence: ReviewConfidence = highestCandidateConfidence(
-    g.confidences.map((c) => ({ confidence: c })),
-  ) ?? "low";
+  const confidence: ReviewConfidence =
+    highestCandidateConfidence(g.confidences.map((c) => ({ confidence: c }))) ?? "low";
   return {
     criteria,
     line: g.line,
