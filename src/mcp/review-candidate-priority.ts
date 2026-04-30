@@ -76,11 +76,24 @@ const HEDGING_TOKENS: readonly RegExp[] = [
  * Minimal per-candidate evidence shape needed to resolve priority.
  * Both `ReviewCandidate` and `DedupedReviewCandidate` satisfy this
  * structurally — the helper does not care which surface called it.
+ *
+ * `confidence` is the optional fourth downgrade gate — when the
+ * finder's static evidence is `"low"` (heuristic match on narrow
+ * evidence per the {@link ReviewConfidence} contract), the candidate
+ * cannot honestly ride at `"high"` priority on an A/AA criterion. The
+ * confidence channel concedes the static evidence is weak; the
+ * priority channel must agree per `docs/kb/architecture/ai-first-
+ * consumer.md` "Reason / priority / fix-description must agree across
+ * all three channels". Omitted when the caller has not threaded the
+ * finder's confidence through (rare — the dedup path and the per-item
+ * checklist rollup both have it on hand) and the resolver falls back
+ * to the existing three-gate logic.
  */
 export interface PriorityCandidateEvidence {
   readonly reason: string;
   readonly vendorContext?: ReviewCandidateVendorContext;
   readonly predicateConceded?: ReviewCandidatePredicateConceded;
+  readonly confidence?: ReviewConfidence;
 }
 
 /**
@@ -101,23 +114,31 @@ export function candidateHedges(c: PriorityCandidateEvidence): boolean {
  * `priorityFor` ranker in `tool-checklist.ts` for the single-candidate
  * case: A/AA criteria default to "high", AAA defaults to "medium",
  * and any candidate whose own evidence concedes the predicate (hedging
- * reason text, vendor-path-shape `vendorContext`, or logotype-pattern
- * `predicateConceded`) downgrades from "high" to "medium" so the
- * attention-budget signal agrees with the framing the candidate
- * already carries.
+ * reason text, vendor-path-shape `vendorContext`, logotype-pattern
+ * `predicateConceded`, or finder `confidence: "low"`) downgrades from
+ * "high" to "medium" so the attention-budget signal agrees with the
+ * framing the candidate already carries.
  *
  * Per `docs/kb/architecture/ai-first-consumer.md` "Reason / priority /
  * fix-description must agree across all three channels": the priority
  * channel cannot ride at "high" on a candidate whose reason concedes
- * the predicate may not apply.
+ * the predicate may not apply, AND it cannot ride at "high" when the
+ * finder itself reported `confidence: "low"` — the confidence channel
+ * is the parallel signal naming "static evidence is heuristic on
+ * narrow evidence" (per `ReviewConfidence` contract), and the
+ * three-channel agreement rule applies symmetrically. Without this
+ * gate, a heterogeneous corpus where most criteria are A/AA reports
+ * uniform `priority: "high"` even when individual candidates ride at
+ * `confidence: "low"`, denying the agent the ranking signal the
+ * priority field exists to provide.
  *
  * The downgrade gates are checked individually (rather than the
  * `everyCandidateX` pattern checklist uses on the per-item rollup)
  * because this resolver runs per-candidate — the per-item helpers
  * fold across N candidates' evidence, but here every entry is a
  * single candidate (or a single deduped union) and the per-finding
- * `vendorContext` / `predicateConceded` / hedging signal IS the
- * conceded evidence.
+ * `vendorContext` / `predicateConceded` / hedging / low-confidence
+ * signal IS the conceded evidence.
  */
 export function resolvePriorityForCandidate(args: {
   readonly level: string | undefined;
@@ -134,6 +155,7 @@ export function resolvePriorityForCandidate(args: {
   if (candidateHedges(evidence)) return "medium";
   if (evidence.vendorContext !== undefined) return "medium";
   if (evidence.predicateConceded !== undefined) return "medium";
+  if (evidence.confidence === "low") return "medium";
   return "high";
 }
 
@@ -234,6 +256,7 @@ export function resolvePriorityForReviewCandidate(args: {
     level,
     evidence: {
       reason: candidate.reason,
+      confidence: candidate.confidence,
       ...(candidate.vendorContext === undefined ? {} : { vendorContext: candidate.vendorContext }),
       ...(candidate.predicateConceded === undefined
         ? {}

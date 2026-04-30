@@ -362,7 +362,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Reason / severity / priority / confidence channel mismatch
 
-- [ ] **Q13-PRIORITY-UNIFORM-HIGH-ZERO-RANKING-SIGNAL** All 10 checklist items on a bulk-template corpus ship `priority: "high"` uniformly — providing zero ranking signal for an agent budgeting against attention. Multiple items have `confidence: "low"` while still `priority: "high"` (1.4.5, 2.4.5, 3.2.1). The doctrine bullet "Don't downgrade priority to hide things" warns against suppression; this is the inverse — uniform-up framing erases the ranking the priority field exists to provide. Fix: priority assignment must reflect grounded-vs-bare evidence and confidence; two checklist items at identical priority+confidence on the same corpus signal the field is not load-bearing — re-derive priority from rule-fan-out + criterion-evidence-density rather than emitting a constant. Per AI-first doctrine "Reason / priority / fix-description must agree across all three channels" — extended to "the priority channel must actually rank."
 
 ### Heuristic-mislabeled meta sub-fields
 

@@ -105,6 +105,51 @@ describe("resolvePriorityForCandidate — downgrade gates", () => {
       }),
     ).toBe("medium");
   });
+
+  it("low-confidence downgrades AA from high to medium", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "AA",
+        evidence: { reason: "ordinary reason", confidence: "low" },
+      }),
+    ).toBe("medium");
+  });
+
+  it("low-confidence downgrades A from high to medium", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "A",
+        evidence: { reason: "ordinary reason", confidence: "low" },
+      }),
+    ).toBe("medium");
+  });
+
+  it("medium confidence keeps high (no downgrade applies)", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "AA",
+        evidence: { reason: "ordinary reason", confidence: "medium" },
+      }),
+    ).toBe("high");
+  });
+
+  it("high confidence keeps high (no downgrade applies)", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "A",
+        evidence: { reason: "ordinary reason", confidence: "high" },
+      }),
+    ).toBe("high");
+  });
+
+  it("low confidence has no effect when base is already medium (AAA stays medium)", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "AAA",
+        evidence: { reason: "ordinary reason", confidence: "low" },
+      }),
+    ).toBe("medium");
+  });
 });
 
 describe("candidateHedges — token list", () => {
@@ -229,6 +274,19 @@ describe("resolvePriorityForReviewCandidate — single-criterion convenience", (
       reason: "ordinary",
       confidence: "medium",
       vendorContext: VENDOR_CONTEXT,
+    };
+    const levels = new Map<string, string>([["wcag22:1.4.3", "AA"]]);
+    expect(resolvePriorityForReviewCandidate({ candidate, criterionLevels: levels })).toBe(
+      "medium",
+    );
+  });
+
+  it("downgrades when the candidate ships confidence: low (heuristic evidence)", () => {
+    const candidate: ReviewCandidate = {
+      criterionId: "wcag22:1.4.3",
+      location: { filePath: "/p", line: 1, column: 0 },
+      reason: "ordinary",
+      confidence: "low",
     };
     const levels = new Map<string, string>([["wcag22:1.4.3", "AA"]]);
     expect(resolvePriorityForReviewCandidate({ candidate, criterionLevels: levels })).toBe(

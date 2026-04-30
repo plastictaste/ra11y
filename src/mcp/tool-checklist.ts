@@ -346,11 +346,29 @@ function wcagPrincipleFor(standardId: string, localId: string): WcagPrinciple | 
  * on the `suggest_fix` surface's separate `VendorContext` shape;
  * this priority drop just keeps the attention-budget signal honest
  * with the framing the candidate already concedes. Drop to "medium".
+ *
+ * Low-confidence downgrade: when every grounded candidate ships
+ * `confidence: "low"` (heuristic match on narrow evidence per the
+ * {@link ReviewConfidence} contract), the item cannot honestly ride
+ * at `"high"` priority — the confidence channel is the parallel
+ * signal naming "static evidence is weak", and the priority channel
+ * must agree per "Reason / priority / fix-description must agree
+ * across all three channels". Without this gate, a heterogeneous
+ * corpus where most criteria are A/AA reports uniform `priority:
+ * "high"` even when individual items ride at `confidence: "low"`,
+ * denying the agent the ranking signal the priority field exists to
+ * provide. Drop to "medium" so the budget signal matches the
+ * confidence framing. The gate is all-or-nothing (mirrors
+ * `everyCandidateHedges`, `everyCandidateHasVendorContext`,
+ * `everyCandidateHasPredicateConceded`): a single `"medium"` /
+ * `"high"` candidate keeps the item at `"high"` so the agent
+ * doesn't miss the actionable case among the low-signal siblings.
  */
 function priorityFor(
   level: string,
   candidates: readonly {
     readonly reason: string;
+    readonly confidence: ReviewConfidence;
     readonly vendorContext?: ReviewCandidateVendorContext;
     readonly predicateConceded?: ReviewCandidatePredicateConceded;
   }[],
@@ -361,6 +379,7 @@ function priorityFor(
   if (everyCandidateHedges(candidates)) return "medium";
   if (everyCandidateHasVendorContext(candidates)) return "medium";
   if (everyCandidateHasPredicateConceded(candidates)) return "medium";
+  if (everyCandidateHasLowConfidence(candidates)) return "medium";
   return "high";
 }
 
@@ -420,6 +439,34 @@ function everyCandidateHasVendorContext(
 function everyCandidateHedges(candidates: readonly { readonly reason: string }[]): boolean {
   for (const c of candidates) {
     if (!candidateHedges(c)) return false;
+  }
+  return true;
+}
+
+/**
+ * True when every grounded candidate ships `confidence: "low"` — the
+ * finder's static evidence is heuristic on narrow grounds (text-regex,
+ * className convention, structural proxy) per the
+ * {@link ReviewConfidence} contract. The all-or-nothing test mirrors
+ * `everyCandidateHedges` / `everyCandidateHasVendorContext` /
+ * `everyCandidateHasPredicateConceded`: a single `"medium"` / `"high"`
+ * sibling keeps the item at `"high"` so the agent doesn't miss the
+ * actionable case among the low-signal siblings.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Reason / priority /
+ * fix-description must agree across all three channels": the
+ * confidence channel is the parallel signal naming "static evidence
+ * is weak"; when every candidate concedes that, priority cannot ride
+ * at `"high"` without contradicting its own siblings. The candidate
+ * still surfaces (per "Surface, don't suppress") — only the
+ * attention-budget signal moves so the agent's ranking reflects the
+ * evidence quality the finder reported.
+ */
+function everyCandidateHasLowConfidence(
+  candidates: readonly { readonly confidence: ReviewConfidence }[],
+): boolean {
+  for (const c of candidates) {
+    if (c.confidence !== "low") return false;
   }
   return true;
 }

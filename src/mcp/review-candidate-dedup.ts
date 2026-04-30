@@ -405,14 +405,6 @@ function materializeDedupedCandidate(
   // resolver is the same logic checklist runs per-item, so the same
   // conceptual candidate ranks identically across both surfaces.
   const level = strongestAttentionLevel(criteria, criterionLevels);
-  const priority = resolvePriorityForCandidate({
-    level,
-    evidence: {
-      reason: g.reason,
-      ...(g.vendorContext === undefined ? {} : { vendorContext: g.vendorContext }),
-      ...(g.predicateConceded === undefined ? {} : { predicateConceded: g.predicateConceded }),
-    },
-  });
   // Take the highest confidence across the folded union — single
   // "high" hit sizes the entry honestly even when other hits are
   // lower-signal. Confidences is non-empty by construction (every
@@ -420,6 +412,23 @@ function materializeDedupedCandidate(
   // type for downstream consumers.
   const confidence: ReviewConfidence =
     highestCandidateConfidence(g.confidences.map((c) => ({ confidence: c }))) ?? "low";
+  // Thread the rolled-up confidence into the priority resolver so a
+  // dedup union whose evidence concedes "low" static signal cannot
+  // ride at `priority: "high"` on an A/AA criterion. Mirrors the
+  // hedging / vendorContext / predicateConceded gates — the
+  // confidence channel is the parallel signal naming heuristic
+  // evidence; per `docs/kb/architecture/ai-first-consumer.md`
+  // "Reason / priority / fix-description must agree across all
+  // three channels", priority must agree with that framing.
+  const priority = resolvePriorityForCandidate({
+    level,
+    evidence: {
+      reason: g.reason,
+      confidence,
+      ...(g.vendorContext === undefined ? {} : { vendorContext: g.vendorContext }),
+      ...(g.predicateConceded === undefined ? {} : { predicateConceded: g.predicateConceded }),
+    },
+  });
   return {
     criteria,
     line: g.line,
