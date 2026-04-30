@@ -1515,6 +1515,129 @@ describe("MCP tool: scan_file", () => {
     expect(structured.details?.["filePath"]).toBe("/definitely/does/not/exist.tsx");
   });
 
+  it("scan_file emits `scan_file_parser_bail_no_findings` on a `.js` configuration object literal that the tsx parser routed through silently", async () => {
+    // Per AI-first doctrine "Zero-output success is ambiguous failure":
+    // when a `.js` file scans to zero findings AND the dispatcher
+    // aliased it through the in-house TSX parser (per
+    // `session.ts::parseForExtension`), the response shape is
+    // indistinguishable from a true clean scan. The TSX parser bails
+    // silently on relational expressions read as JSX, so a clean
+    // `ast.errors` list against a `.js` file is itself ambiguous
+    // evidence that no findings dropped. The conjunction-named warning
+    // gives the agent the structured triage signal that
+    // `parser_bailed_on_non_jsx_in_tsx_route` (routing-only) and
+    // `parser_bailed_zero_findings` (parse-error-only) cannot ship
+    // alone — the "Automated checks clean" `nextStep` framing is then
+    // honestly disambiguated.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-scan-file-bail-no-findings-"));
+    const jsPath = joinPath(dir, "webpack.config.js");
+    // Pure non-JSX configuration object literal — the kind of `.js`
+    // file users actually scan when they ask "is this clean?" The
+    // tsx parser produces an AST without errors but its evidence
+    // horizon does not match a JS-native parser; the routing-decision
+    // signal is the sole bail evidence here (no parse errors).
+    await writeFile(
+      jsPath,
+      [
+        "const path = require('path');",
+        "module.exports = {",
+        "  entry: './src/index.js',",
+        "  output: {",
+        "    path: path.resolve(__dirname, 'dist'),",
+        "    filename: 'bundle.js',",
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    );
+
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: jsPath }, session);
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      findings: unknown[];
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(data.findings).toHaveLength(0);
+    expect(data.warnings).toContain("scan_file_parser_bail_no_findings");
+    const payload = data.warningsDetails?.["scan_file_parser_bail_no_findings"] as
+      | { filePath: string; parserAttempted: string; naturalParser?: string; evidence: string }
+      | undefined;
+    expect(payload).toBeDefined();
+    expect(payload?.filePath).toBe(jsPath);
+    expect(payload?.parserAttempted).toBe("tsx");
+    expect(payload?.naturalParser).toBe("js");
+    expect(payload?.evidence).toBe("non_jsx_in_tsx_route");
+  });
+
+  it("scan_file emits `scan_file_parser_bail_no_findings` (parse_errors evidence) when the parser errored AND zero findings surfaced", async () => {
+    // The parse-errors variant — `analysisCoverage.parseErrorFileCount > 0`
+    // AND zero findings — covers the single-file analogue of the
+    // project-shape `parser_bailed_zero_findings` predicate. Distinct
+    // discriminated `evidence` so the agent's recovery action stays
+    // deterministic (read `analysisCoverage.parseErrorFiles[]` for the
+    // per-error fix pivot rather than re-routing by extension).
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-scan-file-bail-parse-error-"));
+    const htmlPath = joinPath(dir, "broken.html");
+    // Mismatched HTML triggers a parser error AND no a11y rule fires.
+    await writeFile(htmlPath, "<<<>>>\n<div><span></div>\n");
+
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: htmlPath }, session);
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      findings: unknown[];
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(data.findings).toHaveLength(0);
+    expect(data.warnings).toContain("scan_file_parser_bail_no_findings");
+    const payload = data.warningsDetails?.["scan_file_parser_bail_no_findings"] as
+      | { filePath: string; parserAttempted: string; naturalParser?: string; evidence: string }
+      | undefined;
+    expect(payload).toBeDefined();
+    expect(payload?.filePath).toBe(htmlPath);
+    expect(payload?.parserAttempted).toBe("html");
+    expect(payload?.evidence).toBe("parse_errors");
+    // naturalParser omitted because attempted matches natural for `.html`.
+    expect("naturalParser" in (payload ?? {})).toBe(false);
+  });
+
+  it("scan_file does NOT emit `scan_file_parser_bail_no_findings` when findings surfaced (the conjunction predicate gates on zero findings)", async () => {
+    // The warning's predicate is the CONJUNCTION of zero findings AND
+    // parser-bail evidence. A scan that surfaced findings — even on a
+    // routing-suspect substrate — is not the silent-miss shape the
+    // warning names; the agent has real findings to triage and the
+    // "Automated checks clean" framing did not ship.
+    const { mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join: joinPath } = await import("node:path");
+    const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-scan-file-bail-with-findings-"));
+    const htmlPath = joinPath(dir, "withfinding.html");
+    // `<img>` with no alt text fires `a11y/img-alt-missing` so findings
+    // ride alongside any other warnings the response carries.
+    await writeFile(htmlPath, "<img src='foo.png'>\n");
+
+    const tool = findTool("scan_file");
+    const session = new McpSession();
+    const result = await tool.handler({ path: htmlPath }, session);
+    const data = JSON.parse(result.content[0].text) as {
+      findings: unknown[];
+      warnings?: readonly string[];
+    };
+    expect(data.findings.length).toBeGreaterThan(0);
+    expect(data.warnings ?? []).not.toContain("scan_file_parser_bail_no_findings");
+  });
+
   it("parses .scss end-to-end and fires CSS-shaped contrast rules on the AST", async () => {
     // Invariant: `.scss` files reach the scanner through the same path
     // as `.css` files — discovery accepts them (PARSEABLE_EXTENSIONS),

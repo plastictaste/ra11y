@@ -20,7 +20,11 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
-import { extension as fileExtension, parseableExtensions } from "../utils/path.ts";
+import {
+  extension as fileExtension,
+  naturalParserFor,
+  parseableExtensions,
+} from "../utils/path.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
@@ -290,6 +294,26 @@ function applyCrossSurfaceWarnings(args: {
     | undefined;
   const filesByExtension =
     (assembled.meta["filesByExtension"] as Record<string, number> | undefined) ?? {};
+  // Conjunction predicate for `scan_file_parser_bail_no_findings` —
+  // populated only when scan_file's response will carry zero findings
+  // AND the single scanned file took a parser-routing path known to
+  // silently drop content (parse errors recorded against this file,
+  // OR the dispatcher aliased a `.js` source through the in-house TSX
+  // parser per `session.ts::parseForExtension`). The warning fires off
+  // the conjunction-named predicate to disambiguate the dishonest
+  // "Automated checks clean" framing the scan_file response otherwise
+  // ships when the parser may have silenced findings rather than
+  // observed a clean source — per AI-first doctrine "Zero-output
+  // success is ambiguous failure." The scan_file call site is the
+  // predicate authority because the project-shape `parser_bailed_zero_findings`
+  // gate (across-files) cannot name the single-file routing-decision
+  // case, and the routing-telemetry `parser_bailed_on_non_jsx_in_tsx_route`
+  // alone does not name the zero-findings conjunction the agent reads
+  // for triage.
+  const scanFileParserBailNoFindings = deriveScanFileParserBailNoFindings(
+    parsed,
+    collected.violations.length === 0,
+  );
   const scanTime = buildScanTimeWarnings({
     parsedFiles: [parsed],
     violations: collected.violations,
@@ -300,6 +324,7 @@ function applyCrossSurfaceWarnings(args: {
     analysisCoverage,
     filesByExtension,
     durationMs: collected.durationMs,
+    ...(scanFileParserBailNoFindings === undefined ? {} : { scanFileParserBailNoFindings }),
   });
   // Stamp `meta.scannedBuildArtifacts` from the helper's
   // single-pass classification so the field shows up on scan_file
@@ -331,6 +356,78 @@ function applyCrossSurfaceWarnings(args: {
       : { warningsDetails: scanTime.warningsDetails }),
   };
 }
+
+/**
+ * Derives the `scan_file_parser_bail_no_findings` predicate input —
+ * present-when-meaningful per AI-first "Ambiguous field shapes are
+ * dishonest." Returns `undefined` when the scan_file response will
+ * not be the routing-suspect-clean shape (findings exist, OR the
+ * single scanned file shows neither parse errors nor a `.js → tsx`
+ * routing-suspect alias).
+ *
+ * The two evidence axes are OR'd because either alone is sufficient
+ * to mark the "Automated checks clean" framing dishonest:
+ *
+ *   - `parse_errors`: the parser recorded at least one `ParseError`
+ *     against the AST (`parsed.ast.errors.length > 0`). The single-
+ *     file analogue of the project-shape `parser_bailed_zero_findings`
+ *     predicate — zero findings + parse errors = the parser silenced
+ *     whatever rules would have run on the recovered slice. The
+ *     existing `parse_errors_present` warning still fires alongside
+ *     for the parse-error count payload; this code names the
+ *     conjunction the per-file shape needs.
+ *
+ *   - `non_jsx_in_tsx_route`: the dispatcher aliased a `.js` source
+ *     through the in-house TSX parser (per
+ *     `src/mcp/session.ts::parseForExtension`). The TSX parser bails
+ *     silently on relational expressions read as JSX (`r.length<b.length`)
+ *     so a clean `ast.errors` list against a `.js` file is itself
+ *     ambiguous evidence that no findings dropped. The existing
+ *     `parser_bailed_on_non_jsx_in_tsx_route` warning names the
+ *     routing decision regardless of outcome; this code names the
+ *     zero-findings conjunction the agent reads for triage. Detected
+ *     by the natural-vs-attempted parser mismatch
+ *     (`naturalParserFor(filePath) !== ast.language` where the
+ *     attempted parser is `tsx` and the natural parser is `js`).
+ *
+ * `naturalParser` is conditional-spread per the present-when-meaningful
+ * contract — omitted when it would echo `parserAttempted`, surfaced
+ * only when the dispatcher routed through a non-natural parser
+ * (`.js` → tsx).
+ */
+function deriveScanFileParserBailNoFindings(
+  parsed: ParsedFile,
+  zeroFindings: boolean,
+): WarningInputsForScanFile["scanFileParserBailNoFindings"] {
+  if (!zeroFindings) return undefined;
+  const errors = parsed.ast.errors;
+  const hasParseError = errors.length > 0;
+  const parserAttempted = parsed.ast.language;
+  const natural = naturalParserFor(parsed.filePath);
+  const isNonJsxInTsxRoute = parserAttempted === "tsx" && natural !== null && natural !== "tsx";
+  if (!(hasParseError || isNonJsxInTsxRoute)) return undefined;
+  // Parse-error evidence takes priority: when both axes hold (the
+  // file is `.js`-routed-through-tsx AND the parser recorded errors),
+  // the parse-error reason is the more specific signal — the agent
+  // reads `analysisCoverage.parseErrorFiles[]` for the per-error fix
+  // pivot rather than the broader routing-decision class.
+  const evidence: "non_jsx_in_tsx_route" | "parse_errors" = hasParseError
+    ? "parse_errors"
+    : "non_jsx_in_tsx_route";
+  const naturalParser = natural !== null && natural !== parserAttempted ? natural : undefined;
+  return {
+    filePath: parsed.filePath,
+    parserAttempted,
+    ...(naturalParser === undefined ? {} : { naturalParser }),
+    evidence,
+  };
+}
+
+/** Local type alias to keep the helper signature short. */
+type WarningInputsForScanFile = Pick<
+  import("./warnings.ts").WarningInputs,
+  "scanFileParserBailNoFindings"
+>;
 
 /**
  * Structured error for a path that resolves outside its declared

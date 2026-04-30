@@ -633,6 +633,40 @@ export type ScanWarningCode =
   // existence of parse errors; this code names the consistency gap
   // between the parse-error surface and the per-rule coverage surface).
   | "coverage_confidence_uniformly_high_with_parse_errors"
+  // scan_file-only: the response carries
+  // zero findings AND the scanned file took a parser-routing path known
+  // to silently drop content (a `.js` file aliased through the TSX
+  // parser by `src/mcp/session.ts::parseForExtension`, OR the parser
+  // emitted at least one error against the file). Names the conjunction
+  // the existing `parser_bailed_on_non_jsx_in_tsx_route` /
+  // `parse_errors_present` warnings cannot — both fire on the routing
+  // decision OR the parse result independently, so an agent reading
+  // either alone cannot tell whether the "Automated checks clean"
+  // framing on `nextStep` is honest. The conjunction-named code makes
+  // the dishonest "clean on a file the parser may have silenced"
+  // shape explicit so the agent treats `nextStep` skeptically and
+  // either reads the file directly or scopes the scan differently
+  // (e.g. retag the file as `.cjs` / `.mjs` / `.ts` so the dispatcher
+  // routes it through a parser whose evidence horizon matches the
+  // source). Per AI-first doctrine "Zero-output success is ambiguous
+  // failure" — the response shape was indistinguishable from a true
+  // clean scan; the warning is the structured signal that lets the
+  // agent disambiguate without re-running the call. Payload-bearing:
+  // `warningsDetails.scan_file_parser_bail_no_findings` carries
+  // `{ filePath, parserAttempted, naturalParser?, evidence }` so the
+  // agent has the routing-decision identity in one read. `evidence` is
+  // the discriminated reason: `"non_jsx_in_tsx_route"` (the `.js → tsx`
+  // dispatcher decision the agent can fix by extension rename or a
+  // parser-route override) or `"parse_errors"` (the parser emitted
+  // errors AND zero findings surfaced — the agent reads
+  // `analysisCoverage.parseErrorFiles[]` for the per-error fix pivot).
+  // Distinct from `parser_bailed_zero_findings`: that code is the
+  // multi-file project-shape predicate (`parseErrorFileCount > 0` AND
+  // `totalFindings === 0` across the whole scan); this code is the
+  // single-file analogue that ALSO covers the routing-decision case
+  // (`parser_bailed_on_non_jsx_in_tsx_route`) the project-shape code
+  // does not.
+  | "scan_file_parser_bail_no_findings"
   // at least one default-excluded
   // build-artifact directory (`dist/`, `build/`, `.next/`, `.nuxt/`,
   // `out/`, `coverage/`, `target/`, etc. per
@@ -1141,6 +1175,39 @@ export interface WarningInputs {
    * conservatively in that case.
    */
   readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
+  /**
+   * scan_file-only payload describing a routing-suspect single-file
+   * scan whose response carried zero findings AND the scanned file
+   * took a parser-routing path known to silently drop content. Drives
+   * the `scan_file_parser_bail_no_findings` warning code + its
+   * structured payload — fires when the field is present (the call
+   * site only populates it when the conjunction holds).
+   *
+   * `evidence` is the discriminated reason:
+   *   - `"non_jsx_in_tsx_route"` — the dispatcher aliased a `.js` file
+   *     through the in-house TSX parser (per
+   *     `src/mcp/session.ts::parseForExtension`); the parser may have
+   *     silently dropped findings on relational expressions read as
+   *     JSX without recording a `ParseError`.
+   *   - `"parse_errors"` — the parser emitted at least one error
+   *     against the file (the file appears in
+   *     `analysisCoverage.parseErrorFileCount`); zero findings + a
+   *     non-empty parse-error list is the canonical "parser silenced
+   *     everything" shape on the single-file substrate.
+   *
+   * Other tools (scan / scan_project / scan_diff) leave this field
+   * undefined — the predicate has no honest meaning at the project-
+   * scale where `parser_bailed_zero_findings` already names the
+   * across-files analogue. Threaded through {@link ScanTimeWarningInputs}
+   * as `scanFileParserBailNoFindings` so the shared aggregator can
+   * reach the warnings module without a scan_file-specific seam.
+   */
+  readonly scanFileParserBailNoFindings?: {
+    readonly filePath: string;
+    readonly parserAttempted: string;
+    readonly naturalParser?: string;
+    readonly evidence: "non_jsx_in_tsx_route" | "parse_errors";
+  };
 }
 
 // MARKER_PROBE_002
@@ -2301,6 +2368,28 @@ export interface ScanWarningDetails {
   };
   readonly parser_bailed_on_non_jsx_in_tsx_route?: BinaryPresenceMarker;
   readonly coverage_confidence_uniformly_high_with_parse_errors?: BinaryPresenceMarker;
+  /**
+   * Payload for `scan_file_parser_bail_no_findings`. Carries the
+   * routing-decision identity an agent reads to pivot in one read:
+   * which file, which parser actually ran, and which "natural" parser
+   * the dispatcher would have picked off the extension alone (present-
+   * when-meaningful — omitted when the natural parser matches the
+   * attempted one, per AI-first "Ambiguous field shapes are dishonest").
+   *
+   * `evidence` is the discriminated reason: `"non_jsx_in_tsx_route"`
+   * (the `.js → tsx` dispatcher decision the agent can fix by extension
+   * rename or a parser-route override) or `"parse_errors"` (the parser
+   * emitted errors AND zero findings surfaced — the agent reads
+   * `analysisCoverage.parseErrorFiles[]` for the per-error fix pivot).
+   * Splitting the two reasons keeps the agent's recovery action
+   * deterministic without re-reading the analysis-coverage block.
+   */
+  readonly scan_file_parser_bail_no_findings?: {
+    readonly filePath: string;
+    readonly parserAttempted: string;
+    readonly naturalParser?: string;
+    readonly evidence: "non_jsx_in_tsx_route" | "parse_errors";
+  };
 }
 
 /**
@@ -2483,6 +2572,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "linked_stylesheet_not_resolved_for_contrast",
   "parser_bailed_on_non_jsx_in_tsx_route",
   "coverage_confidence_uniformly_high_with_parse_errors",
+  "scan_file_parser_bail_no_findings",
   "default_excluded_artifact_paths",
 ]);
 
@@ -2604,6 +2694,13 @@ function pathShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
  *      coverage surface. The cross-check is performed at the call site
  *      (the warnings module stays pure over its inputs); this branch
  *      only emits on the threaded boolean.
+ * 5. `scan_file_parser_bail_no_findings`.
+ *      scan_file-only conjunction: zero findings AND parser-bail
+ *      evidence on the single scanned file. The scan_file call site
+ *      threads `scanFileParserBailNoFindings` as a populated payload
+ *      only when the conjunction holds (warnings module stays pure
+ *      over its inputs); this branch fires whenever the field is
+ *      defined.
  */
 function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
@@ -2612,6 +2709,9 @@ function parseErrorCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   if (parserBailedZeroFindings(inputs)) out.push("parser_bailed_zero_findings");
   if (coverageConfidenceUniformlyHighWithParseErrors(inputs)) {
     out.push("coverage_confidence_uniformly_high_with_parse_errors");
+  }
+  if (inputs.scanFileParserBailNoFindings !== undefined) {
+    out.push("scan_file_parser_bail_no_findings");
   }
   return out;
 }
@@ -3583,6 +3683,15 @@ type ScanMetaWarningArgs = {
    * rows are available; the warnings module stays pure over its inputs.
    */
   readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
+  /**
+   * Pass-through for the scan_file-only conjunction payload that
+   * drives `scan_file_parser_bail_no_findings`. See
+   * {@link WarningInputs.scanFileParserBailNoFindings}. Populated only
+   * by `scan_file`'s call site when the conjunction holds (zero
+   * findings AND parser-bail evidence on the single scanned file);
+   * other tools leave it undefined.
+   */
+  readonly scanFileParserBailNoFindings?: WarningInputs["scanFileParserBailNoFindings"];
 };
 
 /**
@@ -3624,6 +3733,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "linkedStylesheetsUnresolvedForContrast",
   "jsRoutedThroughTsxSucceededCount",
   "perRuleCoverageUniformlyHighWithParseErrors",
+  "scanFileParserBailNoFindings",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**
@@ -3783,6 +3893,10 @@ export function computeScanWarningDetails(
           inputs.linkedStylesheetsUnresolvedForContrast,
         ),
     },
+    {
+      code: "scan_file_parser_bail_no_findings",
+      summarize: () => summarizeScanFileParserBailNoFindings(inputs.scanFileParserBailNoFindings),
+    },
   ];
   // warnings-details schema discipline: index payload helpers by
   // code so the second pass (binary-presence codes that didn't claim a
@@ -3853,6 +3967,34 @@ function summarizeParseErrors(coverage: Record<string, unknown> | undefined):
     partialParseFileCount,
     ...(parseErrorsByParser === undefined ? {} : { parseErrorsByParser }),
     ...(partialParseByParser === undefined ? {} : { partialParseByParser }),
+  };
+}
+
+/**
+ * Builds the `scan_file_parser_bail_no_findings` payload from the
+ * call-site-supplied identity. Returns the input verbatim — the call
+ * site (`tool-scan-file.ts`) is the predicate authority and only
+ * threads the field when the conjunction holds, so any non-undefined
+ * value is by construction the right shape. `naturalParser` carries
+ * through under the conditional-spread present-when-meaningful contract
+ * (omitted when it would echo `parserAttempted`).
+ */
+function summarizeScanFileParserBailNoFindings(
+  input: WarningInputs["scanFileParserBailNoFindings"],
+):
+  | {
+      readonly filePath: string;
+      readonly parserAttempted: string;
+      readonly naturalParser?: string;
+      readonly evidence: "non_jsx_in_tsx_route" | "parse_errors";
+    }
+  | undefined {
+  if (input === undefined) return undefined;
+  return {
+    filePath: input.filePath,
+    parserAttempted: input.parserAttempted,
+    ...(input.naturalParser === undefined ? {} : { naturalParser: input.naturalParser }),
+    evidence: input.evidence,
   };
 }
 

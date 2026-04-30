@@ -150,6 +150,16 @@ export interface ScanTimeWarningInputs {
    * for the canonical helper.
    */
   readonly perRuleCoverageUniformlyHighWithParseErrors?: boolean;
+  /**
+   * scan_file-only payload describing a routing-suspect single-file
+   * scan. Drives the `scan_file_parser_bail_no_findings` warning code.
+   * Other tools leave this field undefined; only `scan_file`'s call
+   * site populates it (after building the scan-time warnings, then
+   * deriving the conjunction from the resulting analysisCoverage and
+   * routing telemetry). See {@link WarningInputs.scanFileParserBailNoFindings}
+   * for the full payload shape.
+   */
+  readonly scanFileParserBailNoFindings?: WarningInputs["scanFileParserBailNoFindings"];
 }
 
 /**
@@ -541,7 +551,23 @@ function buildWarningsFieldInputs(
       ? {}
       : { jsRoutedThroughTsxSucceededCount: derived.jsRoutedThroughTsxSucceededCount }),
     ...uniformlyHighInput(inputs.perRuleCoverageUniformlyHighWithParseErrors),
+    ...scanFileParserBailInput(inputs.scanFileParserBailNoFindings),
   };
+}
+
+/**
+ * Builds the spreadable scan_file-only payload subset of {@link WarningInputs}
+ * driving `scan_file_parser_bail_no_findings`. Conditional-spread per
+ * the present-when-meaningful contract: undefined drops the field so
+ * the warnings module's predicate falls through; a defined payload
+ * threads through verbatim. Extracted from {@link buildWarningsFieldInputs}
+ * so the orchestrator stays under the cognitive-complexity cap as
+ * scan_file-specific evidence axes accrete.
+ */
+function scanFileParserBailInput(
+  payload: WarningInputs["scanFileParserBailNoFindings"],
+): Partial<WarningInputs> {
+  return payload === undefined ? {} : { scanFileParserBailNoFindings: payload };
 }
 
 /**

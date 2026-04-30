@@ -794,6 +794,144 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("coverage_confidence_uniformly_high_with_parse_errors");
   });
 
+  it("fires `scan_file_parser_bail_no_findings` when scan_file's call site threads the conjunction payload (non_jsx_in_tsx_route variant)", () => {
+    // The scan_file call site is the predicate authority. When the
+    // conjunction holds (zero findings AND parser-bail evidence on the
+    // single scanned file), the call site populates the input field and
+    // the warnings module fires the code. The threading contract — input
+    // present implies predicate held — is exercised here directly so
+    // future refactors keep the warnings module pure over its inputs.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/webpack.config.js",
+        parserAttempted: "tsx",
+        naturalParser: "js",
+        evidence: "non_jsx_in_tsx_route",
+      },
+    });
+    expect(codes).toContain("scan_file_parser_bail_no_findings");
+  });
+
+  it("fires `scan_file_parser_bail_no_findings` on the parse_errors evidence variant", () => {
+    // The parse-errors variant covers the project-shape gap where the
+    // file appears in `analysisCoverage.parseErrorFileCount` AND zero
+    // findings result on the single-file substrate. Distinct from the
+    // routing-decision variant — the discriminated `evidence` reason
+    // lets the agent branch on the recovery action without re-reading
+    // the analysis-coverage block.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".html": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/broken.html",
+        parserAttempted: "html",
+        evidence: "parse_errors",
+      },
+    });
+    expect(codes).toContain("scan_file_parser_bail_no_findings");
+  });
+
+  it("does NOT fire `scan_file_parser_bail_no_findings` when the input is undefined (other tools never speculatively trigger the code)", () => {
+    // Project-rooted tools (scan / scan_project / scan_diff) leave
+    // `scanFileParserBailNoFindings` undefined — the predicate only
+    // makes sense on the single-file substrate. The drop-conservatively
+    // contract pins this so a future refactor that mistakenly populates
+    // the field on a project-shape tool does not silently surface the
+    // code on a multi-file scan where its semantics do not apply.
+    const codes = computeScanWarnings({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 5 },
+      filesByExtension: { ".tsx": 41, ".js": 1 },
+      totalFindings: 0,
+      // no scanFileParserBailNoFindings — scan_project's call site
+      // never populates the field.
+    });
+    expect(codes).not.toContain("scan_file_parser_bail_no_findings");
+  });
+
+  it("`scan_file_parser_bail_no_findings` payload echoes the call-site identity verbatim — naturalParser conditional-spread per present-when-meaningful", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/webpack.config.js",
+        parserAttempted: "tsx",
+        naturalParser: "js",
+        evidence: "non_jsx_in_tsx_route",
+      },
+    });
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/webpack.config.js",
+        parserAttempted: "tsx",
+        naturalParser: "js",
+        evidence: "non_jsx_in_tsx_route",
+      },
+    });
+    expect(details.scan_file_parser_bail_no_findings).toEqual({
+      filePath: "/proj/webpack.config.js",
+      parserAttempted: "tsx",
+      naturalParser: "js",
+      evidence: "non_jsx_in_tsx_route",
+    });
+  });
+
+  it("`scan_file_parser_bail_no_findings` payload omits naturalParser when it would echo the attempted parser", () => {
+    // Same shape as `analysisCoverage.parseErrorFiles[].naturalParser` —
+    // present-when-meaningful, omitted on matching extension/parser
+    // pairs to keep the wire payload from echoing the same string twice.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".html": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/broken.html",
+        parserAttempted: "html",
+        evidence: "parse_errors",
+      },
+    });
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: null,
+      configSource: null,
+      analysisCoverage: { parseErrorFileCount: 1 },
+      filesByExtension: { ".html": 1 },
+      scanFileParserBailNoFindings: {
+        filePath: "/proj/broken.html",
+        parserAttempted: "html",
+        evidence: "parse_errors",
+      },
+    });
+    expect(details.scan_file_parser_bail_no_findings).toEqual({
+      filePath: "/proj/broken.html",
+      parserAttempted: "html",
+      evidence: "parse_errors",
+    });
+    // Per AI-first "Ambiguous field shapes are dishonest": absent rather
+    // than echoing parserAttempted when the natural parser matches.
+    expect("naturalParser" in (details.scan_file_parser_bail_no_findings ?? {})).toBe(false);
+  });
+
   it("preserves declaration order when multiple codes fire at once — the Leela-class silent-failure stack", () => {
     // `no_config_found` now requires filesScanned >= 10 AND the probe
     // to have seen a project marker (Q-SHARED-NO-CONFIG-WARNING-TINY-REPO).
