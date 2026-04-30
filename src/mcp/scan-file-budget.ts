@@ -367,11 +367,14 @@ const SLIM_NEXT_STEP_PROSE =
  * `scan_file` itself — the agent's recovery path is the same tool
  * with paged args. The structured args carry a byte-derived `limit`
  * cap so the next call is a strictly narrower page than the failing
- * call.
+ * call. Unlike scan_project's slim path (which routes to a different
+ * surface — `scan_file` or `coverage` — to avoid the failing tool's
+ * scope), scan_file's failure mode is "too many findings on one
+ * file" — paging via `offset`/`limit` IS a strictly narrower scope
+ * on the same surface, not a re-issue of the failing call.
  *
- * Symmetric to scan_project's `buildSlimNextStepStructured`: empty
- * `args: {}` retention is the canonical "Ambiguous field shapes are
- * dishonest" failure for the structured next-call slot, so the
+ * Empty `args: {}` retention is the canonical "Ambiguous field shapes
+ * are dishonest" failure for the structured next-call slot, so the
  * fallback always ships at least a `path` echo + a derived `limit`
  * even when no other narrowing knob is available.
  */

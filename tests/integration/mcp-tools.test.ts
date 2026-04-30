@@ -1245,7 +1245,20 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (plan + meta + nextStep) survives under the host wall.
     expect(body.files).toEqual([]);
     expect(body.nextStep).toContain("narrower scope");
-    expect(body.nextStepStructured?.tool).toBe("scan_project");
+    // Q13: the structured next-call routes to a DIFFERENT surface than
+    // the failing `scan_project` — `scan_file` on the top-impact non-
+    // vendor file (when one is addressable) or `coverage` for the
+    // manual-review angle (when no addressable single file exists).
+    // Routing back to `scan_project` is the failure mode the doctrine
+    // bullet "NextStep prioritization on truncated/bulk responses must
+    // avoid first-by-filename routing" guards against, extended to
+    // "must avoid routing back to the failed surface."
+    expect(body.nextStepStructured?.tool).not.toBe("scan_project");
+    expect(["scan_file", "coverage"]).toContain(body.nextStepStructured?.tool);
+    // The structured args are non-empty — addressable narrowing for
+    // scan_file (`path`) or addressable scope for coverage (`cwd`).
+    expect(body.nextStepStructured?.args).toBeDefined();
+    expect(Object.keys(body.nextStepStructured?.args ?? {}).length).toBeGreaterThan(0);
     // The catalog itself was dropped on the slim path — the agent's
     // canonical recovery for "I want all rule metadata" is `list_rules`,
     // not re-inlining via `includeRuleDetails: "all"`.

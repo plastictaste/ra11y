@@ -119,13 +119,17 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("scan_project");
-    // The structured next-call must NOT echo the caller's cwd unchanged
-    // — that would re-issue the same scope that just over-flowed. The
-    // narrower target is derived from `formatted.files`: the single
-    // authored `src/example.tsx` resolves the top-level dir `src`, so
-    // `restrictToPaths: ["src"]` differs from the failing call's `cwd`.
-    expect(structured.args).toEqual({ restrictToPaths: ["src"] });
+    // Q13: the slim envelope's structured next-call routes to a
+    // DIFFERENT surface than `scan_project` — the failing tool. With
+    // a single non-vendor file in the inventory (`src/example.tsx`),
+    // the top-impact-file pick lands on `scan_file` with that path.
+    // Routing back to `scan_project` would land the agent on the same
+    // surface that just transport-failed (the doctrine bullet
+    // "NextStep prioritization on truncated/bulk responses must avoid
+    // first-by-filename routing" extended to "must avoid routing back
+    // to the failed surface").
+    expect(structured.tool).toBe("scan_file");
+    expect(structured.args).toEqual({ path: "src/example.tsx" });
     expect(structured.args.cwd).toBeUndefined();
 
     // Warnings channel carries the structured code + payload.
@@ -180,19 +184,22 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(meta.filesScanned).toBe(1);
   });
 
-  it("derives a non-vendor restrictToPaths target when scannedBuildArtifacts marks vendor paths", () => {
-    // When the slim envelope fires AND the file inventory mixes vendor
-    // (classified) and non-vendor paths, the structured next-call must
-    // point at the non-vendor subtree via `restrictToPaths` rather than
-    // echoing the caller's cwd. The narrowing dir is the top-level dir
-    // with the most non-vendor findings — `src` here, since the vendor
-    // entries are routed through scannedBuildArtifacts.
+  it("routes to scan_file on the top non-vendor file when scannedBuildArtifacts marks vendor paths", () => {
+    // Q13: when the slim envelope fires AND the file inventory mixes
+    // vendor (classified) and non-vendor paths, the structured next-
+    // call routes to a DIFFERENT surface (`scan_file`) targeting the
+    // top-impact non-vendor file by finding count. Routing back to
+    // `scan_project` would land the agent on the same tool that just
+    // transport-failed even with a narrower `restrictToPaths` arg.
+    // Here `src/components/button.tsx` carries 3 findings vs. 1 on
+    // `src/components/input.tsx`; the vendor entries are skipped via
+    // scannedBuildArtifacts. The top-impact non-vendor file wins.
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
         notes: 0,
         fixesByClass: {
-          mechanical: { source: 2, buildArtifact: 0 },
+          mechanical: { source: 4, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
           runtimeOnly: { source: 0, buildArtifact: 0 },
           verifyInSource: { source: 0, buildArtifact: 0 },
@@ -200,13 +207,23 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
         reviewNeeded: 0,
         manualOnly: 0,
         estimatedEffort: "small",
-        summary: "2 findings",
+        summary: "4 findings",
       },
       files: [
         { path: "vendor/bootstrap/bootstrap.css", findings: [] },
         { path: "vendor/bootstrap/bootstrap.min.css", findings: [] },
-        { path: "src/components/button.tsx", findings: [] },
-        { path: "src/components/input.tsx", findings: [] },
+        {
+          path: "src/components/button.tsx",
+          findings: [
+            { ruleId: "color/contrast" },
+            { ruleId: "color/contrast" },
+            { ruleId: "alt/missing" },
+          ] as never,
+        },
+        {
+          path: "src/components/input.tsx",
+          findings: [{ ruleId: "color/contrast" }] as never,
+        },
       ],
       meta: {},
     };
@@ -255,29 +272,24 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("scan_project");
-    // The structured args target a strictly narrower scope than the
-    // caller's cwd. `restrictToPaths` names the non-vendor top-level
-    // dir derived from the file inventory; `cwd` is dropped (echoing
-    // it would re-issue the failing call).
-    expect(structured.args).toEqual({ restrictToPaths: ["src"] });
+    // Different surface than the failing scan_project, with addressable
+    // narrowing args (the top-impact non-vendor file's path).
+    expect(structured.tool).toBe("scan_file");
+    expect(structured.args).toEqual({ path: "src/components/button.tsx" });
     expect(structured.args.cwd).toBeUndefined();
+    expect(structured.args.restrictToPaths).toBeUndefined();
   });
 
-  it("ships byte-derived `limit` when every file in the inventory is vendor-classified", () => {
-    // All-vendor edge case: no non-vendor narrowing target exists, so
-    // the structured args fall back to a byte-derived `limit` cap
-    // rather than the prior empty `args: {}` (which was the canonical
-    // "Ambiguous field shapes are dishonest" failure for this slot —
-    // the prose recommended three concrete narrowing knobs while the
-    // structured form gave the agent no callable arg). The derived
-    // limit comes from the byte arithmetic the slim path already
-    // measured: how many file entries would have fit at the per-file
-    // byte rate observed on this scan, scaled by the conservative
-    // safety factor. The agent reads the prose for the three narrowing
-    // knobs (cwd / additionalPaths / restrictToPaths) AND has a copy-
-    // verbatim `limit` arg for the case where the scanner can't honestly
-    // pick a narrower target.
+  it("routes to coverage with caller's cwd when every file in the inventory is vendor-classified", () => {
+    // Q13: all-vendor edge case — no non-vendor file inventory exists,
+    // so the slim envelope cannot point at a single non-vendor file via
+    // `scan_file`. Falls back to `coverage` (the manual-review-half
+    // surface) with the caller's cwd echoed: coverage is a different
+    // tool than `scan_project`, so echoing `cwd` is honest (the failing
+    // surface is not re-issued). Coverage returns the criteria-coverage
+    // matrix and `manualWithCandidates`, neither of which traverses the
+    // files[] envelope that the slim path just had to drop, so it
+    // cannot inherit the same bulk-corpus blow-up.
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
@@ -344,23 +356,160 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("scan_project");
-    // Empty `args: {}` retention is the canonical "Ambiguous field
-    // shapes are dishonest" failure for the structured next-call slot
-    // when the prose recommends concrete narrowing. The fallback ships
-    // a byte-derived `limit` cap so the structured form carries a
-    // directly-applicable knob rather than an empty object.
-    expect(structured.args).not.toEqual({});
-    expect(structured.args.cwd).toBeUndefined();
+    // Different surface than the failing `scan_project`. Coverage is
+    // the manual-review-half angle when no addressable non-vendor file
+    // exists. `args: { cwd }` is non-empty (the canonical "Ambiguous
+    // field shapes are dishonest" failure was empty `args: {}`).
+    expect(structured.tool).toBe("coverage");
+    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
     expect(structured.args.restrictToPaths).toBeUndefined();
-    // `limit` is the only field the byte fallback populates.
-    expect(typeof structured.args.limit).toBe("number");
-    expect(structured.args.limit as number).toBeGreaterThanOrEqual(1);
-    // Sanity: the derived limit must be strictly smaller than the
-    // pre-drop file count — otherwise the agent following the
-    // structured args verbatim would re-issue the same scope.
-    const totalFilesWithFindings = response.totalFilesWithFindings as number;
-    expect(structured.args.limit as number).toBeLessThan(totalFilesWithFindings + 1);
+    expect(structured.args.limit).toBeUndefined();
+  });
+
+  it("falls back to coverage when non-vendor files tie on top finding count (no clean winner)", () => {
+    // Q13: when the slim envelope fires AND the non-vendor file
+    // inventory has multiple files tied at the top finding count, the
+    // top-impact-file picker honestly returns undefined rather than
+    // routing to the alphabetically-first file (the failure mode the
+    // doctrine bullet "NextStep prioritization on truncated/bulk
+    // responses must avoid first-by-filename routing" guards against).
+    // The fallback routes to `coverage` — a different surface than
+    // the failing `scan_project`, with the caller's cwd echoed.
+    const session = new McpSession();
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: {
+          mechanical: { source: 2, buildArtifact: 0 },
+          guidance: { source: 0, buildArtifact: 0 },
+          runtimeOnly: { source: 0, buildArtifact: 0 },
+          verifyInSource: { source: 0, buildArtifact: 0 },
+        },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "small",
+        summary: "2 findings",
+      },
+      files: [
+        {
+          path: "src/components/button.tsx",
+          findings: [{ ruleId: "color/contrast" }] as never,
+        },
+        {
+          path: "src/pages/home.tsx",
+          findings: [{ ruleId: "alt/missing" }] as never,
+        },
+      ],
+      meta: {},
+    };
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: { files: formatted.files, referenceGuide: undefined },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: formatted.files.length,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    const structured = response.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    // Tie collapses to coverage — different surface, addressable args
+    // (cwd echoed honestly because coverage is not the failing tool).
+    expect(structured.tool).toBe("coverage");
+    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+  });
+
+  it("omits cwd from coverage args when the caller passed no cwd", () => {
+    // Q13: when the slim path falls back to `coverage` (no addressable
+    // non-vendor file) AND the caller's params carry no `cwd` (server-
+    // spawned default invocation), the structured args ship `{}`
+    // rather than fabricating a cwd echo. Coverage's own cwd-resolution
+    // path mirrors scan_project's host-root fallback, so the agent's
+    // recovery call still progresses without a guessed cwd.
+    const session = new McpSession();
+    const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
+      plan: {
+        notes: 0,
+        fixesByClass: {
+          mechanical: { source: 0, buildArtifact: 0 },
+          guidance: { source: 0, buildArtifact: 0 },
+          runtimeOnly: { source: 0, buildArtifact: 0 },
+          verifyInSource: { source: 0, buildArtifact: 0 },
+        },
+        reviewNeeded: 0,
+        manualOnly: 0,
+        estimatedEffort: "trivial",
+        summary: "0 findings",
+      },
+      files: [
+        { path: "vendor/lib/bundle.css", findings: [] },
+        { path: "vendor/lib/extra.css", findings: [] },
+      ],
+      meta: {},
+    };
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: {},
+      session,
+      formatted,
+      hoisted: { files: formatted.files, referenceGuide: undefined },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: formatted.files.length,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: formatted.files.length,
+        durationMs: 5,
+        bloatedField: hugePayload,
+        scannedBuildArtifacts: {
+          grouped: [
+            {
+              basename: "bundle.css",
+              count: 2,
+              pathHint: "vendor/lib",
+              classifications: ["likely-bundler-output-dir"],
+              suggestedGlob: "vendor/lib/**",
+            },
+          ],
+          ungrouped: [],
+        },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    const structured = response.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("coverage");
+    expect(structured.args).toEqual({});
   });
 
   it("preserves prior warning codes (density-cap chain) and stamps `truncated: true` on the slim envelope", () => {

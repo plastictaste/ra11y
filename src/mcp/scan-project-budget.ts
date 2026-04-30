@@ -17,7 +17,6 @@ import {
   shouldRerouteToPerRuleNarrowing,
 } from "./next-step.ts";
 import {
-  deriveSlimLimitFromBytes,
   guardOversizeEnvelope,
   type OversizeEnvelopeReason,
   oversizeEnvelopeWarningsField,
@@ -645,7 +644,7 @@ function buildSlimScanProjectEnvelope(args: {
     nextStepStructured: buildSlimNextStepStructured({
       formatted,
       fullMeta,
-      reason,
+      params,
     }),
     warnings: finalWarnings,
     warningsDetails: finalWarningsDetails,
@@ -908,88 +907,117 @@ function trimStringArrayOnDetailSlot(
  */
 const SLIM_NEXT_STEP_PROSE =
   "The full response was over the MCP host's token ceiling, so per-file findings were dropped to keep the envelope routable. " +
-  "Re-call `scan_project` with a narrower scope to recover the file detail: pass a tighter `cwd` (a single subdirectory), " +
+  "The structured next-call routes to a different surface (`scan_file` on the top-impact non-vendor file, or `coverage` for the manual-review angle) " +
+  "rather than re-issuing `scan_project` against the same scope that just over-flowed. " +
+  "Alternatively re-call `scan_project` with a narrower scope to recover the full file detail: pass a tighter `cwd` (a single subdirectory), " +
   "use `restrictToPaths` to scope to a specific file set, or use `additionalPaths` to scan only a few targeted paths. " +
   "For a bulk-corpus first-pass, prefer the upcoming `summaryOnly` mode when it lands.";
 
 /**
- * Structured nextStep for the slim envelope. Points at `scan_project`
- * itself — the agent's recovery path is the same tool with narrower
- * args. The prior shape echoed the caller's `cwd` unchanged, so the
- * structured next-call was *identical* to the failing call: an agent
- * following `nextStepStructured.args` verbatim would re-issue the same
- * over-ceiling scan and oscillate. Per the doctrine's "Zero-output
- * success is ambiguous failure" rule, the structured next-call must
- * differ from the failing call when the failure mode is "scope was too
- * wide."
+ * Structured nextStep for the slim envelope. Points at a DIFFERENT
+ * surface than `scan_project` — routing back to the tool that just
+ * blew the host envelope is the canonical "NextStep prioritization on
+ * truncated/bulk responses" doctrine miss: the agent following the
+ * structured next-call lands on the same surface that failed, the
+ * scope-down knobs the prior shape carried (`restrictToPaths` to the
+ * dominant non-vendor top-level dir, byte-derived `limit`) still
+ * exercised the same envelope budget that just couldn't fit. The
+ * recovery surface must be a different tool with addressable narrowing
+ * args, not the failing tool with cosmetically narrower args. Two
+ * routing arms close the matrix:
  *
- * The narrowing target is derived from the full pre-drop file list:
+ *   1. **Top non-vendor file exists** → `scan_file` with
+ *      `args: { path: <highest-finding-count source file> }`. The
+ *      file is picked from `formatted.files[]` (full pre-drop list),
+ *      excluding paths the build-artifact classifier flagged as
+ *      vendor. Highest `findings.length` wins on a strict majority;
+ *      a clean tie collapses into the fallback. `scan_file` is the
+ *      single-file findings surface — it carries its own paging
+ *      and per-file slim envelope, so it cannot inherit the same
+ *      bulk-corpus blow-up.
  *
- *   1. Build a vendor-path set from `fullMeta.scannedBuildArtifacts`
- *      (`grouped[].pathHint` directory prefixes plus `ungrouped[].path`
- *      exact matches). These are the paths the build-artifact classifier
- *      already labelled — surfacing them again as the next-call target
- *      would just re-run the scan that just over-flowed.
- *   2. Tally findings per top-level directory across the full
- *      `formatted.files` list, skipping vendor paths.
- *   3. The directory with the most non-vendor findings becomes
- *      `restrictToPaths: [<dir>]` (root-relative POSIX). Drop the
- *      `cwd` echo — the structured args now point at a strictly
- *      narrower target than the failing call.
+ *   2. **No non-vendor file** (every file vendor-classified, file
+ *      list empty, or top-finding tie) → `coverage` with
+ *      `args: { cwd: <caller's cwd> }`. Coverage is the manual-
+ *      review-half angle: it returns the criteria-coverage matrix
+ *      and `manualWithCandidates`, none of which goes through the
+ *      per-file files[] envelope. Echoing `cwd` here is honest
+ *      because we're crossing tool surfaces — `cwd` on `coverage`
+ *      lands on a different code path than `cwd` on `scan_project`.
  *
- * When no non-vendor target can be derived (every file in the inventory
- * sits on a vendor path, or the file list is empty), the prior shape
- * shipped `args: {}` — but that's the canonical "Ambiguous field shapes
- * are dishonest" failure: the prose recommends three concrete narrowing
- * knobs (`cwd`, `additionalPaths`, `restrictToPaths`) but the structured
- * form provides no callable arg payload. Per the doctrine bullet, the
- * fallback now ships `limit: <derived>` computed from the byte
- * arithmetic the slim path already knows: how many file entries would
- * have fit at the per-file byte rate observed on this scan. That
- * gives the agent a directly-applicable arg even when the scanner has
- * no honest narrowing dir to recommend — the limit cap differs from
- * the failing call (the failing call took the caller's `limit`, almost
- * always larger than the byte-derived ceiling).
- *
- * The derivation: `floor(droppedFileCountFromRequestedLimit *
- * (hardCeilingBytes / preDropBytes) * 0.7)`, clamped to ≥ 1. The 0.7
- * safety factor accounts for the per-file payload bloating beyond
- * average on the next call (the rules that fired densely on this scan
- * may fire densely again); 70% is conservative enough that the next
- * envelope is unlikely to re-trip the slim guard but loose enough to
- * carry meaningful per-file detail. Floor at 1 because `limit: 0` would
- * be a hung call.
- *
- * Prose still names the same three narrowing knobs (`cwd`,
- * `additionalPaths`, `restrictToPaths`) so the agent keeps full
- * flexibility; the structured args advance one of them (or the limit
- * fallback) with a scanner-derived candidate.
+ * The prior shape routed `scan_project` with `restrictToPaths` or a
+ * byte-derived `limit` cap; both still left the agent on the same
+ * tool that just transport-failed.
  */
 function buildSlimNextStepStructured(args: {
   readonly formatted: ScanFormatted;
   readonly fullMeta: Record<string, unknown>;
-  readonly reason: OversizeEnvelopeReason;
+  readonly params: Record<string, unknown>;
 }): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
-  const { formatted, fullMeta, reason } = args;
+  const { formatted, fullMeta, params } = args;
   const isVendor = buildVendorPredicate(fullMeta);
-  const narrowing = pickNonVendorNarrowingDir(formatted.files, isVendor);
-  // No non-vendor narrowing target found → fall back to a byte-derived
-  // `limit` cap from `reason` (per-file byte rate × 0.7 safety) so the
-  // structured args carry a directly-applicable knob rather than the
-  // prior empty `args: {}` (the canonical "Ambiguous field shapes are
-  // dishonest" failure for this slot). On degenerate byte inputs the
-  // helper returns `undefined`; the final fallback is `limit: 1`, the
-  // smallest honest forward-progress arg. We deliberately do NOT
-  // propagate the caller's `cwd` — that would re-issue the failing
-  // scope.
-  const argsField =
-    narrowing === undefined
-      ? { limit: deriveSlimLimitFromBytes(reason) ?? 1 }
-      : { restrictToPaths: [narrowing] };
-  return { tool: "scan_project", args: argsField };
+  const topFile = pickTopNonVendorFile(formatted.files, isVendor);
+  if (topFile !== undefined) {
+    return { tool: "scan_file", args: { path: topFile } };
+  }
+  // No addressable single-file target — pivot to `coverage` for the
+  // manual-review half. Coverage takes `cwd` and returns the
+  // criteria-coverage matrix without going through the files[]
+  // envelope that the slim path just had to drop. Read `cwd` off the
+  // caller's params; when absent (server-spawned default), omit it
+  // and let the coverage handler resolve its own root — coverage's
+  // own cwd-resolution path mirrors scan_project's host-root
+  // fallback, so the structured args stay forward-progressing.
+  const cwd = typeof params["cwd"] === "string" ? (params["cwd"] as string) : undefined;
+  return {
+    tool: "coverage",
+    args: cwd === undefined ? {} : { cwd },
+  };
+}
+
+/**
+ * Picks the single non-vendor file with the highest `findings.length`
+ * from `formatted.files[]` (full pre-drop inventory). Returns the
+ * relative path; `undefined` when no non-vendor file exists OR every
+ * non-vendor file has zero findings AND the inventory is empty, OR
+ * the top finding count ties between two files (alphabetical-winner
+ * routing is the failure mode the AI-first doctrine "NextStep
+ * prioritization on truncated/bulk responses must avoid first-by-
+ * filename routing" guards against).
+ *
+ * "Top-impact subtree" in the backlog wording maps to "the file with
+ * the most rule fires" — narrowing to that file gives the agent the
+ * highest concentration of actionable findings on the recovery call.
+ * On zero-finding non-vendor inventories (a clean scan that
+ * over-flowed on meta-bloat alone), the helper returns the first
+ * such file only when the inventory has exactly one entry — any
+ * longer list resolves to a tie and falls through to the coverage
+ * fallback rather than fabricating a winner on weaker evidence.
+ */
+export function pickTopNonVendorFile(
+  files: readonly ScanFormatted["files"][number][],
+  isVendor: (path: string) => boolean,
+): string | undefined {
+  let topPath: string | undefined;
+  let topCount = -1;
+  let tie = false;
+  for (const file of files) {
+    if (isVendor(file.path)) continue;
+    const count = file.findings.length;
+    if (count > topCount) {
+      topPath = file.path;
+      topCount = count;
+      tie = false;
+    } else if (count === topCount) {
+      tie = true;
+    }
+  }
+  if (topPath === undefined) return undefined;
+  if (tie) return undefined;
+  return topPath;
 }
 
 /**
