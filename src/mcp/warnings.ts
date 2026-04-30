@@ -1896,9 +1896,29 @@ export interface ScanWarningDetails {
    * the broader code reports total artifact mass, this narrower code
    * names the minified subset whose findings are nearly always
    * unreliable.
+   *
+   * Inline truncation sentinel: when the slim envelope head-slices
+   * `files` to its deterministic prefix (see
+   * {@link import("./scan-project-budget.ts").SLIM_FILE_LIST_CAP}), the
+   * trimmed payload carries `truncated: true` + `totalCount` +
+   * `shownCount` at the same depth as `files` so the agent reading the
+   * array directly sees the absence-of-rest without cross-referencing
+   * `warningsDetails.response_dropped_files_oversize.slimTruncations`.
+   * Closes the "Truncated containers must rename or sentinel, not retain"
+   * doctrine bullet at the per-payload depth — `slimTruncations` is the
+   * canonical envelope-level reporter, the inline sentinel is the
+   * per-payload echo (per "Truncation reporters must reconcile across
+   * warnings": multiple channels are fine when they reconcile by
+   * reference rather than by independent enumeration; the agent reading
+   * either depth gets the same totals). All three sentinel fields are
+   * present-when-meaningful: omitted via conditional spread when the
+   * `files` array shipped untrimmed (under-cap or non-slim path).
    */
   readonly scanned_minified_file?: {
     readonly files: readonly string[];
+    readonly truncated?: true;
+    readonly totalCount?: number;
+    readonly shownCount?: number;
   };
   /**
    * payload for

@@ -845,6 +845,26 @@ interface DetailArraySlot {
   readonly arrayKey: string;
   readonly cap: number;
   readonly fieldPath: string;
+  /**
+   * When `true`, the slim trim embeds an inline truncation sentinel
+   * (`truncated: true`, `totalCount`, `shownCount`) at the same depth as
+   * the trimmed array so an agent reading the payload directly sees the
+   * absence-of-rest without cross-referencing the envelope-level
+   * `slimTruncations` channel. Pairs with the canonical `slimTruncations`
+   * reporter rather than replacing it (per the AI-first doctrine
+   * "Truncation reporters must reconcile across warnings"). The two
+   * channels reconcile by reference: `slimTruncations.shown/total`
+   * mirror the inline `shownCount/totalCount` for the same field path.
+   *
+   * Today set only on `scanned_minified_file` — the canonical regression
+   * the inline sentinel was added to close (a bulk-vendor scan shipping
+   * 3 of 767 minified file paths under `files` with no inline marker).
+   * `bulk_catalog_detected.suggestedExcludes` and
+   * `scss_unresolved_variables.files` keep envelope-level reporting only
+   * pending separate doctrine review — opt-in rather than blanket
+   * rollout to keep the wire shape change narrow.
+   */
+  readonly embedInlineSentinel?: true;
 }
 
 /**
@@ -867,6 +887,7 @@ const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
     arrayKey: "files",
     cap: SLIM_FILE_LIST_CAP,
     fieldPath: "warningsDetails.scanned_minified_file.files",
+    embedInlineSentinel: true,
   },
   {
     code: "scss_unresolved_variables",
@@ -883,6 +904,13 @@ const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
  * already under-cap. Defensive narrowing on every step — the input
  * payload shapes are union-typed and may legitimately omit either the
  * outer code or the inner array.
+ *
+ * When `slot.embedInlineSentinel === true`, the trimmed payload also
+ * carries `truncated: true` + `totalCount` + `shownCount` at the same
+ * depth as the trimmed array — see {@link DetailArraySlot.embedInlineSentinel}
+ * for the rationale. Sentinel fields ride alongside the existing
+ * `slimTruncations` envelope-level summary; the two channels reconcile
+ * by reference (same shown/total pair).
  */
 function trimStringArrayOnDetailSlot(
   next: Record<string, unknown>,
@@ -893,7 +921,14 @@ function trimStringArrayOnDetailSlot(
   const arr = (payload as Record<string, unknown>)[slot.arrayKey];
   if (!Array.isArray(arr) || arr.length <= slot.cap) return undefined;
   const trimmed = arr.slice(0, slot.cap);
-  next[slot.code] = { ...(payload as Record<string, unknown>), [slot.arrayKey]: trimmed };
+  const trimmedPayload: Record<string, unknown> = {
+    ...(payload as Record<string, unknown>),
+    [slot.arrayKey]: trimmed,
+    ...(slot.embedInlineSentinel === true
+      ? { truncated: true as const, totalCount: arr.length, shownCount: trimmed.length }
+      : {}),
+  };
+  next[slot.code] = trimmedPayload;
   return { fieldPath: slot.fieldPath, shown: trimmed.length, total: arr.length };
 }
 

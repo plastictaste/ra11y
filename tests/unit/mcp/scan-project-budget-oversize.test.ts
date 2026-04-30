@@ -767,6 +767,103 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       shown: 3,
       total: 40,
     });
+
+    // Inline truncation sentinel on `scanned_minified_file` payload —
+    // closes the "Truncated containers must rename or sentinel, not
+    // retain" doctrine bullet at the per-payload depth. An agent reading
+    // `warningsDetails.scanned_minified_file.files` directly sees
+    // `truncated: true` + `shownCount: 3` + `totalCount: 60` at the same
+    // depth as `files`, without having to cross-reference the
+    // envelope-level `slimTruncations`. The two channels reconcile by
+    // reference (same shown/total pair) — multiple reporters are fine
+    // when they reconcile rather than enumerate independently.
+    expect(details.scanned_minified_file).toMatchObject({
+      truncated: true,
+      totalCount: 60,
+      shownCount: 3,
+    });
+
+    // Cross-channel reconciliation — the `slimTruncations` summary's
+    // shown/total pair matches the inline `shownCount`/`totalCount`
+    // pair for the same field path. Locking this equality keeps the
+    // two reporters honest under future cap changes.
+    const minifiedSlim = byPath.get("warningsDetails.scanned_minified_file.files");
+    const minifiedInline = details.scanned_minified_file as {
+      shownCount: number;
+      totalCount: number;
+    };
+    expect(minifiedSlim?.shown).toBe(minifiedInline.shownCount);
+    expect(minifiedSlim?.total).toBe(minifiedInline.totalCount);
+
+    // Narrow scope — sibling slim slots intentionally do NOT carry the
+    // inline sentinel today (only `scanned_minified_file` was promoted
+    // per the originating backlog item). Locking the absence so a
+    // future blanket rollout is an explicit decision rather than an
+    // accidental drift.
+    expect(details.scss_unresolved_variables).not.toHaveProperty("truncated");
+    expect(details.scss_unresolved_variables).not.toHaveProperty("totalCount");
+    expect(details.scss_unresolved_variables).not.toHaveProperty("shownCount");
+    expect(details.bulk_catalog_detected).not.toHaveProperty("truncated");
+    expect(details.bulk_catalog_detected).not.toHaveProperty("totalCount");
+    expect(details.bulk_catalog_detected).not.toHaveProperty("shownCount");
+  });
+
+  it("omits the inline truncation sentinel on scanned_minified_file when files are already under the slim cap", () => {
+    // Inline `truncated: true` + `totalCount` + `shownCount` is
+    // present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+    // are dishonest" and the AI-first doctrine "Truncated containers
+    // must rename or sentinel, not retain." When `files` already fits
+    // under the slim cap, the slim path leaves the payload's `files`
+    // alone; an inline `truncated: false`-shaped marker would lie
+    // (nothing was trimmed) and an inline `truncated: true` with
+    // shownCount === totalCount would be redundant. The honest shape
+    // is to ship `files` alone, no sentinel.
+    const session = new McpSession();
+    const formatted = buildMinimalFormatted();
+    const hugePayload = "x".repeat(200_000);
+    const response = assembleScanProjectResponse({
+      params: { cwd: "/tmp/example-project" },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        bloatedField: hugePayload,
+      },
+      baseWarnings: ["scanned_minified_file"],
+      baseWarningsDetails: {
+        scanned_minified_file: {
+          files: ["dist/jquery.min.js", "dist/bootstrap.min.css"],
+        },
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    expect(response.filesArrayDropped).toBe(true);
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    expect(details.scanned_minified_file).toBeDefined();
+    // `files` rides through unchanged — under the slim cap.
+    expect((details.scanned_minified_file.files as readonly unknown[]).length).toBe(2);
+    // No inline sentinel — under-cap files don't lie.
+    expect(details.scanned_minified_file).not.toHaveProperty("truncated");
+    expect(details.scanned_minified_file).not.toHaveProperty("totalCount");
+    expect(details.scanned_minified_file).not.toHaveProperty("shownCount");
   });
 
   it("omits slimTruncations when no verbose array crossed its cap", () => {
