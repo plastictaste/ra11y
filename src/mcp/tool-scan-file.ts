@@ -45,6 +45,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import type { WarningInputs } from "./warnings.ts";
 import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 
 // Remediation string for the `file-unsupported` envelope emitted by
@@ -424,10 +425,7 @@ function deriveScanFileParserBailNoFindings(
 }
 
 /** Local type alias to keep the helper signature short. */
-type WarningInputsForScanFile = Pick<
-  import("./warnings.ts").WarningInputs,
-  "scanFileParserBailNoFindings"
->;
+type WarningInputsForScanFile = Pick<WarningInputs, "scanFileParserBailNoFindings">;
 
 /**
  * Structured error for a path that resolves outside its declared
