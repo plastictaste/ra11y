@@ -1,6 +1,12 @@
 /**
  * External-JS handler grammar for `keyboard/handler-missing`.
  *
+ * Satisfies (via host rule): wcag22:2.1.1, wcag21:2.1.1,
+ *                            wcag22:4.1.2, wcag21:4.1.2
+ * Spec:
+ *   - https://www.w3.org/TR/WCAG22/#keyboard
+ *   - https://www.w3.org/TR/WCAG22/#name-role-value
+ *
  * Vanilla-JS apps attach click handlers in a standalone `.js`/`.ts` file
  * via `el.addEventListener('click', fn)` or `el.onclick = fn` after
  * grabbing the element with `document.querySelector` /
@@ -18,13 +24,27 @@
  * at docs/kb/architecture/ai-first-consumer.md — "The tool's job is to
  * point — file, line, pattern; the agent's job is to investigate").
  *
- * One same-file suppression IS in scope: when the click-attach target
- * was bound from `document.createElement('button'|'a'|'input'|'select'
- * |'textarea'|'summary')`, the receiver IS a native interactive
- * element — focusable and Enter/Space-activatable by construction —
- * and the missing keyboard sibling is not a finding. The createElement
- * tag is provable from the code in the same file, so the suppression
- * is deterministic, not heuristic.
+ * Two same-file backward-resolution paths are in scope, both keyed off
+ * the click-attach target's `document.createElement(...)` declarator:
+ *
+ *   - **Native-interactive suppression**: when the bound tag is one of
+ *     `button` / `a` / `input` / `select` / `textarea` / `summary`, the
+ *     receiver IS a native interactive element (focusable and
+ *     Enter/Space-activatable by construction) — no finding.
+ *
+ *   - **Non-interactive evidence promotion** (Q9 dynamic-creation
+ *     extension): when the bound tag is a non-interactive element such
+ *     as `div` / `span` / `li` / `section`, the receiver's kind is
+ *     provable from the same file with no cross-file lookup. The rule
+ *     still emits, but the host short-circuits the cross-file
+ *     downgrade — `severity: "error"` and `confidence: "high"` (no
+ *     stamp) become honest because no HTML resolution is needed. This
+ *     surfaces the dynamic-creation case (e.g. `insect = createElement
+ *     ('div'); insect.addEventListener('click', ...)`) at the same
+ *     attention budget as a static `<div onClick>`. Satisfies SC 4.1.2
+ *     too: a `<div>` created at runtime with a click handler and no
+ *     `role`/`tabindex` is unreachable for keyboard users (2.1.1) AND
+ *     has no programmatically determinable role (4.1.2).
  *
  * Extracted into its own file so the host rule stays under the
  * scripts/check-limits.ts file budget.
@@ -35,6 +55,22 @@ export interface JsFinding {
   readonly column: number;
   readonly message: string;
   readonly suggestion: string;
+  /**
+   * When the click-attach target was bound from `document.createElement
+   * ('<non-interactive-tag>')` in the same file, this carries the bound
+   * tag verbatim (lowercased). The host rule uses its presence to
+   * short-circuit the unconditional cross-file confidence/severity
+   * downgrade: the receiver's kind is provable from this file alone, so
+   * the per-finding label can honestly stay at `severity: "error"` /
+   * `confidence: "high"` — no HTML grep is needed.
+   *
+   * Absent (`undefined`) for findings whose target wasn't bound by an
+   * in-file `createElement` declarator (function parameters, imported
+   * refs, querySelector returns, …) — those keep the cross-file
+   * downgrade because the receiver's kind genuinely cannot be confirmed
+   * without the HTML.
+   */
+  readonly inFileResolvedTag?: string;
 }
 
 /** Matches `target.addEventListener('click', …)` and captures the target identifier. */
@@ -87,9 +123,17 @@ export function findExternalJsHandlerMissing(source: string): readonly JsFinding
     // missing keyboard sibling is not a finding. The lookup is bounded
     // to declarators preceding the click-attach site in the same file;
     // cross-file resolution stays off-table per the doctrine note above.
-    if (wasBoundFromNativeInteractiveCreateElement(source, site.target, site.offset)) continue;
+    const createdTag = findCreateElementBoundTag(source, site.target, site.offset);
+    if (createdTag !== null && NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS.has(createdTag)) continue;
     const selector = resolveSelectorForVariable(source, site.target, site.offset);
-    out.push(buildFinding(site, selector, source));
+    // Q9 dynamic-creation extension: when the bound tag is a
+    // non-interactive native element (`div`, `span`, `li`, `section`,
+    // …), the receiver's kind is provable from this file with no
+    // cross-file lookup. Thread the tag onto the finding so the host
+    // rule can short-circuit the cross-file downgrade. Native-
+    // interactive tags were already filtered above; a non-null
+    // `createdTag` here is by construction non-interactive.
+    out.push(buildFinding(site, selector, source, createdTag));
   }
   return out;
 }
@@ -198,21 +242,33 @@ function resolveSelectorForVariable(
 }
 
 /**
- * Returns true when the target variable was bound from
- * `document.createElement('<native-interactive>')` in a `const`/`let`/
- * `var` declarator preceding the click-attach site.
+ * Returns the tag name (lowercased) the target variable was bound to via
+ * `document.createElement('<tag>')` in a `const`/`let`/`var` declarator
+ * preceding the click-attach site, or `null` when no such declarator is
+ * present in the file before the site.
  *
  * Same-file scope only. Cross-file resolution (the variable comes in
  * as a function parameter or import) stays off-table — the agent
  * reading the file can grep the binding faster than an in-process
  * resolver could, and a silent wrong cross-file guess is worse than
  * pointing honestly. See the doctrine note at the top of this file.
+ *
+ * Two callers consume the result:
+ *   - native-interactive suppression: when the tag is in
+ *     {@link NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS}, no finding fires
+ *     (button/a/input/select/textarea/summary are focusable +
+ *     Enter/Space-activatable by construction).
+ *   - non-interactive evidence promotion: when the tag is anything
+ *     else (`div` / `span` / `li` / `section` / …), the host rule
+ *     uses the bound tag to keep the per-finding `severity: "error"`
+ *     and `confidence: "high"` honest — the receiver's kind is
+ *     provable from the same file, no HTML grep needed.
  */
-function wasBoundFromNativeInteractiveCreateElement(
+function findCreateElementBoundTag(
   source: string,
   target: string,
   beforeOffset: number,
-): boolean {
+): string | null {
   const escaped = escapeForRegex(target);
   // Examples matched:
   //   const btn = document.createElement('button')
@@ -223,45 +279,89 @@ function wasBoundFromNativeInteractiveCreateElement(
       `\\s*\\(\\s*["'\`]([^"'\`]*)["'\`]`,
     "g",
   );
+  let best: string | null = null;
   let match = declPattern.exec(source);
   while (match !== null) {
     if (match.index >= beforeOffset) break;
     const tag = match[1];
-    if (tag !== undefined && NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS.has(tag.toLowerCase())) {
-      return true;
+    if (tag !== undefined) {
+      best = tag.toLowerCase();
     }
     match = declPattern.exec(source);
   }
-  return false;
+  return best;
 }
 
 function escapeForRegex(name: string): string {
   return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Builds the parenthesized "evidence" clause threaded into the finding's
+ * message. CreateElement evidence wins when present (highest-strength
+ * in-file proof of the receiver's kind); the selector resolution is the
+ * fallback for cross-file-bounded cases; otherwise no clause.
+ */
+function buildEvidenceClause(
+  selector: { readonly method: string; readonly argument: string } | null,
+  createdTag: string | null,
+): string {
+  if (createdTag !== null) {
+    return ` (target was created via \`document.createElement('${createdTag}')\` in this file — a non-interactive element with no role/tabindex)`;
+  }
+  if (selector !== null) {
+    return ` (resolved from \`document.${selector.method}('${selector.argument}')\`)`;
+  }
+  return "";
+}
+
 function buildFinding(
   site: ClickSite,
   selector: { readonly method: string; readonly argument: string } | null,
   source: string,
+  createdTag: string | null,
 ): JsFinding {
   const pos = positionAtOffset(source, site.offset);
   const shapeLabel =
     site.shape === "addEventListener"
       ? `${site.target}.addEventListener('click', …)`
       : `${site.target}.onclick = …`;
-  const selectorClause = selector
-    ? ` (resolved from \`document.${selector.method}('${selector.argument}')\`)`
-    : "";
-  const message = `Click handler attached via ${shapeLabel}${selectorClause} with no sibling keyboard listener on \`${site.target}\` in this file — keyboard users can't activate the target.`;
-  const suggestion = buildExternalJsSuggestion(site, selector);
-  return { line: pos.line, column: pos.column, message, suggestion };
+  // When the target was bound from `document.createElement('<tag>')` in
+  // this file, that's the highest-strength evidence the message can
+  // carry — the agent doesn't need to grep the HTML to find out what
+  // the receiver is. Drop the selector clause in that case so the
+  // message reads cleanly with the createElement clause.
+  const evidenceClause = buildEvidenceClause(selector, createdTag);
+  const message = `Click handler attached via ${shapeLabel}${evidenceClause} with no sibling keyboard listener on \`${site.target}\` in this file — keyboard users can't activate the target.`;
+  const suggestion = buildExternalJsSuggestion(site, selector, createdTag);
+  return {
+    line: pos.line,
+    column: pos.column,
+    message,
+    suggestion,
+    ...(createdTag === null ? {} : { inFileResolvedTag: createdTag }),
+  };
 }
 
 function buildExternalJsSuggestion(
   site: ClickSite,
   selector: { readonly method: string; readonly argument: string } | null,
+  createdTag: string | null,
 ): string {
   const target = site.target;
+  // CreateElement-confirmed branch: the receiver's kind is in-file
+  // evidence. Drop the "Cross-file check: grep" hedge — there's nothing
+  // to grep for. Steer the agent toward the correct create-shape
+  // (`document.createElement('button')`) which fixes both the keyboard
+  // failure (2.1.1) and the missing-role failure (4.1.2) at once.
+  if (createdTag !== null) {
+    return (
+      `The receiver is a \`<${createdTag}>\` created at runtime — keyboard users can't reach or activate it. ` +
+      `The simplest fix is to construct a \`<button>\` instead: change \`document.createElement('${createdTag}')\` to \`document.createElement('button')\` and set \`type = 'button'\` (and any class names you needed for styling on the result). ` +
+      `If the visual must stay a \`<${createdTag}>\`, set \`role = 'button'\`, \`tabIndex = 0\`, an accessible name (\`textContent\` or \`aria-label\`), AND attach a sibling keyboard listener — ` +
+      `\`${target}.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); /* invoke the click handler */ } });\` — so Enter and Space activate the same handler.`
+    );
+  }
   const targetHint = selector
     ? `the element returned by \`document.${selector.method}('${selector.argument}')\``
     : `\`${target}\``;

@@ -222,7 +222,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Rule predicate gaps (false negatives)
 
-- [ ] **Q9-RULE-CROSS-FILE-CLICK-HANDLER-DYNAMIC-NON-INTERACTIVE** No rule detects clickable-div pattern when the click target is created dynamically and wired in a separate JS context (e.g. `insect.addEventListener('click', catchInsect)` on dynamically-created `<div class="insect">`). Vanilla corpus. Fix: cross-check JS-attached click target's resolved kind in the rendered markup (or via cross-file resolution), not only the static-text absence-of-keyboard-sibling signal. Pairs with Q8-RULE-CROSS-FILE-CLICK-HANDLER-NON-INTERACTIVE (open, the static-DOM axis); this is the dynamic-creation extension. Satisfies wcag22:2.1.1 + 4.1.2.
 ### Rule predicate too-broad (false positives)
 
 

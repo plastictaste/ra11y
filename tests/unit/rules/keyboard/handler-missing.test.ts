@@ -655,17 +655,29 @@ btn.addEventListener('click', save);`;
     // Negative cases for the createElement gate — the target was bound
     // from a non-interactive tag, so the missing keyboard sibling is
     // still a 2.1.1 failure.
+    //
+    // The dynamic-creation extension (Q9): when the bound tag is a
+    // confirmed-non-interactive native element (`div`, `span`, `li`,
+    // `section`, …), the receiver's kind is provable from the same
+    // file with no cross-file lookup. The host rule short-circuits the
+    // unconditional cross-file downgrade — `severity: "error"` and
+    // `confidence: "high"` (no stamp) become honest because no HTML
+    // resolution is needed. This surfaces the canonical "insect"-style
+    // pattern (`const insect = document.createElement('div'); insect.
+    // addEventListener('click', catchInsect)`) at the same attention
+    // budget as a static `<div onClick>`.
     it("target was bound from document.createElement('div')", () => {
       const source = `const div = document.createElement('div');
 div.addEventListener('click', handle);`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
-      // External-JS path always carries `confidence: "medium"` and
-      // therefore severity downgrades to `"warning"` — the createElement
-      // gate confirms the receiver is a `<div>`, but the click-attach
-      // shape is still the cross-file-ambiguous one this rule can't
-      // verify in-file beyond the bound tag.
-      expect(v[0]?.severity).toBe("warning");
+      // CreateElement('div') is in-file evidence of the receiver's
+      // kind. No cross-file ambiguity, so severity stays "error" and
+      // confidence stays "high" (no stamp) — the rule's per-finding
+      // attention-budget signal matches the in-file evidence.
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
 
     it("target was bound from document.createElement('span')", () => {
@@ -673,6 +685,8 @@ div.addEventListener('click', handle);`;
 span.addEventListener('click', handle);`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
     });
 
     it("target was bound from document.createElement('section')", () => {
@@ -680,16 +694,137 @@ span.addEventListener('click', handle);`;
 section.onclick = handle;`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
     });
 
     it("createElement appears AFTER the click-attach site (not a backward binding)", () => {
       // The declarator follows the click-attach site, so the target on
       // the click-attach site cannot be the createElement-returned
-      // element — different scope. Still emits.
+      // element — different scope. Still emits, and falls back to the
+      // unconditional cross-file downgrade because the rule has no
+      // in-file evidence of the receiver's kind.
       const source = `btn.addEventListener('click', save);
 const btn = document.createElement('button');`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.confidence).toBe("medium");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Q9 dynamic-creation extension — `document.createElement('<non-
+  // interactive-tag>')` followed by `.addEventListener('click', …)` (or
+  // `.onclick = …`) is the canonical "insect"-style pattern: the
+  // element is created at runtime, wired to a click handler, and
+  // appended to the DOM, but never made keyboard-reachable. The static
+  // HTML has no element to flag, but the runtime DOM does — and the
+  // rule has full evidence of the receiver's kind in this file (the
+  // createElement argument), so the cross-file downgrade is unwarranted.
+  // The finding emits at `severity: "error"` / `confidence: "high"`
+  // with a createElement-aware suggestion that drops the "Cross-file
+  // check: grep" hedge (no HTML to grep).
+  // ---------------------------------------------------------------------------
+  describe("external JS: dynamic-creation pattern (createElement non-interactive)", () => {
+    it("canonical insect pattern fires at error severity and high confidence", () => {
+      const source = `function spawnInsect() {
+  const insect = document.createElement('div');
+  insect.classList.add('insect');
+  document.body.appendChild(insect);
+  insect.addEventListener('click', catchInsect);
+}`;
+      const v = runRule(rule, source, { filePath: "game.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
+      // Message references the createElement evidence so the agent
+      // sees why the finding is high-confidence.
+      expect(v[0]?.message).toContain("createElement('div')");
+      expect(v[0]?.message).toContain("non-interactive");
+    });
+
+    it("createElement-aware suggestion drops the cross-file 'grep the HTML' hedge", () => {
+      const source = `const tile = document.createElement('div');
+tile.addEventListener('click', open);`;
+      const v = runRule(rule, source, { filePath: "ui.js" });
+      expect(v).toHaveLength(1);
+      const suggestion = v[0]?.suggestion ?? "";
+      // Steers toward createElement('button') as the simplest fix.
+      expect(suggestion).toContain("createElement('button')");
+      // No HTML grep instruction — the receiver's kind is in-file evidence.
+      expect(suggestion).not.toContain("grep the selector in your HTML");
+      // Names role/tabIndex/keydown as the alternative path if the
+      // visual must stay a <div>.
+      expect(suggestion).toContain("role");
+      expect(suggestion).toContain("tabIndex");
+    });
+
+    it("createElement('span') + .onclick assignment fires at error severity", () => {
+      const source = `const tag = document.createElement('span');
+tag.onclick = activate;`;
+      const v = runRule(rule, source, { filePath: "ui.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.confidence).toBeUndefined();
+      expect(v[0]?.message).toContain("createElement('span')");
+    });
+
+    it("createElement('li') + click — list-item host is non-interactive", () => {
+      const source = `const li = document.createElement('li');
+li.addEventListener('click', selectItem);`;
+      const v = runRule(rule, source, { filePath: "ui.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("createElement('li')");
+    });
+
+    it("sibling keyboard listener still suppresses createElement('div') case", () => {
+      // The dynamic-creation extension layers on top of the existing
+      // sibling-keyboard suppression — having a keydown alongside the
+      // click is still the right keyboard wiring, regardless of how the
+      // element was created.
+      const source = `const insect = document.createElement('div');
+insect.addEventListener('click', catchInsect);
+insect.addEventListener('keydown', onKey);`;
+      const v = runRule(rule, source, { filePath: "game.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("createElement('button') (native interactive) still suppresses — gate unchanged", () => {
+      // The native-interactive suppression branch must keep working —
+      // the new evidence-promotion path is only for non-interactive tags.
+      const source = `const btn = document.createElement('button');
+btn.addEventListener('click', save);`;
+      const v = runRule(rule, source, { filePath: "game.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("createElement('BUTTON') case-insensitive interactive suppression", () => {
+      // Tag names are ASCII-case-insensitive per HTML spec; the gate
+      // lowercases. createElement('DIV') would conversely promote to
+      // high confidence — verified separately.
+      const source = `const btn = document.createElement('BUTTON');
+btn.addEventListener('click', save);`;
+      const v = runRule(rule, source, { filePath: "game.js" });
+      expect(v).toHaveLength(0);
+    });
+
+    it("createElement('DIV') (uppercase) still emits and lowercases the tag in the message", () => {
+      const source = `const el = document.createElement('DIV');
+el.addEventListener('click', handle);`;
+      const v = runRule(rule, source, { filePath: "ui.js" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("error");
+      expect(v[0]?.message).toContain("createElement('div')");
+    });
+
+    it("cites both wcag22:2.1.1 and wcag22:4.1.2 (Name, Role, Value) on satisfies", () => {
+      // Q9 widens satisfies to include 4.1.2 — a runtime-created div
+      // with no role and no tabIndex fails both 2.1.1 (no keyboard
+      // pathway) and 4.1.2 (no programmatically determinable role).
+      expect(rule.satisfies).toContain("wcag22:4.1.2");
+      expect(rule.satisfies).toContain("wcag21:4.1.2");
     });
   });
 
