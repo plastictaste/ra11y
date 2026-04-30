@@ -21,6 +21,7 @@ import type {
   ReviewCandidateVendorContext,
   ReviewConfidence,
 } from "../types/review.ts";
+import { computeCandidateFindingId } from "../utils/finding-id.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
@@ -78,6 +79,27 @@ import {
 // `.svelte` / `.erb` / `.liquid` (HTML-comment form).
 
 interface ChecklistCandidateOut {
+  /**
+   * Per-emission unique address — same recipe as the rule surface's
+   * `Violation.findingId` (location-coordinate-hashed) and the
+   * `findingId` slot on `scan_file.reviewCandidates[]` /
+   * `scan_project.reviewCandidates[]`. Computed via
+   * `computeCandidateFindingId` over `(sortedCriteria.join(","), path,
+   * line, column)` so the SAME conceptual candidate carries the SAME id
+   * across all three surfaces — agents calling them in sequence can
+   * address one candidate by id regardless of which tool produced it.
+   *
+   * When this candidate also surfaces under sibling checklist items
+   * (i.e. {@link ChecklistCandidateOut#criteria} is populated by
+   * {@link annotateSharedCandidates}), every per-item instance carries
+   * the SAME `findingId` because the hash uses the sorted criteria
+   * union — so an agent dedup-walking the group reads one id, not N.
+   *
+   * Per AI-first doctrine "Per-finding identifiers must be addressable,
+   * not collision-prone" + "Per-tool review-candidate shape must agree
+   * across surfaces."
+   */
+  readonly findingId: string;
   readonly path: string;
   readonly line: number;
   readonly reason: string;
@@ -817,8 +839,13 @@ export const checklistTool: McpTool = {
     // [...]` so an agent walking a shared candidate reads one entry
     // per location and knows which criteria it covers. Items stay
     // per-criterion (ADR 0010 cross-tool invariant) — the annotation
-    // is the dedup signal the agent consumes.
-    const annotatedNeedsReview = annotateSharedCandidates(needsReview);
+    // is the dedup signal the agent consumes. The columnByKey lookup
+    // lets the union-recompute of `findingId` re-hash with the same
+    // column the singleton `mapOneCandidate` used; built once from
+    // the raw `ReviewCandidate[]` since the output shape doesn't
+    // carry `column` (`reportCandidates` does).
+    const columnByKey = buildCandidateColumnLookup(reportCandidates);
+    const annotatedNeedsReview = annotateSharedCandidates(needsReview, columnByKey);
     const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
     const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
@@ -1402,7 +1429,22 @@ function mapOneCandidate(
   // `confidence` passes through verbatim from the finder. See
   // CLAUDE.md §1 — this is identity-like metadata, not an
   // optional enrichment, so it is always present.
+  // `findingId` is the per-emission address — hashed from
+  // `[criterionId]` here so a singleton checklist candidate gets the
+  // same id its sibling on `scan_file.reviewCandidates[]` /
+  // `scan_project.reviewCandidates[]` does. When the candidate later
+  // joins a cross-criterion group via `annotateSharedCandidates`, the
+  // id is recomputed there over the sorted-criteria union so all
+  // sibling instances share one id (still matching the dedup'd
+  // single-entry id on `scan_file`).
+  const findingId = computeCandidateFindingId({
+    criteria: [criterionId],
+    filePath: c.location.filePath,
+    line: c.location.line,
+    column: c.location.column,
+  });
   return {
+    findingId,
     path: c.location.filePath,
     line: c.location.line,
     reason: c.reason,
@@ -1475,7 +1517,37 @@ function mapOneCandidate(
  * AI-first doctrine warns against. Annotating every instance
  * preserves the invariant AND gives the agent the dedup tool.
  */
-function annotateSharedCandidates(items: readonly ChecklistItemOut[]): ChecklistItemOut[] {
+/**
+ * Builds a `(path, line, reason) -> column` lookup from the raw
+ * `ReviewCandidate[]` so {@link annotateSharedCandidates} can recompute
+ * `findingId` over the cross-criterion union with the same column the
+ * singleton mapping used. The output shape `ChecklistCandidateOut`
+ * deliberately omits `column` (the agent reads `path` + `line`), but
+ * the hash recipe needs it.
+ *
+ * First-seen wins: if two finders emit the same `(path, line, reason)`
+ * at different columns (impossible in practice — column is determined
+ * by the AST node the finder anchored on, and the same anchor produces
+ * the same column), the first finder's column governs. The `?? 1`
+ * fallback at the consumer site protects against drift, but with
+ * structural dedup keying and identical-anchor convention this lookup
+ * answers for every key in the input.
+ */
+function buildCandidateColumnLookup(
+  candidates: readonly ReviewCandidate[],
+): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  for (const c of candidates) {
+    const key = `${c.location.filePath}\x00${c.location.line}\x00${c.reason}`;
+    if (!out.has(key)) out.set(key, c.location.column);
+  }
+  return out;
+}
+
+function annotateSharedCandidates(
+  items: readonly ChecklistItemOut[],
+  byColumn: ReadonlyMap<string, number>,
+): ChecklistItemOut[] {
   // Map dedup-key → every criterion ID that owns this location.
   const byKey = new Map<string, string[]>();
   for (const item of items) {
@@ -1495,7 +1567,22 @@ function annotateSharedCandidates(items: readonly ChecklistItemOut[]): Checklist
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const ids = byKey.get(key);
       if (ids === undefined || ids.length <= 1) return c;
-      return { ...c, criteria: [...ids].sort() };
+      // Cross-criterion sharing — recompute `findingId` over the
+      // sorted-criteria union so every sibling per-item instance under
+      // this group reads the SAME id, AND the id matches the same
+      // conceptual candidate's id on `scan_file.reviewCandidates[]` /
+      // `scan_project.reviewCandidates[]` (those surfaces compute the
+      // hash over the same sorted-criteria union via the shared
+      // `computeCandidateFindingId` helper). Per AI-first doctrine
+      // "Per-tool review-candidate shape must agree across surfaces."
+      const criteria = [...ids].sort();
+      const findingId = computeCandidateFindingId({
+        criteria,
+        filePath: c.path,
+        line: c.line,
+        column: byColumn.get(key) ?? 1,
+      });
+      return { ...c, findingId, criteria };
     }),
   }));
 }

@@ -156,6 +156,74 @@ export function computeFindingId(inputs: FindingIdInputs): string {
   return createHash("sha256").update(canonical).digest("hex").slice(0, FINDING_ID_LENGTH);
 }
 
+export interface CandidateFindingIdInputs {
+  /**
+   * Every criterion ID this conceptual candidate satisfies. Sorted and
+   * joined to form the rule-equivalent slot in the hash so the same
+   * `(filePath, line, column)` candidate produces identical ids across
+   * surfaces:
+   *
+   *   - `scan_file.reviewCandidates[]` post-dedup ships `criteria:
+   *     string[]` (the union after cross-criterion / cross-finder
+   *     fold) — pass it verbatim.
+   *   - `scan_project.reviewCandidates[]` ships `criteria: string[]`
+   *     (the same union) — pass it verbatim.
+   *   - `checklist.items[].candidates[]` is per-criterion at emit
+   *     time but `annotateSharedCandidates` populates `criteria:
+   *     [...sortedIds]` when ≥2 items share the same `(path, line,
+   *     reason)`. Pass that final array (or `[criterionId]` for
+   *     singletons).
+   *
+   * Each surface arrives at the same sorted union for the same
+   * conceptual candidate, so `computeCandidateFindingId` produces one
+   * id per candidate across all three.
+   */
+  readonly criteria: readonly string[];
+  readonly filePath: string;
+  /** 1-based line number of the candidate. */
+  readonly line: number;
+  /** 1-based column number of the candidate. */
+  readonly column: number;
+  /**
+   * Absolute or logical "scan root" for path relativization. When
+   * omitted, the `filePath` is normalized in place — same semantics as
+   * {@link FindingIdInputs#scanRoot}.
+   */
+  readonly scanRoot?: string;
+}
+
+/**
+ * Computes the per-emission `findingId` for a review candidate. Mirrors
+ * {@link computeFindingId} on the rule surface — same hash function,
+ * same length, same path normalization — but takes a sorted `criteria`
+ * array as the rule-equivalent slot so the same conceptual candidate
+ * produces identical ids on every surface that ships it (`scan_file`
+ * post-dedup, `scan_project.reviewCandidates`, `checklist.items[]
+ * .candidates[]`).
+ *
+ * Per AI-first doctrine "Per-finding identifiers must be addressable,
+ * not collision-prone": location-coordinate-hashed so two distinct
+ * emissions on different `(line, column)` always get distinct ids, and
+ * "Per-tool review-candidate shape must agree across surfaces": the
+ * hash is a pure function over the sorted `criteria` union plus the
+ * location, so an agent can address the same candidate by id
+ * regardless of which tool surfaced it.
+ */
+export function computeCandidateFindingId(inputs: CandidateFindingIdInputs): string {
+  // Sort defensively even though every caller already sorts: hash
+  // stability depends on the canonical order, and a missed sort would
+  // silently desynchronize ids across surfaces.
+  const sorted = [...inputs.criteria].sort();
+  const ruleId = sorted.join(",");
+  return computeFindingId({
+    ruleId,
+    filePath: inputs.filePath,
+    line: inputs.line,
+    column: inputs.column,
+    ...(inputs.scanRoot === undefined ? {} : { scanRoot: inputs.scanRoot }),
+  });
+}
+
 /**
  * Computes the cross-run-stable `findingGroupId`. Pure function over
  * its inputs; no I/O. Hashes the normalized text of the violation

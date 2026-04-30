@@ -129,6 +129,7 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
         priority: "high" as const,
         confidence: "medium" as const,
         candidates: Array.from({ length: 30 }, (_, i) => ({
+          findingId: `fid-${i}`.padEnd(12, "0").slice(0, 12),
           path: `file-${i}.tsx`,
           line: i + 1,
           reason: "manual review candidate",

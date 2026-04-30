@@ -237,6 +237,37 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
     expect(out[0]?.priority).toBe("high");
   });
 
+  it("populates findingId via location-coordinate hash with sorted-criteria-joined ruleId slot", () => {
+    // Two finders at the same byte position fold to one entry. The
+    // emitted findingId must be deterministic from the sorted-criteria
+    // union + path + line + column — that's the canonical recipe the
+    // shared `computeCandidateFindingId` helper applies on every
+    // surface that ships review candidates. Per AI-first doctrine
+    // "Per-finding identifiers must be addressable, not collision-
+    // prone."
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("wcag22:1.3.6", "reason A", 7, 2),
+      candidate("wcag22:3.3.8", "reason B", 7, 2),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.findingId).toBeDefined();
+    // Length is the FINDING_ID_LENGTH (12) hex chars used by the
+    // rule surface — the shared helper preserves that contract.
+    expect(out[0]?.findingId).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it("findingId distinguishes two candidates that differ only by line", () => {
+    const a = dedupeReviewCandidatesForSingleFile([candidate("wcag22:3.3.8", "r", 5, 2)]);
+    const b = dedupeReviewCandidatesForSingleFile([candidate("wcag22:3.3.8", "r", 12, 2)]);
+    expect(a[0]?.findingId).not.toBe(b[0]?.findingId);
+  });
+
+  it("findingId is stable across runs of the same input", () => {
+    const a = dedupeReviewCandidatesForSingleFile([candidate("wcag22:3.3.8", "r", 7, 2)]);
+    const b = dedupeReviewCandidatesForSingleFile([candidate("wcag22:3.3.8", "r", 7, 2)]);
+    expect(a[0]?.findingId).toBe(b[0]?.findingId);
+  });
+
   it("takes the highest confidence across the cross-finder fold (Pass 2)", () => {
     const levels = new Map<string, string>([
       ["std:a", "AA"],

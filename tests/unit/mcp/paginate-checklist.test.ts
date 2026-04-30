@@ -33,6 +33,7 @@ function makeItem(
   confidence: ReviewConfidence = "medium",
 ) {
   const candidates = Array.from({ length: candidateCount }, (_, i) => ({
+    findingId: `fid-${criterionId}-${i}`.padEnd(12, "0").slice(0, 12),
     path: `${criterionId}-${i}.tsx`,
     line: i + 1,
     reason: "manual review candidate",

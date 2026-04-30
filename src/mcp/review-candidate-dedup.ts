@@ -50,6 +50,7 @@ import type {
   ReviewCandidateVendorContext,
   ReviewConfidence,
 } from "../types/review.ts";
+import { computeCandidateFindingId } from "../utils/finding-id.ts";
 import {
   highestCandidateConfidence,
   type ReviewCandidatePriority,
@@ -71,6 +72,21 @@ import {
  * two surfaces compute from the same logic over the same inputs.
  */
 export interface DedupedReviewCandidate {
+  /**
+   * Per-emission unique address — same recipe as {@link Violation#findingId}
+   * on the rule surface, hashed via {@link computeCandidateFindingId}
+   * over `(sortedCriteria.join(","), filePath, line, column)`. The
+   * canonical sorted-criteria join means the SAME conceptual candidate
+   * surfaces with the SAME `findingId` on `scan_file.reviewCandidates[]`,
+   * `scan_project.reviewCandidates[]`, and `checklist.items[].candidates[]`
+   * — an agent calling those tools in sequence can address the same
+   * candidate by id regardless of which surface produced it. Per AI-first
+   * doctrine "Per-finding identifiers must be addressable, not collision-
+   * prone" + "Per-tool review-candidate shape must agree across surfaces"
+   * (the candidate-shape closure pinned by
+   * `tests/integration/mcp-consistency/candidate-finding-id-cross-surface.test.ts`).
+   */
+  readonly findingId: string;
   readonly criteria: readonly string[];
   readonly line: number;
   readonly column: number;
@@ -154,6 +170,14 @@ export interface DedupedReviewCandidate {
 
 /** Aggregator entry held during the dedup passes. */
 interface DedupAcc {
+  /**
+   * Source file path captured from the first candidate in the group.
+   * `dedupeReviewCandidatesForSingleFile` is per-file by construction,
+   * so every candidate folded into a single acc shares the same path —
+   * preserved here so {@link materializeDedupedCandidate} can hash it
+   * into the per-emission `findingId`.
+   */
+  filePath: string;
   criteria: Set<string>;
   line: number;
   column: number;
@@ -239,6 +263,7 @@ function passOneCollectByReasonKey(candidates: readonly ReviewCandidate[]): Map<
       continue;
     }
     byKey.set(key, {
+      filePath: c.location.filePath,
       criteria: new Set([c.criterionId]),
       line: c.location.line,
       column: c.location.column,
@@ -429,7 +454,21 @@ function materializeDedupedCandidate(
       ...(g.predicateConceded === undefined ? {} : { predicateConceded: g.predicateConceded }),
     },
   });
+  // Per-emission unique address — sorted-criteria-joined ruleId slot
+  // means the same conceptual candidate produces the same id on every
+  // surface that ships it (`scan_file`, `scan_project.reviewCandidates`,
+  // `checklist.items[].candidates`). See
+  // `src/utils/finding-id.ts#computeCandidateFindingId` for the recipe
+  // and the cross-surface invariant test
+  // `tests/integration/mcp-consistency/candidate-finding-id-cross-surface.test.ts`.
+  const findingId = computeCandidateFindingId({
+    criteria,
+    filePath: g.filePath,
+    line: g.line,
+    column: g.column,
+  });
   return {
+    findingId,
     criteria,
     line: g.line,
     column: g.column,

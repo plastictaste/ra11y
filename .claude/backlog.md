@@ -437,8 +437,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Ambiguous / empty-when-meaningful field shapes
 
-- [ ] **Q14-CHECKLIST-CANDIDATE-LACKS-FINDING-ID-GROUP-KEY** `checklist.items[].candidates[]` ship without `findingId` / `groupKey` while `scan_project.files[].findings[]` carry both — agent cannot stably address or suppress review candidates by id, only by `(path,line,reason)` reconstruction. Closure: emit `findingId` (location-coordinate-hashed per Q13) on every checklist candidate via the same hash function the rule surface uses. Per AI-first doctrine "Per-finding identifiers must be addressable, not collision-prone."
-
 ### Cross-surface drift (counts + warnings + lane)
 
 - [ ] **Q14-CHECKLIST-ITEMS-LENGTH-DRIFTS-FROM-SUMMARY-ACTIONABLE** `checklist.summary.actionable.criteria: N` disagrees with `checklist.items.length: M` (observed N=19/M=8 and N=8/M=4 across two corpora) with `truncated: null` and no `nextOffset` — the displayed list silently elides actionable criteria the headline counts. Agent budgeting against the headline sees N work items; reading `items[]` gets only M. Closure: when `items.length < summary.actionable.criteria`, set `truncated: true` and emit a structured warning naming the elision predicate; or fix the items-emission path so it returns the full set. Per AI-first doctrine "Cross-surface count invariant" + "One tool call should answer 'what next?'"
