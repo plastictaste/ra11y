@@ -74,7 +74,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `wcag22:2.2.1` | Timing Adjustable | A | manual | document/meta-refresh | timing | **rule** |
-| `wcag22:2.2.2` | Pause, Stop, Hide | A | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
+| `wcag22:2.2.2` | Pause, Stop, Hide | A | partial | motion/pause-stop-hide | auto-advance-no-pause-control, carousel-pattern +1 | **rule** |
 | `wcag22:2.2.3` | No Timing | AAA | manual | — | timing | **finder** |
 | `wcag22:2.2.4` | Interruptions | AAA | manual | document/meta-refresh | timing | **rule** |
 | `wcag22:2.2.5` | Re-authenticating | AAA | manual | — | timing | **finder** |
@@ -169,7 +169,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.1.3` | Keyboard (No Exception) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.1.4` | Character Key Shortcuts | A | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `wcag21:2.2.1` | Timing Adjustable | A | manual | document/meta-refresh | timing | **rule** |
-| `wcag21:2.2.2` | Pause, Stop, Hide | A | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
+| `wcag21:2.2.2` | Pause, Stop, Hide | A | partial | motion/pause-stop-hide | auto-advance-no-pause-control, carousel-pattern +1 | **rule** |
 | `wcag21:2.2.3` | No Timing | AAA | manual | — | timing | **finder** |
 | `wcag21:2.2.4` | Interruptions | AAA | manual | document/meta-refresh | timing | **rule** |
 | `wcag21:2.2.5` | Re-authenticating | AAA | manual | — | timing | **finder** |
@@ -239,7 +239,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:2.1.1` | Keyboard | base | partial | aria/hidden-focus, keyboard/accesskey-duplicate +10 | cross-file-click-handler-on-non-interactive | **rule** |
 | `section508:2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `section508:2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
-| `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
+| `section508:2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | auto-advance-no-pause-control, carousel-pattern +1 | **rule** |
 | `section508:2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
 | `section508:2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `section508:2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
@@ -293,7 +293,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.1.2` | No Keyboard Trap | base | manual | — | no-keyboard-trap | **finder** |
 | `en301549:9.2.1.4` | Character Key Shortcuts | base | partial | keyboard/accesskey-duplicate, keyboard/character-shortcuts | — | **rule** |
 | `en301549:9.2.2.1` | Timing Adjustable | base | manual | document/meta-refresh | timing | **rule** |
-| `en301549:9.2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | carousel-pattern, timing | **rule** |
+| `en301549:9.2.2.2` | Pause, Stop, Hide | base | partial | motion/pause-stop-hide | auto-advance-no-pause-control, carousel-pattern +1 | **rule** |
 | `en301549:9.2.3.1` | Three Flashes or Below Threshold | base | manual | — | flashing-content | **finder** |
 | `en301549:9.2.4.1` | Bypass Blocks | base | full | document/iframe-title, navigation/in-page-link-fragment-missing +2 | — | **rule** |
 | `en301549:9.2.4.2` | Page Titled | base | full | document/page-titled | — | **rule** |
