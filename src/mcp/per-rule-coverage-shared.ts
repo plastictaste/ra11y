@@ -30,6 +30,7 @@
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { applyCorpusParseErrorRateAdjustment } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionPresentSubkindAdjustment } from "./extension-subkind.ts";
 import { applyParseErrorAdjustment } from "./parse-error-adjustment.ts";
 import {
@@ -109,18 +110,28 @@ export interface SharedPerRuleCoverageMetaResult {
  * established by the prior one):
  *
  *  1. {@link applyParseErrorAdjustment} — drops rows to `"low"` when the
- *     rule's eligible files include a parse-error / partial-parse path.
- *  2. {@link applyScssUnresolvedVariablesAdjustment} — drops rows to
+ *     rule's eligible files include a parse-error / partial-parse path
+ *     (per-file axis; populates `byFile[]` for the corpus-aggregation
+ *     adjuster below).
+ *  2. {@link applyCorpusParseErrorRateAdjustment} — drops rows whose
+ *     corpus-level parse-error rate (`byFile.length / filesEligible`)
+ *     exceeds the medium (10%) / low (25%) thresholds. Sibling of #1
+ *     on the orthogonal corpus-aggregate axis: #1 honestly keeps the
+ *     aggregate `"high"` when one clean file survives, but on bulk-
+ *     vendor corpora (12% parse-error rate across 4000 files) the
+ *     aggregate scalar is the field an agent budgets against and
+ *     hundreds of invisible files would otherwise read as "high."
+ *  3. {@link applyScssUnresolvedVariablesAdjustment} — drops rows to
  *     `"medium"` when at least one of the rule's eligible `.scss` files
  *     declares top-level `$variable: …` decls but produced no literal
  *     color usages.
- *  3. {@link applyFragmentInputAdjustment} — drops document-shaped rules
+ *  4. {@link applyFragmentInputAdjustment} — drops document-shaped rules
  *     to `"medium"` when at least one of their eligible HTML files
  *     classifies as a fragment.
- *  4. {@link applyScssPartialInputAdjustment} — drops rows to `"medium"`
+ *  5. {@link applyScssPartialInputAdjustment} — drops rows to `"medium"`
  *     when at least one of the rule's eligible `.scss` files is a
  *     `_partial.scss` declaring top-level `&` parent-references.
- *  5. {@link applyExtensionPresentSubkindAdjustment} — stamps
+ *  6. {@link applyExtensionPresentSubkindAdjustment} — stamps
  *     `subkind: "extension-absent" | "extension-present-but-out-of-scope"`
  *     on `eligible === 0` extension-gated rows when the caller probed.
  *
@@ -148,8 +159,13 @@ export function buildSharedPerRuleCoverageMeta(
     activeRules,
     violationFilePaths,
   );
+  // Corpus-aggregation pass — drops rows whose corpus parse-error
+  // rate (`byFile.length / filesEligible`) exceeds the medium (10%) /
+  // low (25%) thresholds. Reads the `byFile[]` array the parse-error
+  // pass populated; sequencing is load-bearing.
+  const corpusRateAdjusted = applyCorpusParseErrorRateAdjustment(parseErrorAdjusted);
   const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
-    parseErrorAdjusted,
+    corpusRateAdjusted,
     parsedFiles,
     activeRules,
     new Set(scssUnresolvedFiles),

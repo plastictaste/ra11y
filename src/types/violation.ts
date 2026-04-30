@@ -753,6 +753,22 @@ export interface PerRuleCoverage {
    *     `parseErrorFiles[]` entry, so the agent reading per-rule
    *     coverage gets the structural signal without the parse-error
    *     narrative routing them toward "fix the parse error."
+   *   - `"corpus-parse-error-rate-above-threshold"` — corpus-aggregation
+   *     axis sibling of `"file-parse-error"` / `"partial-parse"`. The
+   *     per-file adjuster intentionally lets a rule's aggregate stay
+   *     `"high"` as long as one cleanly-parsed eligible file survives
+   *     (per the per-file-not-corpus-wide invariant), but the agent
+   *     reads the aggregate scalar to budget against — a 12% parse-
+   *     error rate across a 4000-file corpus leaves every rule with
+   *     ≥1 clean file showing `"high"` even though hundreds of its
+   *     eligible files were invisible. This reason fires when the
+   *     ratio of `byFile.length / filesEligible` exceeds the medium
+   *     (10%) or low (25%) threshold, dropping the aggregate to
+   *     `"medium"` or `"low"` accordingly. Reason text quotes the
+   *     exact percentage so the agent can read the bound additively;
+   *     per-file `byFile[]` still carries the per-file degradation
+   *     for triage. Cross-references the same `parseErrorFiles[]` /
+   *     `partialParseFiles[]` evidence the per-file adjuster consumed.
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
@@ -772,7 +788,8 @@ export interface PerRuleCoverage {
     | "partial-parse"
     | "scss-unresolved-variables"
     | "fragment-input-no-document-envelope"
-    | "scss-partial-input";
+    | "scss-partial-input"
+    | "corpus-parse-error-rate-above-threshold";
   /**
    * Discriminator for an `eligible === 0` extension-gated row,
    * differentiating two structurally distinct gaps the original
