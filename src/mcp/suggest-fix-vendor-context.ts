@@ -178,7 +178,10 @@ export function detectVendorContext(filePath: string, source: string): VendorCon
     const bannerSignal: BuildArtifactSignal =
       vendorLibrary.version === undefined
         ? { kind: "vendor-copyright-banner", value: vendorLibrary.library }
-        : { kind: "vendor-banner-version", value: `${vendorLibrary.library} v${vendorLibrary.version}` };
+        : {
+            kind: "vendor-banner-version",
+            value: `${vendorLibrary.library} v${vendorLibrary.version}`,
+          };
     const classificationSignals: readonly BuildArtifactSignal[] =
       concurrent === null ? [bannerSignal] : [bannerSignal, concurrent.signal];
     return {

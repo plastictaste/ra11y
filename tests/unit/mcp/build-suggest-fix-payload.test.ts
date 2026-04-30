@@ -996,9 +996,7 @@ describe("buildSuggestFixPayload lanes", () => {
   const VENDOR_LIBRARY_CONTEXT = {
     signal: { kind: "vendor-library" as const, library: "bootstrap", version: "5.3.0" },
     redirectTo: "consumer-override" as const,
-    classificationSignals: [
-      { kind: "vendor-banner-version" as const, value: "bootstrap v5.3.0" },
-    ],
+    classificationSignals: [{ kind: "vendor-banner-version" as const, value: "bootstrap v5.3.0" }],
   };
   const BUILD_ARTIFACT_CONTEXT = {
     signal: {

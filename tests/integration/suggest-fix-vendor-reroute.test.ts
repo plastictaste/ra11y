@@ -225,10 +225,7 @@ describe("suggest_fix vendor-redirect is gated on high-confidence classification
     // earns `definite-min-infix` and the redirect fires honestly. This
     // pins the high-confidence half of the gate alongside the low-
     // confidence half above.
-    const ctx = detectVendorContext(
-      "src/styles/tokens.min.css",
-      ".a{color:red}.b{color:blue}\n",
-    );
+    const ctx = detectVendorContext("src/styles/tokens.min.css", ".a{color:red}.b{color:blue}\n");
     expect(ctx).not.toBeNull();
     if (ctx === null) return;
     expect(ctx.signal.kind).toBe("build-artifact");
