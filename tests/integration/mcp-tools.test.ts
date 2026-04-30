@@ -2071,3 +2071,83 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     expect(body.plan).not.toHaveProperty("summary");
   });
 });
+
+// Cross-surface guard for the dropped composite: the per-tool unit
+// suites already pin the absence on `scan_project.plan` and on the
+// bootstrap scan-subset, but those exercise the in-process assembler.
+// This block spawns the actual MCP subprocess (the shipped artifact
+// path) and walks the full response tree — every nested object, not
+// just the top-level `plan` — so a future regression that re-emits
+// `safeEditsAvailable` under a sibling field (e.g. `meta.scan.plan` /
+// `scanContext` / `subset`) on the wire still trips. Doctrine: a
+// dropped field must propagate to the shipped artifact, not just the
+// source-level assembler.
+describe("dropped composite `safeEditsAvailable`: full-protocol subprocess guard", () => {
+  /**
+   * Walks an arbitrary JSON-shaped value and returns the dotted paths
+   * at which `key` appears. Matches own-property keys at every depth
+   * including across array indices. Empty result means the key is
+   * absent from the entire response tree.
+   */
+  function findKeyPaths(value: unknown, key: string, prefix = ""): string[] {
+    if (value === null || typeof value !== "object") return [];
+    if (Array.isArray(value)) {
+      return value.flatMap((item, i) => findKeyPaths(item, key, `${prefix}[${i}]`));
+    }
+    const record = value as Record<string, unknown>;
+    const here = Object.hasOwn(record, key) ? [`${prefix}${prefix ? "." : ""}${key}`] : [];
+    const nested = Object.entries(record).flatMap(([k, v]) =>
+      findKeyPaths(v, key, `${prefix}${prefix ? "." : ""}${k}`),
+    );
+    return [...here, ...nested];
+  }
+
+  it("scan_project response: no nested object emits safeEditsAvailable", async () => {
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const paths = findKeyPaths(body, "safeEditsAvailable");
+    expect(paths).toEqual([]);
+  });
+
+  it("bootstrap response: no nested object emits safeEditsAvailable", async () => {
+    // Bootstrap composes scan_project + detect_native_wrappers +
+    // propose_config and forwards the scan subset onto `response.scan`.
+    // The composite was reported live on `bootstrap` responses too —
+    // walk the whole tree, not just `scan.plan`, so a regression that
+    // surfaces under any sibling (e.g. inside the propose_config leg
+    // or a future `meta` mirror) still trips.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "bootstrap", { cwd: BAD_ALT_DIR }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const paths = findKeyPaths(body, "safeEditsAvailable");
+    expect(paths).toEqual([]);
+  });
+
+  it("scan response: no nested object emits safeEditsAvailable", async () => {
+    // The flat `scan` tool walks an explicit path list. It shares the
+    // assembler with `scan_project` but runs through a different
+    // entrypoint — guard it explicitly so a future code path that
+    // restores the field on this surface alone still trips.
+    const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [BAD_ALT_DIR] })]);
+    const body = bodyOf(responses[1]);
+    const paths = findKeyPaths(body, "safeEditsAvailable");
+    expect(paths).toEqual([]);
+  });
+
+  it("scan_file response: no nested object emits safeEditsAvailable", async () => {
+    // Per-file surface uses a separate response builder; same dropped
+    // composite must stay absent here too.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const paths = findKeyPaths(body, "safeEditsAvailable");
+    expect(paths).toEqual([]);
+  });
+});
