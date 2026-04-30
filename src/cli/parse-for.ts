@@ -36,6 +36,7 @@ import {
   parseTsx,
 } from "../input/parsers/index.ts";
 import type { Ast } from "../types/ast.ts";
+import { stripTemplatingTail } from "../utils/path.ts";
 
 /**
  * Routes `source` through the in-house parser whose extension owns
@@ -76,52 +77,63 @@ import type { Ast } from "../types/ast.ts";
  *     operator emits a fake `Unclosed JSX element <…>`)
  */
 export function parseFor(filePath: string, source: string): Ast | null {
+  // Strip a known templating tail (`.erb` / `.liquid` / `.ejs`) when
+  // it follows another extension so e.g. `README.md.erb` routes by the
+  // leading `.md` (markdown adapter) rather than the trailing `.erb`
+  // (HTML adapter). Standalone `view.erb` is unchanged — the strip
+  // predicate only triggers when there's a leading extension under
+  // the tail. See `stripTemplatingTail` in `src/utils/path.ts`.
+  const routablePath = stripTemplatingTail(filePath);
   if (
-    filePath.endsWith(".html") ||
-    filePath.endsWith(".htm") ||
-    filePath.endsWith(".xhtml") ||
-    filePath.endsWith(".erb")
+    routablePath.endsWith(".html") ||
+    routablePath.endsWith(".htm") ||
+    routablePath.endsWith(".xhtml") ||
+    routablePath.endsWith(".erb")
   ) {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".css")) {
+  if (routablePath.endsWith(".css")) {
     const r = parseCss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".scss")) {
+  if (routablePath.endsWith(".scss")) {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".less")) {
+  if (routablePath.endsWith(".less")) {
     const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".mdx")) {
+  if (routablePath.endsWith(".mdx")) {
     const r = parseMdx(source);
     return { language: "tsx", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".astro")) {
+  if (routablePath.endsWith(".astro")) {
     const r = parseAstro(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".svg")) {
+  if (routablePath.endsWith(".svg")) {
     const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
+  if (routablePath.endsWith(".php") || routablePath.endsWith(".phtml")) {
     const r = parsePhp(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".md") || filePath.endsWith(".markdown") || filePath.endsWith(".mkdn")) {
+  if (
+    routablePath.endsWith(".md") ||
+    routablePath.endsWith(".markdown") ||
+    routablePath.endsWith(".mkdn")
+  ) {
     const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (
-    filePath.endsWith(".tsx") ||
-    filePath.endsWith(".jsx") ||
-    filePath.endsWith(".ts") ||
-    filePath.endsWith(".js")
+    routablePath.endsWith(".tsx") ||
+    routablePath.endsWith(".jsx") ||
+    routablePath.endsWith(".ts") ||
+    routablePath.endsWith(".js")
   ) {
     const r = parseTsx(source, { filePath });
     return { language: "tsx", root: r.root, errors: r.errors };

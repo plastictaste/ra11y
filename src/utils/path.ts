@@ -12,9 +12,74 @@ export function extension(filePath: string): string {
   return extname(filePath).toLowerCase();
 }
 
-/** True if the path ends with a known parseable extension. */
+/**
+ * True if the path's effective routable extension is parseable. The
+ * effective extension is the file's trailing extension when the chain
+ * is a single extension (e.g. `view.erb` → `.erb`), or the leading
+ * extension after a known templating tail when the chain is double
+ * (e.g. `README.md.erb` → `.md`). See {@link stripTemplatingTail} for
+ * the strip predicate and {@link TEMPLATING_TAIL_EXTENSIONS} for the
+ * canonical tail set.
+ */
 export function hasParseableExtension(filePath: string): boolean {
-  return PARSEABLE_EXTENSIONS.has(extension(filePath));
+  return PARSEABLE_EXTENSIONS.has(extension(routableExtensionPath(filePath)));
+}
+
+/**
+ * Templating-tail extensions: extensions that wrap a file whose real
+ * source language is named by the *leading* extension. A file like
+ * `README.md.erb` is markdown content embedded in an ERB processor;
+ * the parser dispatcher must route by the leading `.md` so the
+ * markdown adapter (and every `.md`-scoped rule) sees the file. Per
+ * AI-first doctrine "Routing skips that drop content are the
+ * symmetric twin of suppression" — routing `.md.erb` through the
+ * `.erb` HTML branch silently drops every markdown finding the file
+ * could carry.
+ *
+ * Single-extension files like `view.erb` (no leading source extension)
+ * keep their existing routing (see `EXTENSION_ALIASES`: `.erb → .html`).
+ * The strip predicate only triggers when there's a non-empty leading
+ * extension underneath the templating tail.
+ */
+const TEMPLATING_TAIL_EXTENSIONS: ReadonlySet<string> = new Set([".erb", ".liquid", ".ejs"]);
+
+/**
+ * Returns `filePath` with its trailing templating extension stripped
+ * if and only if (a) the trailing extension is in
+ * {@link TEMPLATING_TAIL_EXTENSIONS} and (b) the path under the tail
+ * has its own non-empty extension. Otherwise returns `filePath`
+ * unchanged.
+ *
+ *   stripTemplatingTail("README.md.erb")    → "README.md"
+ *   stripTemplatingTail("page.html.liquid") → "page.html"
+ *   stripTemplatingTail("foo.css.ejs")      → "foo.css"
+ *   stripTemplatingTail("view.erb")         → "view.erb"   (no leading ext)
+ *   stripTemplatingTail("notes.md")         → "notes.md"   (not a tail)
+ *
+ * Used by the parser-routing dispatchers (`parseFor` in
+ * `src/cli/parse-for.ts`, `parseForExtension` in `src/mcp/session.ts`,
+ * the harness mirror in `tests/fixtures/real-world/runner.ts`) so a
+ * file whose source language is named by the leading extension reaches
+ * the right adapter rather than silently routing through the
+ * templating-tail's adapter.
+ */
+export function stripTemplatingTail(filePath: string): string {
+  const tail = extname(filePath).toLowerCase();
+  if (!TEMPLATING_TAIL_EXTENSIONS.has(tail)) return filePath;
+  const stripped = filePath.slice(0, -tail.length);
+  if (extname(stripped) === "") return filePath;
+  return stripped;
+}
+
+/**
+ * Path with the templating tail stripped when the chain is double.
+ * Thin wrapper around {@link stripTemplatingTail} retained for
+ * call-site readability — `routableExtensionPath(p)` reads as "the
+ * path whose trailing extension drives the parser route" rather than
+ * "the strip-templating helper applied to p".
+ */
+function routableExtensionPath(filePath: string): string {
+  return stripTemplatingTail(filePath);
 }
 
 /**

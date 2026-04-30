@@ -27,6 +27,7 @@ import {
 } from "../input/parsers/index.ts";
 import type { Ast } from "../types/ast.ts";
 import type { LoadedConfig, RuleSetting } from "../types/config.ts";
+import { stripTemplatingTail } from "../utils/path.ts";
 import { LoggingState } from "./logging.ts";
 
 /** Cached entry: AST + metadata keyed by absolute path. */
@@ -448,11 +449,22 @@ function fileUriToPath(uri: string): string | null {
   return null;
 }
 function parseForExtension(filePath: string, source: string): Ast | null {
+  // Strip a known templating tail (`.erb` / `.liquid` / `.ejs`) when
+  // it follows another extension so e.g. `README.md.erb` routes by the
+  // leading `.md` (markdown adapter) rather than the trailing `.erb`
+  // (HTML adapter). Standalone `view.erb` is unchanged — the strip
+  // predicate only triggers when there's a leading extension under
+  // the tail. See `stripTemplatingTail` in `src/utils/path.ts`. Per
+  // AI-first doctrine "Routing skips that drop content are the
+  // symmetric twin of suppression" — without this strip, every
+  // `.md.erb` / `.html.liquid` / `.css.ejs` file silently routes
+  // through the wrong adapter and drops findings.
+  const routablePath = stripTemplatingTail(filePath);
   if (
-    filePath.endsWith(".html") ||
-    filePath.endsWith(".htm") ||
-    filePath.endsWith(".xhtml") ||
-    filePath.endsWith(".erb")
+    routablePath.endsWith(".html") ||
+    routablePath.endsWith(".htm") ||
+    routablePath.endsWith(".xhtml") ||
+    routablePath.endsWith(".erb")
   ) {
     // `.erb` — Ruby embedded-template (Rails views, Middleman
     // templates, Jekyll `*.md.erb` scaffolds). The HTML parser's
@@ -469,27 +481,27 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".css")) {
+  if (routablePath.endsWith(".css")) {
     const r = parseCss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".scss")) {
+  if (routablePath.endsWith(".scss")) {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".less")) {
+  if (routablePath.endsWith(".less")) {
     const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".mdx")) {
+  if (routablePath.endsWith(".mdx")) {
     const r = parseMdx(source);
     return { language: "tsx", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".astro")) {
+  if (routablePath.endsWith(".astro")) {
     const r = parseAstro(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".svg")) {
+  if (routablePath.endsWith(".svg")) {
     // Standalone `.svg` asset — the SVG adapter passes through to
     // parseHtml (HTML tokenizer tolerates SVG's tag zoo and preserves
     // `<title>` text). Aliased to `.html` in PARSEABLE_EXTENSIONS so
@@ -498,7 +510,7 @@ function parseForExtension(filePath: string, source: string): Ast | null {
     const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
+  if (routablePath.endsWith(".php") || routablePath.endsWith(".phtml")) {
     // PHP server pages (Laravel views, WordPress themes, hand-rolled
     // `.phtml` scaffolds). The {@link parsePhp} adapter blanks
     // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
@@ -519,15 +531,19 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   // Markdown extension (Vim, older static-site generators) — routing
   // it through the same adapter avoids dropping otherwise-valid
   // Markdown input.
-  if (filePath.endsWith(".md") || filePath.endsWith(".markdown") || filePath.endsWith(".mkdn")) {
+  if (
+    routablePath.endsWith(".md") ||
+    routablePath.endsWith(".markdown") ||
+    routablePath.endsWith(".mkdn")
+  ) {
     const r = parseMarkdown(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (
-    filePath.endsWith(".tsx") ||
-    filePath.endsWith(".jsx") ||
-    filePath.endsWith(".ts") ||
-    filePath.endsWith(".js")
+    routablePath.endsWith(".tsx") ||
+    routablePath.endsWith(".jsx") ||
+    routablePath.endsWith(".ts") ||
+    routablePath.endsWith(".js")
   ) {
     // Pass `filePath` so `inferJsxMode` can disable JSX-mode entry on
     // bare `.js`/`.ts` inputs that lack a JSX-import signal — without

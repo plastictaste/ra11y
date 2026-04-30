@@ -292,7 +292,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Routing edge cases
 
-- [ ] **Q11-PARSER-DOUBLE-EXTENSION-ERB-MARKDOWN-ROUTING** `.md.erb` files (templated markdown — common in static-site themes for theme-template README files) route via the `.erb` half (→html parser) rather than the `.md` half (→markdown parser); content scanned as HTML produces no findings even when real markdown content is present. Static-site corpus, `lib/theme_template/README.md.erb`. Fix: when an extension chain ends in a known templating extension (`.erb` / `.liquid` / `.ejs`), route by the leading extension — strip the templating tail before mode lookup. Per AI-first doctrine "Routing skips that drop content are the symmetric twin of suppression." Edge case but the file class is real.
 
 ### 2026-04-26 round recurrences (folded onto existing Q9/Q10 rows)
 

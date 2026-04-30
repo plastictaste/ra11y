@@ -66,6 +66,7 @@ import {
 import type { Ast } from "../../types/ast.ts";
 import type { LoadedConfig } from "../../types/config.ts";
 import { headSha } from "../../utils/git.ts";
+import { stripTemplatingTail } from "../../utils/path.ts";
 import { VERSION } from "../../version.ts";
 import type { CliOptions } from "../args.ts";
 import { ExitCode } from "../exit-codes.ts";
@@ -377,11 +378,18 @@ async function parseScanInputs(
 }
 
 function parseFor(filePath: string, source: string): Ast | null {
+  // Strip a known templating tail (`.erb` / `.liquid` / `.ejs`) when
+  // it follows another extension so e.g. `README.md.erb` routes by
+  // the leading `.md`. Standalone `view.erb` is unchanged. See
+  // `stripTemplatingTail` in `src/utils/path.ts` and the canonical
+  // CLI parse-for helper at `src/cli/parse-for.ts` for the same
+  // strip applied across the reporting commands.
+  const routablePath = stripTemplatingTail(filePath);
   if (
-    filePath.endsWith(".html") ||
-    filePath.endsWith(".htm") ||
-    filePath.endsWith(".xhtml") ||
-    filePath.endsWith(".erb")
+    routablePath.endsWith(".html") ||
+    routablePath.endsWith(".htm") ||
+    routablePath.endsWith(".xhtml") ||
+    routablePath.endsWith(".erb")
   ) {
     // `.erb` — Ruby embedded-template routed through parseHtml (the
     // parser strips `<%= … %>` / `<% … %>` / `<%# … %>` from text
@@ -392,31 +400,31 @@ function parseFor(filePath: string, source: string): Ast | null {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".css")) {
+  if (routablePath.endsWith(".css")) {
     const r = parseCss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".scss")) {
+  if (routablePath.endsWith(".scss")) {
     const r = parseScss(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".less")) {
+  if (routablePath.endsWith(".less")) {
     const r = parseLess(source);
     return { language: "css", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".mdx")) {
+  if (routablePath.endsWith(".mdx")) {
     const r = parseMdx(source);
     return { language: "tsx", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".astro")) {
+  if (routablePath.endsWith(".astro")) {
     const r = parseAstro(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".svg")) {
+  if (routablePath.endsWith(".svg")) {
     const r = parseSvg(source);
     return { language: "html", root: r.root, errors: r.errors };
   }
-  if (filePath.endsWith(".php") || filePath.endsWith(".phtml")) {
+  if (routablePath.endsWith(".php") || routablePath.endsWith(".phtml")) {
     // PHP server pages route through {@link parsePhp}, which blanks
     // `<?php … ?>` / `<?= … ?>` / `<? … ?>` islands (preserving
     // line/col) and feeds the HTML residue to parseHtml.
@@ -424,10 +432,10 @@ function parseFor(filePath: string, source: string): Ast | null {
     return { language: "html", root: r.root, errors: r.errors };
   }
   if (
-    filePath.endsWith(".tsx") ||
-    filePath.endsWith(".jsx") ||
-    filePath.endsWith(".ts") ||
-    filePath.endsWith(".js")
+    routablePath.endsWith(".tsx") ||
+    routablePath.endsWith(".jsx") ||
+    routablePath.endsWith(".ts") ||
+    routablePath.endsWith(".js")
   ) {
     const r = parseTsx(source, { filePath });
     return { language: "tsx", root: r.root, errors: r.errors };

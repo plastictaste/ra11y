@@ -59,6 +59,7 @@ import { BUILTIN_STANDARDS } from "../../../src/standards/index.ts";
 import type { Ast } from "../../../src/types/ast.ts";
 import type { ReviewCandidate } from "../../../src/types/review.ts";
 import type { ReportData, ScanResult, Violation } from "../../../src/types/violation.ts";
+import { stripTemplatingTail } from "../../../src/utils/path.ts";
 
 // ---------------------------------------------------------------------------
 // Public types — matches ADR 0006 §1 verbatim.
@@ -434,7 +435,13 @@ function parseForExtension(filePath: string, source: string): Ast | null {
   // runner doesn't register — the unit-test layer becomes the only
   // safety net for parser-routing decisions on those extensions, and
   // routing regressions land without the fixture-harness alarm.
-  const ext = extname(filePath).toLowerCase();
+  //
+  // The double-extension strip (`README.md.erb` → routed by leading
+  // `.md`) shares the production `stripTemplatingTail` helper so the
+  // harness exercises the same routing rule the scanner does on
+  // double-extension chains.
+  const routablePath = stripTemplatingTail(filePath);
+  const ext = extname(routablePath).toLowerCase();
   if (ext === ".html" || ext === ".htm" || ext === ".xhtml" || ext === ".erb") {
     const r = parseHtml(source);
     return { language: "html", root: r.root, errors: r.errors };
@@ -505,7 +512,11 @@ function visitDirectory(dir: string, stack: string[], out: string[]): void {
       stack.push(abs);
       continue;
     }
-    const ext = extname(name).toLowerCase();
+    // Match the production parser-route gate: a file with a templating
+    // tail (`.md.erb`, `.html.liquid`, `.css.ejs`) is supported when
+    // the leading extension is supported, mirroring `parseForExtension`
+    // above and `hasParseableExtension` in `src/utils/path.ts`.
+    const ext = extname(stripTemplatingTail(name)).toLowerCase();
     if (SUPPORTED_EXTENSIONS.has(ext)) out.push(abs);
   }
 }
