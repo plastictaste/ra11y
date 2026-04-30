@@ -55,7 +55,10 @@ export interface TestVerdict {
  * stacks, summary block) are preserved verbatim.
  */
 export function stripPassLines(text: string): string {
-  return text.split("\n").filter((line) => !PASS_LINE.test(line)).join("\n");
+  return text
+    .split("\n")
+    .filter((line) => !PASS_LINE.test(line))
+    .join("\n");
 }
 
 /**
