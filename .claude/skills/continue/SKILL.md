@@ -274,9 +274,11 @@ The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory
 
 Back to step 1. Stop when: `$1`/10 turns used, all active tracks empty, or unrecoverable failure.
 
+**Slice exhaustion is NOT a stop condition.** When you've consumed every turn in the cached `plan.turns[]` but `plan.more_available === true` and turn budget remains, re-invoke the planner per step 0 ("Replan as needed") with `lookaheadTurns: 3` and continue. The planner ships a 3-turn lookahead by design to keep step 0 cheap; the cache ending means refresh the plan, not end the run. The 2026-04-30 run stopped at 3/15 turns by pattern-matching slice exhaustion to "all active tracks empty" while the planner had `more_available: true` and ~22 open Q14 items plus 3 explicitly deferred picks. Before stopping, audit: is the planner saying `more_available: true`? Are active tracks actually empty per the dashboard line, or just empty in the current cached slice? If unsure, replan — replanning is cheap; over-stopping leaks user-visible turn budget.
+
 ## Termination
 
-- Normal: all active tracks empty, or `$1`/10 turns handled.
+- Normal: all active tracks empty (verified by the planner returning zero `turns` AND `more_available: false` on a fresh replan), or `$1`/10 turns handled.
 - BLOCKED: one or more items could not be completed. Report each with the specialist and the error. Continue other tracks.
 - Interrupted: user pressed Ctrl-C. Last committed state is always recoverable — subsequent `/continue` picks up where it stopped.
 
