@@ -3807,37 +3807,33 @@ export function warningsFromScanMeta(args: ScanMetaWarningArgs): readonly ScanWa
 }
 
 /**
- * Builds the structured `warningsDetails` payload — see ADR 0023 plus
- * the warnings-details schema discipline amendment. Returns one
- * entry per code in `codes`: payload-bearing codes get the rich
- * summarizer output (when the summarizer produces one) and binary-
- * presence codes get the shared empty-object marker. The "every fired
- * code is keyed" invariant is the load-bearing contract — an agent
- * reading `warningsDetails[code]` always gets a definite answer
- * (richer payload OR `{}`) without prior knowledge of which codes are
- * payload-bearing on this surface.
- *
- * Payload-bearing codes whose summarizer falls through (e.g. zero
- * counts, missing pivot — degenerate payload) fall back to the
- * empty-object marker so the wire shape never carries a half-built
- * payload but the membership invariant still holds.
+ * Row shape for the payload-bearing code dispatch table consumed by
+ * {@link computeScanWarningDetails}. Each row pairs a code with the
+ * summarizer that builds its `warningsDetails` entry; rows are checked
+ * in declaration order so the resulting record preserves stable key
+ * ordering across runs.
  */
-export function computeScanWarningDetails(
-  codes: readonly ScanWarningCode[],
+type ScanWarningDetailsDispatchRow = {
+  readonly code: ScanWarningCode;
+  readonly summarize: () => unknown;
+};
+
+/**
+ * Builds the dispatch list that pairs each payload-bearing warning
+ * code with its summarizer. Extracted from
+ * {@link computeScanWarningDetails} so the orchestrator's effective-
+ * line count stays under the per-function cap as new payload codes
+ * accrete (the limits guard fires at 120 lines; the table is the bulk
+ * of the function and would otherwise pin the orchestrator at the
+ * cap). Order IS the wire-key order on the resulting `warningsDetails`
+ * record — keep it aligned with the declaration order on
+ * {@link ScanWarningDetails} so consumers walking either declaration
+ * see the same sequence.
+ */
+function buildScanWarningDetailsDispatch(
   inputs: WarningInputs,
-): ScanWarningDetails {
-  // Code → summarizer dispatch table. Each row pairs a payload-bearing
-  // code with the helper that produces its `warningsDetails` entry —
-  // rows are checked in declaration order so the resulting record
-  // preserves a stable key ordering across runs (-
-  // CROSS-SURFACE-REGRESSION). The list-driven shape keeps the
-  // function's cognitive complexity flat as new payload codes accrete:
-  // adding one is +1 row, not +1 conditional branch on the orchestrator.
-  const details: Record<string, unknown> = {};
-  const dispatch: ReadonlyArray<{
-    readonly code: ScanWarningCode;
-    readonly summarize: () => unknown;
-  }> = [
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
     {
       code: "text_source_skipped",
       summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
@@ -3938,13 +3934,40 @@ export function computeScanWarningDetails(
       summarize: () => summarizeParserBailedOnNonJsxInTsxRoute(inputs.parserBailedJsTsxRouteFiles),
     },
   ];
-  // warnings-details schema discipline: index payload helpers by
-  // code so the second pass (binary-presence codes that didn't claim a
-  // rich summary) can stamp the marker without duplicating the
-  // dispatch list. Order doesn't matter here — the rich pass below
-  // walks the dispatch list in declaration order.
-  const summarizerByCode = new Map<ScanWarningCode, () => unknown>();
-  for (const row of dispatch) summarizerByCode.set(row.code, row.summarize);
+}
+
+/**
+ * Builds the structured `warningsDetails` payload — see ADR 0023 plus
+ * the warnings-details schema discipline amendment. Returns one
+ * entry per code in `codes`: payload-bearing codes get the rich
+ * summarizer output (when the summarizer produces one) and binary-
+ * presence codes get the shared empty-object marker. The "every fired
+ * code is keyed" invariant is the load-bearing contract — an agent
+ * reading `warningsDetails[code]` always gets a definite answer
+ * (richer payload OR `{}`) without prior knowledge of which codes are
+ * payload-bearing on this surface.
+ *
+ * Payload-bearing codes whose summarizer falls through (e.g. zero
+ * counts, missing pivot — degenerate payload) fall back to the
+ * empty-object marker so the wire shape never carries a half-built
+ * payload but the membership invariant still holds.
+ */
+export function computeScanWarningDetails(
+  codes: readonly ScanWarningCode[],
+  inputs: WarningInputs,
+): ScanWarningDetails {
+  // Code → summarizer dispatch table. Each row pairs a payload-bearing
+  // code with the helper that produces its `warningsDetails` entry —
+  // rows are checked in declaration order so the resulting record
+  // preserves a stable key ordering across runs (-
+  // CROSS-SURFACE-REGRESSION). The list-driven shape keeps the
+  // function's cognitive complexity flat as new payload codes accrete:
+  // adding one is +1 row, not +1 conditional branch on the orchestrator.
+  const details: Record<string, unknown> = {};
+  const dispatch = buildScanWarningDetailsDispatch(inputs);
+  // First pass: walk the dispatch list and let each summarizer emit
+  // its rich payload. Walks in declaration order so the resulting
+  // record key sequence stays stable across runs.
   for (const row of dispatch) {
     if (!codes.includes(row.code)) continue;
     const summary = row.summarize();
