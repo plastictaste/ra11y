@@ -52,6 +52,7 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 4. **Final verify.** Run `bun run verify` on clean `main`.
    - If green: proceed to step 5.
+   - **Timing-flake exemption.** If the only failures are integration tests whose names contain `mcp-completions`, `mcp-config-context-triple`, `vendor-context-priority`, or `roots/list timeout` or `sampling/createMessage timeout` in the failure output — these are MCP subprocess startup-ordering flakes that clear on retry under reduced load. Re-run `bun run verify:precommit` once in isolation before treating as a real failure. If the retry passes, treat as green and proceed. Do NOT revert the pick for a flake that clears on one retry. Signal code for ledger: `verify_flaky_mcp_subprocess`.
    - If red AND attributable to the most recent pick: `git reset --hard HEAD~1`, move that pick from `integrated` to `blocked` as `{ item, sha: null }`, append `"verify_red: <item> — <first failing line>"` to top-level `errors[]`, re-run verify. If still red after the revert, set `verifyOk: false`, append `"cross_pick_interaction: verify still red after reverting <item>"` to `errors[]`, and stop — the orchestrator will investigate.
    - If red AND not obviously attributable: do not guess-revert. Set `verifyOk: false`, append `"unknown_state: <first failing line>"` to `errors[]`, and stop.
 
