@@ -13,8 +13,13 @@ import type { Violation } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
+import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import {
+  buildSharedPerRuleCoverageMeta,
+  type SharedPerRuleCoverageMetaResult,
+} from "./per-rule-coverage-shared.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
@@ -388,6 +393,39 @@ export const coverageTool: McpTool = {
     // helper internally classifies build artifacts, the SCSS unresolved-
     // variables list, vendor-CSS noise, etc., so callers don't have to
     // duplicate the predicates that previously diverged here.
+    //
+    // Compute the shared per-rule-coverage rows BEFORE the warnings
+    // call so the `metaArrayTruncatedFields` payload can name
+    // `perRuleCoverage` whenever the
+    // {@link PER_RULE_COVERAGE_CAP} head-slice fired. Cross-surface
+    // count invariant per `docs/kb/architecture/ai-first-consumer.md` —
+    // every project-rooted tool emits the same `meta.perRuleCoverage`
+    // row set on identical input.
+    const violationFilePathsForCascade = new Set<string>(
+      result.violations.map((v) => v.location.filePath),
+    );
+    const extensionsProbe = await probeExtensionsPresentAtRoot({
+      cwd,
+      perRuleCoverage,
+      activeRules,
+    });
+    const sharedPerRuleCoverage: SharedPerRuleCoverageMetaResult = buildSharedPerRuleCoverageMeta({
+      perRuleCoverage,
+      parsedFiles: files,
+      activeRules,
+      violationFilePaths: violationFilePathsForCascade,
+      ...(extensionsProbe.extensionsPresentAtRoot === undefined
+        ? {}
+        : { extensionsPresentAtRoot: extensionsProbe.extensionsPresentAtRoot }),
+      verboseMeta,
+    });
+    const metaTruncatedFields: string[] = [];
+    if (analysisCoverageField.metaArrayTruncated === true) {
+      metaTruncatedFields.push("analysisCoverage.fragmentFiles");
+    }
+    if (sharedPerRuleCoverage.fragment.perRuleCoverageTruncated !== undefined) {
+      metaTruncatedFields.push("perRuleCoverage");
+    }
     const baseWarnings = buildScanTimeWarnings({
       parsedFiles: files,
       violations: result.violations,
@@ -402,14 +440,15 @@ export const coverageTool: McpTool = {
       // Q-SHARED-META-ARRAY-BUDGET-CAP: propagate truncation so the
       // response-level `response_meta_truncated` code fires AND its
       // `warningsDetails.response_meta_truncated.fields` payload names
-      // the structured fields elided. The coverage helper only caps
-      // `analysisCoverage.fragmentFiles` (the build-artifact path
-      // arrays don't surface through this seam — `tool-coverage` doesn't
-      // assemble `scannedBuildArtifacts`), so the field list resolves
-      // to a single dotted path when the cap fired.
-      ...(analysisCoverageField.metaArrayTruncated === true
-        ? { metaArrayTruncatedFields: ["analysisCoverage.fragmentFiles"] }
-        : {}),
+      // the structured fields elided. Two array surfaces participate
+      // on `coverage`: `analysisCoverage.fragmentFiles` (clipped under
+      // the shared meta-array cap) and `perRuleCoverage` (the per-rule
+      // meta surface introduced when this tool started emitting the
+      // shared row set; clipped under {@link PER_RULE_COVERAGE_CAP}).
+      // Build the field list from whichever caps actually fired so the
+      // payload names exactly the dotted paths the agent should
+      // re-fetch under `verboseMeta: true` or scope down on.
+      ...(metaTruncatedFields.length > 0 ? { metaArrayTruncatedFields: metaTruncatedFields } : {}),
     });
     const warnings = baseWarnings;
     // every tool that runs the scanner
@@ -436,8 +475,9 @@ export const coverageTool: McpTool = {
       scannedEnvelope,
       rulesEvaluated: buildRulesEvaluated({
         loadedCount: activeRules.length,
-        perRuleCoverage,
+        perRuleCoverage: sharedPerRuleCoverage.adjustedPerRuleCoverage,
       }),
+      perRuleCoverageFragment: sharedPerRuleCoverage.fragment,
       enabledStandards: standards,
       level,
       cwd,
@@ -540,6 +580,19 @@ function buildCoverageMetaField(args: {
   readonly configSource: string | null;
   readonly scannedEnvelope: ScannedEnvelope;
   readonly rulesEvaluated: RulesEvaluated;
+  /**
+   * Pre-built per-rule-coverage meta fragment from the shared cascade
+   * helper ({@link buildSharedPerRuleCoverageMeta}). Spread directly
+   * into `fullMeta` so the `coverage` tool emits the same
+   * `perRuleCoverage` (verbose) / `perRuleCoverageSummary` (default) /
+   * `rulesNotEvaluatedDueToInputType` shape `scan_project` /
+   * `scan_file` ship — cross-surface count invariant per
+   * `docs/kb/architecture/ai-first-consumer.md`. Before this seam, the
+   * `verboseMeta` input description on `coverage` promised the rows
+   * but the tool never actually emitted them, while `scan_file` on the
+   * same input shipped ~95 rows.
+   */
+  readonly perRuleCoverageFragment: import("./scan-assembly.ts").PerRuleCoverageMetaFragment;
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;
@@ -567,6 +620,14 @@ function buildCoverageMetaField(args: {
     rulesEvaluated: args.rulesEvaluated,
     standards: [...args.enabledStandards],
     level: args.level,
+    // `perRuleCoverage` (verbose) or `perRuleCoverageSummary` (default)
+    // ride at the top of the meta block so an agent can verify which
+    // rules ran on which substrates without a separate `scan_project`
+    // round trip. The fragment also carries the unconditional
+    // `rulesNotEvaluatedDueToInputType` counter — load-bearing
+    // scan-confidence telemetry the agent reads to triage which
+    // extensions the scan never saw.
+    ...args.perRuleCoverageFragment,
   };
   return {
     meta: applyMetaCacheMode({

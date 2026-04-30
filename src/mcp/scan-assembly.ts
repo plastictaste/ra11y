@@ -510,11 +510,16 @@ function prioritizePerRuleCoverageForCap(
   return [...rows].sort((a, b) => priorityOf(a) - priorityOf(b));
 }
 
-function perRuleCoverageMetaFragment(
-  rows: readonly PerRuleCoverage[],
-  activeRules: readonly Rule[],
-  verboseMeta: boolean,
-): {
+/**
+ * Spreadable shape returned by {@link perRuleCoverageMetaFragment}. The
+ * shared per-rule-coverage helper (`./per-rule-coverage-shared.ts`)
+ * re-exports this so the `coverage` tool emits the same wire shape
+ * `scan_project` / `scan_file` already produce. Mutually exclusive on
+ * `perRuleCoverage` vs `perRuleCoverageSummary`: a response carries one
+ * or the other, never both, so an agent reading the meta block doesn't
+ * disambiguate two parallel views of the same row set.
+ */
+export interface PerRuleCoverageMetaFragment {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
   readonly perRuleCoverageTruncated?: MetaArrayTruncationSummary;
   readonly perRuleCoverageSummary?: {
@@ -522,7 +527,13 @@ function perRuleCoverageMetaFragment(
     readonly ruleIds: readonly string[];
   };
   readonly rulesNotEvaluatedDueToInputType: RulesNotEvaluatedDueToInputType;
-} {
+}
+
+export function perRuleCoverageMetaFragment(
+  rows: readonly PerRuleCoverage[],
+  activeRules: readonly Rule[],
+  verboseMeta: boolean,
+): PerRuleCoverageMetaFragment {
   const { retained, notEvaluatedDueToInputType } = partitionPerRuleCoverage(rows, activeRules);
   if (retained.length === 0) {
     return { rulesNotEvaluatedDueToInputType: notEvaluatedDueToInputType };

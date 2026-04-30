@@ -64,13 +64,13 @@ import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
-import { applyExtensionPresentSubkindAdjustment } from "./extension-subkind.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import {
   buildPerRuleLimitationMap,
   enrichFindingsWithPerRuleLimitations,
 } from "./per-finding-confidence-parity.ts";
+import { buildSharedPerRuleCoverageMeta } from "./per-rule-coverage-shared.ts";
 import {
   buildReferenceGuide,
   hoistAndBuildReferenceGuide,
@@ -85,12 +85,8 @@ import {
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
 import {
-  applyFragmentInputAdjustment,
-  applyParseErrorAdjustment,
-  applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
-  detectFragmentFiles,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   isPerRuleCoverageUniformlyHigh,
@@ -98,10 +94,6 @@ import {
   partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
-import {
-  applyScssPartialInputAdjustment,
-  detectScssPartialFiles,
-} from "./scss-partial-adjustment.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
@@ -247,6 +239,41 @@ function violationFilePathSet(violations: readonly Violation[]): Set<string> {
   const out = new Set<string>();
   for (const v of violations) out.add(v.location.filePath);
   return out;
+}
+
+/**
+ * Drives {@link buildSharedPerRuleCoverageMeta} from inside
+ * {@link assembleScanFamilyResponse} and returns just the adjusted rows.
+ * The wrapper exists so the caller passes a fixed input shape (the
+ * conditional-spread for the optional `extensionsPresentAtRoot` lives
+ * here, not at the call site) — keeps
+ * {@link assembleScanFamilyResponse}'s cognitive complexity under the
+ * lint cap. The shared helper's `fragment` slot is consumed downstream
+ * by `tool-coverage.ts`, where the assembler-internal
+ * {@link buildScanMeta} path doesn't reach; this seam discards it
+ * because {@link buildScanMeta} re-derives the same fragment via the
+ * underlying {@link perRuleCoverageMetaFragment} from the adjusted rows
+ * it receives below.
+ */
+function runPerRuleCoverageCascade(args: {
+  readonly perRuleCoverage: readonly PerRuleCoverage[];
+  readonly parsedFiles: readonly ParsedFile[];
+  readonly activeRules: readonly Rule[];
+  readonly violationFilePaths: ReadonlySet<string>;
+  readonly extensionsPresentAtRoot: ReadonlySet<string> | undefined;
+  readonly verboseMeta: boolean;
+}): readonly PerRuleCoverage[] {
+  const { adjustedPerRuleCoverage } = buildSharedPerRuleCoverageMeta({
+    perRuleCoverage: args.perRuleCoverage,
+    parsedFiles: args.parsedFiles,
+    activeRules: args.activeRules,
+    violationFilePaths: args.violationFilePaths,
+    ...(args.extensionsPresentAtRoot === undefined
+      ? {}
+      : { extensionsPresentAtRoot: args.extensionsPresentAtRoot }),
+    verboseMeta: args.verboseMeta,
+  });
+  return adjustedPerRuleCoverage;
 }
 
 /**
@@ -518,69 +545,31 @@ export function assembleScanFamilyResponse(
   // a token-only theme partial doesn't read as `findings: []` /
   // `coverageConfidence: "high"`. Parse-error precedence is honored:
   // a row already at `"low"` keeps its existing reason.
+  // `scssUnresolvedFiles` is shared with the warnings channel below
+  // (`scssUnresolvedVariableFiles: scssUnresolvedFiles` arg to
+  // `buildAssemblerWarningsField`) — kept as a local so the same file
+  // list reaches both the per-rule cascade and the
+  // `warningsDetails.scss_unresolved_variables.files` payload.
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(parsedFiles);
-  // a third
-  // adjustment chained on the fragment-classification axis. When the
-  // parsed file lacks `<html>`/`<body>` (Jekyll `_includes/`, Hugo /
-  // Astro / Handlebars partials, README markdown residue), document-
-  // shaped rules (`semantics/landmark-main`, `semantics/heading-
-  // hierarchy`, `document/page-titled`, `document/lang-attribute`,
-  // `parsing/html-has-lang`, `semantics/empty-heading`) drop to
-  // `coverageConfidence: "medium"` with
-  // `coverageConfidenceReason: "fragment-input-no-document-envelope"`
-  // so a clean tally on a fragment doesn't read as `"high"` confidence
-  // the rule could not honestly establish — the parent layout's
-  // envelope is unobservable here. Parse-error / SCSS precedence is
-  // honored: a row already at `"low"` keeps its existing reason.
-  const fragmentFiles = detectFragmentFiles(parsedFiles);
-  // SCSS-partial-input adjustment (Q10) — companion of the
-  // fragment-input HTML adjustment on the SCSS axis. When a `_*.scss`
-  // file declares top-level `&` parent-references, it is intentionally
-  // a fragment of another file; the SCSS preprocessor's dangling-`&`
-  // verdict is correct in isolation but mislabels authorial intent.
-  // Excluded from `parseErrorFiles[]` upstream; downgrades per-rule
-  // confidence to `"medium"` with
-  // `coverageConfidenceReason: "scss-partial-input"` here so the agent
-  // reading per-rule coverage gets the structural signal without the
-  // parse-error narrative routing them toward "fix the parse error."
-  // Parse-error / SCSS-unresolved / fragment precedence is honored: a
-  // row already carrying a non-partial reason keeps it.
-  const scssPartialFiles = detectScssPartialFiles(parsedFiles);
-  const parseErrorAdjusted = applyParseErrorAdjustment(
+  // The full adjustment cascade (parse-error → scss-unresolved →
+  // fragment-input → scss-partial → extension-presence-subkind) lives
+  // in the shared per-rule-coverage helper so the `coverage` tool emits
+  // the same adjusted rows on identical input. Cross-surface count
+  // invariant per `docs/kb/architecture/ai-first-consumer.md`. The
+  // helper also formats the spreadable `meta.perRuleCoverage` /
+  // `meta.perRuleCoverageSummary` fragment, but at this seam we still
+  // route through {@link buildScanMeta} (which calls the same internal
+  // {@link perRuleCoverageMetaFragment}) — the helper's `fragment` slot
+  // is consumed by `tool-coverage.ts`, where the seam doesn't have a
+  // {@link buildScanMeta} caller.
+  const adjustedPerRuleCoverage = runPerRuleCoverageCascade({
     perRuleCoverage,
     parsedFiles,
     activeRules,
     violationFilePaths,
-  );
-  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
-    parseErrorAdjusted,
-    parsedFiles,
-    activeRules,
-    new Set(scssUnresolvedFiles),
-  );
-  const fragmentInputAdjusted = applyFragmentInputAdjustment(
-    scssAdjusted,
-    parsedFiles,
-    activeRules,
-    new Set(fragmentFiles),
-  );
-  const scssPartialAdjusted = applyScssPartialInputAdjustment(
-    fragmentInputAdjusted,
-    parsedFiles,
-    activeRules,
-    new Set(scssPartialFiles),
-  );
-  // Disambiguate `eligible === 0` extension-gated rows by stamping
-  // `subkind: "extension-absent" | "extension-present-but-out-of-scope"`.
-  // The caller pre-computed `extensionsPresentAtRoot` from a bounded
-  // directory walk that does NOT respect scope filters — the whole
-  // point is to detect what scope filters pruned. Skipped (no-op) on
-  // surfaces without a cwd-rooted scope (`scan_file` explicit paths).
-  const adjustedPerRuleCoverage = applyExtensionPresentSubkindAdjustment(
-    scssPartialAdjusted,
-    activeRules,
-    input.extensionsPresentAtRoot,
-  );
+    extensionsPresentAtRoot: input.extensionsPresentAtRoot,
+    verboseMeta,
+  });
   // Per-finding confidence parity (in the
   // backlog; doctrine source: docs/kb/architecture/ai-first-consumer.md
   // "Per-finding confidence must reflect per-rule coverage limitations").

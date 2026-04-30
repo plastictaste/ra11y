@@ -258,7 +258,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### Per-rule / per-finding confidence drift
 
-- [ ] **Q10-COVERAGE-PERRULECOVERAGE-EMPTY-VS-SCAN-FILE-FULL** `coverage` with `verboseMeta: true` ships an empty `perRuleCoverage[]` while `scan_file` on the same input ships ~95 rows; the doctrine's parser-failure-invalidates-confidence invariant is unauditable from the canonical confidence-dashboard tool. Fix: shared per-rule-coverage helper consumed by both surfaces; integration test pinning row-count parity on identical input. Per AI-first doctrine "Cross-surface count invariant."
 
 ### Cross-surface count + warning drift
 
@@ -449,7 +448,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 - **Q9-EXPANDED-ON-DISCLOSURE-SR-ONLY-CHILD-CONCESSION** — +1 recurrence: bulk-template corpus ships severity `error` while `aria/expanded-on-disclosure` divergent confidence fires on the same evidence (Q13-EXPANDED-DISCLOSURE-DIVERGENT-CONFIDENCE-IDENTICAL-EVIDENCE captures the new sub-axis).
 - **Q9-RULE-LINK-TARGET-BLANK-NEVER-FIRES** (related) — +0 recurrences this round, but Q13-GATED-BY-LEVEL-RULES-IN-PER-RULE-COVERAGE-AT-LOW captures a related visibility-in-coverage axis.
 - **Q9-OVERSIZE-MITIGATION-DOES-NOT-ENGAGE-PRE-SERIALIZATION** — +2 recurrences: post-clip envelope still over host cap on 2 corpora; closure work still in flight per Q9 row.
-- **Q10-COVERAGE-PERRULECOVERAGE-EMPTY-VS-SCAN-FILE-FULL** — +2 recurrences: coverage ships empty `perRuleCoverage[]` while `scan_file` on the same input ships ~95-111 rows on 2 corpora; closure (shared helper) still pending.
 - **Q10-META-TRUNCATED-FIELD-NAME-RETAINED-WHEN-GUTTED** — +3 recurrences: `meta` retained while 8-9 sub-fields silently dropped; 67 keys remain after a corpus-level truncation pass, no per-field sentinels (CSS-framework, static-site, bulk-template).
 - **Q10-SUGGEST-FIX-VENDOR-REDIRECT-COMPOUNDS-MISLABEL** — +1 recurrence: `vendorContext.redirectTo: "consumer-override"` on a candidate where the vendor classification fired on banner-comment evidence; new shape-axis captured in Q13-VENDOR-CONTEXT-REDIRECTTO-UNDOCUMENTED-CONTRACT.
 - **Q11-BULK-CATALOG-SUGGESTEDEXCLUDES-NOT-ADDITIONALPATHS-INVERSE** — +1 recurrence: bulk-template `nextStepStructured.args: {}` echoes failing `cwd` despite `bulk_catalog_detected.suggestedExcludes` being populated; new sub-axis (Q13-NEXTSTEP-STRUCTURED-ARGS-EMPTY-OBJECT) captures the empty-object case directly.
