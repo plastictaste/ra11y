@@ -29,17 +29,28 @@
  * helper fixes the drift at the source; an integration test pins the
  * agreement.
  *
- * Definition (shared across all three surfaces): a criterion is in the
- * "applicable manual" set when ALL of:
- *   1. metadata `automatable === "manual"`
- *   2. level rank ≤ `maxLevel`
- *   3. has zero error/warning violations on this scan (a fired manual
- *      criterion is "failing in the automated lane," not "still needs
- *      manual review")
- *   4. not `isLikelyIrrelevant` (no media-only criteria when the scan
- *      saw no `<video>` / `<audio>`)
- * Then `actionable` = subset with at least one grounded review
- * candidate; `untargeted` = subset without.
+ * Definitions (shared across all three surfaces):
+ *
+ *   - `actionable` = count of distinct criterion IDs across the shipped
+ *     grounded candidates (modulo any caller-supplied `skipCriteria`).
+ *     Counts criteria for ANY shipped candidate — including candidates
+ *     for `automatable === "partial"` criteria. Pre-Q13 the count was
+ *     filtered down to `applicableManualIds ∩ candidates`, dropping
+ *     every partial-criterion candidate from the headline; an agent
+ *     reading `actionableManualItems: 0` next to 16 shipped grounded
+ *     items hit the silent-miss the AI-first doctrine warns against.
+ *
+ *   - `untargeted` = applicable manual-only criteria with no shipped
+ *     candidate. A criterion is in the "applicable manual" set when
+ *     ALL of: metadata `automatable === "manual"`; level rank ≤
+ *     `maxLevel`; zero error/warning violations on this scan (fired
+ *     metadata-manual criteria route into the failing automated lane);
+ *     not `isLikelyIrrelevant` (no media-only criteria on a scan with
+ *     no `<video>` / `<audio>`); not in caller-supplied `skipCriteria`.
+ *     Stays scoped to metadata-manual because the bare-criterion-prompt
+ *     surface is meaningless for partial criteria — those have
+ *     automated rules, so "the finder couldn't ground them" doesn't
+ *     describe an evidence gap the agent can act on.
  */
 
 import { buildCoverageReport, type PerStandardCoverage } from "../reports/coverage.ts";
@@ -49,27 +60,51 @@ import type { ScanResult } from "../types/violation.ts";
 import { type Applicability, splitManualCriteria } from "./manual-applicability.ts";
 
 /**
- * Result of a single manual-criteria tally. All three counts agree by
- * construction: `actionable + untargeted === applicableManualIds.size`.
+ * Result of a single manual-criteria tally.
  *
  * `applicableManualIds` is exposed so callers that need the underlying
  * set (e.g. to filter review candidates back down to the manual subset
  * for the inline `reviewCandidates` field on `scan_project`) can read
  * the same set the counts were derived from. No need to recompute.
+ *
+ * Note: the legacy `actionable + untargeted === applicableManualIds.size`
+ * invariant no longer holds. `actionable` counts every criterion with at
+ * least one shipped grounded candidate (regardless of metadata-manual
+ * classification) per Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE
+ * and the AI-first doctrine "Per-call shape must agree with per-class
+ * plan tally" — a scan_file response shipping 16 grounded candidates
+ * for partial-automatable criteria (`wcag22:2.4.3` focus-order,
+ * `wcag22:1.1.1` redundant-alt-text, `wcag22:3.3.1` error-identification,
+ * etc.) used to read `actionableManualItems: 0` because none of those
+ * criterion IDs cleared the metadata `automatable === "manual"` filter,
+ * forcing the agent to budget against a headline that ignored 16 visible
+ * actionable items in the same response. `untargeted` still scopes to
+ * applicable manual-only criteria with no candidates so the
+ * bare-criterion-prompt count stays semantically distinct.
  */
 export interface ManualCriteriaTally {
   /**
-   * Criterion IDs that count as "applicable manual review" — passed all
-   * four filters above. Downstream consumers may treat as a Set
-   * directly.
+   * Criterion IDs that count as "applicable manual review" — passed the
+   * `automatable === "manual"` AND `!fired` AND `!isLikelyIrrelevant`
+   * AND `!skipCriteria` filter. Downstream consumers may treat as a Set
+   * directly. Drives the {@link ManualCriteriaTally#untargeted} count;
+   * does NOT gate {@link ManualCriteriaTally#actionable}.
    */
   readonly applicableManualIds: ReadonlySet<string>;
   /**
-   * Number of applicable manual criteria a finder grounded in a
-   * concrete file:line via at least one review candidate. Matches
-   * `scan_project.plan.actionableManualItems`,
+   * Number of distinct criterion IDs that have at least one shipped
+   * grounded review candidate on this scan, modulo any caller-supplied
+   * `skipCriteria`. Matches `scan_project.plan.actionableManualItems`,
    * `checklist.summary.actionable.criteria`, and
-   * `coverage[].manualWithCandidates.length`.
+   * `coverage[].manualWithCandidates.length` so the "criteria with
+   * shipped candidates" count agrees across every project-rooted MCP
+   * surface. Counts criteria for ANY candidate the scanner emitted —
+   * including candidates for `automatable === "partial"` criteria like
+   * `wcag22:2.4.3` (focus-order) or `wcag22:1.1.1` (redundant-alt-text).
+   * Pre-fix, the count was filtered down to `applicableManualIds ∩
+   * candidates`, dropping every partial-criterion candidate from the
+   * headline; the agent budgeted against 0 while the response shipped
+   * 16 grounded items per Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE.
    */
   readonly actionable: number;
   /**
@@ -77,7 +112,10 @@ export interface ManualCriteriaTally {
    * the bare-criterion-prompt subset. Matches
    * `scan_project.plan.untargetedCriteria`,
    * `checklist.summary.untargetedCriteria`, and
-   * `coverage[].untargetedCriteria`.
+   * `coverage[].untargetedCriteria`. Scoped to `applicableManualIds`
+   * (metadata-manual minus likely-irrelevant minus skip) so the
+   * bare-prompt surface stays focused on the WCAG manual-only criteria
+   * the rule library can never mechanically check.
    */
   readonly untargeted: number;
 }
@@ -168,20 +206,84 @@ export function tallyManualCriteriaFromCoverage(
   candidates: readonly ReviewCandidate[],
   filters?: TallyManualCriteriaFilters,
 ): ManualCriteriaTally {
-  const candidateCriteria = new Set(candidates.map((c) => c.criterionId));
   const skipCriteria = filters?.skipCriteria;
-  const applicableManualIds = new Set<string>();
+  const inScopeCriteria = collectInScopeCriteria(coverage);
+  const candidateCriteria = collectCandidateCriteria(candidates, inScopeCriteria, skipCriteria);
+  const applicableManualIds = collectApplicableManualIds(coverage, applicability, skipCriteria);
+  const actionable = candidateCriteria.size;
+  let untargeted = 0;
+  for (const id of applicableManualIds) {
+    if (!candidateCriteria.has(id)) untargeted += 1;
+  }
+  return { applicableManualIds, actionable, untargeted };
+}
+
+/**
+ * In-scope criterion-ID set: every criterion the coverage report
+ * surfaces after standard-filtering and level-filtering. Candidates
+ * carry both the active standard's ID AND its `equivalentIds`
+ * (canonical case: `media-variants` finder emits both `wcag22:1.2.4`
+ * and `wcag21:1.2.4`); without this gate, a single-standard scan
+ * (default `wcag22`) would silently double the actionable count by
+ * counting equivalent-standard IDs as separate criteria. Coverage's
+ * `entry.criteria[]` is the authoritative in-scope set.
+ *
+ * Level-filter caveat: the set excludes AAA criteria when the caller
+ * scopes to `level: "AA"`. Finders themselves don't level-filter, so
+ * AAA candidates still ship on `reviewCandidates[]` — the headline
+ * reflects only the AA-scoped subset. This matches the pre-Q13
+ * behavior; a separate concern from the partial-criterion miss that
+ * motivated Q13.
+ */
+function collectInScopeCriteria(coverage: readonly PerStandardCoverage[]): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const entry of coverage) {
+    for (const cc of entry.criteria) out.add(cc.criterionId);
+  }
+  return out;
+}
+
+/**
+ * Distinct in-scope criterion IDs across the candidate stream, with
+ * `skipCriteria` applied. Counts criteria for ANY shipped candidate
+ * (regardless of metadata-manual classification) — see
+ * {@link tallyManualCriteriaFromCoverage} doctrine note for why
+ * partial-criterion candidates must contribute to the actionable
+ * headline.
+ */
+function collectCandidateCriteria(
+  candidates: readonly ReviewCandidate[],
+  inScopeCriteria: ReadonlySet<string>,
+  skipCriteria: ReadonlySet<string> | undefined,
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const c of candidates) {
+    if (!inScopeCriteria.has(c.criterionId)) continue;
+    if (skipCriteria?.has(c.criterionId)) continue;
+    out.add(c.criterionId);
+  }
+  return out;
+}
+
+/**
+ * Applicable manual criterion IDs across every coverage entry — the
+ * metadata-manual subset minus likely-irrelevant minus
+ * caller-supplied `skipCriteria`. Drives `untargeted` only; the
+ * bare-prompt surface is meaningless for partial criteria so
+ * `actionable` deliberately uses a broader gate.
+ */
+function collectApplicableManualIds(
+  coverage: readonly PerStandardCoverage[],
+  applicability: Applicability,
+  skipCriteria: ReadonlySet<string> | undefined,
+): ReadonlySet<string> {
+  const out = new Set<string>();
   for (const entry of coverage) {
     const { applicable } = splitManualCriteria(entry.manualCriteria, applicability);
     for (const id of applicable) {
-      if (skipCriteria !== undefined && skipCriteria.has(id)) continue;
-      applicableManualIds.add(id);
+      if (skipCriteria?.has(id)) continue;
+      out.add(id);
     }
   }
-  let actionable = 0;
-  for (const id of applicableManualIds) {
-    if (candidateCriteria.has(id)) actionable += 1;
-  }
-  const untargeted = applicableManualIds.size - actionable;
-  return { applicableManualIds, actionable, untargeted };
+  return out;
 }

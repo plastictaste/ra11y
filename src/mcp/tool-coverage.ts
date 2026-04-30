@@ -191,7 +191,34 @@ export const coverageTool: McpTool = {
       // when there's no <video>/<audio>, and never inflate the
       // review-required number.
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
-      const withCandidates = applicable.filter((id) => candidateCriteria.has(id));
+      // Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE:
+      // `withCandidates` lists every distinct criterion in THIS
+      // standard (not just the metadata-manual subset) that has at
+      // least one shipped grounded review candidate. Pre-Q13 the
+      // filter narrowed to `applicable.filter(...)` — `applicable`
+      // is metadata-manual minus likely-irrelevant, so a candidate
+      // for `wcag22:2.4.3` (focus-order, `automatable: "partial"`)
+      // shipped by the scanner never made the list, while
+      // `summary.actionable.criteria` did count it once
+      // `tallyManualCriteriaFromCoverage` switched to
+      // distinct-criteria-with-candidates semantics. The
+      // cross-surface count invariant
+      // (`scan.plan.actionableManualItems ===
+      // coverage.entries[0].manualWithCandidates.length`) requires
+      // this surface use the same definition. `untargeted` keeps
+      // the narrow metadata-manual-without-candidate scope — see
+      // the `tallyManualCriteriaFromCoverage` doctrine note for why
+      // the bare-prompt surface only makes sense for metadata-manual
+      // criteria.
+      //
+      // The walk is over `c.criteria` (level-filtered, in-scope for
+      // this standard) so AAA criteria with shipped candidates don't
+      // appear when the caller scopes to `level: "AA"` — matches the
+      // helper's level-filter scope and the checklist `items[]`
+      // build that iterates `manualCriteria` (also level-filtered).
+      const withCandidates = c.criteria
+        .map((cc) => cc.criterionId)
+        .filter((id) => candidateCriteria.has(id));
       const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
       const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
         c.failingCriteria,
@@ -266,7 +293,18 @@ export const coverageTool: McpTool = {
         criteriaWithFindings: c.withFindings,
         criteriaUntestable: c.untestable,
         untestableCriteria: withTitles(c.untestableCriteria, session),
-        criteriaManualReviewRequired: applicable.length,
+        // `criteriaManualReviewRequired` equals `withCandidates.length
+        // + untargeted.length` — the count of "criteria still needing
+        // human attention on this scan." Pre-Q13 this was
+        // `applicable.length` (metadata-manual minus likely-irrelevant),
+        // which silently dropped every partial-criterion candidate on
+        // the shipped reviewCandidates from the per-standard headline.
+        // The cross-surface invariant
+        // `scan.plan.actionableManualItems + scan.plan.untargetedCriteria
+        // === coverage.criteriaManualReviewRequired` now holds because
+        // both sides sum the same two lanes (criteria-with-candidates +
+        // applicable-manual-without-candidates).
+        criteriaManualReviewRequired: withCandidates.length + untargeted.length,
         // Split the manual-review pile so agents can see at the coverage
         // level (without a second checklist call) how many manual
         // criteria have concrete candidates worth reviewing vs pure
@@ -309,12 +347,12 @@ export const coverageTool: McpTool = {
         summary: passRateMeaningful
           ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
             `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
-            `${applicable.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
+            `${withCandidates.length + untargeted.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
             `(${withCandidates.length} with concrete candidates, ${untargeted.length} untargeted` +
             `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}). ` +
             `Run the 'checklist' tool for evaluation prompts.`
           : `No files scanned — automated pass rate is not meaningful. ` +
-            `${applicable.length} of ${c.total} criteria in ${c.standardId} would need manual review once sources are present. ` +
+            `${untargeted.length} of ${c.total} criteria in ${c.standardId} would need manual review once sources are present. ` +
             `See the \`scanned_zero_files\` warning for why the scan root matched no parseable files.`,
       };
     });
