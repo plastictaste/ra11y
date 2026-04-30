@@ -817,6 +817,23 @@ export interface WarningInputs {
    */
   readonly additionalPathsRedundant?: boolean;
   /**
+   * caller-supplied list of `additionalPaths` entries that contributed
+   * parseable files all already in the discovered base set — i.e. the
+   * subset of inputs that were actually redundant (as opposed to the
+   * subset rejected for one of the per-path skip reasons, which surface
+   * separately under `meta.additionalPathsScanned.skipped[]`). Drives
+   * the `warningsDetails.redundant_additional_paths.redundantPaths`
+   * payload. The call site materializes this as `additionalPaths.filter
+   * (p => skipped.every(s => s.path !== p))` so the list reads in the
+   * caller's input order. Pass `undefined` (or omit) when
+   * `additionalPathsRedundant` is false; when true and this list is
+   * empty, the payload drops conservatively to the binary-presence
+   * marker (the bare-code signal still fires off
+   * `additionalPathsRedundant`, but the agent loses the per-path
+   * remediation cue).
+   */
+  readonly redundantAdditionalPathsList?: readonly string[];
+  /**
    * true when the caller supplied
    * `restrictToPaths` on `scan_project`, the pre-restrict merged file
    * set had ≥1 entry, AND the intersection with the restriction paths
@@ -2132,7 +2149,37 @@ export interface ScanWarningDetails {
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
-  readonly redundant_additional_paths?: BinaryPresenceMarker;
+  /**
+   * Payload for `redundant_additional_paths`. Names the caller-supplied
+   * `additionalPaths` entries that resolved to parseable files but whose
+   * files were already in the default-discovered base set — i.e. the
+   * paths that were the redundant ones, not the ones that contributed
+   * a new file or were rejected for one of the per-path skip reasons
+   * (`not-found` / `unsupported-extension` / `excluded-by-glob` /
+   * `no-parseable-files`, all of which surface separately under
+   * `meta.additionalPathsScanned.skipped[]`). Without this payload the
+   * bare code reads as "the flag was redundant" but on a multi-entry
+   * `additionalPaths` array the agent cannot tell which subset was
+   * redundant vs. which was skipped vs. which contributed — only the
+   * subset with `additionalFilesCount > 0 && filesAdded === 0` semantics
+   * applies, and that subset is exactly the entries NOT in `skipped[]`.
+   *
+   * - `redundantPaths` — caller-supplied entries (verbatim, in input
+   *   order) that contributed parseable files all already covered by
+   *   the discovered base set. Always carries at least one entry when
+   *   the warning fires (the predicate requires
+   *   `additionalFilesCount > 0`).
+   * - `reason` — the deterministic predicate that fired in plain text,
+   *   so the agent has the load-bearing remediation cue without
+   *   re-deriving it ("drop the param" vs. "fix the path"). Per the
+   *   AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest"
+   *   — the warning code declares "this is the redundant case" and the
+   *   payload spells out the per-path evidence the caller can act on.
+   */
+  readonly redundant_additional_paths?: {
+    readonly redundantPaths: readonly string[];
+    readonly reason: string;
+  };
   readonly restrict_to_paths_no_matches?: BinaryPresenceMarker;
   /**
    * Payload for `response_meta_truncated`. Names which structured
@@ -2327,7 +2374,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
-  "redundant_additional_paths",
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
   "proposed_config_deprecated_use_suggested_config",
@@ -3420,6 +3466,12 @@ type ScanMetaWarningArgs = {
    */
   readonly templateLiteralFiles?: readonly string[];
   readonly additionalPathsRedundant?: boolean;
+  /**
+   * Pass-through for the per-input redundant-paths list that drives the
+   * `warningsDetails.redundant_additional_paths.redundantPaths` payload.
+   * See {@link WarningInputs.redundantAdditionalPathsList}.
+   */
+  readonly redundantAdditionalPathsList?: readonly string[];
   readonly restrictToPathsEmpty?: boolean;
   readonly configSearchSawProjectMarker?: boolean;
   /**
@@ -3523,6 +3575,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "templateDirectivesOverlap",
   "templateLiteralFiles",
   "additionalPathsRedundant",
+  "redundantAdditionalPathsList",
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
   "configSearchedFromForWarning",
@@ -3670,6 +3723,10 @@ export function computeScanWarningDetails(
     {
       code: "no_config_found",
       summarize: () => summarizeNoConfigFound(inputs.configSearchedFromForWarning),
+    },
+    {
+      code: "redundant_additional_paths",
+      summarize: () => summarizeRedundantAdditionalPaths(inputs.redundantAdditionalPathsList),
     },
     {
       code: "response_meta_truncated",
@@ -4023,6 +4080,35 @@ function summarizeNoConfigFound(
 ): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
   if (typeof searchedFrom !== "string" || searchedFrom.length === 0) return undefined;
   return { searchedFrom };
+}
+
+/**
+ * Builds the `redundant_additional_paths` payload from the caller-
+ * supplied `redundantAdditionalPathsList`. Returns `undefined` when the
+ * list is absent or empty so the dispatch table conditional-spreads
+ * the entry away — the bare-code signal still fires off
+ * `additionalPathsRedundant`, but the agent loses the per-path
+ * remediation cue. Pure shape-builder; the call site filters
+ * `additionalPaths` against the per-path skip classifier so the list
+ * only carries entries that contributed parseable files
+ * already in the discovered base set (the redundancy case the warning
+ * names — distinct from the `not-found` / `unsupported-extension` /
+ * `excluded-by-glob` / `no-parseable-files` cases that surface under
+ * `meta.additionalPathsScanned.skipped[]`).
+ *
+ * `reason` is a deterministic string the agent can read without parsing
+ * prose — names the single predicate that fires the code so the
+ * remediation cue is one read away.
+ */
+function summarizeRedundantAdditionalPaths(
+  paths: WarningInputs["redundantAdditionalPathsList"],
+): NonNullable<ScanWarningDetails["redundant_additional_paths"]> | undefined {
+  if (paths === undefined || paths.length === 0) return undefined;
+  return {
+    redundantPaths: [...paths],
+    reason:
+      "all parseable files at these paths were already in the discovered base set; drop the param or re-target the path",
+  };
 }
 
 /**

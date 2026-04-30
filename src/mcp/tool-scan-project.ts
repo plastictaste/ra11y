@@ -10,7 +10,10 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
-import { additionalPathsScannedField } from "./additional-paths-classifier.ts";
+import {
+  additionalPathsScannedField,
+  classifyAdditionalPathSkips,
+} from "./additional-paths-classifier.ts";
 import { baselineStatusField, probeBaselineStatus } from "./baseline-status.ts";
 import {
   type BuildArtifactClassification,
@@ -556,6 +559,20 @@ export const scanProjectTool: McpTool = {
             additionalFilesCount: additionalFiles.length,
             filesAdded: mergedFiles.length - baseFiles.length,
           }),
+          // Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: thread the
+          // input-path subset that contributed parseable files
+          // already covered by the discovered base set so the
+          // `warningsDetails.redundant_additional_paths` payload names
+          // which entries were redundant (vs. which were rejected for
+          // a per-path skip reason — those surface separately under
+          // `meta.additionalPathsScanned.skipped[]`). Empty list when
+          // the warning won't fire; the summarizer drops the payload
+          // conservatively in that case.
+          redundantAdditionalPathsList: redundantAdditionalPathsListFor({
+            additionalPaths,
+            root,
+            excludes: session.config.exclude,
+          }),
           // empty intersection AND a
           // non-empty pre-restrict set → the restriction is what cleared
           // the file list (not "no parseable files anywhere"). Helper
@@ -815,6 +832,15 @@ function buildBaseWarningsForScanProject(args: {
   readonly storybookPresetActive: boolean;
   readonly sessionWrappersMismatchCwd: boolean;
   readonly additionalPathsRedundant: boolean;
+  /**
+   * Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: caller-supplied
+   * subset of `additionalPaths` whose entries contributed parseable
+   * files all already in the discovered base set — drives
+   * `warningsDetails.redundant_additional_paths.redundantPaths`. Empty
+   * list resolves to no payload (the bare-code signal still fires off
+   * `additionalPathsRedundant`).
+   */
+  readonly redundantAdditionalPathsList: readonly string[];
   readonly restrictToPathsEmpty: boolean;
   readonly configSearchSawProjectMarker: boolean;
   readonly scssUnresolvedVariableFiles: readonly string[];
@@ -854,6 +880,7 @@ function buildBaseWarningsForScanProject(args: {
     storybookPresetActive,
     sessionWrappersMismatchCwd,
     additionalPathsRedundant,
+    redundantAdditionalPathsList,
     restrictToPathsEmpty,
     configSearchSawProjectMarker,
     scssUnresolvedVariableFiles,
@@ -961,6 +988,7 @@ function buildBaseWarningsForScanProject(args: {
     templateDirectivesOverlap,
     ...templateLiteralFilesField(templateLiteralFiles),
     additionalPathsRedundant,
+    ...(redundantAdditionalPathsList.length > 0 ? { redundantAdditionalPathsList } : {}),
     restrictToPathsEmpty,
     configSearchSawProjectMarker,
     // Q-SHARED-META-ARRAY-BUDGET-CAP: scan-project is the primary
@@ -1608,6 +1636,39 @@ function isAdditionalPathsRedundant(args: {
   if (args.additionalPaths.length === 0) return false;
   if (args.additionalFilesCount === 0) return false;
   return args.filesAdded === 0;
+}
+
+/**
+ * Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: derives the per-input
+ * subset of `additionalPaths` that contributed parseable files
+ * already in the discovered base set — i.e. the redundant subset, as
+ * opposed to entries rejected for one of the per-path skip reasons
+ * (`not-found` / `unsupported-extension` / `excluded-by-glob` /
+ * `no-parseable-files`, all of which surface separately under
+ * `meta.additionalPathsScanned.skipped[]`).
+ *
+ * The classifier owns the per-path skip predicate; the redundant set
+ * is its complement within the input array. Returns an empty list when
+ * no input was supplied. The summarizer drops the payload conservatively
+ * when the list is empty so the warning channel's bare-code signal
+ * still fires off `additionalPathsRedundant` even when the per-path
+ * cross-reference is unavailable.
+ *
+ * Pure over its inputs — re-uses the same {@link classifyAdditionalPathSkips}
+ * the meta-field builder consumed; the duplicate call is cheap (the
+ * classifier walks the disk once per path with a 500-file cap) and
+ * keeps the redundant-path derivation honest about which entries the
+ * scan classifier saw as skipped.
+ */
+function redundantAdditionalPathsListFor(args: {
+  readonly additionalPaths: readonly string[];
+  readonly root: string;
+  readonly excludes: readonly string[];
+}): readonly string[] {
+  if (args.additionalPaths.length === 0) return [];
+  const skipped = classifyAdditionalPathSkips(args.additionalPaths, args.root, args.excludes);
+  const skippedSet = new Set(skipped.map((s) => s.path));
+  return args.additionalPaths.filter((p) => !skippedSet.has(p));
 }
 
 /**

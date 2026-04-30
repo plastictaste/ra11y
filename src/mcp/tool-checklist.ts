@@ -1040,6 +1040,9 @@ export const checklistTool: McpTool = {
       filesByExtension,
       violations: result.violations,
       nextCursor: page.paginationFields.nextCursor,
+      ...(page.paginationFields.nextCursorClipDetails
+        ? { nextCursorClipDetails: page.paginationFields.nextCursorClipDetails }
+        : {}),
       configSource: projectConfig.sourcePath,
       configSearchSawProjectMarker,
       cwd,
@@ -1097,6 +1100,18 @@ function buildChecklistWarnings(args: {
   readonly filesByExtension: Record<string, number>;
   readonly violations: ReturnType<typeof runScan>["result"]["violations"];
   readonly nextCursor: ChecklistCursor | undefined;
+  /**
+   * Q13-RESULTS-TRUNCATED-USE-NEXTCURSOR-EMPTY-DETAILS: paired clip
+   * details for `nextCursor`. When present, drives the
+   * `warningsDetails.results_truncated_use_nextcursor` payload so the
+   * warning channel carries the load-bearing scalars (`criterionId`,
+   * `clippedAt`, `totalAvailable`) without forcing the agent to
+   * cross-reference the top-level pagination block. Always paired with
+   * `nextCursor` (the call site populates both together).
+   */
+  readonly nextCursorClipDetails?: NonNullable<
+    PaginatedChecklist["paginationFields"]["nextCursorClipDetails"]
+  >;
   /**
    * the resolved `configSource` from the
    * loaded project config. Threaded through so `no_config_found` fires
@@ -1169,6 +1184,16 @@ function buildChecklistWarnings(args: {
   // "Ambiguous field shapes are dishonest": the warning code alone
   // would leave the caller unable to tell "clamped from 500 to 100"
   // from "clamped from 101 to 100."
+  //
+  // Q13-RESULTS-TRUNCATED-USE-NEXTCURSOR-EMPTY-DETAILS: same pattern
+  // for `results_truncated_use_nextcursor` — the bare code reads as
+  // "more candidates exist; pass nextCursor back" but on a multi-
+  // criterion page the agent cannot tell which criterion was clipped,
+  // how many of its candidates this page shows, or how many were
+  // available pre-clip without re-reading the top-level
+  // `paginationFields.nextCursorClipDetails`. Mirroring the scalars on
+  // the warning channel closes the silent miss of "Empty
+  // `warningsDetails.<code>: {}` is dishonest."
   const mergedDetails: Record<string, unknown> = {
     ...(scanTime.warningsDetails === undefined ? {} : { ...scanTime.warningsDetails }),
     ...(args.perCriterionClamp
@@ -1179,16 +1204,27 @@ function buildChecklistWarnings(args: {
           },
         }
       : {}),
+    ...(args.nextCursor !== undefined && args.nextCursorClipDetails !== undefined
+      ? {
+          results_truncated_use_nextcursor: {
+            criterionId: args.nextCursorClipDetails.criterionId,
+            clippedAt: args.nextCursorClipDetails.clippedAt,
+            totalAvailable: args.nextCursorClipDetails.totalAvailable,
+            nextCursor: args.nextCursor,
+          },
+        }
+      : {}),
   };
   // Warnings-details schema discipline: stamp the empty-object
   // marker for every fired code that didn't already get a rich
-  // entry. Covers tool-local presence-only codes
-  // (`results_truncated_use_nextcursor`) plus any
-  // `ScanWarningCode` from the derivative-scan channel that arrived
-  // without a payload. Without this, an agent reading the response
-  // sees a code in `warnings[]` but no key in `warningsDetails`
-  // and cannot tell "no payload defined" from "this surface didn't
-  // compute it."
+  // entry. Covers any `ScanWarningCode` from the derivative-scan
+  // channel that arrived without a payload. Without this, an agent
+  // reading the response sees a code in `warnings[]` but no key in
+  // `warningsDetails` and cannot tell "no payload defined" from
+  // "this surface didn't compute it." The two checklist-local codes
+  // (`max_candidates_per_criterion_clamped`,
+  // `results_truncated_use_nextcursor`) are payload-bearing — both
+  // ship structured details above and never fall through to `{}`.
   for (const code of sorted) {
     if (mergedDetails[code] !== undefined) continue;
     mergedDetails[code] = {};
@@ -1673,6 +1709,22 @@ export interface PaginatedChecklist {
      */
     readonly nextCursor?: ChecklistCursor;
     /**
+     * Q13-RESULTS-TRUNCATED-USE-NEXTCURSOR-EMPTY-DETAILS: structured
+     * per-criterion clip event paired with `nextCursor` so the
+     * `warningsDetails.results_truncated_use_nextcursor` payload (and
+     * any agent reading the pagination block directly) sees the
+     * load-bearing scalars in one place: the criterion that was
+     * clipped, how many candidates this page shows for it, and how
+     * many were available pre-clip. Always populated together with
+     * `nextCursor` (and absent otherwise) so the two surfaces never
+     * disagree on which criterion the cursor names.
+     */
+    readonly nextCursorClipDetails?: {
+      readonly criterionId: string;
+      readonly clippedAt: number;
+      readonly totalAvailable: number;
+    };
+    /**
      * a useful target the
      * caller can pass back as `maxCandidatesPerCriterion` when they
      * want a deeper cut in one shot instead of paginating through
@@ -1724,10 +1776,13 @@ export function paginateChecklistItems(
   // the cursor pointing at the first clipped criterion (for later
   // resume calls), and the max uncapped count across clipped items
   // (hint computation).
-  const { clipped, totalCandidates, firstClippedCursor, largestUncappedCount } = clipChecklistItems(
-    items,
-    maxCandidatesPerCriterion,
-  );
+  const {
+    clipped,
+    totalCandidates,
+    firstClippedCursor,
+    firstClippedTotalAvailable,
+    largestUncappedCount,
+  } = clipChecklistItems(items, maxCandidatesPerCriterion);
   // Phase 2 — flat-stream pagination across clipped items. Walk with
   // a running global index; each item emits the candidate slice that
   // falls inside [offset, offset + limit). Items entirely outside
@@ -1769,7 +1824,16 @@ export function paginateChecklistItems(
       rangeEnd,
       truncated,
       perCriterionClipped: firstClippedCursor !== undefined,
-      ...(firstClippedCursor ? { nextCursor: firstClippedCursor } : {}),
+      ...(firstClippedCursor
+        ? {
+            nextCursor: firstClippedCursor,
+            nextCursorClipDetails: {
+              criterionId: firstClippedCursor.afterCriterion,
+              clippedAt: firstClippedCursor.afterCandidateIndex + 1,
+              totalAvailable: firstClippedTotalAvailable,
+            },
+          }
+        : {}),
       ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
     }),
   };
@@ -1800,10 +1864,12 @@ function clipChecklistItems(
   readonly clipped: readonly ChecklistItemOut[];
   readonly totalCandidates: number;
   readonly firstClippedCursor: ChecklistCursor | undefined;
+  readonly firstClippedTotalAvailable: number;
   readonly largestUncappedCount: number;
 } {
   let totalCandidates = 0;
   let firstClippedCursor: ChecklistCursor | undefined;
+  let firstClippedTotalAvailable = 0;
   let largestUncappedCount = 0;
   const clipped: ChecklistItemOut[] = [];
   for (const item of items) {
@@ -1817,13 +1883,20 @@ function clipChecklistItems(
         afterCriterion: item.criterionId,
         afterCandidateIndex: cap - 1,
       };
+      firstClippedTotalAvailable = item.candidates.length;
     }
     if (item.candidates.length > largestUncappedCount) {
       largestUncappedCount = item.candidates.length;
     }
     clipped.push({ ...item, candidates: item.candidates.slice(0, cap) });
   }
-  return { clipped, totalCandidates, firstClippedCursor, largestUncappedCount };
+  return {
+    clipped,
+    totalCandidates,
+    firstClippedCursor,
+    firstClippedTotalAvailable,
+    largestUncappedCount,
+  };
 }
 
 /**
@@ -1884,11 +1957,25 @@ function paginateChecklistResume(
   const maxCandidatesPerCriterionHint = moreRemaining
     ? Math.min(target.candidates.length, CHECKLIST_MAX_MAX_PER_CRITERION)
     : undefined;
+  // Q13-RESULTS-TRUNCATED-USE-NEXTCURSOR-EMPTY-DETAILS: surface the
+  // resume-branch clip event with the same shape `paginateChecklistItems`
+  // emits — `clippedAt` is the post-resume slice end (cursor naming
+  // resumeEnd - 1), `totalAvailable` is the criterion's full pre-clip
+  // candidate count. Paired with `nextCursor` so cross-channel readers
+  // (top-level pagination block, warning details payload) agree.
+  const nextCursorClipDetails = nextCursor
+    ? {
+        criterionId: target.criterionId,
+        clippedAt: resumeEnd,
+        totalAvailable: target.candidates.length,
+      }
+    : undefined;
   return {
     items: pageItems,
     totalCandidates,
     paginationFields: {
       ...(nextCursor ? { nextCursor } : {}),
+      ...(nextCursorClipDetails ? { nextCursorClipDetails } : {}),
       ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
     },
   };
@@ -1916,6 +2003,9 @@ function buildChecklistPaginationFields(args: {
   readonly truncated: boolean;
   readonly perCriterionClipped: boolean;
   readonly nextCursor?: ChecklistCursor;
+  readonly nextCursorClipDetails?: NonNullable<
+    PaginatedChecklist["paginationFields"]["nextCursorClipDetails"]
+  >;
   readonly maxCandidatesPerCriterionHint?: number;
 }): PaginatedChecklist["paginationFields"] {
   const {
@@ -1926,6 +2016,7 @@ function buildChecklistPaginationFields(args: {
     truncated,
     perCriterionClipped,
     nextCursor,
+    nextCursorClipDetails,
     maxCandidatesPerCriterionHint,
   } = args;
   // Count the candidates that actually shipped so `effectiveLimit` is
@@ -1948,6 +2039,7 @@ function buildChecklistPaginationFields(args: {
     ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
     ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
     ...(nextCursor ? { nextCursor } : {}),
+    ...(nextCursorClipDetails ? { nextCursorClipDetails } : {}),
     ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
   };
 }

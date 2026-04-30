@@ -1115,6 +1115,79 @@ describe("MCP tool: scan_project", () => {
       expect(data.warnings).toContain("redundant_additional_paths");
     });
 
+    // Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS — when the warning
+    // fires, `warningsDetails.redundant_additional_paths` carries the
+    // per-input redundant subset + a deterministic `reason` so the
+    // agent's remediation cue is one read away. Without the payload,
+    // the bare code reads as "the flag was redundant" but on a
+    // multi-entry `additionalPaths` array the agent cannot tell which
+    // subset was redundant vs. which was skipped — silent-miss per the
+    // AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+    it("populates warningsDetails.redundant_additional_paths with redundantPaths/reason when the warning fires", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-redundant-payload-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: dir, additionalPaths: ["."] }, session);
+      const data = JSON.parse(result.content[0].text) as {
+        warnings?: string[];
+        warningsDetails?: Record<string, unknown>;
+      };
+      expect(data.warnings).toContain("redundant_additional_paths");
+      const detail = data.warningsDetails?.["redundant_additional_paths"] as
+        | { readonly redundantPaths?: readonly string[]; readonly reason?: string }
+        | undefined;
+      expect(detail).toBeDefined();
+      // payload must be non-empty (the rule the closure addresses).
+      expect(Object.keys(detail ?? {}).length).toBeGreaterThan(0);
+      expect(detail?.redundantPaths).toEqual(["."]);
+      expect(typeof detail?.reason).toBe("string");
+      expect((detail?.reason ?? "").length).toBeGreaterThan(0);
+    });
+
+    // Cross-input invariant: a multi-entry `additionalPaths` array
+    // mixing redundant + skipped entries must list ONLY the redundant
+    // subset under `warningsDetails.redundant_additional_paths.redundantPaths`.
+    // The skipped entries surface separately under
+    // `meta.additionalPathsScanned.skipped[]`; the warning payload is
+    // exclusively the redundancy cue ("drop the param") not the
+    // skip cue ("fix the path").
+    it("lists ONLY the redundant subset when additionalPaths mixes redundant + skipped entries", async () => {
+      const { mkdtemp, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join: joinPath } = await import("node:path");
+
+      const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-extra-redundant-mixed-"));
+      await writeFile(joinPath(dir, "app.tsx"), "export const App = () => <div />;");
+
+      const tool = findTool("scan_project");
+      const session = new McpSession();
+      const result = await tool.handler(
+        { cwd: dir, additionalPaths: [".", "does-not-exist"] },
+        session,
+      );
+      const data = JSON.parse(result.content[0].text) as {
+        warnings?: string[];
+        warningsDetails?: Record<string, unknown>;
+        meta: { additionalPathsScanned?: { skipped?: { path: string; reason: string }[] } };
+      };
+      expect(data.warnings).toContain("redundant_additional_paths");
+      const detail = data.warningsDetails?.["redundant_additional_paths"] as
+        | { readonly redundantPaths?: readonly string[] }
+        | undefined;
+      expect(detail?.redundantPaths).toEqual(["."]);
+      // skipped entries surface under the meta block, NOT the warning
+      // payload — the two channels never overlap.
+      expect(data.meta.additionalPathsScanned?.skipped).toEqual([
+        { path: "does-not-exist", reason: "not-found" },
+      ]);
+    });
+
     // Distinct-from-ignored invariant: when `additionalPaths` resolved
     // to nothing (the path doesn't exist, has an unsupported extension,
     // or is excluded by glob), the code path is `skipped` reasons —

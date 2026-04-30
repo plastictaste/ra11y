@@ -68,6 +68,13 @@ interface ChecklistEnvelope {
     readonly args?: Record<string, unknown>;
   };
   readonly warnings?: readonly string[];
+  readonly warningsDetails?: Record<string, unknown>;
+  readonly nextCursor?: { readonly afterCriterion: string; readonly afterCandidateIndex: number };
+  readonly nextCursorClipDetails?: {
+    readonly criterionId: string;
+    readonly clippedAt: number;
+    readonly totalAvailable: number;
+  };
 }
 
 interface StructuredErrorPayload {
@@ -448,6 +455,70 @@ describe("checklist tool: nextStep paginate-recommendation when totalCandidates 
       }
       expect(data.truncated).toBeUndefined();
       expect(data.nextStepStructured?.tool).toBe("scan_project");
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("checklist tool: results_truncated_use_nextcursor warning payload", () => {
+  // Q13-RESULTS-TRUNCATED-USE-NEXTCURSOR-EMPTY-DETAILS — when the
+  // per-criterion cap clips at least one criterion, the response carries
+  // both `nextCursor` AND `warningsDetails.results_truncated_use_nextcursor`
+  // populated with the load-bearing scalars (criterionId, clippedAt,
+  // totalAvailable, nextCursor). Without the payload, the bare warning
+  // code reads as "more candidates exist; pass nextCursor back" but
+  // gives the agent zero per-criterion budget to decide whether to
+  // follow the cursor — silent-miss failure mode per the AI-first
+  // doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+  it("populates warningsDetails.results_truncated_use_nextcursor with criterionId/clippedAt/totalAvailable/nextCursor when the per-criterion cap clips", async () => {
+    const fixture = makeMultiCandidateFixture(5);
+    try {
+      const tool = findTool("checklist");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: fixture, maxCandidatesPerCriterion: 1 }, session);
+      expect(result.isError).toBeUndefined();
+      const data = parseEnvelope(result.content[0]?.text ?? "{}");
+      // precondition — clip fired, cursor emitted on the wire.
+      expect(data.warnings ?? []).toContain("results_truncated_use_nextcursor");
+      expect(data.nextCursor).toBeDefined();
+      const detail = data.warningsDetails?.["results_truncated_use_nextcursor"] as
+        | {
+            readonly criterionId?: string;
+            readonly clippedAt?: number;
+            readonly totalAvailable?: number;
+            readonly nextCursor?: { readonly afterCriterion: string };
+          }
+        | undefined;
+      expect(detail).toBeDefined();
+      // payload must be non-empty (the "Empty `warningsDetails.<code>: {}`
+      // is dishonest" rule the closure addresses).
+      expect(Object.keys(detail ?? {}).length).toBeGreaterThan(0);
+      // the four load-bearing scalars must agree with the top-level
+      // pagination block — cross-channel consumers see one truth.
+      expect(detail?.criterionId).toBe(data.nextCursor?.afterCriterion);
+      expect(typeof detail?.clippedAt).toBe("number");
+      expect(typeof detail?.totalAvailable).toBe("number");
+      expect((detail?.totalAvailable ?? 0) > (detail?.clippedAt ?? 0)).toBe(true);
+      expect(detail?.nextCursor?.afterCriterion).toBe(data.nextCursor?.afterCriterion);
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  // Honest-shape: when nothing clipped, the warning code does NOT fire
+  // and the details payload does NOT carry the key. Absence is the
+  // signal — present-when-meaningful, never sentinel-empty.
+  it("omits warningsDetails.results_truncated_use_nextcursor when the per-criterion cap did not clip", async () => {
+    const fixture = makeMultiCandidateFixture(2);
+    try {
+      const tool = findTool("checklist");
+      const session = new McpSession();
+      const result = await tool.handler({ cwd: fixture }, session);
+      expect(result.isError).toBeUndefined();
+      const data = parseEnvelope(result.content[0]?.text ?? "{}");
+      expect(data.warnings ?? []).not.toContain("results_truncated_use_nextcursor");
+      expect(data.warningsDetails?.["results_truncated_use_nextcursor"]).toBeUndefined();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

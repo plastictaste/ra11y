@@ -438,7 +438,14 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
-  "redundant_additional_paths",
+  // `redundant_additional_paths` is now payload-bearing on the canonical
+  // scan_project surface (it threads `redundantAdditionalPathsList`
+  // through the warnings aggregator). Derivative surfaces that don't
+  // materialize the per-input subset still fall back to the
+  // `{ truncated: true, reason: "summarizer_inputs_unavailable" }`
+  // sentinel via the schema-discipline contract, but the typed schema
+  // declares the code as `{ redundantPaths, reason }` so it no longer
+  // belongs in the exclusively-binary set this invariant walks.
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
   "proposed_config_deprecated_use_suggested_config",

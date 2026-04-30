@@ -373,6 +373,62 @@ describe("paginateChecklistItems — per-criterion cursor resume", () => {
     });
   });
 
+  // when `nextCursor` is emitted,
+  // `nextCursorClipDetails` ships alongside it with the load-bearing
+  // scalars an agent reading the warning channel needs (criterionId,
+  // clippedAt, totalAvailable). The two surfaces are populated together
+  // so cross-channel readers (top-level pagination block, warning
+  // details payload) never disagree on which criterion the cursor
+  // names. Closes the "Empty `warningsDetails.<code>: {}` is dishonest"
+  // case for `results_truncated_use_nextcursor`.
+  it("populates nextCursorClipDetails alongside nextCursor on the initial branch", () => {
+    const items = [makeItem("wcag22:2.4.5", 30)];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    expect(page.paginationFields.nextCursor).toEqual({
+      afterCriterion: "wcag22:2.4.5",
+      afterCandidateIndex: 4,
+    });
+    expect(page.paginationFields.nextCursorClipDetails).toEqual({
+      criterionId: "wcag22:2.4.5",
+      clippedAt: 5,
+      totalAvailable: 30,
+    });
+  });
+
+  // Resume branch parity: when `paginateChecklistResume` re-emits a
+  // `nextCursor` because the tail still overflows the cap, the paired
+  // `nextCursorClipDetails` carries the SAME criterion + the new clip
+  // boundaries (clippedAt = post-resume slice end, totalAvailable =
+  // criterion's full pre-clip count). Same shape as the initial branch
+  // so consumers don't branch on which path emitted the cursor.
+  it("populates nextCursorClipDetails on the resume branch with the same shape", () => {
+    const items = [makeItem("wcag22:2.4.5", 30)];
+    const page1 = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
+    const cursor = page1.paginationFields.nextCursor;
+    expect(cursor).toBeDefined();
+    const page2 = paginateChecklistItems(
+      items,
+      fullParams({ maxCandidatesPerCriterion: 5, ...(cursor ? { cursor } : {}) }),
+    );
+    expect(page2.paginationFields.nextCursor).toEqual({
+      afterCriterion: "wcag22:2.4.5",
+      afterCandidateIndex: 9,
+    });
+    expect(page2.paginationFields.nextCursorClipDetails).toEqual({
+      criterionId: "wcag22:2.4.5",
+      clippedAt: 10,
+      totalAvailable: 30,
+    });
+  });
+
+  // Honest-shape: absent when nothing clipped (parallel to nextCursor).
+  it("omits nextCursorClipDetails when nothing was per-criterion clipped", () => {
+    const items = [makeItem("wcag22:1.4.3", 3), makeItem("wcag22:2.4.5", 5)];
+    const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 10 }));
+    expect(page.paginationFields.nextCursor).toBeUndefined();
+    expect(page.paginationFields.nextCursorClipDetails).toBeUndefined();
+  });
+
   it("round-trip: page 1 nextCursor → page 2 cursor resumes the elided tail", () => {
     // 30 candidates on one criterion, cap 5. Page 1 serves [0..4],
     // emits nextCursor {afterCandidateIndex:4}. Page 2 with that
