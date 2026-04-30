@@ -32,6 +32,12 @@
  *      as a warning, not an error.
  *   4. Subtags that aren't 1-8 alphanumeric characters
  *      (`lang="xyz_123"`, `lang="english"`).
+ *
+ * Framework-convention hosts are skipped: `<style lang="scss">` and
+ * `<script lang="ts">` (Vue SFC, Astro, Svelte) overload `lang` as a
+ * preprocessor tag, and `<Component lang="...">` (PascalCase) is a
+ * custom prop. BCP 47 is not the contract on those tags. Sibling rule
+ * `parsing/html-has-lang` applies the identical gate.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -93,9 +99,49 @@ type Emit = (v: {
 
 const ATTR_NAMES = ["lang", "xml:lang"] as const;
 
+/**
+ * Tags whose `lang` attribute is a build-tool preprocessor language
+ * tag rather than a BCP 47 natural-language tag. In Vue SFCs, Astro,
+ * Svelte, and similar component-file dialects, `<style lang="scss">`
+ * and `<script lang="ts">` declare the source dialect of the embedded
+ * block — `lang="scss"` / `lang="ts"` / `lang="postcss"` are not BCP
+ * 47 tags and were never intended to be. WCAG 3.1.2 governs natural
+ * language declarations on content-bearing elements; the spec contract
+ * does not extend to the build-tool overload of the attribute.
+ *
+ * Reference: https://vuejs.org/api/sfc-spec.html (Pre-Processors),
+ * https://docs.astro.build/en/core-concepts/astro-components/#styles--css.
+ */
+const FRAMEWORK_PREPROCESSOR_HOSTS = new Set(["script", "style"]);
+
+/**
+ * PascalCase tag pattern: first character ASCII A-Z. In JSX a
+ * capitalized tag name is a user-defined component, and its `lang`
+ * attribute is a custom prop, not the HTML `lang` attribute — BCP 47
+ * is not the contract. Lowercase HTML tag names (`span`, `p`, `div`,
+ * `section`) and hyphenated custom-element names (`my-widget`) are
+ * unaffected.
+ */
+const PASCAL_CASE_RE = /^[A-Z]/;
+
+/**
+ * True when the element's `lang` (or `xml:lang`) attribute is not
+ * governed by BCP 47 because the host tag is either a framework
+ * preprocessor host (`<style>` / `<script>`) or a PascalCase custom
+ * component. Both rules in this domain (parsing/html-has-lang and
+ * document/lang-on-parts) gate on this predicate; if changing here,
+ * update the sibling rule too.
+ */
+function isFrameworkConventionHost(tagName: string): boolean {
+  if (FRAMEWORK_PREPROCESSOR_HOSTS.has(tagName.toLowerCase())) return true;
+  if (PASCAL_CASE_RE.test(tagName)) return true;
+  return false;
+}
+
 function checkHtml(doc: HtmlDocument, emit: Emit): void {
   for (const el of walkHtmlElements(doc)) {
     if (el.tagName.toLowerCase() === "html") continue;
+    if (isFrameworkConventionHost(el.tagName)) continue;
     for (const attrName of ATTR_NAMES) {
       const value = getHtmlAttribute(el, attrName);
       if (value === null) continue;
@@ -115,6 +161,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   for (const el of walkJsxElements(module)) {
     // Skip <html> in JSX too (e.g. Next.js _document.tsx).
     if (el.tagName.toLowerCase() === "html") continue;
+    if (isFrameworkConventionHost(el.tagName)) continue;
     for (const attrName of ATTR_NAMES) {
       checkJsxAttr(el, attrName, emit);
     }

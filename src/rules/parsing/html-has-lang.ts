@@ -38,6 +38,12 @@
  *
  * Document-scoped. Runs on .html/.htm files only; JSX support can be
  * added later once jsx ast-helpers surface attribute walks as cleanly.
+ *
+ * Framework-convention hosts are skipped: `<style lang="scss">` and
+ * `<script lang="ts">` (Vue SFC, Astro, Svelte) overload `lang` as a
+ * preprocessor tag, and `<Component lang="...">` (PascalCase) is a
+ * custom prop. BCP 47 is not the contract on those tags. Sibling rule
+ * `document/lang-on-parts` applies the identical gate.
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -80,6 +86,31 @@ const UNDERSPECIFIED_LANG_CODES = new Set(["zxx", "und", "mul", "mis"]);
  * scaffolding contributes no text either way.)
  */
 const NON_VISIBLE_TEXT_TAGS = new Set(["script", "style", "noscript", "template", "head"]);
+
+/**
+ * Tags whose `lang` attribute is a build-tool preprocessor language tag
+ * rather than a BCP 47 natural-language tag. In Vue SFCs, Astro, Svelte,
+ * and similar component-file dialects, `<style lang="scss">` and
+ * `<script lang="ts">` declare the source dialect of the embedded block
+ * — `lang="scss"` / `lang="ts"` / `lang="postcss"` are not BCP 47 tags
+ * and were never intended to be. WCAG 3.1.1 / 3.1.2 govern natural
+ * language declarations on content-bearing elements; the spec contract
+ * does not extend to the build-tool overload of the attribute.
+ *
+ * Reference: https://vuejs.org/api/sfc-spec.html (Pre-Processors),
+ * https://docs.astro.build/en/core-concepts/astro-components/#styles--css.
+ */
+const FRAMEWORK_PREPROCESSOR_HOSTS = new Set(["script", "style"]);
+
+/**
+ * PascalCase tag pattern: first character ASCII A-Z. JSX (and a number
+ * of HTML-shaped component-file dialects) treat capitalized tag names
+ * as user components; their `lang` attribute is a custom prop, not the
+ * HTML `lang` attribute. Lowercase HTML tag names (`html`, `span`,
+ * `p`, `div`, `section`) and hyphenated custom-element names
+ * (`my-widget`) are unaffected.
+ */
+const PASCAL_CASE_RE = /^[A-Z]/;
 
 export const rule = defineRule({
   id: "parsing/html-has-lang",
@@ -131,6 +162,14 @@ interface LangProblem {
 }
 
 function classifyLang(element: HtmlElement): LangProblem | null {
+  // Framework-convention hosts overload `lang` as a build-tool
+  // preprocessor tag (Vue SFC `<style lang="scss">`, Astro
+  // `<script lang="ts">`) or a custom component prop
+  // (`<Component lang="...">`); BCP 47 is not the spec contract here.
+  // See FRAMEWORK_PREPROCESSOR_HOSTS / PASCAL_CASE_RE for the closure
+  // rationale.
+  if (FRAMEWORK_PREPROCESSOR_HOSTS.has(element.tagName.toLowerCase())) return null;
+  if (PASCAL_CASE_RE.test(element.tagName)) return null;
   const raw = findLangAttribute(element);
   if (raw === null) return null;
   const trimmed = raw.trim();

@@ -219,4 +219,57 @@ describe("rule parsing/html-has-lang", () => {
     expect(v[0]?.message).toContain("<section>");
     expect(v[0]?.message).toContain("zxx");
   });
+
+  // ---------------------------------------------------------------------
+  // Framework-convention hosts: `<style>` / `<script>` use `lang` as a
+  // build-tool preprocessor tag (Vue SFC, Astro, Svelte); PascalCase
+  // tags are custom components whose `lang` is a prop. BCP 47 is not
+  // the contract on those tags, so the rule must not fire.
+  // ---------------------------------------------------------------------
+
+  it('does not flag <style lang="scss"> (Vue/Astro preprocessor tag)', () => {
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><style lang="scss">.x{color:red}</style></body></html>`,
+      { filePath: "Component.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not flag <script lang="ts"> (Vue/Astro preprocessor tag)', () => {
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><script lang="ts">const x: number = 1;</script></body></html>`,
+      { filePath: "Component.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not flag <Component lang="..."> (PascalCase = custom component prop)', () => {
+    // `lang` here is a JSX-style component prop, not the HTML lang
+    // attribute. Still emerges in HTML-shaped Astro/Svelte components.
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><Heading lang="primary">x</Heading></body></html>`,
+      { filePath: "Component.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('still flags <html lang="zz"> on a real document (BCP 47 contract preserved)', () => {
+    // The framework-convention skip must not regress the document-root
+    // check — `<html>` is lowercase + non-script/style, so the gate
+    // does not apply.
+    const v = runRule(rule, `<html lang="zz"><body><p>hi</p></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v).toHaveLength(0);
+    // (`zz` is two letters and passes BCP47_BASIC; the rule does not
+    // validate against IANA. Use a real malformed value to confirm
+    // the gate doesn't suppress real findings.)
+    const v2 = runRule(rule, `<html lang="english"><body><p>hi</p></body></html>`, {
+      filePath: "index.html",
+    });
+    expect(v2).toHaveLength(1);
+  });
 });

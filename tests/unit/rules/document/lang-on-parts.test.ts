@@ -138,4 +138,74 @@ describe("rule document/lang-on-parts", () => {
     expect(rule.satisfies).toContain("wcag22:3.1.2");
     expect(rule.satisfies).toContain("wcag21:3.1.2");
   });
+
+  // --- framework-convention hosts (predicate-mismatch closure) ---------------
+  // `<style lang="scss">` / `<script lang="ts">` overload `lang` as a
+  // build-tool preprocessor tag (Vue SFC, Astro, Svelte); PascalCase tags
+  // are JSX components whose `lang` is a custom prop. BCP 47 is not the
+  // contract on those tags. Per AI-first doctrine "Reason text and
+  // severity must agree" — firing error-severity on a non-BCP-47 host is
+  // the canonical predicate-mismatch failure.
+
+  it('ignores <style lang="scss"> in HTML (Vue SFC / Astro preprocessor tag)', () => {
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><style lang="scss">.x{color:red}</style></body></html>`,
+      { filePath: "Component.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('ignores <script lang="ts"> in HTML (Vue SFC / Astro preprocessor tag)', () => {
+    const v = runRule(
+      rule,
+      `<html lang="en"><body><script lang="ts">const x: number = 1;</script></body></html>`,
+      { filePath: "Component.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('ignores <style lang="scss"> in JSX', () => {
+    const v = runRule(
+      rule,
+      `export const X = () => (<style lang="scss">.x{color:red}</style>);`,
+      { filePath: "Component.tsx" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('ignores <script lang="ts"> in JSX', () => {
+    const v = runRule(
+      rule,
+      'export const X = () => (<script lang="ts">const x = 1;</script>);',
+      { filePath: "Component.tsx" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('ignores PascalCase component <Heading lang="..."> in JSX (custom prop)', () => {
+    const v = runRule(rule, `export const X = () => (<Heading lang="primary">x</Heading>);`, {
+      filePath: "Component.tsx",
+    });
+    expect(v).toHaveLength(0);
+  });
+
+  it('ignores nested PascalCase <Code lang="ts"> (custom prop, not BCP 47)', () => {
+    const v = runRule(rule, `export const X = () => (<Code lang="ts">const x = 1;</Code>);`, {
+      filePath: "Component.tsx",
+    });
+    expect(v).toHaveLength(0);
+  });
+
+  it('still fires on lowercase <p lang="english"> alongside framework-convention siblings', () => {
+    // The framework-convention skip must be precise — sibling lowercase
+    // BCP-47-bearing elements still get checked.
+    const v = runRule(
+      rule,
+      'export const X = () => (<><style lang="scss">.x{}</style><p lang="english">hi</p></>);',
+      { filePath: "Component.tsx" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.message).toContain("<p");
+  });
 });
