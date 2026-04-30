@@ -3471,7 +3471,7 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        count: 14,
+        unresolvedHrefCount: 14,
         htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
         topUnresolvedHrefs: ["css/bootstrap.min.css"],
       },
@@ -3498,7 +3498,7 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        count: 0,
+        unresolvedHrefCount: 0,
         htmlFiles: [],
         topUnresolvedHrefs: [],
       },
@@ -3506,7 +3506,7 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
     expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
   });
 
-  it("payload carries count, htmlFiles, and topUnresolvedHrefs on the warningsDetails channel", () => {
+  it("payload carries unresolvedHrefCount, htmlFiles, and topUnresolvedHrefs on the warningsDetails channel", () => {
     const out = warningsField({
       filesScanned: 14,
       rootSource: "explicit",
@@ -3514,7 +3514,7 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: undefined,
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        count: 28,
+        unresolvedHrefCount: 28,
         htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
         topUnresolvedHrefs: ["css/bootstrap.min.css", "css/theme.css"],
       },
@@ -3522,7 +3522,7 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
     expect(out.warnings).toContain("linked_stylesheet_not_resolved_for_contrast");
     const detail = out.warningsDetails?.linked_stylesheet_not_resolved_for_contrast;
     expect(detail).toBeDefined();
-    expect(detail?.count).toBe(28);
+    expect(detail?.unresolvedHrefCount).toBe(28);
     expect(detail?.htmlFiles?.length).toBe(2);
     expect(detail?.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
   });

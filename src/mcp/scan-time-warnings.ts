@@ -542,7 +542,7 @@ function buildWarningsFieldInputs(
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
-    ...(derived.linkedStylesheetsUnresolvedForContrast.count === 0
+    ...(derived.linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
       ? {}
       : {
           linkedStylesheetsUnresolvedForContrast: derived.linkedStylesheetsUnresolvedForContrast,

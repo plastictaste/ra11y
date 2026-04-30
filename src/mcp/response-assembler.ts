@@ -465,7 +465,7 @@ function buildAssemblerWarningsField(args: {
       ? {}
       : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
     ...(args.linkedStylesheetsUnresolvedForContrast === undefined ||
-    args.linkedStylesheetsUnresolvedForContrast.count === 0
+    args.linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
       ? {}
       : {
           linkedStylesheetsUnresolvedForContrast: args.linkedStylesheetsUnresolvedForContrast,
@@ -723,7 +723,7 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
-    ...(linkedStylesheetsUnresolvedForContrast.count === 0
+    ...(linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
       ? {}
       : { linkedStylesheetsUnresolvedForContrast }),
     // Cross-check for the

@@ -947,7 +947,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"></head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.count).toBe(1);
+    expect(result.unresolvedHrefCount).toBe(1);
     expect(result.htmlFiles).toEqual(["/proj/page.html"]);
     expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
   });
@@ -958,7 +958,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       `<!DOCTYPE html><html lang="en"><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.count).toBe(0);
+    expect(result.unresolvedHrefCount).toBe(0);
     expect(result.htmlFiles).toEqual([]);
     expect(result.topUnresolvedHrefs).toEqual([]);
   });
@@ -968,7 +968,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="alternate stylesheet" href="alt.css"><link rel="preload" as="style" href="hot.css"></head><body><p>hi</p></body></html>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
   });
 
   it("ignores fragment HTML (no `<html>`/`<body>`) — partials don't establish a link-resolution context", () => {
@@ -976,7 +976,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/_partials/header.html",
       `<link rel="stylesheet" href="bootstrap.min.css"><nav>hi</nav>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
   });
 
   it("ignores `<link>` elements without a non-empty href", () => {
@@ -984,7 +984,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet"><link rel="stylesheet" href=""></head><body><p>hi</p></body></html>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).count).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
   });
 
   it("de-duplicates hrefs across pages and returns sorted-ascending lists deterministically", () => {
@@ -997,7 +997,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"><link rel="stylesheet" href="css/theme.css"></head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([a, b]);
-    expect(result.count).toBe(3);
+    expect(result.unresolvedHrefCount).toBe(3);
     expect(result.htmlFiles).toEqual(["/proj/page-a.html", "/proj/page-z.html"]);
     expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
   });
@@ -1010,7 +1010,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source,
       ast: { language: "css", root: parsed.root, errors: [...parsed.errors] },
     };
-    expect(detectLinkedStylesheetsNotResolvedForContrast([scss]).count).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([scss]).unresolvedHrefCount).toBe(0);
   });
 });
 

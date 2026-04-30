@@ -567,9 +567,9 @@ export type ScanWarningCode =
   // at the scan), `propose_config` (add the on-disk equivalent), or a
   // separate `scan` against the linked CSS file. Paired payload:
   // `warningsDetails.linked_stylesheet_not_resolved_for_contrast`
-  // carries `{ count, htmlFiles, topUnresolvedHrefs }` so the agent
-  // branches on identity (which pages, which hrefs?) without re-walking
-  // the per-file AST.
+  // carries `{ unresolvedHrefCount, htmlFiles, topUnresolvedHrefs }` so
+  // the agent branches on identity (which pages, which hrefs?) without
+  // re-walking the per-file AST.
   | "linked_stylesheet_not_resolved_for_contrast"
   // at least one `.js` file in the
   // scan was successfully routed through the in-house TSX parser.
@@ -1113,14 +1113,15 @@ export interface WarningInputs {
    * `warningsDetails` payload. The detector lives at the assembly seam
    * so this module stays pure over its inputs — the predicate walks
    * parsed HTML ASTs and returns the deterministic
-   * `{ count, htmlFiles, topUnresolvedHrefs }` shape directly.
+   * `{ unresolvedHrefCount, htmlFiles, topUnresolvedHrefs }` shape
+   * directly.
    *
    * Pass `undefined` when the caller did not run the detector (e.g.
    * `scan` against arbitrary paths where the parsed-file list is not
    * threaded through the scan-time-warnings aggregator). The code
-   * drops conservatively when this field is absent or its `count` is
-   * zero. Empty `htmlFiles` (with `count: 0`) is treated identically
-   * to `undefined`.
+   * drops conservatively when this field is absent or its
+   * `unresolvedHrefCount` is zero. Empty `htmlFiles` (with
+   * `unresolvedHrefCount: 0`) is treated identically to `undefined`.
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
@@ -2323,12 +2324,20 @@ export interface ScanWarningDetails {
    * the unresolved-link tally so an agent reading the warning channel
    * can scope a follow-up without re-walking the per-file AST.
    *
-   * - `count` — total number of `(htmlFile, href)` pairs the detector
-   *   saw across the scan (pre-cap on the href list). Distinct from
+   * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs
+   *   the detector saw across the scan (pre-cap on the href list).
+   *   Renamed from the generic `count` per AI-first doctrine "Sibling
+   *   fields naming the same concept must use one shape" so the three
+   *   sibling counts in this payload (`unresolvedHrefCount`,
+   *   `htmlFiles.length`, `topUnresolvedHrefs.length`) cannot collide on
+   *   the same name when they measure different slices. Distinct from
    *   `topUnresolvedHrefs.length` because one href can repeat across
-   *   pages and one page can carry multiple links.
+   *   pages, and from `htmlFiles.length` because one page can carry
+   *   multiple links.
    * - `htmlFiles` — sorted-ascending list of HTML files that declared
-   *   at least one unresolved `<link rel="stylesheet" href="…">`.
+   *   at least one unresolved `<link rel="stylesheet" href="…">`. The
+   *   file-count is derivable from `htmlFiles.length`; no parallel
+   *   scalar twin is shipped (same doctrine).
    * - `topUnresolvedHrefs` — sorted-ascending, de-duplicated href
    *   slice capped at the implementation's top-paths limit (see
    *   {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}).
@@ -2336,7 +2345,8 @@ export interface ScanWarningDetails {
    *   keeps the wire payload bounded on bulk-vendor corpora while
    *   preserving the dominant-href shape an agent reads to decide
    *   whether the unresolved set is one shared bundle or a
-   *   heterogeneous fan-out.
+   *   heterogeneous fan-out. The capped distinct-href count is
+   *   `topUnresolvedHrefs.length`.
    *
    * Per "deferring full resolution is acceptable, silent omission is
    * not" — the payload is additive routing telemetry. The contrast
@@ -2347,7 +2357,7 @@ export interface ScanWarningDetails {
    * scanner cannot consult).
    */
   readonly linked_stylesheet_not_resolved_for_contrast?: {
-    readonly count: number;
+    readonly unresolvedHrefCount: number;
     readonly htmlFiles: readonly string[];
     readonly topUnresolvedHrefs: readonly string[];
   };
@@ -3039,7 +3049,7 @@ function hasLinkedStylesheetsUnresolvedForContrast(
   detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
 ): boolean {
   if (detection === undefined) return false;
-  if (detection.count <= 0) return false;
+  if (detection.unresolvedHrefCount <= 0) return false;
   return detection.htmlFiles.length > 0;
 }
 
@@ -4356,10 +4366,10 @@ function summarizeLinkedStylesheetsUnresolvedForContrast(
   detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
 ): NonNullable<ScanWarningDetails["linked_stylesheet_not_resolved_for_contrast"]> | undefined {
   if (detection === undefined) return undefined;
-  if (detection.count <= 0) return undefined;
+  if (detection.unresolvedHrefCount <= 0) return undefined;
   if (detection.htmlFiles.length === 0) return undefined;
   return {
-    count: detection.count,
+    unresolvedHrefCount: detection.unresolvedHrefCount,
     htmlFiles: detection.htmlFiles,
     topUnresolvedHrefs: detection.topUnresolvedHrefs,
   };

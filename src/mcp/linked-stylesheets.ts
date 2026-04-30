@@ -38,22 +38,30 @@ import type { HtmlDocument } from "../types/ast.ts";
  *
  * - `htmlFiles` — sorted list of HTML files that declared at least one
  *   `<link rel="stylesheet" href="…">` whose target the contrast rule
- *   did not resolve.
+ *   did not resolve. Per AI-first doctrine "Sibling fields naming the
+ *   same concept must use one shape," the file-count is derivable from
+ *   `htmlFiles.length` rather than shipped as a parallel scalar twin.
  * - `topUnresolvedHrefs` — sorted, de-duplicated list of distinct href
  *   values across those files (capped at
  *   {@link LINKED_STYLESHEET_TOP_HREFS_CAP} entries) so an agent reading
  *   the warning has concrete identifiers to scope a follow-up against
- *   without descending into the per-file AST.
- * - `count` — total number of `(file, href)` pairs the detector saw,
- *   pre-cap. Distinct from `topUnresolvedHrefs.length` (which is the
- *   capped distinct-href count) because one href can appear across
- *   multiple HTML pages and one HTML file can carry many links.
+ *   without descending into the per-file AST. The capped distinct-href
+ *   count is `topUnresolvedHrefs.length` (post-cap) — distinct from
+ *   `unresolvedHrefCount` below.
+ * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs the
+ *   detector saw, pre-cap. Names the slice precisely so the three sibling
+ *   counts in the payload (`unresolvedHrefCount`, `htmlFiles.length`,
+ *   `topUnresolvedHrefs.length`) cannot collide on the generic name
+ *   `count`. One href can repeat across multiple pages and one page can
+ *   carry multiple links, so this number is generally different from
+ *   both the file count and the capped distinct-href count.
  *
- * Empty arrays + zero count when no link-stylesheet references were
- * present — callers conditional-spread on `count > 0`.
+ * Empty arrays + zero `unresolvedHrefCount` when no link-stylesheet
+ * references were present — callers conditional-spread on
+ * `unresolvedHrefCount > 0`.
  */
 export interface LinkedStylesheetsUnresolvedForContrast {
-  readonly count: number;
+  readonly unresolvedHrefCount: number;
   readonly htmlFiles: readonly string[];
   readonly topUnresolvedHrefs: readonly string[];
 }
@@ -107,7 +115,7 @@ export function detectLinkedStylesheetsNotResolvedForContrast(
   const sortedFiles = [...htmlFiles].sort();
   const sortedHrefs = [...allHrefs].sort();
   return {
-    count: pairCount,
+    unresolvedHrefCount: pairCount,
     htmlFiles: sortedFiles,
     topUnresolvedHrefs: sortedHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
   };
