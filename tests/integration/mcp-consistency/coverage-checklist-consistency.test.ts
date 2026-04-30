@@ -135,7 +135,10 @@ interface NextStepStructured {
 
 interface CoverageBody {
   readonly standardId: string;
-  readonly criteriaManualReviewRequired: number;
+  // The legacy composite `criteriaManualReviewRequired` was deleted
+  // in favor of the same two-counter split scan_project and checklist
+  // already ship.
+  readonly actionableManualItems: number;
   readonly untargetedCriteria: number;
   // Canonical field name is `criterionId` — matches
   // `checklist.items[].criterionId` and the namespaced-id convention

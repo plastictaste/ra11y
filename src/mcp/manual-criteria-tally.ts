@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the manual-review tally that
  * `scan_project.plan.{actionableManualItems,untargetedCriteria}`,
- * `coverage[].{criteriaManualReviewRequired,untargetedCriteria}`, and
+ * `coverage[].{actionableManualItems,untargetedCriteria}`, and
  * `checklist.summary.{actionable,untargetedCriteria}` all report.
  *
  * Cross-surface drift on these counts is the canonical failure mode the

@@ -62,7 +62,7 @@ Agents keep suggesting a `runtime_plan` tool or a runtime-harness scaffolder. **
 
 ### Coverage reports raw counts, not composite percentages
 
-We briefly had `overallAutomatedCoverage: passing / total`. Agents read "54%" as failure when it actually measured "the rule library automates 54% of WCAG." That's a property of the tool, not a grade. Surface raw counts (`criteriaTotal`, `criteriaAutomatable`, `criteriaManualReviewRequired`) and let agents form their own ratios.
+We briefly had `overallAutomatedCoverage: passing / total`. Agents read "54%" as failure when it actually measured "the rule library automates 54% of WCAG." That's a property of the tool, not a grade. Surface raw counts (`criteriaTotalForProfile`, `criteriaAutomatable`, `actionableManualItems`, `untargetedCriteria`) and let agents form their own ratios.
 
 ### `info` severity is the default, by design
 

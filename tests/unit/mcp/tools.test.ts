@@ -2733,7 +2733,8 @@ describe("MCP tool: coverage", () => {
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       criteriaAutomatable: number;
-      criteriaManualReviewRequired: number;
+      actionableManualItems: number;
+      untargetedCriteria: number;
       summary: string;
     };
     expect(data.standardId).toBe("wcag22");
@@ -2745,8 +2746,21 @@ describe("MCP tool: coverage", () => {
     // A and AA criteria).
     const levelSum = Object.values(data.criteriaByLevel).reduce((a, b) => a + b, 0);
     expect(levelSum).toBe(data.criteriaTotalForProfile);
-    expect(data.criteriaManualReviewRequired).toBeGreaterThan(0);
-    expect(data.summary).toContain("manual");
+    // Two top-level counters mirror `scan_project.plan` and
+    // `checklist.summary` — never summed into a composite headline per
+    // AI-first doctrine "Composite headline counts are dishonest." The
+    // legacy `criteriaManualReviewRequired` composite was deleted;
+    // agents that want the legacy total sum these two themselves.
+    expect(typeof data.actionableManualItems).toBe("number");
+    expect(typeof data.untargetedCriteria).toBe("number");
+    expect(data.actionableManualItems + data.untargetedCriteria).toBeGreaterThan(0);
+    expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
+    expect(data.summary).toContain("Manual review");
+    // The summary string surfaces the two counts as separate clauses,
+    // never composed — pin both numbers appear so a future drift back
+    // to a composite phrase fails here.
+    expect(data.summary).toContain("actionable items");
+    expect(data.summary).toContain("untargeted criteria");
     // Must NOT expose overallAutomatedCoverage — that ratio reads as failure
     // ("54%") when it actually measures a property of the rule library.
     expect((data as Record<string, unknown>).overallAutomatedCoverage).toBeUndefined();

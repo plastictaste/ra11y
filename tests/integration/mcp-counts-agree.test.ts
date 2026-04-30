@@ -83,7 +83,14 @@ interface ScanBody {
   };
 }
 interface CoverageBody {
-  readonly criteriaManualReviewRequired: number;
+  // The legacy composite `criteriaManualReviewRequired` was deleted
+  // (mirroring the precedent on `plan.totalFindings`). Coverage now
+  // ships the same two top-level counters `scan_project.plan` and
+  // `checklist.summary` already split into — `actionableManualItems`
+  // (criteria with grounded candidates) and `untargetedCriteria`
+  // (applicable manual-only with no candidate). Callers that want the
+  // former composite total sum the two on read.
+  readonly actionableManualItems: number;
   readonly untargetedCriteria: number;
 }
 interface ChecklistBody {
@@ -102,6 +109,7 @@ async function gatherCounts(cwd: string): Promise<{
   coverage: number;
   checklist: number;
   scanActionable: number;
+  coverageActionable: number;
   checklistActionable: number;
   scanUntargeted: number;
   coverageUntargeted: number;
@@ -118,15 +126,16 @@ async function gatherCounts(cwd: string): Promise<{
   const checklistBody = body<ChecklistBody>(responses[3]);
   return {
     // Re-derive the cross-tool total from the split top-level fields
-    // on every surface. `manualReviewRequired` no longer ships on
-    // scan_project's plan or on checklist's summary — both composites
-    // re-created the dishonest-headline pattern this split exists to
-    // kill. The invariant is still "all surfaces agree on the total",
-    // just computed from the honest parts on both sides.
+    // on every surface. The composite `manualReviewRequired` was
+    // dropped from scan_project's plan, checklist's summary, AND
+    // coverage (Q13) — the dishonest-headline pattern is the same on
+    // every surface. The invariant is still "all surfaces agree on the
+    // total", just computed from the honest parts everywhere.
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
-    coverage: coverageBody.criteriaManualReviewRequired,
+    coverage: coverageBody.actionableManualItems + coverageBody.untargetedCriteria,
     checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
+    coverageActionable: coverageBody.actionableManualItems,
     checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteria,
     coverageUntargeted: coverageBody.untargetedCriteria,
@@ -176,14 +185,21 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria", async () => {
+  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.actionableManualItems", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
     // file:line candidates. Exposing the actionable count inline
     // saves the round trip.
+    //
+    // The same counter also rides on `coverage` as
+    // `actionableManualItems` — same name on every project-rooted
+    // surface so the agent can compare without a translation table.
+    // The legacy composite `criteriaManualReviewRequired` was deleted;
+    // only the structured per-lane siblings carry the count now.
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     expect(mediaFree.scanActionable).toBe(mediaFree.checklistActionable);
+    expect(mediaFree.scanActionable).toBe(mediaFree.coverageActionable);
     expect(mediaFree.scanActionable).toBeLessThanOrEqual(mediaFree.scan);
   });
 

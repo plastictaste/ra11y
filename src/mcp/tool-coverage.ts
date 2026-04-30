@@ -293,18 +293,28 @@ export const coverageTool: McpTool = {
         criteriaWithFindings: c.withFindings,
         criteriaUntestable: c.untestable,
         untestableCriteria: withTitles(c.untestableCriteria, session),
-        // `criteriaManualReviewRequired` equals `withCandidates.length
-        // + untargeted.length` — the count of "criteria still needing
-        // human attention on this scan." Pre-Q13 this was
-        // `applicable.length` (metadata-manual minus likely-irrelevant),
-        // which silently dropped every partial-criterion candidate on
-        // the shipped reviewCandidates from the per-standard headline.
-        // The cross-surface invariant
-        // `scan.plan.actionableManualItems + scan.plan.untargetedCriteria
-        // === coverage.criteriaManualReviewRequired` now holds because
-        // both sides sum the same two lanes (criteria-with-candidates +
-        // applicable-manual-without-candidates).
-        criteriaManualReviewRequired: withCandidates.length + untargeted.length,
+        // Split the manual-review pile across two top-level counters
+        // exactly as `scan_project.plan` and `checklist.summary` ship —
+        // `actionableManualItems` (criteria with shipped grounded
+        // candidates, file:line addressable) and `untargetedCriteria`
+        // (applicable manual-only criteria with no candidate, bare WCAG
+        // prompts). The legacy composite `criteriaManualReviewRequired`
+        // summed the two categorically different sub-buckets under one
+        // headline, repeating the dishonest-composite shape
+        // `plan.totalFindings` had been deleted for; agents budgeting
+        // against the composite mis-sized the work because grounded
+        // candidates and bare prompts are not interchangeable. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Composite
+        // headline counts are dishonest" the durable answer is deletion
+        // (not rename to `criteriaManualReviewRequiredComposite`) — the
+        // structured per-lane siblings already carry the honest signal,
+        // and callers that want the legacy total sum the two on read.
+        // Cross-surface count invariant: this `actionableManualItems`
+        // equals `scan_project.plan.actionableManualItems`,
+        // `checklist.summary.actionable.criteria`, and
+        // `manualWithCandidates.length` here — same name on every
+        // surface so the agent can compare without a translation table.
+        actionableManualItems: withCandidates.length,
         // Split the manual-review pile so agents can see at the coverage
         // level (without a second checklist call) how many manual
         // criteria have concrete candidates worth reviewing vs pure
@@ -344,15 +354,31 @@ export const coverageTool: McpTool = {
         // `automatedCriteriaPassRate` omission above so the summary
         // and the structured field agree; the `scanned_zero_files`
         // warning code still fires at the response level.
+        //
+        // Surface both manual-review counters as separate quantities
+        // — never summed into a single composite headline. Previously
+        // the prose read
+        // `${withCandidates.length + untargeted.length} of ${c.total}
+        // criteria in ${c.standardId} need manual review` and the
+        // composite repeated the dishonest shape the structured field
+        // (also dropped) carried. Agents read the prose first; an
+        // ambient composite there silently re-budgets the same way the
+        // `criteriaManualReviewRequired` field did. Surface the two
+        // numbers as discrete clauses ("`A` actionable items, `B`
+        // untargeted criteria") so the categorical difference between
+        // grounded-with-file:line and bare-criterion prompts is visible
+        // in the sentence itself.
         summary: passRateMeaningful
           ? `${c.clean}/${c.evaluated} evaluated automatable criteria passing (${c.automatedPassRate}%)` +
             `${c.untestable > 0 ? `; ${c.untestable} untestable (no applicable input in this scan)` : ""}. ` +
-            `${withCandidates.length + untargeted.length} of ${c.total} criteria in ${c.standardId} need manual review ` +
-            `(${withCandidates.length} with concrete candidates, ${untargeted.length} untargeted` +
-            `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}). ` +
+            `Manual review in ${c.standardId}: ${withCandidates.length} actionable items (criteria with grounded candidates), ` +
+            `${untargeted.length} untargeted criteria (no candidates the finders could ground), ` +
+            `out of ${c.total} criteria in scope` +
+            `${likelyIrrelevant.length > 0 ? `; ${likelyIrrelevant.length} media-only criteria are irrelevant to this scan` : ""}. ` +
             `Run the 'checklist' tool for evaluation prompts.`
           : `No files scanned — automated pass rate is not meaningful. ` +
-            `${untargeted.length} of ${c.total} criteria in ${c.standardId} would need manual review once sources are present. ` +
+            `Manual review in ${c.standardId}: 0 actionable items, ${untargeted.length} untargeted criteria, ` +
+            `out of ${c.total} criteria in scope (would apply once sources are present). ` +
             `See the \`scanned_zero_files\` warning for why the scan root matched no parseable files.`,
       };
     });
