@@ -827,11 +827,18 @@ export const BASENAME_GROUP_THRESHOLD = 3;
  * is the filename portion; `count` is the number of same-basename
  * entries the group subsumes; `pathHint` is the longest directory
  * prefix shared by every member, so the agent sees "these all sit
- * under `vendor/bootstrap/5.x/`" without scanning the flat list;
- * `classifications` is the deduped set of classifier verdicts fired
- * across the group (most groups carry a single classification — a
- * vendor bundle shipped via `likely-bundler-output-dir` — but e.g. a
- * `bootstrap.css` and `bootstrap.min.css` mix would carry both
+ * under `vendor/bootstrap/5.x/`" without scanning the flat list —
+ * present-when-meaningful: omitted entirely when group members share
+ * no common directory prefix (the empty-string sentinel was dishonest
+ * per the AI-first "ambiguous field shapes" rule, since `""` was
+ * indistinguishable from "field elided to save bytes"); the agent
+ * reads "field absent" as "no actionable directory prefix for this
+ * group" and falls back to the repo-wide `suggestedGlob` already
+ * computed; `classifications` is the deduped set of classifier
+ * verdicts fired across the group (most groups carry a single
+ * classification — a vendor bundle shipped via
+ * `likely-bundler-output-dir` — but e.g. a `bootstrap.css` and
+ * `bootstrap.min.css` mix would carry both
  * `likely-bundler-output-dir` and `definite-min-infix`);
  * `suggestedGlob` is inline-ready for `propose_config`'s
  * `exclude: [...]` entry — root-relative POSIX, covers every member
@@ -850,7 +857,7 @@ export const BASENAME_GROUP_THRESHOLD = 3;
 export interface BuildArtifactGroup {
   readonly basename: string;
   readonly count: number;
-  readonly pathHint: string;
+  readonly pathHint?: string;
   readonly classifications: readonly BuildArtifactClassification[];
   readonly suggestedGlob: string;
 }
@@ -1031,10 +1038,19 @@ function partitionBuckets(buckets: ReadonlyMap<string, readonly ScannedBuildArti
     if (members.length >= BASENAME_GROUP_THRESHOLD) {
       const pathHint = longestCommonDirPrefix(members.map((m) => m.path));
       const classifications = dedupeClassificationsSorted(members.map((m) => m.classification));
+      // pathHint is present-when-meaningful per AI-first "ambiguous
+      // field shapes" doctrine: when group members share no common
+      // directory prefix the helper returns "", which previously
+      // shipped on every entry as a meaningless empty string.
+      // Conditional-spread it away so the agent reading "field
+      // absent" knows there is no actionable directory prefix to
+      // paste, rather than re-disambiguating "did we elide this to
+      // save bytes?". The repo-wide `suggestedGlob` (`**/<basename>`)
+      // already covers the no-prefix case.
       grouped.push({
         basename,
         count: members.length,
-        pathHint,
+        ...(pathHint ? { pathHint } : {}),
         classifications,
         suggestedGlob: buildSuggestedGlob(pathHint, basename),
       });

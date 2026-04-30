@@ -1626,20 +1626,44 @@ describe("groupBuildArtifactsByBasename — grouped shape", () => {
     expect(out.grouped[0]?.suggestedGlob).toBe("vendor/**/x.css");
   });
 
-  it("emits empty `pathHint` + repo-wide suggestedGlob when group members share no directory", () => {
+  it("omits `pathHint` + emits repo-wide suggestedGlob when group members share no directory", () => {
     // The three members sit under different top-level dirs, so the
     // longest shared prefix is the empty string. The suggestedGlob
     // degrades to `**/<basename>` — still a legal exclude entry,
     // just repo-wide. The agent sees this and can tighten the glob
-    // manually if needed.
+    // manually if needed. Per AI-first "ambiguous field shapes"
+    // doctrine the `pathHint` field is omitted entirely rather
+    // than shipped as `""`, so the agent reads "no actionable
+    // directory prefix for this group" rather than disambiguating
+    // an empty-string sentinel.
     const entries = [
       mkEntry("/root/dist/a.css", "likely-bundler-output-dir"),
       mkEntry("/root/build/a.css", "likely-bundler-output-dir"),
       mkEntry("/root/public/a.css", "likely-bundler-output-dir"),
     ];
     const out = groupBuildArtifactsByBasename(entries, "/root");
-    expect(out.grouped[0]?.pathHint).toBe("");
-    expect(out.grouped[0]?.suggestedGlob).toBe("**/a.css");
+    const group = out.grouped[0];
+    expect(group).toBeDefined();
+    expect(group?.pathHint).toBeUndefined();
+    expect(group !== undefined && "pathHint" in group).toBe(false);
+    expect(group?.suggestedGlob).toBe("**/a.css");
+  });
+
+  it("retains `pathHint` when group members share a real common directory prefix", () => {
+    // Counter-test to the omission above: when members share a
+    // real common directory, `pathHint` is present so the agent
+    // can paste it into a tightened exclude glob. Pinning both
+    // the present and absent sides locks in the present-when-
+    // meaningful contract — drift on either side surfaces here.
+    const entries = [
+      mkEntry("/root/vendor/bootstrap/5.0/lib.css", "likely-bundler-output-dir"),
+      mkEntry("/root/vendor/bootstrap/5.1/lib.css", "likely-bundler-output-dir"),
+      mkEntry("/root/vendor/bootstrap/5.2/lib.css", "likely-bundler-output-dir"),
+    ];
+    const out = groupBuildArtifactsByBasename(entries, "/root");
+    const group = out.grouped[0];
+    expect(group?.pathHint).toBe("vendor/bootstrap/");
+    expect(group?.suggestedGlob).toBe("vendor/bootstrap/**/lib.css");
   });
 
   it("returns an empty envelope on zero input (honest shape on clean scans)", () => {
