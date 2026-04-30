@@ -39,6 +39,7 @@ import {
   type BuildArtifactSignal,
   classifyBuildArtifactDetailed,
   detectVendorLibraries,
+  isDefiniteBuildArtifactClassification,
 } from "./build-artifacts.ts";
 
 /**
@@ -86,16 +87,61 @@ export type VendorContextSignal =
  * primary fix lane when this context is present. Future redirects
  * (e.g. `"upstream-bug-report"` for known-buggy library versions)
  * would extend the enum.
+ *
+ * `classificationSignals` lists every deterministic signal that fired
+ * for the (filePath, source) pair in the order the classifier
+ * evaluated them. Today's classifier short-circuits at the first
+ * match so the array carries one entry — the same evidence as
+ * `signal.evidence` for the `build-artifact` variant, or a synthetic
+ * `vendor-banner-version` / `vendor-copyright-banner` entry for the
+ * `vendor-library` variant. The plural shape is intentional: the
+ * field reads honestly when a future multi-signal corroborator emits
+ * (`min-infix` + `sibling-map-file`, `build-dir-segment` + `vendor-
+ * banner-version`, etc.). Per `docs/kb/architecture/ai-first-
+ * consumer.md` "Heuristic-mislabeled meta sub-fields are dishonest"
+ * the agent reads the array to sanity-check the redirect verdict
+ * without re-running the classifier — a single-signal redirect on a
+ * file the agent suspects is hand-authored is one Read away from a
+ * dismissal, and the array names exactly which predicate to
+ * scrutinize.
  */
 export interface VendorContext {
   readonly signal: VendorContextSignal;
   readonly redirectTo: "consumer-override";
+  readonly classificationSignals: readonly BuildArtifactSignal[];
 }
 
 /**
  * Returns a {@link VendorContext} when the (filePath, source) pair
- * matches either the build-artifact classifier or the vendor-library
- * banner table; `null` otherwise.
+ * matches either the vendor-library banner table or a high-
+ * confidence build-artifact predicate; `null` otherwise.
+ *
+ * The "high-confidence" gate is load-bearing. The build-artifact
+ * classifier emits two grades:
+ *   - `definite-*` — predicates whose verdict is provable from the
+ *     file's path or its declared sourcemap pairing alone (`.min.`
+ *     infix, paired `.map` sibling, `//# sourceMappingURL=…min….map`
+ *     pointer, sibling `.min.<ext>` file in the scan set). These are
+ *     the publishing conventions of distributed bundles — a hand-
+ *     authored file does not carry them.
+ *   - `likely-*` — heuristics whose verdict reads as "minified-shape
+ *     evidence" but can mis-fire on hand-authored content (long
+ *     `calc()` expressions, MDX prop bundles, SCSS `@function`
+ *     bodies, hashed-segment basenames in tooling tests, files under
+ *     `dist/` directories an author named coincidentally).
+ *
+ * Only `definite-*` classifications + vendor-library banner matches
+ * earn the redirect. A `likely-*` classification returns `null` here
+ * — the agent still gets the rule's actual fix on the
+ * non-vendor lane, and `meta.scannedBuildArtifacts` separately
+ * surfaces the heuristic verdict so the agent can audit it without
+ * the redirect compounding the mis-classification. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest": the redirect is a deterministic-
+ * shape recommendation (override-the-selector-in-your-own-stylesheet
+ * + demote-the-rule-fix-to-alternatives) and must rest on
+ * deterministic-grade evidence; routing on a heuristic risks silently
+ * denying fix help on hand-authored source the predicate mis-labeled.
  *
  * Preference order when both fire: vendor-library wins. The library
  * name composes a more actionable override prose ("override the
@@ -120,6 +166,21 @@ export function detectVendorContext(filePath: string, source: string): VendorCon
   const vendorLibraries = detectVendorLibraries([{ filePath, source }]);
   const vendorLibrary = vendorLibraries[0];
   if (vendorLibrary !== undefined) {
+    // The vendor-library banner is its own deterministic predicate
+    // (curated regex table on the first non-blank line). The
+    // build-artifact classifier may also have fired on the same file
+    // (e.g. `bootstrap.min.css` matches both). Forward the
+    // build-artifact signal too when present so
+    // `classificationSignals` reflects the full evidence set the
+    // classifier saw — even though the `signal` field prefers the
+    // vendor-library variant for prose.
+    const concurrent = classifyBuildArtifactDetailed(filePath, source);
+    const bannerSignal: BuildArtifactSignal =
+      vendorLibrary.version === undefined
+        ? { kind: "vendor-copyright-banner", value: vendorLibrary.library }
+        : { kind: "vendor-banner-version", value: `${vendorLibrary.library} v${vendorLibrary.version}` };
+    const classificationSignals: readonly BuildArtifactSignal[] =
+      concurrent === null ? [bannerSignal] : [bannerSignal, concurrent.signal];
     return {
       signal: {
         kind: "vendor-library",
@@ -127,20 +188,28 @@ export function detectVendorContext(filePath: string, source: string): VendorCon
         ...(vendorLibrary.version === undefined ? {} : { version: vendorLibrary.version }),
       },
       redirectTo: "consumer-override",
+      classificationSignals,
     };
   }
   const buildArtifact = classifyBuildArtifactDetailed(filePath, source);
-  if (buildArtifact !== null) {
-    return {
-      signal: {
-        kind: "build-artifact",
-        classification: buildArtifact.classification,
-        evidence: buildArtifact.signal,
-      },
-      redirectTo: "consumer-override",
-    };
+  if (buildArtifact === null) return null;
+  // High-confidence gate: only `definite-*` classifications earn the
+  // redirect. `likely-*` heuristics (long-line + corroborator,
+  // hashed-filename, bundler-output dir, compiled-tailwind, vendor-
+  // distribution-by-banner-shape) return `null` here so the agent
+  // still gets the rule's actual fix on the non-vendor lane.
+  if (!isDefiniteBuildArtifactClassification(buildArtifact.classification)) {
+    return null;
   }
-  return null;
+  return {
+    signal: {
+      kind: "build-artifact",
+      classification: buildArtifact.classification,
+      evidence: buildArtifact.signal,
+    },
+    redirectTo: "consumer-override",
+    classificationSignals: [buildArtifact.signal],
+  };
 }
 
 /**

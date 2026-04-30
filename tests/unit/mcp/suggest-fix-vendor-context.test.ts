@@ -67,10 +67,39 @@ describe("detectVendorContext — vendor-library banner match", () => {
     if (ctx === null) return;
     expect(ctx.signal.kind).toBe("vendor-library");
   });
+
+  it("classificationSignals carries the banner + the concurrent build-artifact signal", () => {
+    // bootstrap.min.css matches both the vendor-library banner and
+    // the `definite-min-infix` build-artifact predicate. The
+    // `signal` field prefers vendor-library for prose, but
+    // `classificationSignals` enumerates both so the agent can
+    // sanity-check the redirect rests on multiple deterministic
+    // tokens co-occurring (banner + min-infix).
+    const source = "/*! Bootstrap v5.3.0 (https://getbootstrap.com/) ... */\n.foo{color:red}\n";
+    const ctx = detectVendorContext("vendor/bootstrap.min.css", source);
+    if (ctx === null) throw new Error("expected vendor context");
+    expect(ctx.classificationSignals).toHaveLength(2);
+    expect(ctx.classificationSignals[0]?.kind).toBe("vendor-banner-version");
+    expect(ctx.classificationSignals[1]?.kind).toBe("min-infix");
+  });
+
+  it("classificationSignals enumerates every deterministic signal that fired (banner + copyright-banner)", () => {
+    // The Bootstrap canonical opener (`/*! Bootstrap v5.3.0 ...`)
+    // matches BOTH the curated banner table (`vendor-banner-version`)
+    // AND the generic `/*!` + license-token predicate
+    // (`vendor-copyright-banner`). Both are deterministic; the array
+    // surfaces both so the agent can sanity-check the redirect rests
+    // on multiple co-occurring signals.
+    const source = "/*! Bootstrap v5.3.0 (https://getbootstrap.com/) ... */\n.foo {}\n";
+    const ctx = detectVendorContext("vendor/bootstrap.css", source);
+    if (ctx === null) throw new Error("expected vendor context");
+    expect(ctx.classificationSignals.length).toBeGreaterThanOrEqual(1);
+    expect(ctx.classificationSignals[0]?.kind).toBe("vendor-banner-version");
+  });
 });
 
-describe("detectVendorContext — build-artifact match", () => {
-  it("detects .min. infix as definite-min-infix", () => {
+describe("detectVendorContext — build-artifact match (high-confidence gate)", () => {
+  it("detects .min. infix as definite-min-infix and redirects", () => {
     const ctx = detectVendorContext("vendor/some.min.css", ".a{}");
     expect(ctx).not.toBeNull();
     if (ctx === null || ctx.signal.kind !== "build-artifact") {
@@ -81,27 +110,53 @@ describe("detectVendorContext — build-artifact match", () => {
     expect(ctx.redirectTo).toBe("consumer-override");
   });
 
-  it("detects bundler-output dir (dist/) as likely-bundler-output-dir", () => {
+  it("returns null for likely-bundler-output-dir (dist/) — heuristic, not deterministic", () => {
+    // `dist/` is the heuristic-grade `likely-bundler-output-dir`
+    // predicate; an author can name a top-level directory `dist/` for
+    // unrelated reasons. The redirect must rest on deterministic
+    // evidence, so this returns null and the agent gets the rule's
+    // actual fix on the non-vendor lane. The
+    // `meta.scannedBuildArtifacts` surface still labels the file
+    // separately so the agent can audit.
     const ctx = detectVendorContext("dist/assets/app.css", ".a{}");
-    expect(ctx).not.toBeNull();
-    if (ctx === null || ctx.signal.kind !== "build-artifact") {
-      throw new Error("expected build-artifact signal");
-    }
-    expect(ctx.signal.classification).toBe("likely-bundler-output-dir");
-    expect(ctx.signal.evidence.kind).toBe("build-dir-segment");
+    expect(ctx).toBeNull();
   });
 
-  it("forwards the build-artifact evidence verbatim from classifyBuildArtifactDetailed", () => {
-    // Hashed-filename probe — the evidence carries the hex segment so
-    // the agent can grep for it.
+  it("returns null for likely-hashed-bundle (hex segment) — heuristic, not deterministic", () => {
+    // The hashed-filename predicate fires on `app.a1b2c3d4.js` shapes.
+    // It is heuristic-grade because tooling tests and identifier-named
+    // files can match the same regex; the redirect must not compound a
+    // mis-classification.
     const ctx = detectVendorContext("assets/app.a1b2c3d4.js", "// bundle");
-    expect(ctx).not.toBeNull();
-    if (ctx === null || ctx.signal.kind !== "build-artifact") {
-      throw new Error("expected build-artifact signal");
-    }
-    expect(ctx.signal.evidence.kind).toBe("hex-segment-in-basename");
-    if (ctx.signal.evidence.kind !== "hex-segment-in-basename") return;
-    expect(ctx.signal.evidence.value).toBe("a1b2c3d4");
+    expect(ctx).toBeNull();
+  });
+
+  it("returns null for likely-minified-by-line-stats — heuristic, not deterministic", () => {
+    // Synthetic minified-shape source: ≥3 long lines (≥ 500 chars each)
+    // so the count-floor + ratio corroborator both fire alongside the
+    // single-long-line probe — produces the
+    // `likely-minified-by-line-stats` classification. This is the
+    // canonical Q9 false-positive shape (long-line SCSS function
+    // bodies, MDX prop bundles, `calc()` token modules); the redirect
+    // must NOT take when only this heuristic fires.
+    const longLine = `.foo { content: "${"x".repeat(600)}"; }`;
+    const source = [
+      ".a { color: red; }",
+      longLine,
+      ".b { color: blue; }",
+      longLine,
+      ".c { color: green; }",
+      longLine,
+    ].join("\n");
+    const ctx = detectVendorContext("src/styles/foo.css", source);
+    expect(ctx).toBeNull();
+  });
+
+  it("classificationSignals carries the build-artifact evidence on the high-confidence path", () => {
+    const ctx = detectVendorContext("vendor/some.min.css", ".a{}");
+    if (ctx === null) throw new Error("expected vendor context");
+    expect(ctx.classificationSignals).toHaveLength(1);
+    expect(ctx.classificationSignals[0]?.kind).toBe("min-infix");
   });
 });
 
@@ -154,10 +209,14 @@ describe("buildOverridePrimaryExplanation", () => {
   });
 
   it("uses the artifact basename + generic ordering hint on a build-artifact (non-library) signal", () => {
-    const ctx = detectVendorContext("dist/assets/app.css", ".a{}");
+    // `vendor/app.min.css` is `definite-min-infix` — passes the high-
+    // confidence gate. (`dist/assets/app.css` is now `null` because
+    // `likely-bundler-output-dir` is heuristic-grade and no longer
+    // earns the redirect.)
+    const ctx = detectVendorContext("vendor/app.min.css", ".a{}");
     if (ctx === null) throw new Error("expected vendor context");
-    const prose = buildOverridePrimaryExplanation("dist/assets/app.css", ctx, ".foo");
-    expect(prose).toContain("app.css");
+    const prose = buildOverridePrimaryExplanation("vendor/app.min.css", ctx, ".foo");
+    expect(prose).toContain("app.min.css");
     expect(prose).toContain("build artifact");
     expect(prose).toContain("AFTER");
     // No library name to thread when the signal is build-artifact-only.

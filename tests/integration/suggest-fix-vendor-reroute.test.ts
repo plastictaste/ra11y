@@ -168,11 +168,10 @@ describe("suggest_fix on a vendor-classified file routes to override-redirect gu
   it("build-artifact path (.min. infix, no banner): same restructure fires via the second classification pathway", () => {
     // No vendor-library banner here — the predicate falls through to
     // `classifyBuildArtifactDetailed` and matches on the `.min.` infix.
-    // The override-redirect is classification-agnostic by design: the
-    // payload builder restructures any match into the override lane
-    // whenever vendorContext is set, regardless of which detector
-    // produced it. This sub-case pins that contract on the second
-    // real classification pathway.
+    // The override-redirect rests on the `definite-min-infix`
+    // classification (deterministic — `.min.` is a publishing
+    // convention, hand-authored files do not carry it). This sub-case
+    // pins the second real high-confidence pathway.
     const payload = vendorReroutePayload({
       filePath: "vendor/site.min.css",
       source: ".text-muted{color:#adb5bd;background-color:#fff}\n",
@@ -185,5 +184,57 @@ describe("suggest_fix on a vendor-classified file routes to override-redirect gu
     expect(vendorContext.signal.kind).toBe("build-artifact");
     const alternatives = payload["alternatives"] as ReadonlyArray<{ approach: string }>;
     expect(alternatives[0]?.approach).toBe(IN_VENDOR_EDIT_ALTERNATIVE_APPROACH);
+  });
+});
+
+describe("suggest_fix vendor-redirect is gated on high-confidence classifications", () => {
+  // The redirect compounds with mis-classification when a hand-authored
+  // file fires the heuristic-grade `likely-minified-by-line-stats`
+  // predicate (long-line SCSS function bodies, MDX prop bundles, design-
+  // system `calc()` token modules). Per `docs/kb/architecture/ai-first-
+  // consumer.md` "Heuristic-mislabeled meta sub-fields are dishonest,"
+  // the redirect must rest on deterministic-grade evidence — `.min.`
+  // infix, paired `.map` sibling, sourcemap-pointer-min, sibling-min-
+  // file, or vendor-library banner. A `likely-*` classification alone
+  // returns `null` from `detectVendorContext`, so the agent gets the
+  // rule's actual fix on the non-vendor lane.
+
+  it("a hand-authored long-line CSS file does NOT trigger vendor-redirect", () => {
+    // Synthetic long-line file shaped like a design-system token module:
+    // ≥3 lines exceed the 500-char threshold so the count-floor + ratio
+    // corroborator both fire and the file would classify as
+    // `likely-minified-by-line-stats`. The `.min.` infix is intentionally
+    // absent; the path is a hand-authored `src/styles/` location. The
+    // redirect must NOT take, and `detectVendorContext` must return null.
+    const longRule = `.foo { content: "${"x".repeat(600)}"; }`;
+    const handAuthoredSource = [
+      ".a { color: red; }",
+      longRule,
+      ".b { color: blue; }",
+      longRule,
+      ".c { color: green; }",
+      longRule,
+    ].join("\n");
+    const ctx = detectVendorContext("src/styles/tokens.css", handAuthoredSource);
+    expect(ctx).toBeNull();
+  });
+
+  it("the same long-line file gains the redirect when paired with a `.min.` sibling (deterministic)", () => {
+    // The `.min.` infix is a publishing convention — hand-authored files
+    // don't carry it. Pairing the long-line shape with a `.min.` infix
+    // earns `definite-min-infix` and the redirect fires honestly. This
+    // pins the high-confidence half of the gate alongside the low-
+    // confidence half above.
+    const ctx = detectVendorContext(
+      "src/styles/tokens.min.css",
+      ".a{color:red}.b{color:blue}\n",
+    );
+    expect(ctx).not.toBeNull();
+    if (ctx === null) return;
+    expect(ctx.signal.kind).toBe("build-artifact");
+    if (ctx.signal.kind !== "build-artifact") return;
+    expect(ctx.signal.classification).toBe("definite-min-infix");
+    expect(ctx.classificationSignals).toHaveLength(1);
+    expect(ctx.classificationSignals[0]?.kind).toBe("min-infix");
   });
 });

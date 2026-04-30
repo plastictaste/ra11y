@@ -263,7 +263,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### suggest_fix shape + correctness bugs
 
-- [ ] **Q10-SUGGEST-FIX-VENDOR-REDIRECT-COMPOUNDS-MISLABEL** When `suggest_fix` is called on a finding whose file was classified as a build artifact, it returns `kind: "none"` with `vendorContext.redirectTo: "consumer-override"` instead of a fix. Combined with a heuristic mis-classification (Q9-MINIFIED-LABEL-MISLABELS-LONG-LINE-SCSS recurrence), the agent is silently denied fix help on hand-authored source. Two failure modes compound. Fix: gate vendor-redirect on a high-confidence build-artifact classifier (token co-occurrence, not single-marker) AND surface the underlying classification signals in `vendorContext` so the agent can decide whether to trust the redirect. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
 - [ ] **Q10-PARSE-ERROR-REASON-DIRECTION-INVERTED** A `parseErrorFiles[].reason` describing layout-tail elision narrates the wrong direction: claims `</html>` is the elided closer when the file's actual content has `</html>` on its last line and the OPENING `<html>` is what's elided (supplied by an included partial). Fix: parse-error reason text must reflect which tag is actually elided; integration test on a synthetic include-pattern fixture asserting reason matches the elided side. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest" (reason-text honesty extension).
 
 ### Reason-severity mismatches
