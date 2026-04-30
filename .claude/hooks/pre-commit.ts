@@ -26,6 +26,7 @@ import { audit } from "./lib/audit.ts";
 import { readHookInput } from "./lib/input.ts";
 import { block, ok } from "./lib/output.ts";
 import type { PreToolUseInput } from "./lib/types.ts";
+import { getMarkerPath, getStagedTreeSha, writeMarker } from "./lib/verify-marker.ts";
 
 const input = await readHookInput<PreToolUseInput>();
 const projectDir = process.env.CLAUDE_PROJECT_DIR ?? input.cwd;
@@ -131,6 +132,16 @@ if (failures.length > 0) {
   block(
     `pre-commit verification failed — fix these and retry (do NOT --no-verify):\n\n${failures.join("\n\n")}`,
   );
+}
+
+// Verify passed on the staged tree. Write the staged tree-sha to the
+// marker so the immediate Stop after this commit lands fast-skips —
+// HEAD^{tree} will equal this sha once `git commit` runs. Best-effort:
+// any failure here just means Stop reverifies, which is correct.
+const markerPath = getMarkerPath(projectDir);
+const stagedTree = getStagedTreeSha(projectDir);
+if (markerPath && stagedTree) {
+  writeMarker(markerPath, stagedTree);
 }
 
 audit({ event: "PreToolUse:git-commit", action: "allow" });

@@ -3,12 +3,13 @@
 // control to the user. If typecheck or tests are broken, we block and
 // Claude has to fix before the turn ends.
 //
-// Skip-fast path: when the working tree is clean AND HEAD matches the
-// marker written after the last successful Stop run, the previous verify
-// result still holds and we skip. The marker is per-worktree (lives under
-// `git rev-parse --git-dir`) so parallel agent worktrees stay isolated;
-// see lib/verify-marker.ts for the full rationale and the cherry-pick /
-// rebase / manual-commit cases the marker covers.
+// Skip-fast path: when the working tree is clean AND HEAD's tree-sha
+// matches the marker written after the last successful Stop run OR by
+// pre-commit after a successful verify on the staged tree, the previous
+// verify result still holds and we skip. The marker is per-worktree
+// (lives under `git rev-parse --git-dir`) so parallel agent worktrees
+// stay isolated; see lib/verify-marker.ts for the full rationale and
+// the cherry-pick / rebase / amend cases the marker covers.
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -32,7 +33,7 @@ if (!(hasSrc && hasNodeModules)) {
 
 const skip = decideSkip(projectDir);
 if (skip.skip) {
-  audit({ event: "Stop", action: "skip:already-verified", detail: { head: skip.head } });
+  audit({ event: "Stop", action: "skip:already-verified", detail: { tree: skip.tree } });
   ok();
 }
 
@@ -45,7 +46,15 @@ const SPAWN_OPTS = {
   maxBuffer: 64 * 1024 * 1024,
 };
 
-const tsc = spawnSync("bunx tsc --noEmit", SPAWN_OPTS);
+// Incremental tsc with a cached buildinfo file (same path scripts/verify.ts
+// uses for --precommit). Cold cost ~3s; warm cost ~300ms. Skip is the
+// common case anyway; this only matters when the marker is missing or
+// the tree changed without going through pre-commit.
+const TSBUILDINFO = join(projectDir, "node_modules/.cache/ra11y/tsbuildinfo");
+const tsc = spawnSync(
+  `bunx tsc --noEmit --incremental --tsBuildInfoFile ${TSBUILDINFO}`,
+  SPAWN_OPTS,
+);
 if (tsc.status !== 0) {
   const out = `${(tsc.stdout ?? "").trim()}\n${(tsc.stderr ?? "").trim()}`.trim();
   failures.push(`tsc --noEmit failed:\n${out}`);
@@ -73,12 +82,12 @@ if (failures.length > 0) {
   );
 }
 
-// Verify passed — record HEAD as last-verified so subsequent Stop runs
-// on an unchanged tree can fast-skip. Only update on success: a failed
-// verify must re-run on the next Stop event even if the tree hasn't
-// changed.
-if (skip.markerPath && skip.head) {
-  writeMarker(skip.markerPath, skip.head);
+// Verify passed — record HEAD's tree-sha as last-verified so subsequent
+// Stop runs on an unchanged tree can fast-skip. Only update on success:
+// a failed verify must re-run on the next Stop event even if the tree
+// hasn't changed.
+if (skip.markerPath && skip.tree) {
+  writeMarker(skip.markerPath, skip.tree);
 }
 
 audit({ event: "Stop", action: "allow" });

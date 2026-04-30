@@ -10,7 +10,13 @@
 // would have caught sits on disk. The "dirty-tree-untracked" case below
 // pins the `git status --porcelain --untracked-files=all` choice.
 //
-// Worktree isolation is the second load-bearing case: the marker lives
+// The second load-bearing case is the pre-commit handoff: pre-commit.ts
+// writes the staged tree-sha (from `git write-tree`) to the marker after
+// a successful verify; once the commit lands, HEAD^{tree} equals that
+// sha and Stop can fast-skip. The "pre-commit handoff" case below pins
+// that the staged tree-sha equals the post-commit HEAD^{tree}.
+//
+// Worktree isolation is the third load-bearing case: the marker lives
 // under `git rev-parse --git-dir`, which returns a per-worktree path in
 // linked worktrees. That keeps parallel agent worktrees from clobbering
 // each other's "last verified" state.
@@ -22,8 +28,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   decideSkip,
-  getCurrentHead,
+  getCurrentTreeSha,
   getMarkerPath,
+  getStagedTreeSha,
   isTreeClean,
   MARKER_FILENAME,
   readMarker,
@@ -77,16 +84,48 @@ describe("getMarkerPath", () => {
   });
 });
 
-describe("getCurrentHead", () => {
-  test("returns the 40-char sha of HEAD", () => {
-    const head = getCurrentHead(repo);
-    expect(head).toMatch(/^[0-9a-f]{40}$/);
+describe("getCurrentTreeSha", () => {
+  test("returns the 40-char tree-sha of HEAD", () => {
+    const tree = getCurrentTreeSha(repo);
+    expect(tree).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("differs from the HEAD-sha (regression: tree-sha, not commit-sha)", () => {
+    const tree = getCurrentTreeSha(repo);
+    const head = git(repo, "rev-parse HEAD").trim();
+    expect(tree).not.toBe(head);
   });
 
   test("returns null when cwd is not a git repo", () => {
     const notRepo = mkdtempSync(join(tmpdir(), "ra11y-not-repo-"));
     cleanups.push(notRepo);
-    expect(getCurrentHead(notRepo)).toBeNull();
+    expect(getCurrentTreeSha(notRepo)).toBeNull();
+  });
+});
+
+describe("getStagedTreeSha", () => {
+  test("returns a 40-char tree-sha for the index", () => {
+    const tree = getStagedTreeSha(repo);
+    expect(tree).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("equals HEAD's tree when nothing is staged or modified", () => {
+    expect(getStagedTreeSha(repo)).toBe(getCurrentTreeSha(repo));
+  });
+
+  test("equals post-commit HEAD^{tree} (pre-commit handoff invariant)", () => {
+    writeFileSync(join(repo, "file.txt"), "hello\n");
+    git(repo, "add file.txt");
+    const stagedBefore = getStagedTreeSha(repo);
+    git(repo, 'commit -q -m "add file"');
+    const treeAfter = getCurrentTreeSha(repo);
+    expect(stagedBefore).toBe(treeAfter);
+  });
+
+  test("returns null when cwd is not a git repo", () => {
+    const notRepo = mkdtempSync(join(tmpdir(), "ra11y-not-repo-"));
+    cleanups.push(notRepo);
+    expect(getStagedTreeSha(notRepo)).toBeNull();
   });
 });
 
@@ -143,41 +182,73 @@ describe("decideSkip", () => {
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
     expect(decision.reason).toBe("no-marker");
-    expect(decision.head).toMatch(/^[0-9a-f]{40}$/);
+    expect(decision.tree).toMatch(/^[0-9a-f]{40}$/);
     expect(decision.markerPath).toBeTruthy();
   });
 
-  test("clean+head-match: marker matches HEAD on a clean tree → skip", () => {
-    const head = getCurrentHead(repo);
+  test("clean+tree-match: marker matches HEAD's tree on a clean tree → skip", () => {
+    const tree = getCurrentTreeSha(repo);
     const path = getMarkerPath(repo);
-    expect(head && path).toBeTruthy();
-    if (!(head && path)) return;
-    writeMarker(path, head);
+    expect(tree && path).toBeTruthy();
+    if (!(tree && path)) return;
+    writeMarker(path, tree);
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(true);
-    expect(decision.reason).toBe("clean+head-match");
+    expect(decision.reason).toBe("clean+tree-match");
   });
 
-  test("head-mismatch: new commit since last verify → no skip", () => {
-    const oldHead = getCurrentHead(repo);
+  test("tree-mismatch: new commit since last verify → no skip", () => {
+    const oldTree = getCurrentTreeSha(repo);
     const path = getMarkerPath(repo);
-    expect(oldHead && path).toBeTruthy();
-    if (!(oldHead && path)) return;
-    writeMarker(path, oldHead);
+    expect(oldTree && path).toBeTruthy();
+    if (!(oldTree && path)) return;
+    writeMarker(path, oldTree);
     writeFileSync(join(repo, "second.txt"), "x\n");
     git(repo, "add second.txt");
     git(repo, 'commit -q -m "second"');
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
-    expect(decision.reason).toBe("head-mismatch");
+    expect(decision.reason).toBe("tree-mismatch");
+  });
+
+  test("amend with same content → tree unchanged → still skips", () => {
+    // Tree-sha (not HEAD-sha) means amending the commit message on an
+    // already-verified tree doesn't force a needless reverify.
+    const tree = getCurrentTreeSha(repo);
+    const path = getMarkerPath(repo);
+    expect(tree && path).toBeTruthy();
+    if (!(tree && path)) return;
+    writeMarker(path, tree);
+    git(repo, 'commit -q --amend -m "init reworded"');
+    const decision = decideSkip(repo);
+    expect(decision.skip).toBe(true);
+    expect(decision.reason).toBe("clean+tree-match");
+  });
+
+  test("pre-commit handoff: staged tree-sha written before commit fast-skips after commit", () => {
+    // Simulates pre-commit.ts writing the staged tree-sha after a
+    // successful verify, then the commit landing, then Stop firing.
+    const path = getMarkerPath(repo);
+    expect(path).toBeTruthy();
+    if (!path) return;
+    writeFileSync(join(repo, "feature.txt"), "x\n");
+    git(repo, "add feature.txt");
+    const stagedTree = getStagedTreeSha(repo);
+    expect(stagedTree).toBeTruthy();
+    if (!stagedTree) return;
+    writeMarker(path, stagedTree);
+    git(repo, 'commit -q -m "feat"');
+    const decision = decideSkip(repo);
+    expect(decision.skip).toBe(true);
+    expect(decision.reason).toBe("clean+tree-match");
   });
 
   test("dirty-tree (modified tracked) → no skip even when marker matches", () => {
-    const head = getCurrentHead(repo);
+    const tree = getCurrentTreeSha(repo);
     const path = getMarkerPath(repo);
-    expect(head && path).toBeTruthy();
-    if (!(head && path)) return;
-    writeMarker(path, head);
+    expect(tree && path).toBeTruthy();
+    if (!(tree && path)) return;
+    writeMarker(path, tree);
     writeFileSync(join(repo, "README.md"), "modified\n");
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
@@ -185,11 +256,11 @@ describe("decideSkip", () => {
   });
 
   test("dirty-tree (untracked file) → no skip even when marker matches (regression)", () => {
-    const head = getCurrentHead(repo);
+    const tree = getCurrentTreeSha(repo);
     const path = getMarkerPath(repo);
-    expect(head && path).toBeTruthy();
-    if (!(head && path)) return;
-    writeMarker(path, head);
+    expect(tree && path).toBeTruthy();
+    if (!(tree && path)) return;
+    writeMarker(path, tree);
     writeFileSync(join(repo, "new-fixture.ts"), "export const x = 1;\n");
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
@@ -231,22 +302,22 @@ describe("worktree isolation", () => {
     cleanups.push(worktreePath);
     git(repo, `worktree add -q -b feature-decide "${worktreePath}"`);
 
-    const wtHead = getCurrentHead(worktreePath);
+    const wtTree = getCurrentTreeSha(worktreePath);
     const wtMarker = getMarkerPath(worktreePath);
     const mainMarker = getMarkerPath(repo);
-    expect(wtHead && wtMarker && mainMarker).toBeTruthy();
-    if (!(wtHead && wtMarker && mainMarker)) return;
+    expect(wtTree && wtMarker && mainMarker).toBeTruthy();
+    if (!(wtTree && wtMarker && mainMarker)) return;
 
     // Marker only on main checkout; worktree should still decide "no skip".
-    writeMarker(mainMarker, wtHead);
+    writeMarker(mainMarker, wtTree);
     const wtDecision = decideSkip(worktreePath);
     expect(wtDecision.skip).toBe(false);
     expect(wtDecision.reason).toBe("no-marker");
 
     // Now write the worktree's own marker → it should skip.
-    writeMarker(wtMarker, wtHead);
+    writeMarker(wtMarker, wtTree);
     const wtDecisionAfter = decideSkip(worktreePath);
     expect(wtDecisionAfter.skip).toBe(true);
-    expect(wtDecisionAfter.reason).toBe("clean+head-match");
+    expect(wtDecisionAfter.reason).toBe("clean+tree-match");
   });
 });
