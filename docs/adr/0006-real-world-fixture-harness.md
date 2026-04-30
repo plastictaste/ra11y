@@ -8,7 +8,7 @@ date: 2026-04-16
 
 ## Status
 
-Accepted. Unblocks Track F (v0.2.0). Implementation begins with a harness prototype against `tests/fixtures/real-world/tsx-generics/`; fixture backfill (9 sanitized cases from Apr 2026 leela-feedback rounds) fans out behind the prototype.
+Accepted. Unblocks Track F (v0.2.0). Implementation begins with a harness prototype against `tests/fixtures/real-world/tsx-generics/`; fixture backfill (9 sanitized cases from Apr 2026 multi-corpus field-test rounds) fans out behind the prototype.
 
 ## Context
 
@@ -102,7 +102,7 @@ import type { FixtureAssertions } from "@/tests/fixtures/real-world/runner";
 export const assertions: FixtureAssertions = {
   description:
     "TS generics (Pick<T,K>, ForwardRefRenderFunction<...>) parse without emitting JSX parse errors",
-  origin: { commit: "2968d87", feedbackRound: "leela-round-1" },
+  origin: { commit: "2968d87", notes: "Sanitized from a multi-corpus field-test round." },
   toolInput: { autoDetectWrappers: false, verboseMeta: false },
   expectations: [
     { kind: "zero-parse-errors" },

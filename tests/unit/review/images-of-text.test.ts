@@ -343,8 +343,8 @@ describe("review/images-of-text", () => {
     // wrapping shape, enumerated-token alt, >= 4 consecutive members
     // collapse to ONE consolidated candidate carrying
     // siblingOccurrences. The fixture under
-    // tests/fixtures/real-world/jekyll-readme-sponsor-logos/ guards
-    // the same invariant on the canonical jekyll README repro; these
+    // tests/fixtures/real-world/readme-sponsor-logos-pattern/ guards
+    // the same invariant on the canonical README repro; these
     // unit tests cover the boundary conditions in isolation.
 
     it("aggregates 4+ adjacent <a><img/></a> siblings with enumerated-token alt (HTML)", () => {
@@ -759,8 +759,8 @@ describe("review/images-of-text", () => {
     // After the alt-repeats-prose predicate moved to redundant-alt-text
     // under 1.1.1, the keyword-hint signal (logo/banner/heading/title/
     // header on class or src) is the sole 1.4.5 trigger. Aggregation
-    // still fires on keyword-bearing siblings (the canonical jekyll
-    // sponsor pattern stays covered because every `<img>` carries
+    // still fires on keyword-bearing siblings (the canonical
+    // sponsor-logo pattern stays covered because every `<img>` carries
     // `class="sponsor-logo"`).
 
     it("still aggregates keyword-bearing siblings in markdown files", () => {

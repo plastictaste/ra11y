@@ -155,7 +155,7 @@ describe("rule semantics/landmark-main", () => {
   // The branches were added to recover under-detection on full-page vanilla
   // HTML files that lack header/nav/footer (counter pages, FAQ pages,
   // multi-step widgets) — the kind of page hand-authored hobbyist projects
-  // tend to produce. See `tests/fixtures/real-world/50p-vanilla-doctype/`.
+  // tend to produce. See `tests/fixtures/real-world/vanilla-html-doctype-fragment/`.
   // ─────────────────────────────────────────────────────────────────────────
   describe("heuristic branch B (h1 + body content)", () => {
     it("fires on a document with <h1> and ≥5 body descendants but no <main>", () => {
@@ -898,7 +898,7 @@ describe("rule semantics/landmark-main", () => {
         // Branch (a) requires ALL of <html>/<body>/<head> absent. A
         // bodyless layout file with <html> + <head> still gets the
         // bodyless-partial enrichment — guards the
-        // jekyll-default-layout/top.html fixture invariant.
+        // ssg-default-layout-include-partial/top.html fixture invariant.
         const v = runRule(
           rule,
           [

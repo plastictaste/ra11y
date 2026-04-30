@@ -27,7 +27,7 @@ If your tree is unexpectedly dirty at boot, that IS the signal — return `block
 
 ## 3. Never `cd` out of your worktree
 
-Scripts like `scripts/scaffold-rule.ts` compute `ROOT` via `import.meta.dir` and resolve to whichever tree the shell is in. `bun scripts/scaffold-rule.ts` from the worktree is safe; `cd /Users/van/dev/ra11y && bun scripts/scaffold-rule.ts` silently writes into the main tree and corrupts parallel peers. The shell starts you in the worktree — stay there.
+Scripts like `scripts/scaffold-rule.ts` compute `ROOT` via `import.meta.dir` and resolve to whichever tree the shell is in. `bun scripts/scaffold-rule.ts` from the worktree is safe; `cd <repo-root> && bun scripts/scaffold-rule.ts` silently writes into the main tree and corrupts parallel peers. The shell starts you in the worktree — stay there.
 
 ## 4. Catch up to current main BEFORE editing anything
 

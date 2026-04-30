@@ -43,7 +43,7 @@ commits.
 ## Origin
 
 - Commit: `2968d87` (`fix(parser): disambiguate TS generics from JSX in tsx parser`).
-- Feedback round: leela-round-1 (Apr 2026).
+- Captured during a multi-corpus field-test round (Apr 2026).
 - Sanitization: branded identifiers (original component names from a
   design system) replaced with `Widget*` generics; structural
   patterns (generic arity, type shapes, JSX children) preserved

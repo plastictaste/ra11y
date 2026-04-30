@@ -63,11 +63,11 @@ The `limit` description in the tool schema is updated to reflect the new default
 
 **Token-aware plus lower file default.** Deferred for the same reason — it solves a problem we don't yet have and adds a contract consumers would need to learn alongside a change they already have to absorb.
 
-**Lower to 15 (the synthetic 100 KB breakpoint).** Too aggressive. The label-heavy synthetic is pathological — a realistic label-heavy repo averages 3–5 findings per file, not 8. Picking 15 optimizes against a fixture we constructed, not the Bootstrap data point from the field report.
+**Lower to 15 (the synthetic 100 KB breakpoint).** Too aggressive. The label-heavy synthetic is pathological — a realistic label-heavy repo averages 3–5 findings per file, not 8. Picking 15 optimizes against a fixture we constructed, not the label-dense corpus data point from the field report.
 
 ## Amendment (2026-04-20): token-density secondary budget
 
-The file-count cap calibrated above holds on codebases where bytes-per-file is bounded — but not on *density-heavy* codebases where findings cluster in few label-dense files. Re-measurement on `twbs/bootstrap` (second-pass, via the `V1-SIZE-RESPONSE-BUDGET-DENSITY` `fix.description` hoist, 075b64c + 2a26c25):
+The file-count cap calibrated above holds on codebases where bytes-per-file is bounded — but not on *density-heavy* codebases where findings cluster in few label-dense files. Re-measurement on a label-dense CSS-framework + MDX-docs corpus (second-pass, via the `V1-SIZE-RESPONSE-BUDGET-DENSITY` `fix.description` hoist, 075b64c + 2a26c25):
 
 | metric | value |
 |---|---|
@@ -76,7 +76,7 @@ The file-count cap calibrated above holds on codebases where bytes-per-file is b
 | files-with-findings | **18** |
 | response size after hoist | ≈ 107 KB (~26.7k tokens) |
 
-With 18 < 25, the file-count cap never engages — `truncated` / `nextOffset` don't fire — and the response ships 1.07× the ~25k token MCP host ceiling. The original ADR projected worst-case ~163 KB "with honest `truncated` + `nextOffset` signals," but that projection assumed the file count would exceed the cap and trigger pagination. Bootstrap shows the signals can fail to engage when per-file density, not file count, is the bloat axis. Root cause: `semantics/label-in-name` emits a 1,970-char `fix.description` that repeats verbatim 6× (~12 KB of the response); `forms/autocomplete-missing` repeats a 150-char description 31× (~4.5 KB). The Q2-PROSE-style `fix.description` hoist (`V1-SIZE-RESPONSE-BUDGET-DENSITY` option (b), shipped at 075b64c) recovered 14.1% (~17.6 KB), but the remaining per-finding `message` (~22 KB), `fix` (~13 KB), `suppressWith` (~7.6 KB), and `criteriaTitles` (~3.8 KB) are not dedupable at that layer.
+With 18 < 25, the file-count cap never engages — `truncated` / `nextOffset` don't fire — and the response ships 1.07× the ~25k token MCP host ceiling. The original ADR projected worst-case ~163 KB "with honest `truncated` + `nextOffset` signals," but that projection assumed the file count would exceed the cap and trigger pagination. The label-dense data point shows the signals can fail to engage when per-file density, not file count, is the bloat axis. Root cause: `semantics/label-in-name` emits a 1,970-char `fix.description` that repeats verbatim 6× (~12 KB of the response); `forms/autocomplete-missing` repeats a 150-char description 31× (~4.5 KB). The Q2-PROSE-style `fix.description` hoist (`V1-SIZE-RESPONSE-BUDGET-DENSITY` option (b), shipped at 075b64c) recovered 14.1% (~17.6 KB), but the remaining per-finding `message` (~22 KB), `fix` (~13 KB), `suppressWith` (~7.6 KB), and `criteriaTitles` (~3.8 KB) are not dedupable at that layer.
 
 **Decision.** Add a byte-based secondary budget on top of the existing file-count cap. After the `fix.description` hoist runs in the response-assembly path (`tool-scan-project.ts`, `tools.ts`, `tool-scan-diff.ts`), the helper `applyTokenBudget` (in `src/mcp/tools-helpers.ts`) measures `JSON.stringify(response).length`; if over budget, drops trailing file entries one at a time until the serialized shape fits, then flips `truncated: true`, records `nextOffset = offset + keptFileCount`, and surfaces a `response_token_budget_truncated` warning code so the caller can distinguish density truncation from the existing file-count truncation. The `limit` / `offset` contract is unchanged — the density cap is a *secondary* guard that fires only when per-file density would push the response past the threshold even after `limit` has been applied. Either cap firing is honest truncation; `truncated: true` is set in both cases, and the two causes are disambiguated by the presence or absence of the new warning code.
 
@@ -90,7 +90,7 @@ With 18 < 25, the file-count cap never engages — `truncated` / `nextOffset` do
 
 **Scope.** Wired through `scan`, `scan_project`, and `scan_diff` (both baseline and hunks modes). `scan_file` is a single-file shape — the density cap's drop dimension (trailing file entries) does not exist there, so the helper is not called on that path. The coverage matches `V1-SIZE-RESPONSE-BUDGET-DENSITY` (b) — `suggest_fix` / `apply_fix` / `baseline` are skipped for the same reason: their response bodies don't carry a multi-file array the density cap can trim. `scan` has no `limit`/`offset` contract, so when the cap fires there it emits `truncated: true` + `totalFilesWithFindings` + the warning, but omits `nextOffset` — the remediation surfaced via the warning is "narrow `paths` or use `scan_project` which does paginate."
 
-**Measurement after amendment.** Verified post-merge against `/tmp/bootstrap` (twbs/bootstrap) via in-process handler call:
+**Measurement after amendment.** Verified post-merge against a CSS-framework + MDX-docs corpus via in-process handler call:
 
 | metric | pre-amendment (post-hoist) | post-amendment |
 |---|---:|---:|

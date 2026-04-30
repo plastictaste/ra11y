@@ -67,7 +67,7 @@ interface FlashInfo {
  * uses this to decide whether the cycles-per-second arithmetic is
  * meaningful: a one-shot animation cannot cycle at any frequency, so
  * quoting "~6.7Hz" for `animation: fade-in 0.15s` is mathematically
- * dishonest. See `tests/fixtures/real-world/jekyll-docsearch-scss-line-drift`
+ * dishonest. See `tests/fixtures/real-world/scss-line-drift-with-includes`
  * for the sanitized field-report repro.
  */
 type IterationCount = "infinite" | number | undefined;
@@ -130,7 +130,7 @@ function extractShortCycleFlashInfo(
   // entirely when adjacent rulesets share leading tokens. The selector
   // is the structural anchor — it identifies which DOM context the
   // animation runs in. See tests/fixtures/real-world/
-  // jekyll-docsearch-scss-line-drift for the regression guard.
+  // scss-line-drift-with-includes for the regression guard.
   return {
     anchorLine: cssRule.loc.start.line,
     anchorColumn: cssRule.loc.start.column,

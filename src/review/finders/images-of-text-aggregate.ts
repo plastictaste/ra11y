@@ -3,8 +3,8 @@
  * adjacent same-shape sibling `<img>` candidates into a single
  * consolidated `ReviewCandidate` carrying `siblingOccurrences`.
  *
- * Canonical repro (jekyll/jekyll README.markdown:58-67): ten adjacent
- * `<a href="..."><img class="sponsor-logo" alt="Jekyll Sponsor N"/></a>`
+ * Canonical repro (a sanitized SSG README sponsor row): ten adjacent
+ * `<a href="..."><img class="sponsor-logo" alt="Sponsor N"/></a>`
  * siblings. Before aggregation each `<img>` produced one candidate per
  * 1.4.5-family criterion — ten near-identical candidates per criterion
  * that read as noise to the consuming agent. Aggregation reduces that
@@ -99,7 +99,7 @@ export interface SiblingSummary {
  *   - `"enumerated-token"` — the strict, original predicate: same
  *     parent, same wrapping shape, alt-text token-count matches and at
  *     most one token position varies across the run ("Sponsor 1/2/…").
- *     Catches the canonical jekyll README sponsor-row repro.
+ *     Catches the canonical README sponsor-row repro.
  *   - `"parent-shape-contiguous-range"` — the relaxed fallback: same
  *     parent, same wrapping shape, ≥4 consecutive members, but alt-text
  *     token shape diverges in more than one position so the strict

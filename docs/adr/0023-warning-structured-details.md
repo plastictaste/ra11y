@@ -10,7 +10,7 @@
 
 MCP scan-family responses carry a top-level `warnings: string[]` channel whose codes are defined in `ScanWarningCode` (`src/mcp/warnings.ts`). The header on that file names the doctrine: "Codes are stable identifiers, not English. Agents branch on the code; the prose of 'why this fired' lives in the same response's `meta` fields which the warning implicitly points at." That split works for codes whose signal is pure presence (`no_config_found`, `scanned_zero_files`, `storybook_preset_active`) — the name of the code *is* the payload.
 
-It breaks for `extensions_skipped_no_parser`. A seventh-pass `scan_project` run against `twbs/bootstrap` HEAD returned 125 parseable files out of 453 source files — 328 dropped at ingestion (110 `.mdx`, 104 `.astro`, 114 `.scss`). The warning code fired, and the ext-count map surfaced in `meta.analysisCoverage.skippedByExtension`:
+It breaks for `extensions_skipped_no_parser`. A seventh-pass `scan_project` run against a CSS-framework + MDX-docs corpus returned 125 parseable files out of 453 source files — 328 dropped at ingestion (110 `.mdx`, 104 `.astro`, 114 `.scss`). The warning code fired, and the ext-count map surfaced in `meta.analysisCoverage.skippedByExtension`:
 
 ```jsonc
 {

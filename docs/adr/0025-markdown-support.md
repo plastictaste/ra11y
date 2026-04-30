@@ -75,7 +75,7 @@ Option A's maintenance burden is not justified for the incremental gain. Option 
 **New files:**
 
 - `src/input/parsers/markdown.ts` — the extractor (~300 LOC). Strips ATX headings, fenced/indented code blocks; extracts markdown image nodes as `<img>` elements; translates kramdown IAL to inline `class=`; passes HTML residue to `parseHtml`. Returns a `ParseResult` with `source: "markdown-residue"` in its diagnostics.
-- `tests/fixtures/real-world/jekyll-markdown-mix/` — a sanitized fixture exercising the full SSG shape: tables, iframes, admonition divs, image alt-text, kramdown IAL.
+- `tests/fixtures/real-world/ssg-markdown-mix/` — a sanitized fixture exercising the full SSG shape: tables, iframes, admonition divs, image alt-text, kramdown IAL.
 
 **Modified files:**
 
