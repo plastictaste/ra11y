@@ -32,6 +32,7 @@ import { buildNextStep } from "./next-step.ts";
 import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
+import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
@@ -221,6 +222,15 @@ export const scanFileTool: McpTool = {
         // calling scan_file gets the same canonical "where was the
         // search?" answer scan / scan_project surface.
         configSearchedFromForWarning: configSearchBase,
+        // Thread the criterion-level lookup through to the
+        // review-candidate dedup helper so per-candidate `priority`
+        // resolves against the strongest-attention level among each
+        // candidate's `criteria` union. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Per-tool
+        // review-candidate shape must agree across surfaces" — the
+        // checklist surface populates priority/confidence on every
+        // candidate; scan_file's deduped surface must match.
+        criterionLevels: buildCriterionLevelMap(session.registry.standards),
       },
       { tokenBudget: 0, includeReviewCandidates: true },
     );

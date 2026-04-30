@@ -166,3 +166,94 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positiona
     expect(out[1]?.line).toBe(9);
   });
 });
+
+describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () => {
+  it("populates priority + confidence from the shared resolver (defaults to medium when no level map supplied)", () => {
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("wcag22:1.4.3", "ordinary reason", 5, 4),
+    ]);
+    expect(out).toHaveLength(1);
+    // No level map → resolver's no-level base → "medium"
+    expect(out[0]?.priority).toBe("medium");
+    expect(out[0]?.confidence).toBe("medium");
+  });
+
+  it("resolves priority from the criterionLevels map (AA → high)", () => {
+    const levels = new Map<string, string>([["wcag22:1.4.3", "AA"]]);
+    const out = dedupeReviewCandidatesForSingleFile(
+      [candidate("wcag22:1.4.3", "ordinary reason", 5, 4)],
+      levels,
+    );
+    expect(out[0]?.priority).toBe("high");
+  });
+
+  it("downgrades priority to medium when the candidate carries vendorContext", () => {
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const out = dedupeReviewCandidatesForSingleFile(
+      [
+        candidate("wcag22:2.2.1", "vendor lib timer", 5, 4, {
+          vendorContext: {
+            signal: { kind: "vendor-bundle-basename" },
+            redirectTo: "consumer-override",
+          },
+        }),
+      ],
+      levels,
+    );
+    expect(out[0]?.priority).toBe("medium");
+  });
+
+  it("downgrades priority to medium when the reason text hedges", () => {
+    const levels = new Map<string, string>([["wcag22:1.3.1", "A"]]);
+    const out = dedupeReviewCandidatesForSingleFile(
+      [
+        candidate(
+          "wcag22:1.3.1",
+          "if this is a standalone single-page file the criterion may not apply",
+          5,
+          4,
+        ),
+      ],
+      levels,
+    );
+    expect(out[0]?.priority).toBe("medium");
+  });
+
+  it("takes the strongest-attention level across the union of criteria (mixed AA + AAA → AA → high)", () => {
+    const levels = new Map<string, string>([
+      ["wcag22:1.4.3", "AA"],
+      ["wcag22:1.4.6", "AAA"],
+    ]);
+    // Same reason → Pass 1 collapses both into one entry; the union
+    // criteria carries AA + AAA. The strongest-attention level is AA
+    // → priority "high".
+    const out = dedupeReviewCandidatesForSingleFile(
+      [
+        candidate("wcag22:1.4.3", "same reason", 7, 2),
+        candidate("wcag22:1.4.6", "same reason", 7, 2),
+      ],
+      levels,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.priority).toBe("high");
+  });
+
+  it("takes the highest confidence across the cross-finder fold (Pass 2)", () => {
+    const levels = new Map<string, string>([
+      ["std:a", "AA"],
+      ["std:b", "AA"],
+    ]);
+    // Two finders at the same position; one carries low confidence,
+    // the other high. The folded entry takes "high" — a single high
+    // hit sizes the entry honestly.
+    const out = dedupeReviewCandidatesForSingleFile(
+      [
+        candidate("std:a", "reason A", 7, 2, { confidence: "low" }),
+        candidate("std:b", "reason B", 7, 2, { confidence: "high" }),
+      ],
+      levels,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.confidence).toBe("high");
+  });
+});

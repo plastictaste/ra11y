@@ -24,6 +24,7 @@ import type {
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
+import { candidateHedges } from "./review-candidate-priority.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import {
@@ -407,30 +408,16 @@ function everyCandidateHasVendorContext(
 }
 
 /**
- * Hedging tokens an agent reads as "the predicate this candidate names
- * may not even apply here." Drawn from the doctrine list in
- * ai-first-consumer.md ("Reason / priority / fix-description must
- * agree across all three channels"): `may not apply`, `only if`,
- * `verify…before`, `if this is`, plus `Cross-file check: grep` from
- * the fix-description twin case. Matched case-insensitively against
- * each candidate's reason text. The list is intentionally narrow — it
- * targets self-conceding framings, not generic guidance ("verify the
- * heading order is logical" is not a hedge; the predicate is
- * affirmed). Add new tokens only when the same self-cancelling shape
- * appears in a finder's reason text and the agent should not read the
- * candidate as "high attention".
+ * Hedging-token check for the per-item rollup. Delegates to the
+ * shared {@link candidateHedges} predicate so the per-item gate
+ * here and the per-candidate priority resolver in
+ * `review-candidate-priority.ts` test the same self-conceding
+ * framings — keeping the two surfaces aligned per the doctrine
+ * line "Per-tool review-candidate shape must agree across surfaces."
  */
-const HEDGING_TOKENS: readonly RegExp[] = [
-  /\bmay not apply\b/i,
-  /\bonly if\b/i,
-  /\bverify[^.]*\bbefore\b/i,
-  /\bif this is\b/i,
-  /Cross-file check:\s*grep/i,
-];
-
 function everyCandidateHedges(candidates: readonly { readonly reason: string }[]): boolean {
   for (const c of candidates) {
-    if (!HEDGING_TOKENS.some((re) => re.test(c.reason))) return false;
+    if (!candidateHedges(c)) return false;
   }
   return true;
 }

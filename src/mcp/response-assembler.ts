@@ -186,6 +186,22 @@ export interface ScanFamilyResponseInput {
    * present-when-meaningful shape).
    */
   readonly extensionsPresentAtRoot?: ReadonlySet<string>;
+  /**
+   * `criterionId → level` lookup map drawn from the loaded standards
+   * registry. Threaded through to
+   * {@link import("./review-candidate-dedup.ts").dedupeReviewCandidatesForSingleFile}
+   * so the per-candidate `priority` resolver can read each criterion's
+   * level (A / AA / AAA / base) without coupling the dedup module to
+   * the standards registry. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+   * candidate shape must agree across surfaces" — populating
+   * `priority` on the scan_file `reviewCandidates[]` shape requires
+   * the level lookup, and the shared resolver stays pure by taking
+   * the map as input. Omit on legacy callers that don't surface
+   * review candidates; falls back to an empty map and the resolver's
+   * no-level base.
+   */
+  readonly criterionLevels?: ReadonlyMap<string, string>;
 }
 
 export interface ScanFamilyResponseOptions {
@@ -473,6 +489,7 @@ export function assembleScanFamilyResponse(
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
+    criterionLevels,
   } = input;
   // Cross-surface count invariant: when the caller supplied raw
   // (pre-filter) violations, derive the parser/finder-honesty
@@ -653,9 +670,15 @@ export function assembleScanFamilyResponse(
   const ruleCoverage = buildRuleCoverageDerivative(adjustedPerRuleCoverage, violations);
 
   // (7) Review candidates — opt-in dedupe at the single-file level.
+  // Threads the caller-supplied `criterionLevels` map through to the
+  // dedup helper so per-candidate `priority` resolves against the
+  // strongest-attention level among the union of `criteria`. Empty-
+  // map fallback keeps legacy fixture callers (which don't thread
+  // standards) working — the resolver downgrades to the no-level
+  // base when the lookup misses.
   const includeReview = options.includeReviewCandidates === true;
   const dedupedCandidates = includeReview
-    ? dedupeReviewCandidatesForSingleFile(reviewCandidates)
+    ? dedupeReviewCandidatesForSingleFile(reviewCandidates, criterionLevels ?? new Map())
     : undefined;
 
   // (8) Warnings channel — extracted to keep this orchestrator's

@@ -446,7 +446,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Ambiguous / empty-when-meaningful field shapes
 
-- [ ] **Q14-SCAN-FILE-REVIEW-CANDIDATES-PRIORITY-CONFIDENCE-NULL** `scan_file.reviewCandidates[]` ships every entry with `priority: null` and `confidence: null` while the same conceptual candidate on `checklist.items[]` populates both fields with grounded values (`priority: "high"`, `confidence: "medium"`). Same data, two surfaces, agent reading scan_file gets a degenerate value. Closure: populate priority/confidence on scan_file candidates from the same shared helper checklist uses, OR omit the fields rather than ship null. Per AI-first doctrine "Ambiguous field shapes are dishonest" + "Per-tool lane and warning-set classification must agree."
 - [ ] **Q14-CHECKLIST-CANDIDATE-LACKS-FINDING-ID-GROUP-KEY** `checklist.items[].candidates[]` ship without `findingId` / `groupKey` while `scan_project.files[].findings[]` carry both — agent cannot stably address or suppress review candidates by id, only by `(path,line,reason)` reconstruction. Closure: emit `findingId` (location-coordinate-hashed per Q13) on every checklist candidate via the same hash function the rule surface uses. Per AI-first doctrine "Per-finding identifiers must be addressable, not collision-prone."
 
 ### Cross-surface drift (counts + warnings + lane)
