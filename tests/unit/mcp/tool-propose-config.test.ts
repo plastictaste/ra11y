@@ -33,6 +33,7 @@ interface ProposeConfigResponse {
     };
     readonly wrappersIncluded: number;
     readonly buildArtifactsIncluded: number;
+    readonly likelyBuildPathsIncluded: number;
     readonly topRulesIncluded: number;
   };
   readonly nextStep: string;
@@ -120,12 +121,13 @@ describe("propose_config: wrappers only", () => {
 });
 
 describe("propose_config: wrappers + build-artifact excludes", () => {
-  // Guards the exclude branch: a compiled-CSS file under dist/ is
+  // Guards the exclude branch: a `definite-*` build-artifact file
+  // (here: `.min.` infix in the basename — definite-min-infix) is
   // labeled by `collectBuildArtifacts` and surfaces in the proposed
-  // `exclude` array. Paths appear verbatim (no normalization) so the
-  // agent pasting the config gets the same string the scanner
-  // produced.
-  it("emits exclude entries for every labeled build artifact", async () => {
+  // live `exclude` array. Heuristic (`likely-*`) classifications go
+  // to the commented `// likelyBuildPaths` block instead — see the
+  // sibling describe block "heuristic vs definite split."
+  it("emits exclude entries for every definite-classified build artifact", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "Button.tsx"),
@@ -133,88 +135,220 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
           "  return <button onClick={props.onClick}>{props.children}</button>;\n" +
           "}\n",
       );
-      // Canonical Tailwind-JIT escape-bracket selector in a non-dist
-      // path — `dist/` is in the default-excluded discovery set so a
-      // file there never reaches the labeler. The escaped-selector
-      // signal is the deterministic "this came from Tailwind's
-      // compiler" probe; agents onboarding Tailwind projects keep the
-      // compiled CSS somewhere the scanner CAN read (e.g.
-      // `public/` or `static/`), then add it to `exclude` via this
-      // proposal.
-      await writeFile(
-        join(dir, "compiled.css"),
-        ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n",
-      );
+      // `.min.` infix in the basename → definite-min-infix.
+      // Provable from the path alone, so the entry is paste-safe in
+      // the live `exclude: [...]` array.
+      await writeFile(join(dir, "vendor.min.js"), "// minified vendor bundle\n");
       const body = await callTool(dir);
       expect(body.meta.buildArtifactsIncluded).toBeGreaterThanOrEqual(1);
       expect(body.suggestedConfig).toContain("exclude: [");
-      expect(body.suggestedConfig).toContain("compiled.css");
+      expect(body.suggestedConfig).toContain("vendor.min.js");
       expect(body.nextStep).toContain("build-artifact path");
     });
   });
 
   it("emits exclude paths relative to the scan root — no absolute leaked filesystem paths", async () => {
     // Closes Q-SHARED-PROPOSE-CONFIG-RELATIVE-PATHS: prior behaviour
-    // emitted `/tmp/<scratch>/compiled.css` verbatim, which (a) does
-    // not match ra11y's gitignore-style exclude globs so the paste-in
-    // config silently does nothing, and (b) leaks the scan-host
-    // filesystem into a committed artifact. Relative-only is the
-    // honest, portable shape.
+    // emitted `/tmp/<scratch>/vendor.min.js` verbatim, which (a)
+    // does not match ra11y's gitignore-style exclude globs so the
+    // paste-in config silently does nothing, and (b) leaks the
+    // scan-host filesystem into a committed artifact. Relative-only
+    // is the honest, portable shape.
     await withScratch(async (dir) => {
-      await writeFile(
-        join(dir, "compiled.css"),
-        ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n",
-      );
+      await writeFile(join(dir, "vendor.min.js"), "// minified bundle\n");
       const body = await callTool(dir);
-      expect(body.suggestedConfig).toContain("compiled.css");
+      expect(body.suggestedConfig).toContain("vendor.min.js");
       expect(body.suggestedConfig).not.toContain(dir);
       expect(body.suggestedConfig).not.toMatch(/"\//);
     });
   });
 
-  it("collapses 3+ build-artifact files sharing a top-level directory into a single <dir>/** glob", async () => {
+  it("collapses 3+ definite-classified files sharing a top-level directory into a single <dir>/** glob", async () => {
     // Motivating field report: website-templates repo emitted 301
     // absolute `exclude` entries, all under one `dist/`-style tree.
     // Collapsing to a single `<dir>/**` is strictly easier to review
-    // and edit than an itemized dump, and the glob is the honest
-    // semantic form for "the whole build output is a compiled
-    // artifact."
+    // and edit than an itemized dump — but the collapse only applies
+    // to `definite-*` classifications (paste-safe). Heuristic
+    // signals never collapse to `<topdir>/**`; that's the canonical
+    // regression the heuristic-vs-definite split fixes.
     await withScratch(async (dir) => {
-      // Three compiled-CSS files under an `assets/` tree — the
-      // escape-bracket Tailwind selector is the signal every entry
-      // needs to land in the build-artifacts list.
-      const tailwindCss = ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n";
       const { mkdir } = await import("node:fs/promises");
       await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.css"), tailwindCss);
-      await writeFile(join(dir, "assets", "b.css"), tailwindCss);
-      await writeFile(join(dir, "assets", "c.css"), tailwindCss);
+      // Three `.min.`-infix files → all definite-min-infix.
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain('"assets/**"');
       // Individual entries must NOT appear once the collapse fires —
       // the whole point is that the emitted config is one line, not
       // three.
-      expect(body.suggestedConfig).not.toContain('"assets/a.css"');
-      expect(body.suggestedConfig).not.toContain('"assets/b.css"');
-      expect(body.suggestedConfig).not.toContain('"assets/c.css"');
+      expect(body.suggestedConfig).not.toContain('"assets/a.min.js"');
+      expect(body.suggestedConfig).not.toContain('"assets/b.min.js"');
+      expect(body.suggestedConfig).not.toContain('"assets/c.min.js"');
     });
   });
 
-  it("keeps 2 sibling build-artifact files itemized — below the collapse threshold a wildcard would overreach", async () => {
+  it("keeps 2 sibling definite-classified files itemized — below the collapse threshold a wildcard would overreach", async () => {
     // A two-file `assets/` is still specific enough that the
     // unglobbed pair is clearer than `assets/**`. The collapse cap
     // applies only when the count starts to dominate the emitted
     // config.
     await withScratch(async (dir) => {
-      const tailwindCss = ".w-\\[400px\\] { width: 400px; }\n.h-\\[2rem\\] { height: 2rem; }\n";
       const { mkdir } = await import("node:fs/promises");
       await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.css"), tailwindCss);
-      await writeFile(join(dir, "assets", "b.css"), tailwindCss);
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
       const body = await callTool(dir);
-      expect(body.suggestedConfig).toContain('"assets/a.css"');
-      expect(body.suggestedConfig).toContain('"assets/b.css"');
+      expect(body.suggestedConfig).toContain('"assets/a.min.js"');
+      expect(body.suggestedConfig).toContain('"assets/b.min.js"');
       expect(body.suggestedConfig).not.toContain('"assets/**"');
+    });
+  });
+});
+
+describe("propose_config: heuristic vs definite split — paste-safe `exclude`", () => {
+  // Guards "Bootstrap output must be paste-safe" doctrine
+  // (`docs/kb/architecture/ai-first-consumer.md`): only
+  // `definite-*` build-artifact classifications populate the live
+  // `exclude: [...]` array. Heuristic (`likely-*`) classifications
+  // — bundler-output dir, hashed-bundle, compiled-tailwind,
+  // vendor-banner, long-line-stats — land in a commented-out
+  // `// likelyBuildPaths` hint block, individually itemized, so
+  // the agent opts in per-path after reading the source.
+  //
+  // Canonical regression: a `js/` directory with three small files
+  // crossing a heuristic threshold collapsed to `js/**`, sweeping
+  // every authored module in the project. The split makes that
+  // shape unreachable at the generator step.
+
+  it("does NOT emit `js/**` when only heuristic signals fire on files under js/", async () => {
+    // Three files under `js/components/` containing Tailwind escape
+    // selectors in JSX string literals — but the tailwind probe is
+    // gated to .css/.scss/.less paths so it does NOT fire on these
+    // .tsx files. We instead simulate the realistic "small repo
+    // under js/ tripping a heuristic" shape with files whose names
+    // alone would not classify but which a heuristic predicate does
+    // catch. We use minified-by-line-stats: a single >500-char line
+    // PLUS a high-median-line-length corroborator across siblings.
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "js", "components"), { recursive: true });
+      // A long, single-line JS file that crosses the heuristic
+      // threshold for `likely-minified-by-line-stats`. Three such
+      // files in a directory previously triggered the `js/**`
+      // collapse.
+      const long = `const data = ${JSON.stringify("x".repeat(800))};`;
+      await writeFile(join(dir, "js", "components", "a.js"), long);
+      await writeFile(join(dir, "js", "components", "b.js"), long);
+      await writeFile(join(dir, "js", "components", "c.js"), long);
+      const body = await callTool(dir);
+      // The live `exclude: [...]` array must NOT contain `js/**`
+      // or any individual `js/components/*.js` entry — they are
+      // heuristic-only classifications and the generator must not
+      // mechanically paste them into the user's `exclude`.
+      expect(body.suggestedConfig).not.toContain('"js/**"');
+      expect(body.suggestedConfig).not.toMatch(/^\s+"js\/components\/[abc]\.js"/m);
+      // The exclude array, if present at all, must not be the
+      // dominant noise from this heuristic-only corpus. Either the
+      // exclude block is absent or it carries only paths from
+      // `definite-*` classifications (none here).
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      if (excludeBlockMatch !== null) {
+        expect(excludeBlockMatch[1]).not.toContain("js/");
+      }
+    });
+  });
+
+  it("routes heuristic classifications to the commented `// likelyBuildPaths` block", async () => {
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "js", "components"), { recursive: true });
+      const long = `const data = ${JSON.stringify("x".repeat(800))};`;
+      await writeFile(join(dir, "js", "components", "Foo.js"), long);
+      const body = await callTool(dir);
+      // Hint preamble + commented array marker must both land.
+      expect(body.suggestedConfig).toContain("likely-build-paths");
+      expect(body.suggestedConfig).toContain("// likelyBuildPaths: [");
+      // The path itself rides as a quoted, commented entry —
+      // itemized (not glob-collapsed), so the agent reads each
+      // path before opting any into `exclude`.
+      expect(body.suggestedConfig).toMatch(/\/\/\s+"js\/components\/Foo\.js"/);
+      // Every line inside the block is commented — pasting the
+      // proposal into ra11y.config.ts must NOT silently exclude
+      // any of these heuristic paths.
+      const lines = body.suggestedConfig.split("\n");
+      const start = lines.findIndex((l) => l.includes("// likelyBuildPaths: ["));
+      const end = lines.findIndex((l, i) => i > start && l.includes("// ],"));
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      for (let i = start; i <= end; i += 1) {
+        const line = lines[i] ?? "";
+        if (line.trim().length === 0) continue;
+        expect(line.trimStart().startsWith("//")).toBe(true);
+      }
+      // Meta carries the per-axis count split — heuristic hints
+      // never inflate `buildArtifactsIncluded`.
+      expect(body.meta.buildArtifactsIncluded).toBe(0);
+      expect(body.meta.likelyBuildPathsIncluded).toBeGreaterThan(0);
+    });
+  });
+
+  it("definite-min-infix paths still populate the live `exclude` array", async () => {
+    // Sanity guard for the corollary: a file with `.min.` infix in
+    // the basename is provable from the path alone, classifies as
+    // `definite-min-infix`, and lands in the paste-safe `exclude`
+    // surface (not the commented hint block). `vendor/` is in the
+    // default-excluded artifact-dir-names set so the discovery
+    // walk skips it; place the `.min.` file at the repo root so
+    // the labeller sees it.
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "library.min.js"), "// vendor bundle\n");
+      const body = await callTool(dir);
+      // Live exclude must carry the `.min.` path. Either as the
+      // single entry or via collapse — but the path-substring must
+      // appear inside the `exclude: [...]` block, not the
+      // commented `likelyBuildPaths` block.
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      expect(excludeBlockMatch).not.toBeNull();
+      expect(excludeBlockMatch?.[1]).toContain("library.min.js");
+      expect(body.meta.buildArtifactsIncluded).toBeGreaterThan(0);
+    });
+  });
+
+  it("splits a mixed corpus: definite-min-infix to `exclude`, likely-bundler-output-dir to hint block", async () => {
+    // A file under `dist/` is `likely-bundler-output-dir`
+    // (heuristic — the bundler-dir marker is a path-prefix probe,
+    // not a content one). A `.min.` file is `definite-min-infix`.
+    // The two must split correctly: definite path in the live
+    // exclude array, likely path in the commented hint block.
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      // `dist/` is in DEFAULT_EXCLUDED_PATTERNS so the discovery
+      // walk skips it; use `public/` which is a build-dir marker
+      // but not in the default-excluded set, so the file reaches
+      // the labeller.
+      await mkdir(join(dir, "public"), { recursive: true });
+      await writeFile(
+        join(dir, "public", "page.html"),
+        "<!doctype html><html><body></body></html>\n",
+      );
+      // Add a definite-min-infix file at the repo root.
+      await writeFile(join(dir, "lib.min.js"), "// minified\n");
+      const body = await callTool(dir);
+      // Definite path lands in live exclude.
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      expect(excludeBlockMatch?.[1]).toContain("lib.min.js");
+      // Likely path lands in the commented hint block.
+      expect(body.suggestedConfig).toContain("// likelyBuildPaths: [");
+      const hintBlockMatch = body.suggestedConfig.match(
+        /\/\/ likelyBuildPaths: \[([\s\S]*?)\/\/ \],/,
+      );
+      expect(hintBlockMatch).not.toBeNull();
+      expect(hintBlockMatch?.[1]).toContain("public/");
+      // The likely path must NOT appear inside the live exclude
+      // block.
+      expect(excludeBlockMatch?.[1]).not.toContain("public/");
     });
   });
 });

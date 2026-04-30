@@ -65,7 +65,7 @@ import { relative } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { runScan } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
-import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
@@ -138,14 +138,37 @@ export const proposeConfigTool: McpTool = {
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
     const confirmedWrappers = deriveConfirmedWrappers(files);
-    // `collectBuildArtifacts` returns `{ path, reason }[]` so the
-    // scan_project meta surface can carry per-path classification
-    // signal; `propose_config` only needs the path strings to feed
-    // the exclude-list normalizer.
-    const buildArtifacts = normalizeExcludes(
-      collectBuildArtifacts(files).map((entry) => entry.path),
-      root,
-    );
+    // Bootstrap-output-paste-safe doctrine
+    // (`docs/kb/architecture/ai-first-consumer.md`): split the
+    // classifier output by confidence grade. Only `definite-*` paths
+    // (definite-min-infix, definite-sourcemap-paired,
+    // definite-vendor-distribution) earn a slot in the live
+    // `exclude: [...]` array — those predicates are provable from the
+    // path or scan-set alone, so a glob-collapsed `<dir>/**` glob
+    // built from them won't sweep authored source. `likely-*`
+    // classifications are heuristics that, on prior field reports,
+    // produced `exclude: ["js/**", "site/**"]` entries that covered
+    // every authored-source tree in the project. They land in a
+    // commented-out `// likely-build-paths` hint block instead, where
+    // the agent can opt in per-path after reading the source.
+    //
+    // Per "Bootstrap output must be paste-safe": classification
+    // predicates default to do-nothing (false-negative inclusion)
+    // when evidence is ambiguous. `definite-*` is the only side that
+    // is mechanically pasted into the user's repo; the heuristic side
+    // requires explicit agent action.
+    const allArtifacts = collectBuildArtifacts(files);
+    const definiteArtifactPaths: string[] = [];
+    const likelyArtifactPaths: string[] = [];
+    for (const entry of allArtifacts) {
+      if (isDefiniteBuildArtifactClassification(entry.classification)) {
+        definiteArtifactPaths.push(entry.path);
+      } else {
+        likelyArtifactPaths.push(entry.path);
+      }
+    }
+    const buildArtifacts = normalizeExcludes(definiteArtifactPaths, root);
+    const likelyBuildPaths = normalizeLikelyHints(likelyArtifactPaths, root);
     const topRules = deriveTopRules(files, session);
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a
@@ -177,6 +200,7 @@ export const proposeConfigTool: McpTool = {
     const suggestedConfig = buildConfigString({
       wrappers: confirmedWrappers,
       excludes: buildArtifacts,
+      likelyBuildPaths,
       topRules,
     });
 
@@ -205,17 +229,27 @@ export const proposeConfigTool: McpTool = {
         // dishonest"; the agent sees "rules the config on/off filter
         // kept" without the tool pretending to know eligibility.
         rulesEvaluated: buildRulesEvaluated({ loadedCount: activeRules.length }),
-        // Three distinct counts instead of one composite — each names
+        // Distinct counts instead of one composite — each names
         // one kind of thing folded into the proposal (CLAUDE.md §1
         // "Composite headline counts are dishonest"). An agent sizing
         // the proposal can see which pieces carried weight.
+        // `buildArtifactsIncluded` counts only `definite-*` paths
+        // (those that landed in the live `exclude: [...]` array);
+        // `likelyBuildPathsIncluded` counts `likely-*` heuristics
+        // that landed in the commented-out hint block. Splitting the
+        // axes is the headline-count discipline applied at the
+        // bootstrap-output level: agents budget against the
+        // paste-safe slice (`definite-*`) without confusing it with
+        // the opt-in slice.
         wrappersIncluded: confirmedWrappers.length,
         buildArtifactsIncluded: buildArtifacts.length,
+        likelyBuildPathsIncluded: likelyBuildPaths.length,
         topRulesIncluded: topRules.length,
       },
       nextStep: buildNextStep({
         wrappers: confirmedWrappers,
         excludes: buildArtifacts,
+        likelyBuildPaths,
         topRules,
         configSource: projectConfig.sourcePath,
         foreignEcosystem,
@@ -294,6 +328,24 @@ function normalizeExcludes(paths: readonly string[], root: string): readonly str
   const relativized = relativizeToRoot(paths, root);
   const { groups, rootLevelFiles } = partitionByTopDir(relativized);
   return collapseGroups(groups, rootLevelFiles);
+}
+
+/**
+ * Sibling of {@link normalizeExcludes} for the heuristic
+ * (`likely-*`) classifier output. Relativizes paths against the scan
+ * root using the same POSIX-normalizing logic, but does NOT
+ * glob-collapse. The doctrine bullet "Bootstrap output must be
+ * paste-safe" calls out the canonical regression: a few heuristic
+ * hits under `js/` collapsing to `js/**` and sweeping every authored
+ * module in the project. Hints are emitted into a commented-out
+ * block, so per-path itemization is the readable form for an agent
+ * deciding which entries (if any) to opt into `exclude`. A
+ * `<topdir>/**` glob would compress the evidence into a shape that
+ * looks paste-ready and undoes the whole point of the commented
+ * block.
+ */
+function normalizeLikelyHints(paths: readonly string[], root: string): readonly string[] {
+  return relativizeToRoot(paths, root);
 }
 
 function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {
@@ -421,16 +473,24 @@ function deriveTopRules(
 function buildConfigString(args: {
   readonly wrappers: readonly string[];
   readonly excludes: readonly string[];
+  readonly likelyBuildPaths: readonly string[];
   readonly topRules: readonly TopRuleEntry[];
 }): string {
-  const { wrappers, excludes, topRules } = args;
+  const { wrappers, excludes, likelyBuildPaths, topRules } = args;
 
-  // Case 1: nothing to propose. The honest shape is a minimal
-  // defineConfig({}) with a comment naming why — an empty string (or
-  // a config file that omits the defineConfig wrapper) would read as
-  // "tool never ran." Per §1 "Zero-output success is ambiguous
-  // failure."
-  if (wrappers.length === 0 && excludes.length === 0 && topRules.length === 0) {
+  // Case 1: nothing to propose AND no commented hints available. The
+  // honest shape is a minimal defineConfig({}) with a comment naming
+  // why — an empty string (or a config file that omits the
+  // defineConfig wrapper) would read as "tool never ran." Per §1
+  // "Zero-output success is ambiguous failure." Likely-build-path
+  // hints alone don't disqualify the clean-scan branch by themselves;
+  // they ride below the wrapper as advisory comments.
+  if (
+    wrappers.length === 0 &&
+    excludes.length === 0 &&
+    likelyBuildPaths.length === 0 &&
+    topRules.length === 0
+  ) {
     return [
       `import { defineConfig } from "@ra11y/core";`,
       "",
@@ -451,13 +511,47 @@ function buildConfigString(args: {
   }
 
   // exclude: straight array of paths in scan-discovered order (same
-  // order the `scannedBuildArtifacts` meta field surfaces).
+  // order the `scannedBuildArtifacts` meta field surfaces). ONLY
+  // `definite-*` build-artifact classifications populate this list —
+  // see the splitter at the handler call site for the doctrine
+  // rationale (`docs/kb/architecture/ai-first-consumer.md` "Bootstrap
+  // output must be paste-safe").
   if (excludes.length > 0) {
     bodyLines.push(`${INDENT}exclude: [`);
     for (const path of excludes) {
       bodyLines.push(`${INDENT}${INDENT}${JSON.stringify(path)},`);
     }
     bodyLines.push(`${INDENT}],`);
+  }
+
+  // likely-build-paths: commented out so paste does NOT silently
+  // exclude files. Heuristic classifications (`likely-*` —
+  // bundler-dir, hashed-bundle, compiled-tailwind, vendor-distribution
+  // by banner, minified-by-line-stats) land here, individually
+  // itemized so the agent can read each path before opting any of
+  // them into `exclude`. Paths are NOT collapsed to `<topdir>/**`
+  // globs at this stage — the canonical regression was a heuristic
+  // signal on a few files under `js/` collapsing to `js/**` and
+  // sweeping every authored module in the project. Itemized hints
+  // give the agent the raw evidence so it can decide per-path.
+  if (likelyBuildPaths.length > 0) {
+    bodyLines.push("");
+    bodyLines.push(
+      `${INDENT}// likely-build-paths: heuristic classifier flagged the paths below as`,
+    );
+    bodyLines.push(
+      `${INDENT}// possibly-generated (bundler-dir / hashed / compiled-tailwind / vendor-banner /`,
+    );
+    bodyLines.push(
+      `${INDENT}// long-line-stats). Read each before adding to \`exclude\` above — the`,
+    );
+    bodyLines.push(`${INDENT}// signals fire on authored content too (template literals, SVG path`);
+    bodyLines.push(`${INDENT}// data, SCSS function bodies). NOT auto-applied; opt in per path.`);
+    bodyLines.push(`${INDENT}// likelyBuildPaths: [`);
+    for (const path of likelyBuildPaths) {
+      bodyLines.push(`${INDENT}//   ${JSON.stringify(path)},`);
+    }
+    bodyLines.push(`${INDENT}// ],`);
   }
 
   // rules: commented out so the proposal doesn't change behavior on
@@ -509,17 +603,23 @@ function buildConfigString(args: {
 function buildNextStep(args: {
   readonly wrappers: readonly string[];
   readonly excludes: readonly string[];
+  readonly likelyBuildPaths: readonly string[];
   readonly topRules: readonly TopRuleEntry[];
   readonly configSource: string | null;
   readonly foreignEcosystem: string | null;
 }): string {
-  const { wrappers, excludes, topRules, configSource, foreignEcosystem } = args;
+  const { wrappers, excludes, likelyBuildPaths, topRules, configSource, foreignEcosystem } = args;
   const summary: string[] = [];
   if (wrappers.length > 0) {
     summary.push(`${wrappers.length} confirmed wrapper${wrappers.length === 1 ? "" : "s"}`);
   }
   if (excludes.length > 0) {
     summary.push(`${excludes.length} build-artifact path${excludes.length === 1 ? "" : "s"}`);
+  }
+  if (likelyBuildPaths.length > 0) {
+    summary.push(
+      `${likelyBuildPaths.length} likely-build path${likelyBuildPaths.length === 1 ? "" : "s"} in a commented hint block`,
+    );
   }
   if (topRules.length > 0) {
     summary.push(
