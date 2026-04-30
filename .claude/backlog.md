@@ -263,7 +263,6 @@ Field-test follow-ups from a 20-agent multi-corpus probe (CSS framework + static
 
 ### suggest_fix shape + correctness bugs
 
-- [ ] **Q10-PARSE-ERROR-REASON-DIRECTION-INVERTED** A `parseErrorFiles[].reason` describing layout-tail elision narrates the wrong direction: claims `</html>` is the elided closer when the file's actual content has `</html>` on its last line and the OPENING `<html>` is what's elided (supplied by an included partial). Fix: parse-error reason text must reflect which tag is actually elided; integration test on a synthetic include-pattern fixture asserting reason matches the elided side. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest" (reason-text honesty extension).
 
 ### Reason-severity mismatches
 

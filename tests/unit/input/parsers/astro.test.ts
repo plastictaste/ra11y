@@ -314,9 +314,11 @@ describe("parseAstro — layout-tail rename for delegated root closers", () => {
   // carries only the matching close tags downstream. Without the
   // rename, the agent reads `partialParseFiles[].reason: "Stray
   // </body> at top level"` and triages it as a parser bug. With the
-  // rename, the agent reads "Astro page or partial whose document
-  // envelope is opened by a parent <Layout> component" and routes
-  // straight to the composition shape.
+  // rename, the agent reads "Elided layout-tail <body> open — file
+  // contains a bare </body> closer; this Astro page or partial
+  // expects the matching <body> open tag from a parent <Layout>
+  // component" and routes straight to the composition shape with
+  // the elided side named honestly.
 
   it("renames the stray-close diagnostic for </body> when no <body> opens in source", () => {
     const src = `---
@@ -328,7 +330,10 @@ import Footer from "./Footer.astro";
     const { errors } = parseAstro(src);
     const body = errors.find((e) => e.message.includes("</body>"));
     expect(body).toBeDefined();
-    expect(body?.message).toContain("Elided layout-tail </body>");
+    // The opener `<body>` is elided (delegated to a parent <Layout>);
+    // the closer `</body>` is in source. Rename names the elided side.
+    expect(body?.message).toContain("Elided layout-tail <body> open");
+    expect(body?.message).toContain("</body>");
     expect(body?.message).toContain("Astro");
   });
 
@@ -344,8 +349,8 @@ import Footer from "./Footer.astro";
     expect(errors.length).toBeGreaterThanOrEqual(2);
     const body = errors.find((e) => e.message.includes("</body>"));
     const html = errors.find((e) => e.message.includes("</html>"));
-    expect(body?.message).toContain("Elided layout-tail </body>");
-    expect(html?.message).toContain("Elided layout-tail </html>");
+    expect(body?.message).toContain("Elided layout-tail <body> open");
+    expect(html?.message).toContain("Elided layout-tail <html> open");
   });
 
   it("keeps the stray-close diagnostic when the matching open IS in source", () => {
@@ -366,7 +371,7 @@ const x = 1;
 `;
     const { errors } = parseAstro(src);
     const html = errors.find((e) => e.message.includes("</html>"));
-    expect(html?.message).toContain("Elided layout-tail </html>");
+    expect(html?.message).toContain("Elided layout-tail <html> open");
   });
 
   it("does not rename </div> stray closes — only the html/body/head set is layout-tail eligible", () => {

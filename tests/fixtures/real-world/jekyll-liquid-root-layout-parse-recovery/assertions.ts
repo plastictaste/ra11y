@@ -25,8 +25,15 @@
  * closer + one of `html` / `body` / `head` + a `{% include %}` /
  * `{% render %}` head — and renames the reason to
  *
- *   "Elided layout-tail </html> — file opens with a Liquid {% include %}
- *    directive whose sibling partial closes this root tag"
+ *   "Elided layout-tail <html> open — file ends with a bare </html>
+ *    closer; opens with a Liquid {% include %} directive whose sibling
+ *    partial provides the matching <html> open tag"
+ *
+ * The reason names the elided side (the OPENING `<html>` supplied by
+ * the partial) and the observed side (the bare `</html>` closer in
+ * this file). An earlier rename inverted that direction — naming the
+ * closer `</html>` as elided and claiming the partial "closes" the
+ * tag — which read backwards to an agent triaging the file.
  *
  * The rename is reason-string enrichment, not suppression: the
  * recoverable error still fires (so `partialParseFiles` retains the

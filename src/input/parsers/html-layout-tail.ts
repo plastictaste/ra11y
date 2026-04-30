@@ -169,7 +169,15 @@ export function strayClosingTagMessage(
     hasLiquidIncludeHead &&
     countLayoutTailClosers(source) === 1
   ) {
-    return `Elided layout-tail </${lower}> — file opens with a Liquid {% include %} directive whose sibling partial closes this root tag`;
+    // The `</${lower}>` IS in source (that's what we just diagnosed); the
+    // OPENING `<${lower}>` is what's elided — supplied by the sibling
+    // partial pulled in via `{% include %}` / `{% render %}`. Naming the
+    // elided side honestly per docs/kb/architecture/ai-first-consumer.md
+    // "Heuristic-mislabeled meta sub-fields are dishonest" — the prior
+    // wording named the closer as elided and claimed the partial "closes"
+    // the tag (it opens it), which inverted the direction the agent
+    // routes on.
+    return `Elided layout-tail <${lower}> open — file ends with a bare </${lower}> closer; opens with a Liquid {% include %} directive whose sibling partial provides the matching <${lower}> open tag`;
   }
   if (
     depth === 0 &&
@@ -177,7 +185,10 @@ export function strayClosingTagMessage(
     astroComposedLayout &&
     !hasMatchingOpenTag(source, lower)
   ) {
-    return `Elided layout-tail </${lower}> — Astro page or partial whose document envelope is opened by a parent <Layout> component`;
+    // Same direction-inversion fix as the Liquid branch: the closer is in
+    // source, the opener is delegated to the parent `<Layout>` component
+    // and is what's actually elided.
+    return `Elided layout-tail <${lower}> open — file contains a bare </${lower}> closer; this Astro page or partial expects the matching <${lower}> open tag from a parent <Layout> component`;
   }
   if (depth > 0 && enclosingTag !== undefined) {
     return `Mismatched </${closerName}> close at line ${line} (inside <${enclosingTag}>)`;

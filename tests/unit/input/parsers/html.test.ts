@@ -314,7 +314,12 @@ describe("parseHtml", () => {
     const { errors } = parseHtml(src);
     expect(errors.length).toBe(1);
     expect(errors[0]?.recoverable).toBe(true);
-    expect(errors[0]?.message).toContain("Elided layout-tail </html>");
+    // The reason names the elided side honestly: `<html>` open is
+    // elided (provided by the partial); `</html>` close is in source.
+    // Naming the closer as "elided" inverted the routing direction
+    // an agent reads off `partialParseFiles[].reason`.
+    expect(errors[0]?.message).toContain("Elided layout-tail <html> open");
+    expect(errors[0]?.message).toContain("</html>");
     expect(errors[0]?.message).toContain("Liquid");
   });
 
@@ -325,7 +330,8 @@ describe("parseHtml", () => {
 `;
     const { errors } = parseHtml(src);
     expect(errors.length).toBe(1);
-    expect(errors[0]?.message).toContain("Elided layout-tail </body>");
+    expect(errors[0]?.message).toContain("Elided layout-tail <body> open");
+    expect(errors[0]?.message).toContain("</body>");
   });
 
   it("accepts {% render %} as an equivalent layout-composition head", () => {
@@ -334,7 +340,7 @@ describe("parseHtml", () => {
 </html>
 `;
     const { errors } = parseHtml(src);
-    expect(errors[0]?.message).toContain("Elided layout-tail </html>");
+    expect(errors[0]?.message).toContain("Elided layout-tail <html> open");
   });
 
   it("keeps the root-level wording for a non-root closer under a Liquid head", () => {
