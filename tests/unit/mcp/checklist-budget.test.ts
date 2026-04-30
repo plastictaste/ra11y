@@ -41,7 +41,11 @@ function buildSyntheticChecklistResponse(
   }));
   return {
     summary: {
-      actionable: { criteria: itemCount, candidatesUncapped: itemCount, candidatesReturned: itemCount },
+      actionable: {
+        criteria: itemCount,
+        candidatesUncapped: itemCount,
+        candidatesReturned: itemCount,
+      },
       untargetedCriteria: 0,
     },
     items,

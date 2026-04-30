@@ -44,9 +44,7 @@ function buildSyntheticCoverageResponse(
     criteriaUntestable: 0,
     actionableManualItems: 5,
     untargetedCriteria: 5,
-    untargetedCriteriaList: [
-      { criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" },
-    ],
+    untargetedCriteriaList: [{ criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" }],
     manualWithCandidates: [
       { criterionId: "wcag22:1.3.1", title: "Info and Relationships", level: "A" },
     ],
