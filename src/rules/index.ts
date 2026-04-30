@@ -106,6 +106,7 @@ import { rule as formLandmarkNameMissing } from "./semantics/form-landmark-name-
 import { rule as headingClassOnNonheading } from "./semantics/heading-class-on-nonheading.ts";
 import { rule as headingHierarchy } from "./semantics/heading-hierarchy.ts";
 import { rule as inlineDisplayNoneOnFocusable } from "./semantics/inline-display-none-on-focusable.ts";
+import { rule as interactiveAncestorOfHeading } from "./semantics/interactive-ancestor-of-heading.ts";
 import { rule as labelInName } from "./semantics/label-in-name.ts";
 import { rule as landmarkMain } from "./semantics/landmark-main.ts";
 import { rule as layoutTableNoPresentationRole } from "./semantics/layout-table-no-presentation-role.ts";
@@ -167,6 +168,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   imgEmptyAltInClickableGroup,
   inPageLinkFragmentMissing,
   inlineDisplayNoneOnFocusable,
+  interactiveAncestorOfHeading,
   interactiveDivRoleMissing,
   invalidIdShape,
   invalidRole,
@@ -283,6 +285,7 @@ export {
   imgEmptyAltInClickableGroup,
   inlineDisplayNoneOnFocusable,
   inPageLinkFragmentMissing,
+  interactiveAncestorOfHeading,
   interactiveDivRoleMissing,
   invalidIdShape,
   invalidRole,
