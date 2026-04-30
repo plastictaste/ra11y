@@ -53,7 +53,16 @@ if (tsc.status !== 0) {
 
 const test = spawnSync("bun test --bail", SPAWN_OPTS);
 if (test.status !== 0) {
-  const out = `${(test.stdout ?? "").trim()}\n${(test.stderr ?? "").trim()}`.trim();
+  // Drop verbose `(pass)` lines on failure — bun test prints every passing
+  // test by default, which floods the bounded hook-feedback channel
+  // (~5000 lines on a full suite). Keep file headers, fail lines, error
+  // stacks, and the trailing summary block.
+  const stdoutFiltered = (test.stdout ?? "")
+    .split("\n")
+    .filter((line) => !line.startsWith("(pass)"))
+    .join("\n")
+    .trim();
+  const out = `${stdoutFiltered}\n${(test.stderr ?? "").trim()}`.trim();
   failures.push(`bun test failed:\n${out}`);
 }
 
