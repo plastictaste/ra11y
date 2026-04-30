@@ -1306,5 +1306,153 @@ describe("rule aria/expanded-on-disclosure", () => {
         findingKind: "missing-expanded",
       });
     });
+
+    it("surfaces visuallyHiddenLabelClass on evidence when the trigger has a .sr-only direct child", () => {
+      // The label-evidence axis (visually-hidden child) gates the
+      // per-emit severity downgrade. Surfacing it on the structured
+      // `evidence` shape keeps the cross-finding invariant auditable —
+      // two findings with identical evidence inputs ship identical
+      // evidence objects and identical severity.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m">
+            <span class="sr-only">Toggle</span>
+          </button>
+        </body></html>`,
+        { filePath: "sr.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "data-toggle",
+        findingKind: "missing-expanded",
+        visuallyHiddenLabelClass: "sr-only",
+      });
+    });
+
+    it("surfaces inlineAriaLabel: true on evidence when the trigger has a non-empty inline aria-label", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button aria-label="Open" data-bs-toggle="collapse" data-bs-target="#m"></button>
+        </body></html>`,
+        { filePath: "label.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.evidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "data-toggle",
+        findingKind: "missing-expanded",
+        inlineAriaLabel: true,
+      });
+    });
+  });
+
+  describe("cross-finding invariant: identical evidence yields identical attention-budget signals", () => {
+    // Doctrine source: docs/kb/architecture/ai-first-consumer.md
+    // "Per-finding confidence must reflect per-rule coverage
+    // limitations" — extended to "identical evidence must yield
+    // identical attention-budget signals." When two findings share
+    // the same predicate branch and the same label-evidence inputs,
+    // they MUST ship identical severity, identical
+    // `couldBeWrongBecause`, and identical `evidence` shape.
+    //
+    // The regression this pins: before the fix, the rule shipped
+    // 1-of-5 findings at `info`/low and 4-of-5 at `warning`/medium
+    // across sibling lines whose `predicateBranch: "data-toggle"` and
+    // `couldBeWrongBecause` were identical — the divergence was driven
+    // by a label-evidence axis (visually-hidden direct child) that was
+    // NOT surfaced on the structured `evidence` field. The fix surfaces
+    // that input as `evidence.visuallyHiddenLabelClass` so the divergence
+    // is justified by visible evidence shape rather than hidden state.
+    it("five sibling data-toggle triggers without label evidence ship identical severity + evidence + couldBeWrongBecause", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m1">a</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m2">b</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m3">c</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m4">d</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m5">e</button>
+        </body></html>`,
+        { filePath: "siblings-no-label.html" },
+      );
+      expect(violations).toHaveLength(5);
+      const expectedSeverity = violations[0]?.severity;
+      const expectedEvidence = violations[0]?.evidence;
+      const expectedCouldBeWrongBecause = violations[0]?.couldBeWrongBecause;
+      for (const v of violations) {
+        expect(v.severity).toBe(expectedSeverity);
+        expect(v.evidence).toEqual(expectedEvidence);
+        expect(v.couldBeWrongBecause).toEqual(expectedCouldBeWrongBecause);
+      }
+      expect(expectedSeverity).toBe("warning");
+    });
+
+    it("five sibling data-toggle triggers WITH visually-hidden label children all ship identical severity=info + identical evidence shape", () => {
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m1"><span class="sr-only">a</span></button>
+          <button data-bs-toggle="collapse" data-bs-target="#m2"><span class="sr-only">b</span></button>
+          <button data-bs-toggle="collapse" data-bs-target="#m3"><span class="sr-only">c</span></button>
+          <button data-bs-toggle="collapse" data-bs-target="#m4"><span class="sr-only">d</span></button>
+          <button data-bs-toggle="collapse" data-bs-target="#m5"><span class="sr-only">e</span></button>
+        </body></html>`,
+        { filePath: "siblings-sr-only.html" },
+      );
+      expect(violations).toHaveLength(5);
+      const expectedSeverity = violations[0]?.severity;
+      const expectedEvidence = violations[0]?.evidence;
+      const expectedCouldBeWrongBecause = violations[0]?.couldBeWrongBecause;
+      for (const v of violations) {
+        expect(v.severity).toBe(expectedSeverity);
+        expect(v.evidence).toEqual(expectedEvidence);
+        expect(v.couldBeWrongBecause).toEqual(expectedCouldBeWrongBecause);
+      }
+      expect(expectedSeverity).toBe("info");
+      expect(expectedEvidence).toEqual({
+        kind: "disclosure-predicate-branch",
+        predicateBranch: "data-toggle",
+        findingKind: "missing-expanded",
+        visuallyHiddenLabelClass: "sr-only",
+      });
+    });
+
+    it("mixed siblings (some with sr-only child, some without) ship divergent severity ONLY where evidence shape diverges", () => {
+      // The regression case directly: 4 plain triggers + 1 with a
+      // sr-only child. Findings with the same evidence shape MUST share
+      // severity; findings whose evidence shape differs (because the
+      // label-evidence input differs) are allowed to differ — and the
+      // structured `evidence` field makes that divergence auditable.
+      const violations = runRule(
+        rule,
+        `<!doctype html><html><body>
+          <button data-bs-toggle="collapse" data-bs-target="#m1">a</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m2">b</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m3"><span class="sr-only">c</span></button>
+          <button data-bs-toggle="collapse" data-bs-target="#m4">d</button>
+          <button data-bs-toggle="collapse" data-bs-target="#m5">e</button>
+        </body></html>`,
+        { filePath: "mixed.html" },
+      );
+      expect(violations).toHaveLength(5);
+      // Group by evidence shape (JSON-stringified) and confirm
+      // severity is constant within each group.
+      const groups = new Map<string, Set<string>>();
+      for (const v of violations) {
+        const key = JSON.stringify(v.evidence);
+        const set = groups.get(key) ?? new Set<string>();
+        set.add(v.severity);
+        groups.set(key, set);
+      }
+      for (const [, severities] of groups) {
+        expect(severities.size).toBe(1);
+      }
+      // And confirm there ARE two distinct evidence shapes (the
+      // divergence is real but justified by visible evidence).
+      expect(groups.size).toBe(2);
+    });
   });
 });

@@ -370,7 +370,13 @@ export const rule = defineRule({
   // {@link severityForLabelEvidence} for the rationale (the message
   // adds a layered "if that is the disclosure label, verify..." hedge
   // on top of the base predicate hedge, and two stacked concessions
-  // earn the further downgrade).
+  // earn the further downgrade). The label-evidence inputs gating
+  // that downgrade are surfaced on `evidence.visuallyHiddenLabelClass`
+  // / `evidence.inlineAriaLabel` so two findings with identical
+  // predicate + label inputs ship identical `evidence` shapes and
+  // identical severity — the cross-finding invariant the AI-first
+  // consumer model requires ("identical evidence must yield identical
+  // attention-budget signals").
   severity: "warning",
   scope: "node",
   // re-tagged `mechanical` →
@@ -447,21 +453,42 @@ type Emit = (v: {
 }) => void;
 
 /**
- * Promotes the rule's internal {@link PredicateBranch} discriminator and
- * the {@link FindingKind} flag to a structured `evidence` shape on the
- * emitted violation. An agent triaging a 169-finding cluster can branch
- * on `evidence.predicateBranch === "aria-controls"` (strongest signal —
+ * Promotes the rule's internal {@link PredicateBranch} discriminator,
+ * the {@link FindingKind} flag, AND the {@link LabelEvidence} signals
+ * to a structured `evidence` shape on the emitted violation. An agent
+ * triaging a 169-finding cluster can branch on
+ * `evidence.predicateBranch === "aria-controls"` (strongest signal —
  * the trigger references an existing id) vs `"disclosure-class"` (the
  * weakest, class-token-only signal) without parsing the rule's prose
  * `message`. The prose still names the branch — `evidence` is additive
- * machine-routable signal. See {@link ViolationEvidence} for the
- * surface contract.
+ * machine-routable signal.
+ *
+ * The label-evidence fields (`visuallyHiddenLabelClass`,
+ * `inlineAriaLabel`) are surfaced **present-when-meaningful** so two
+ * findings with identical predicate inputs and identical label inputs
+ * carry identical `evidence` objects and identical severity — the
+ * cross-finding invariant the AI-first consumer model requires
+ * ("identical evidence must yield identical attention-budget signals").
+ * The visually-hidden token IS a per-emit severity input (it gates the
+ * `warning` → `info` drop in {@link severityForLabelEvidence}); making
+ * it visible in `evidence` keeps the severity divergence auditable
+ * from the response alone.
+ *
+ * See {@link ViolationEvidence} for the surface contract.
  */
-function buildPredicateEvidence(branch: PredicateBranch, finding: FindingKind): ViolationEvidence {
+function buildPredicateEvidence(
+  branch: PredicateBranch,
+  finding: FindingKind,
+  label: LabelEvidence,
+): ViolationEvidence {
   return {
     kind: "disclosure-predicate-branch",
     predicateBranch: branch.kind,
     findingKind: finding,
+    ...(label.visuallyHiddenClassToken === null
+      ? {}
+      : { visuallyHiddenLabelClass: label.visuallyHiddenClassToken }),
+    ...(label.ariaLabel ? { inlineAriaLabel: true as const } : {}),
   };
 }
 
@@ -521,7 +548,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
       couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
-      evidence: buildPredicateEvidence(branch, finding),
+      evidence: buildPredicateEvidence(branch, finding, labelEvidence),
     });
   }
 }
@@ -717,7 +744,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
       message: buildMessage(el.tagName, branch, finding, labelEvidence),
       suggestion: buildSuggestion(el.tagName, branch, finding, labelEvidence),
       couldBeWrongBecause: [DISCLOSURE_PREDICATE_HEURISTIC],
-      evidence: buildPredicateEvidence(branch, finding),
+      evidence: buildPredicateEvidence(branch, finding, labelEvidence),
     });
   }
 }

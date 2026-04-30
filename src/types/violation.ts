@@ -475,6 +475,20 @@ export type ViolationEvidence =
    * list contains a disclosure-pattern token). The `findingKind`
    * field distinguishes the two findings the rule emits
    * (`missing-expanded` vs `missing-controls`).
+   *
+   * Label-evidence fields (`visuallyHiddenLabelClass`, `inlineAriaLabel`)
+   * are surfaced when the flagged trigger carries label signal in the
+   * tree. Both fields are present-when-meaningful (omitted when the
+   * underlying evidence is absent — never `null` / `false` sentinel)
+   * per the AI-first consumer model. They exist to make the per-emit
+   * severity downgrade auditable: severity drops from `warning` to
+   * `info` when `visuallyHiddenLabelClass` is populated (two stacked
+   * concessions in the message — see the rule docstring), and the
+   * agent reading `evidence` can see which evidence inputs gated the
+   * downgrade rather than re-deriving them from prose. Identical
+   * evidence inputs across two findings therefore yield identical
+   * severity + identical evidence shape — the cross-finding invariant
+   * the AI-first doctrine requires.
    */
   | {
       readonly kind: "disclosure-predicate-branch";
@@ -484,6 +498,24 @@ export type ViolationEvidence =
         | "onclick-classlist"
         | "disclosure-class";
       readonly findingKind: "missing-expanded" | "missing-controls";
+      /**
+       * The matched visually-hidden class token (e.g. `sr-only`,
+       * `visually-hidden`) on a direct element child of the flagged
+       * trigger. Present when the trigger ships a hidden text label
+       * inline (the Bootstrap collapse-button canonical pattern).
+       * Drives the per-emit severity downgrade to `info`.
+       */
+      readonly visuallyHiddenLabelClass?: string;
+      /**
+       * `true` when the flagged trigger carries a non-empty inline
+       * `aria-label` attribute (literal value for JSX). An inline
+       * `aria-label` is provably part of the accessible name per
+       * ARIA, so it does NOT trigger the severity downgrade — but
+       * surfacing it as evidence keeps the cross-finding invariant
+       * honest (two findings with identical evidence shape have
+       * identical severity).
+       */
+      readonly inlineAriaLabel?: true;
     }
   /**
    * `semantics/landmark-main` — emitted on the missing-`<main>` branch
