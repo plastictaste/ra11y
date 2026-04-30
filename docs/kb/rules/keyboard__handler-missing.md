@@ -2,12 +2,12 @@
 title: "keyboard/handler-missing"
 severity: "error"
 scope: "node"
-satisfies: ["wcag22:2.1.1", "wcag21:2.1.1"]
+satisfies: ["wcag22:2.1.1", "wcag21:2.1.1", "wcag22:4.1.2", "wcag21:4.1.2"]
 ---
 # `keyboard/handler-missing`
 - **Severity:** error
 - **Scope:** node
-- **Satisfies:** `wcag22:2.1.1`, `wcag21:2.1.1`
+- **Satisfies:** `wcag22:2.1.1`, `wcag21:2.1.1`, `wcag22:4.1.2`, `wcag21:4.1.2`
 - **Applies to:** .html, .htm, .tsx, .jsx, .ts, .js
 ## What it checks
 Elements that declare click or toggle behavior (onClick, data-bs-toggle, etc.) must be reachable by keyboard: use a native button/link or add tabIndex plus an onKeyDown/onKeyUp that handles Enter and Space.
