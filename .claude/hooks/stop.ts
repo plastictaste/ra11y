@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { audit } from "./lib/audit.ts";
 import { readHookInput } from "./lib/input.ts";
 import { block, ok } from "./lib/output.ts";
+import { interpretTestRun } from "./lib/test-output.ts";
 import type { StopInput } from "./lib/types.ts";
 import { decideSkip, writeMarker } from "./lib/verify-marker.ts";
 
@@ -61,18 +62,25 @@ if (tsc.status !== 0) {
 }
 
 const test = spawnSync("bun test --bail", SPAWN_OPTS);
-if (test.status !== 0) {
-  // Drop verbose `(pass)` lines on failure — bun test prints every passing
-  // test by default, which floods the bounded hook-feedback channel
-  // (~5000 lines on a full suite). Keep file headers, fail lines, error
-  // stacks, and the trailing summary block.
-  const stdoutFiltered = (test.stdout ?? "")
-    .split("\n")
-    .filter((line) => !line.startsWith("(pass)"))
-    .join("\n")
-    .trim();
-  const out = `${stdoutFiltered}\n${(test.stderr ?? "").trim()}`.trim();
-  failures.push(`bun test failed:\n${out}`);
+const verdict = interpretTestRun({
+  status: test.status,
+  stdout: test.stdout ?? "",
+  stderr: test.stderr ?? "",
+});
+if (verdict.failed) {
+  // `bun test` exits non-zero for actual test failures AND for transient
+  // teardown noise (e.g. an MCP integration test's child process logging
+  // `[ra11y error] MCP dispatch error: ...` on shutdown), so trusting the
+  // exit code alone misclassifies otherwise-green runs as failures and
+  // dumps thousands of lines back to the user. interpretTestRun parses
+  // the bun summary's `N fail` line first; the exit code is only the
+  // fallback when no summary is present (true crash before any test ran).
+  //
+  // `(pass)` lines also get dropped inside interpretTestRun — bun emits
+  // them to stderr (not stdout), which is why filtering only stdout was
+  // a no-op on the original c6cdcba7 patch. See lib/test-output.ts for
+  // the full rationale.
+  failures.push(`bun test failed:\n${verdict.output}`);
 }
 
 if (failures.length > 0) {
