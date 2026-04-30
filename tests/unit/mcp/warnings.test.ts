@@ -1771,7 +1771,10 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // signal; `topFiles` is a head slice bounded so the wire stays
     // small. Same cap pattern as
     // `js_innerhtml_template_literal_unparsed.fileSamples`.
-    const fullList = Array.from({ length: 12 }, (_, i) => `/proj/page${String(i).padStart(2, "0")}.php`);
+    const fullList = Array.from(
+      { length: 12 },
+      (_, i) => `/proj/page${String(i).padStart(2, "0")}.php`,
+    );
     const details = computeScanWarningDetails(["php_islands_stripped"], {
       filesScanned: 12,
       rootSource: "explicit",
@@ -1801,7 +1804,11 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
       analysisCoverage: { phpIslandsStripped: true },
       filesByExtension: { ".php": 3 },
     });
-    expect(details.php_islands_stripped).toEqual({
+    // Read through `Record<string, unknown>` so the assertion accepts
+    // the runtime truncation sentinel (the static type only declares
+    // the populated payload shape).
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.php_islands_stripped).toEqual({
       truncated: true,
       reason: "summarizer_inputs_unavailable",
     });
