@@ -62,13 +62,13 @@ async function makeSiteDir(root: string, name: string, assetDir = "css"): Promis
 describe("detectCatalogShape: catalog regime", () => {
   it("resolves a 5-sibling site catalog with the threshold count + alphabetical examples", async () => {
     await withScratch(async (root) => {
-      const names = ["coffee-shop", "agile-agency", "delite-music", "frames-corporate", "vone"];
+      const names = ["template-b", "template-a", "template-c", "template-d", "template-e"];
       for (const name of names) await makeSiteDir(root, name);
       const result = detectCatalogShape(root);
       expect(result).not.toBeNull();
       expect(result?.topLevelSiblings).toBe(5);
       // Alphabetical, capped at CATALOG_EXAMPLE_CAP for stability.
-      expect(result?.exampleSiblings).toEqual(["agile-agency", "coffee-shop", "delite-music"]);
+      expect(result?.exampleSiblings).toEqual(["template-a", "template-b", "template-c"]);
       expect(result?.exampleSiblings.length).toBeLessThanOrEqual(CATALOG_EXAMPLE_CAP);
     });
   });
@@ -162,22 +162,22 @@ describe("catalogHintProse", () => {
   it("embeds the sibling count and at least one example plus structured detail", () => {
     const hint: CatalogHint = {
       topLevelSiblings: 174,
-      exampleSiblings: ["agile-agency", "coffee-shop", "delite-music"],
+      exampleSiblings: ["template-a", "template-b", "template-c"],
     };
     const structured = catalogHintProse(hint);
     expect(structured.code).toBe("catalog_shape_detected");
     expect(structured.text).toContain("174");
-    expect(structured.text).toContain("agile-agency");
-    expect(structured.text).toContain("coffee-shop");
+    expect(structured.text).toContain("template-a");
+    expect(structured.text).toContain("template-b");
     // Names the second-call shape so the agent has a paste-ready hint.
     expect(structured.text).toContain('scan_project({ cwd: "<subdir>" })');
     // structured detail mirrors
     // CatalogHint so agents dispatch without reparsing `text`.
     expect(structured.detail?.["topLevelSiblings"]).toBe(174);
     expect(structured.detail?.["exampleSiblings"]).toEqual([
-      "agile-agency",
-      "coffee-shop",
-      "delite-music",
+      "template-a",
+      "template-b",
+      "template-c",
     ]);
   });
 });

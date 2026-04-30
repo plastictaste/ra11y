@@ -41,7 +41,7 @@ export const assertions: FixtureAssertions = {
     "template rather than re-scanning the flat tree.",
   origin: {
     notes:
-      "Sanitized echo of /tmp/website-templates from the 2026-04-22 8-scan field test " +
+      "Sanitized echo of a bulk-template catalog corpus from a multi-scan field test " +
       "(174 sibling site dirs each carrying index.html + css/ + js/). Five subdirs is the " +
       "minimum that trips the detector's CATALOG_MIN_SIBLINGS gate; the production repo " +
       "is much larger but the same shape.",
@@ -57,7 +57,7 @@ export const assertions: FixtureAssertions = {
       path: ["catalogHint", "exampleSiblings"],
       // Alphabetical prefix capped at three — pinning the exact list
       // protects the stable-ordering invariant the agent relies on.
-      predicate: { equals: ["agile-agency", "coffee-shop", "delite-music"] },
+      predicate: { equals: ["template-a", "template-b", "template-c"] },
     },
     {
       kind: "meta-hint-includes",

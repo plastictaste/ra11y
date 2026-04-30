@@ -92,7 +92,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
  * (populated branch) or absent (the css-only-with-empty-html branch).
  */
 function makeFiveSiblingSites(root: string, withParseableHtml: boolean): readonly string[] {
-  const names = ["agile-agency", "coffee-shop", "delite-music", "frames-corporate", "vone"];
+  const names = ["template-a", "template-b", "template-c", "template-d", "template-e"];
   for (const name of names) {
     const dir = join(root, name);
     mkdirSync(dir);
@@ -121,7 +121,7 @@ describe("scan_project:", () => {
       const hint = meta.catalogHint as Record<string, unknown> | undefined;
       expect(hint).toBeDefined();
       expect(hint?.topLevelSiblings).toBe(5);
-      expect(hint?.exampleSiblings).toEqual(["agile-agency", "coffee-shop", "delite-music"]);
+      expect(hint?.exampleSiblings).toEqual(["template-a", "template-b", "template-c"]);
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
       expect(coverage).toBeDefined();
       const hints = coverage?.hints as

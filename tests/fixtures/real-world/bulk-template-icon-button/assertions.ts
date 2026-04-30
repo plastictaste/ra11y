@@ -3,8 +3,8 @@
  * fires on ALL icon-font glyph elements in a Bootstrap-template navbar
  * that mixes labeled `<button>` and labeled `<a>` parents.
  *
- * Pattern drawn from the website-templates corpus (coffee-shop shape,
- * sanitized). Three Font Awesome `<i>` elements — one inside a
+ * Pattern drawn from a bulk-template catalog corpus (Bootstrap-style
+ * navbar shape, sanitized). Three Font Awesome `<i>` elements — one inside a
  * `<button aria-label="Toggle navigation">`, two inside
  * `<a aria-label="...">` anchors — lack `aria-hidden="true"`.
  *
@@ -40,7 +40,7 @@ export const assertions: FixtureAssertions = {
     "in a Bootstrap-template navbar. Guards bulk detection and mixed button/anchor parent types.",
   origin: {
     notes:
-      "Pattern from the website-templates corpus (coffee-shop template shape, sanitized). " +
+      "Pattern from a bulk-template catalog corpus (Bootstrap-style navbar shape, sanitized). " +
       "Real-world scans emitted zero findings on this pattern; investigation confirmed the " +
       "rule fires correctly on the current codebase — the zero-findings field report was " +
       "caused by a stale MCP subprocess, not a predicate gap. Fixture locks in the " +

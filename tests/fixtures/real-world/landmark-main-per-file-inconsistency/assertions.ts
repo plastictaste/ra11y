@@ -3,7 +3,7 @@
  * semantics/landmark-main firing inconsistently across two
  * structurally-equivalent pages in the same scan.
  *
- * Source: sanitized from bradtraversy/50projects50days. A field-test
+ * Source: sanitized from a vanilla-JS mini-projects corpus. A field-test
  * pass produced one `semantics/landmark-main` finding on
  * `drink-water/index.html` (no <main>, branch B via h1 + body content)
  * but zero on `expanding-cards/index.html` (also no <main>, same
@@ -54,10 +54,11 @@ export const assertions: FixtureAssertions = {
     "ul/ol/dl which this page lacks. Widening to include a script-in-body branch closes the gap.",
   origin: {
     notes:
-      "Sanitized from bradtraversy/50projects50days/03-drink-water and /01-expanding-cards. " +
-      "Structure preserved verbatim: DOCTYPE, lang='en', standard meta tags, external " +
-      "stylesheet, body content matching the demo, body-level <script src='script.js'>. " +
-      "No <main> landmark in either file — the field-test shape.",
+      "Sanitized from two representative files in a vanilla-JS mini-projects corpus " +
+      "(a drink-water and an expanding-cards demo). Structure preserved verbatim: " +
+      "DOCTYPE, lang='en', standard meta tags, external stylesheet, body content " +
+      "matching the demo, body-level <script src='script.js'>. No <main> landmark " +
+      "in either file — the field-test shape.",
   },
   expectations: [
     { kind: "zero-parse-errors" },

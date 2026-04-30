@@ -2,13 +2,12 @@
  * bootstrap-data-bs-toggle-tooltip — guards the JS-tooltip-enhancer
  * reason-text enrichment for `tooltip/dismissable` (wcag22:1.4.13).
  *
- * On `twbs/bootstrap` at `js/tests/integration/index.html:18`, the
- * finding
+ * On a representative file in a CSS-framework corpus, the finding
  *
  *   <button data-bs-toggle="tooltip" title="Tooltip on top">
  *
- * fired 18 times across the scan. Bootstrap's tooltip JS replaces
- * the native `title` attribute with an ARIA-aware runtime widget
+ * fired 18 times across the scan. A Bootstrap-style component framework's
+ * tooltip JS replaces the native `title` attribute with an ARIA-aware runtime widget
  * (`aria-describedby` + `role="tooltip"` + keyboard dismiss), so the
  * `title` is a source string for the widget — not the rendered
  * native browser tooltip the rule normatively targets.
@@ -65,7 +64,7 @@ export const assertions: FixtureAssertions = {
     "in fact WCAG 1.4.13-compliant.",
   origin: {
     notes:
-      "Sanitized from js/tests/integration/index.html:18 (sixth-pass twbs/bootstrap scan). The " +
+      "Sanitized from a representative integration test file in a CSS-framework corpus. The " +
       "native title attribute is a source string for a runtime ARIA-aware tooltip widget " +
       "(aria-describedby + role=tooltip + keyboard dismiss); static analysis cannot prove the " +
       "widget is actually wired up, so the finding stays live and the agent reads the file to " +

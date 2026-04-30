@@ -5,7 +5,7 @@
  * `aria-hidden="true"`.
  *
  * The pattern (Bootstrap navbar-toggle + Font Awesome icon) is ubiquitous
- * in the website-templates corpus. When the button already has an
+ * in bulk-template catalog corpora. When the button already has an
  * accessible name via `aria-label`, the unlabeled icon glyph causes many
  * AT stacks to announce the private-use-area pseudo-content on top of the
  * button's real label — the "double-announce" anti-pattern.
@@ -38,8 +38,8 @@ export const assertions: FixtureAssertions = {
     "double-announce risk (labeled parent + unannotated icon glyph).",
   origin: {
     notes:
-      "Pattern observed across website-templates corpus (Bootstrap 3 navbar-toggle + Font Awesome). " +
-      "The coffee-shop-free-html5-template uses span.icon-bar (not Font Awesome), so the direct " +
+      "Pattern observed across a bulk-template catalog corpus (Bootstrap 3 navbar-toggle + Font Awesome). " +
+      "Some templates in that corpus use span.icon-bar (not Font Awesome), so the direct " +
       "source is the generic Bootstrap+FA pairing. Sanitized to minimal skeleton. " +
       "Field test observed as non-firing due to stale subprocess; live probe confirms detection.",
   },

@@ -1,8 +1,9 @@
 <!--
-  Sanitized from twbs/bootstrap js/tests/integration/index.html
-  (sixth-pass scan). Bootstrap's tooltip JS replaces the native
-  title="…" with an ARIA-aware runtime widget (aria-describedby +
-  role=tooltip + keyboard dismiss). The native `title` attribute is
+  Sanitized from a representative integration test file in a
+  CSS-framework corpus. A Bootstrap-style component framework's tooltip
+  JS replaces the native title="…" with an ARIA-aware runtime widget
+  (aria-describedby + role=tooltip + keyboard dismiss). The native
+  `title` attribute is
   a source string for the widget, not a rendered native browser
   tooltip. Static analysis cannot tell one apart from the other,
   so tooltip/dismissable still fires — but the scanner surfaces

@@ -1,11 +1,11 @@
 /**
- * website-templates-aria-labelledby-dangling — guards that
- * `aria/labelledby-target-exists` fires when a Bootstrap 3 modal carries
+ * bulk-template-aria-labelledby-dangling — guards that
+ * `aria/labelledby-target-exists` fires when a Bootstrap-style modal carries
  * `aria-labelledby="myModalLabel"` but no element in the document has
  * `id="myModalLabel"`.
  *
- * The pattern appears verbatim in the website-templates field corpus
- * (coffee-shop-free-html5-template/index.html line 162). The `<h4>` inside
+ * The pattern appears verbatim in a representative file in a bulk-template
+ * catalog corpus. The `<h4>` inside
  * the modal carries `class="modal-title"` but never `id="myModalLabel"` —
  * the wire-up is silently dead. Screen readers fall back to the dialog's
  * role announcement ("dialog") with no accessible name.
@@ -28,7 +28,7 @@ export const assertions: FixtureAssertions = {
     "the broken token so the agent knows the exact fix (add id or correct the reference).",
   origin: {
     notes:
-      "Sanitized from coffee-shop-free-html5-template/index.html (website-templates corpus). " +
+      "Sanitized from a representative file in a bulk-template catalog corpus. " +
       'The modal header contains class="modal-title" but never id="myModalLabel". ' +
       "Field test observed as non-firing due to stale MCP subprocess; live probe on current " +
       "src/ confirms the rule fires and names the token.",

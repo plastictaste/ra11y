@@ -2,11 +2,11 @@
  * bootstrap-modal-aria-hidden — guards the overlay-class runtime-toggle
  * framing on aria/hidden-focus findings.
  *
- * Canonical real-world FP: twbs/bootstrap `js/tests/integration/index.html:41`.
+ * Canonical real-world FP: a representative file in a CSS-framework corpus.
  * A `<div class="modal fade" … aria-hidden="true">` containing a focusable
- * `<button class="btn-close">` fires aria/hidden-focus because Bootstrap
- * toggles `aria-hidden` at runtime when the widget opens — static analysis
- * cannot observe that toggle. The `limitations` block already names this
+ * `<button class="btn-close">` fires aria/hidden-focus because a Bootstrap-style
+ * component framework toggles `aria-hidden` at runtime when the widget opens —
+ * static analysis cannot observe that toggle. The `limitations` block already names this
  * class of gap, but every individual finding previously shipped at
  * `severity: error` with no framing, forcing the consuming agent to
  * re-derive "is this a runtime-toggled overlay?" per call site.

@@ -3,8 +3,8 @@
 Guards the fix for the over-permissive fragment heuristic in
 `src/rules/semantics/landmark-main.ts` (`looksLikeFullPage`).
 
-**Failure mode.** A 52-file field-test pass against the
-bradtraversy/50projects50days vanilla corpus produced only 1
+**Failure mode.** A 52-file field-test pass against a vanilla-JS
+mini-projects corpus produced only 1
 `semantics/landmark-main` finding despite the majority of files having full
 DOCTYPE+html+head+body structure and no `<main>` landmark. Root cause:
 `looksLikeFullPage()` requires a `header`/`nav`/`footer`/`aside` element

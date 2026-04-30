@@ -74,7 +74,7 @@ export const CATALOG_MIN_SIBLINGS = 5;
 /**
  * Cap on the number of `exampleSiblings` returned. Three is enough to
  * confirm the pattern without padding the meta block — agents reading
- * "exampleSiblings: ['agile-agency', 'coffee-shop', 'delite-music']"
+ * "exampleSiblings: ['template-a', 'template-b', 'template-c']"
  * have all the evidence they need to recognize a templates catalog.
  * The full count stays available via `topLevelSiblings`.
  */

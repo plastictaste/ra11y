@@ -3,17 +3,17 @@
  * semantics/nested-interactive rule against firing on role-only
  * wrappers.
  *
- * Canonical real-world FP: twbs/bootstrap `js/tests/visual/collapse/`
- * and `js/tests/visual/modal/` visual-test HTML. The outer wrapper
- * carries an ARIA role (role="tab", role="button") to convey AT
- * semantics, but is NOT materially interactive — no click/key handler
- * attribute, no tabindex, not a native interactive tag. The sole
- * focus + activation surface is the inner `<a href>` / `<button>`.
+ * Canonical real-world FP: representative collapse and modal visual-test
+ * files in a CSS-framework corpus. The outer wrapper carries an ARIA role
+ * (role="tab", role="button") to convey AT semantics, but is NOT materially
+ * interactive — no click/key handler attribute, no tabindex, not a native
+ * interactive tag. The sole focus + activation surface is the inner
+ * `<a href>` / `<button>`.
  *
  * Previous behaviour: role-on-wrapper alone qualified the outer
  * element as "interactive" for the nested-interactive ancestry walk,
  * producing false positives on this idiomatic accordion/collapse/tab
- * markup (7 FPs across Bootstrap's visual-test HTML).
+ * markup (7 FPs across the framework's visual-test HTML).
  *
  * Required behaviour (surface-don't-suppress applied correctly):
  *   - A wrapper whose ONLY interactive signal is an ARIA role does
@@ -39,9 +39,9 @@ export const assertions: FixtureAssertions = {
     "controls pattern to surface.",
   origin: {
     notes:
-      "Sanitized from Bootstrap's js/tests/visual/collapse/ and " +
-      "js/tests/visual/modal/ visual-test HTML. Seven FPs across those " +
-      "files before the fix; zero after.",
+      "Sanitized from a Bootstrap-style component framework's collapse and " +
+      "modal visual-test HTML. Seven FPs across those files before the fix; " +
+      "zero after.",
   },
   expectations: [
     { kind: "zero-parse-errors" },

@@ -2,8 +2,8 @@
  * 50p-vanilla-doctype — guards the fix for the fragment-heuristic
  * over-permissiveness in semantics/landmark-main.
  *
- * Source: sanitized from the bradtraversy/50projects50days corpus — 50
- * pedagogical vanilla HTML/CSS/JS bundles, no framework, no build step.
+ * Source: sanitized from a vanilla-JS mini-projects corpus — pedagogical
+ * vanilla HTML/CSS/JS bundles, no framework, no build step.
  * A 52-file field-test pass produced only 1 `semantics/landmark-main`
  * finding despite the majority of files having full-page DOCTYPE structure
  * and no <main> landmark. Root cause: `looksLikeFullPage()` in
@@ -69,7 +69,7 @@ export const assertions: FixtureAssertions = {
     "a heading + list + interactive trio (branch C).",
   origin: {
     notes:
-      "Sanitized from bradtraversy/50projects50days vanilla corpus. " +
+      "Sanitized from a vanilla-JS mini-projects corpus. " +
       "Field-test pass (52 files) produced 0 semantics/landmark-main findings " +
       "pre-fix. Root cause: looksLikeFullPage() in src/rules/semantics/landmark-main.ts " +
       "originally required header/nav/footer/aside presence; 50p files have none. " +

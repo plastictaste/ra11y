@@ -1,16 +1,16 @@
 /**
- * jekyll-readme-sponsor-logos — guards the review/images-of-text
+ * readme-sponsor-logos — guards the review/images-of-text
  * aggregation contract: when ≥4 adjacent sibling `<img>` elements share
  * a structural pattern (same parent, same `<a><img/></a>` wrapping,
- * alt-text differing only by an enumerated token — "Jekyll Sponsor 1",
- * "Jekyll Sponsor 2", …), the finder emits ONE consolidated candidate
+ * alt-text differing only by an enumerated token — "Sponsor 1",
+ * "Sponsor 2", …), the finder emits ONE consolidated candidate
  * per criterion whose `siblingOccurrences` list carries every matched
  * sibling's `{ line, alt, href }`.
  *
- * Before aggregation, the canonical repro (jekyll/jekyll
- * `README.markdown:58-67` — ten sponsor `<a><img/></a>` siblings)
- * produced ten near-identical review candidates per 1.4.5-family
- * criterion. Per the AI-first consumer model this is honest pattern
+ * Before aggregation, the canonical repro (a representative file in a
+ * Jekyll-style SSG corpus — ten sponsor `<a><img/></a>` siblings in a
+ * project README) produced ten near-identical review candidates per
+ * 1.4.5-family criterion. Per the AI-first consumer model this is honest pattern
  * aggregation, not heuristic suppression: the provable-from-evidence
  * fact (same parent, same wrapping shape, enumerated-token alt) is
  * deterministic from the AST, and the agent reads the aggregated
@@ -41,11 +41,11 @@ export const assertions: FixtureAssertions = {
     "a structural pattern and enumerated-token alt text into ONE consolidated " +
     "candidate per criterion, with siblingOccurrences carrying the full " +
     "per-sibling trail. Guards against regression to the pre-aggregation " +
-    "ten-candidate noise shape (jekyll/jekyll README.markdown:58-67).",
+    "ten-candidate noise shape (sponsor-logo block in a project README).",
   origin: {
     notes:
-      "Sanitized from jekyll/jekyll README.markdown:58-67 — ten adjacent " +
-      "<a href='...'><img class='sponsor-logo' alt='Jekyll Sponsor N'/></a> " +
+      "Sanitized from a representative README file in a Jekyll-style SSG corpus — " +
+      "ten adjacent <a href='...'><img class='sponsor-logo' alt='Sponsor N'/></a> " +
       "siblings. Pairs with closed " +
       "(per-rule meta concentration, different surface) and open " +
       "(cross-file sibling of the same " +

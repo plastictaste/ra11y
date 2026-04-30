@@ -1,7 +1,7 @@
 /**
  * bootstrap-floating-label-select — guards against a false positive
- * observed on twbs/bootstrap at
- * site/src/assets/examples/floating-labels/floating-label.html:77.
+ * observed on a CSS-framework corpus in a representative file in that
+ * corpus.
  *
  * A <select class="form-select" aria-label="Floating label select
  * example"> with four <option> children fired the semantics/label-in-
@@ -32,7 +32,7 @@ export const assertions: FixtureAssertions = {
     "value, not its visible label (HTML AAM / WCAG 2.5.3).",
   origin: {
     notes:
-      "twbs/bootstrap site/src/assets/examples/floating-labels/floating-label.html:77. " +
+      "Sanitized from a CSS-framework corpus floating-label-select example. " +
       "The rule treated option text as the <select>'s visible label and " +
       "compared it against aria-label, firing 18x on this pattern (13.7% " +
       "of the total scan). Fix: exclude <option> descendant text when " +
