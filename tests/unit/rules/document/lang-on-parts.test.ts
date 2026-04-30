@@ -166,20 +166,16 @@ describe("rule document/lang-on-parts", () => {
   });
 
   it('ignores <style lang="scss"> in JSX', () => {
-    const v = runRule(
-      rule,
-      `export const X = () => (<style lang="scss">.x{color:red}</style>);`,
-      { filePath: "Component.tsx" },
-    );
+    const v = runRule(rule, `export const X = () => (<style lang="scss">.x{color:red}</style>);`, {
+      filePath: "Component.tsx",
+    });
     expect(v).toHaveLength(0);
   });
 
   it('ignores <script lang="ts"> in JSX', () => {
-    const v = runRule(
-      rule,
-      'export const X = () => (<script lang="ts">const x = 1;</script>);',
-      { filePath: "Component.tsx" },
-    );
+    const v = runRule(rule, 'export const X = () => (<script lang="ts">const x = 1;</script>);', {
+      filePath: "Component.tsx",
+    });
     expect(v).toHaveLength(0);
   });
 
