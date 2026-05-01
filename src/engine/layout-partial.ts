@@ -94,18 +94,31 @@ function looksLikeLayoutsPath(filePath: string): boolean {
 }
 
 /**
- * True when the raw source contains a *layout-shape* composition
- * directive — the file declares "I compose a child template's content
- * into my markup at render time" (and therefore IS the page envelope,
- * not a fragment). Narrower than {@link hasCompositionDirective}: that
- * predicate also fires on `{% include %}` / `{% render %}`, which mark
- * a file pulling another partial — that file may itself still be a
- * fragment (a partial that composes deeper partials). The layout-
- * directive predicate fires only on the *child-content placeholder*
- * shape — the slot a parent layout opens for a child page's output.
+ * True when the raw source contains a layout-composition directive —
+ * either:
+ *   - a *parent-role* composition slot (this file IS a layout that
+ *     composes a child template's content into its markup at render
+ *     time): `{{ content }}`, `<%= yield %>`, `@RenderBody`,
+ *     `{% extends`, `<slot>`, `{outlet}`, `<router-view>`; OR
+ *   - a *child-role* frontmatter declaration (this file declares it
+ *     uses a parent layout to wrap its content at render time):
+ *     `--- layout: foo ---` / `--- permalink: /foo ---` (Jekyll /
+ *     Eleventy / Hugo / Astro / MDX SSG frontmatter).
  *
- * Examples per `docs/kb/architecture/ai-first-consumer.md` (the
- * "heuristic-mislabeled meta sub-fields" rule for fragment classification):
+ * Both shapes are evidence the file participates in a multi-file
+ * layout-composition system — the rendered page is assembled across
+ * this file PLUS another file the static scanner can't see in the same
+ * pass. The signal name describes what is detected (the presence of a
+ * layout directive in some role), so the meta entry's
+ * `hasLayoutDirective: true` is honest for both Jekyll posts (`---
+ * layout: post ---`) and Jekyll layouts (`{{ content }}`) — under the
+ * prior parent-role-only definition, posts shipped `false` even though
+ * their frontmatter clearly declared a layout directive, and the meta
+ * label lied about its evidence per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest."
+ *
+ * Parent-role shapes (file IS the page envelope):
  *   - Liquid / Hugo: `{{ content }}`, `{{ body }}`
  *   - ERB / Rails: `<%= yield %>`, `<% yield %>`
  *   - Razor / ASP.NET: `@RenderBody()`, `@RenderSection("name")`
@@ -113,30 +126,90 @@ function looksLikeLayoutsPath(filePath: string): boolean {
  *   - Astro / Web Components: `<slot />`, `{outlet}`
  *   - SPA frameworks: `<router-view />`
  *
+ * Child-role shapes (file is composed by a parent layout):
+ *   - Jekyll / Eleventy / Hugo / Astro / Next.js MDX frontmatter
+ *     declaring `layout:` (the parent layout filename) or
+ *     `permalink:` (a layout-aware route the SSG resolves through a
+ *     default layout).
+ *
  * Used by {@link classifyFragment} as the `hasLayoutDirective` signal
- * that vetoes fragment classification: a file that declares itself a
- * composer of child content is not a fragment whose rules should
- * suppress.
+ * that vetoes fragment classification: a file that declares ANY layout
+ * relationship is not a leaf fragment whose document-shape rules
+ * should suppress to "fragment_input_no_document_envelope" — surfacing
+ * findings on it (with the `couldBeWrongBecause` enrichment from
+ * `isHtmlLayoutOrPartial`) gives the agent the chance to verify
+ * whether the parent layout supplies the missing envelope, per
+ * `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
+ * suppress."
  */
 function hasLayoutDirective(source: string): boolean {
-  // Liquid / Hugo child-content interpolation.
+  // Parent-role: Liquid / Hugo child-content interpolation.
   if (/\{\{-?\s*(?:content|body)\s*(?:\||-?\}\})/.test(source)) return true;
-  // ERB layouts — `<%= yield %>` (and `<% yield %>` for block forms).
+  // Parent-role: ERB layouts — `<%= yield %>` (and `<% yield %>` for
+  // block forms).
   if (/<%=?\s*yield\b/.test(source)) return true;
-  // Razor / ASP.NET — `@RenderBody()` / `@RenderSection("name")`.
+  // Parent-role: Razor / ASP.NET — `@RenderBody()` /
+  // `@RenderSection("name")`.
   if (/@Render(?:Body|Section)\b/.test(source)) return true;
-  // Twig / Jinja `{% extends "..." %}` — declares this file inherits
-  // from a parent template, so the rendered page is composed across
-  // both. Same shape as `<%= yield %>` viewed from the child side.
+  // Parent-role: Twig / Jinja `{% extends "..." %}` — declares this
+  // file inherits from a parent template, so the rendered page is
+  // composed across both. Same shape as `<%= yield %>` viewed from
+  // the child side.
   if (/\{%-?\s*extends\b/.test(source)) return true;
-  // Astro / Web Components `<slot />` — child-content placeholder.
+  // Parent-role: Astro / Web Components `<slot />` — child-content
+  // placeholder.
   if (/<slot[\s/>]/i.test(source)) return true;
-  // Astro `{outlet}` — alternative child-content placeholder.
+  // Parent-role: Astro `{outlet}` — alternative child-content
+  // placeholder.
   if (/\{outlet\}/i.test(source)) return true;
-  // SPA frameworks — `<router-view>` (Vue Router) and similar route
-  // outlets. The element name is router-view exactly (case-insensitive).
+  // Parent-role: SPA frameworks — `<router-view>` (Vue Router) and
+  // similar route outlets. The element name is router-view exactly
+  // (case-insensitive).
   if (/<router-view\b/i.test(source)) return true;
+  // Child-role: frontmatter `layout:` / `permalink:` declaration.
+  if (hasFrontmatterLayoutKey(source)) return true;
   return false;
+}
+
+/**
+ * True when `source` begins with a YAML frontmatter block (`---\n…\n---`
+ * at file start, with optional UTF-8 BOM and leading blank lines) whose
+ * body contains a `layout:` or `permalink:` key. Matches the conventions
+ * used by Jekyll, Eleventy, Hugo, Astro content collections, and Next.js
+ * MDX — all five resolve frontmatter `layout:` / `permalink:` through a
+ * parent layout at render time.
+ *
+ * Narrow regex match (key followed by `:`) rather than a YAML parser —
+ * we don't need to recover the value, only know the key is present. A
+ * bare `---` block with only `title:` / `date:` does NOT count (the
+ * file is a stand-alone post with no layout relationship declared).
+ *
+ * Used by {@link hasLayoutDirective} as the child-role evidence branch.
+ * Kept as a separate function so the YAML-block structural scan stays
+ * close to the regex that consumes its body and is independently
+ * testable.
+ */
+function hasFrontmatterLayoutKey(source: string): boolean {
+  let i = 0;
+  // Skip UTF-8 BOM.
+  if (source.charCodeAt(0) === 0xfeff) i = 1;
+  // Skip leading blank lines.
+  while (i < source.length && (source[i] === "\n" || source[i] === "\r")) i += 1;
+  // Require an opening `---` on its own line.
+  if (!source.startsWith("---", i)) return false;
+  const afterOpener = i + 3;
+  if (afterOpener >= source.length) return false;
+  const nextChar = source[afterOpener];
+  if (nextChar !== "\n" && nextChar !== "\r") return false;
+  // Find the closing `---` line.
+  const closer = source.indexOf("\n---", afterOpener);
+  if (closer === -1) return false;
+  const header = source.slice(afterOpener, closer);
+  // Match a `layout:` or `permalink:` key at the start of any header
+  // line. YAML allows `layout: foo`, `layout:"foo"`, `layout : foo` —
+  // keep the match narrow (key followed by `:`) rather than parsing
+  // YAML.
+  return /(^|\n)\s*(?:layout|permalink)\s*:/.test(header);
 }
 
 /**
@@ -186,10 +259,23 @@ export interface FragmentClassificationSignals {
    */
   readonly hasHtmlOpener: boolean;
   /**
-   * The raw source contains a layout-shape composition directive
-   * (`{{ content }}`, `<%= yield %>`, `@RenderBody`, `{% extends`,
-   * `<slot>`, `{outlet}`, `<router-view>`). A file with this signal IS
-   * a layout that composes child content, not a fragment.
+   * The raw source contains a layout-composition directive in either
+   * role:
+   *   - Parent-role composition slot (`{{ content }}`, `<%= yield %>`,
+   *     `@RenderBody`, `{% extends`, `<slot>`, `{outlet}`,
+   *     `<router-view>`) — the file IS a layout that composes child
+   *     content; OR
+   *   - Child-role frontmatter declaration (`--- layout: foo ---` /
+   *     `--- permalink: /foo ---` Jekyll / Eleventy / Hugo / Astro /
+   *     MDX) — the file is composed by a parent layout at render time.
+   *
+   * A file with this signal participates in a multi-file layout system
+   * — the rendered page assembles across this file PLUS another file
+   * the static scanner can't see in one pass — so document-shape rules
+   * should NOT suppress to `fragment_input_no_document_envelope` on
+   * the leaf fragment confidence; they should surface findings with
+   * the `couldBeWrongBecause` enrichment so an agent can verify
+   * whether the parent layout supplies the missing envelope.
    */
   readonly hasLayoutDirective: boolean;
   /**

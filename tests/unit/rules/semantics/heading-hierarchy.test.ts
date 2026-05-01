@@ -461,13 +461,32 @@ describe("rule semantics/heading-hierarchy", () => {
         expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
       });
 
-      it("suppresses no-h1 on a front-matter file with bare heading body (no <html>)", () => {
-        // The realistic Jekyll content shape: front-matter declaring
-        // `layout: post`, then the body the parent layout will wrap.
-        // No `<html>` opener, no layout-shape composition directive,
-        // not in a layouts dir → fragment per the shared classifier.
+      it("DOES emit no-h1 on a front-matter file declaring `layout: post` (Q14 — honest fragment label)", () => {
+        // Q14 closure: the frontmatter `layout: post` key is itself a
+        // child-role layout-composition directive — the file declares
+        // it uses a parent layout to wrap its content. The shared
+        // classifier extends `hasLayoutDirective` to fire on this
+        // shape so the meta entry reports the evidence honestly. The
+        // file is NOT a leaf fragment; the rule surfaces the no-h1
+        // finding (with the `isHtmlLayoutOrPartial`
+        // `couldBeWrongBecause` enrichment) so the agent can verify
+        // whether the parent layout supplies the missing `<h1>`
+        // rather than silently suppressing on a confidence the
+        // scanner can't honestly establish. Per AI-first doctrine
+        // "Heuristic-mislabeled meta sub-fields are dishonest."
         const source = "---\ntitle: Foo\nlayout: post\n---\n<h3>Body heading</h3>";
         const v = runRule(rule, source, { filePath: "post.html" });
+        expect(v.some((x) => x.message.includes("no <h1>"))).toBe(true);
+      });
+
+      it("suppresses no-h1 on a front-matter file with bare title-only frontmatter (no layout key)", () => {
+        // A front-matter block with only `title:` (no `layout:` and no
+        // `permalink:`) declares no layout-composition relationship.
+        // The file is a leaf fragment per the shared classifier — no
+        // `<html>` opener, no layout directive in either role, not in
+        // a layouts dir.
+        const source = "---\ntitle: Foo\n---\n<h3>Body heading</h3>";
+        const v = runRule(rule, source, { filePath: "draft.html" });
         expect(v.find((x) => x.message.includes("no <h1>"))).toBeUndefined();
       });
 

@@ -442,19 +442,18 @@ describe("rule semantics/landmark-main", () => {
       expect(v).toHaveLength(0);
     });
 
-    it("does NOT fire on a fragment page with `---` front-matter and no <html>", () => {
-      // A typical Jekyll content page: front-matter + body content, no
-      // `<html>` opener (the parent layout supplies the envelope at
-      // render time). Under the shared fragment classifier this is a
-      // fragment (no html, no layout-shape directive, not in a layouts
-      // dir) and the rule suppresses outright. The realistic shape:
-      // authors who declare `layout: default` in front-matter do NOT
-      // also write `<html>` in the same file — that produces nested
-      // envelopes after rendering. Pages that DO ship `<html>` in
-      // source are self-contained and the rule emits honestly (the Q10
-      // fix: a full-page layout file mis-tagged as a fragment used to
-      // silently suppress missing-<main> emits the page actually
-      // owned).
+    it("DOES fire on a front-matter page declaring `layout: default` (Q14 — honest fragment label)", () => {
+      // Q14 closure: the frontmatter `layout: default` key is a
+      // child-role layout-composition directive — the file declares
+      // it uses a parent layout to wrap its content. The shared
+      // classifier extends `hasLayoutDirective` to fire on this shape
+      // so the meta entry reports the evidence honestly. The file is
+      // NOT a leaf fragment; the rule surfaces missing-`<main>` (with
+      // the `isHtmlLayoutOrPartial` `couldBeWrongBecause` enrichment)
+      // so the agent can verify whether the parent layout supplies
+      // the missing landmark rather than silently suppressing on a
+      // confidence the scanner can't honestly establish. Per AI-first
+      // doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
       const v = runRule(
         rule,
         [
@@ -470,6 +469,30 @@ describe("rule semantics/landmark-main", () => {
           "<p>Yet more prose.</p>",
         ].join("\n"),
         { filePath: "about.html" },
+      );
+      expect(v.length).toBeGreaterThan(0);
+    });
+
+    it("does NOT fire on a bare front-matter page with title-only frontmatter (no layout key)", () => {
+      // A front-matter block with only `title:` (no `layout:` and no
+      // `permalink:`) declares no layout-composition relationship.
+      // The file is a leaf fragment per the shared classifier — no
+      // `<html>` opener, no layout directive in either role, not in
+      // a layouts dir.
+      const v = runRule(
+        rule,
+        [
+          "---",
+          "title: About",
+          "---",
+          "<header>About</header>",
+          "<h1>About</h1>",
+          "<p>Some prose.</p>",
+          "<p>More prose.</p>",
+          "<p>Even more prose.</p>",
+          "<p>Yet more prose.</p>",
+        ].join("\n"),
+        { filePath: "draft.html" },
       );
       expect(v).toHaveLength(0);
     });

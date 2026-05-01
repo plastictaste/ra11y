@@ -211,15 +211,53 @@ describe("classifyFragment / isFragmentFile", () => {
       expect(result.signals.inLayoutsDir).toBe(true);
     });
 
-    it("returns IS a fragment for a Jekyll post with frontmatter but no envelope or directive", () => {
+    it("returns NOT a fragment for a Jekyll post whose frontmatter declares `layout:`", () => {
       // `posts/welcome.md` shape: `---\nlayout: post\n---\n# Hello`.
-      // No `<html>` opener, no layout directive, not in layouts dir →
-      // fragment per the tightened predicate. Document-shape rules
-      // suppress because the parent `_layouts/post.html` supplies the
-      // envelope at render time, and the per-rule confidence downgrade
-      // stays honest.
+      // The frontmatter `layout: post` key is itself a layout-
+      // composition directive (child-role): the file declares it uses
+      // a parent layout to wrap its content at render time. The shared
+      // classifier extends `hasLayoutDirective` to fire on this shape
+      // so the meta entry reports the evidence honestly — the prior
+      // parent-role-only definition shipped `false` here even though
+      // the frontmatter clearly carried a layout directive, and the
+      // meta label lied about its evidence per the AI-first doctrine
+      // "Heuristic-mislabeled meta sub-fields are dishonest." With
+      // the signal extended, the file is NOT classified as a leaf
+      // fragment; document-shape rules surface findings (with the
+      // `isHtmlLayoutOrPartial` `couldBeWrongBecause` enrichment) so
+      // the agent can verify whether the parent layout supplies the
+      // missing envelope rather than silently suppressing on a
+      // confidence the scanner can't honestly establish.
       const source = "---\nlayout: post\ntitle: Hi\n---\n# Hello\n\nWorld\n";
       const result = classifyFragment(parse(source), source, "posts/welcome.md");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals).toEqual({
+        hasHtmlOpener: false,
+        hasLayoutDirective: true,
+        inLayoutsDir: false,
+      });
+    });
+
+    it("returns NOT a fragment for a frontmatter `permalink:` declaration", () => {
+      // Eleventy / Jekyll permalinks resolve through a parent layout
+      // (the SSG looks up the configured default layout for the
+      // permalink's collection). Same predicate-strength evidence as
+      // `layout:`: the file declares it participates in layout
+      // composition.
+      const source = "---\npermalink: /about/\n---\n# About\n";
+      const result = classifyFragment(parse(source), source, "about.md");
+      expect(result.isFragment).toBe(false);
+      expect(result.signals.hasLayoutDirective).toBe(true);
+    });
+
+    it("returns IS a fragment for a frontmatter block with only `title:` / `date:` (no layout key)", () => {
+      // A bare `---` block with neither `layout:` nor `permalink:` is
+      // a stand-alone post with no layout relationship declared. The
+      // narrow regex match (key followed by `:`) keeps the predicate
+      // honest — the file is a leaf fragment whose document envelope
+      // is genuinely absent, not composed elsewhere.
+      const source = "---\ntitle: Hi\ndate: 2026-01-01\n---\n# Hello\n";
+      const result = classifyFragment(parse(source), source, "drafts/welcome.md");
       expect(result.isFragment).toBe(true);
       expect(result.signals).toEqual({
         hasHtmlOpener: false,

@@ -128,9 +128,13 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
     //     NOT a fragment (Q10 closure: was previously over-stamped).
     //   - `index.html`: self-contained page with `<html>` → NOT a
     //     fragment.
-    //   - `posts/welcome.md`: front-matter + markdown body, no
-    //     `<html>`, no directive, not in layouts dir → fragment
-    //     (markdown-residue kind).
+    //   - `posts/welcome.md`: front-matter declaring `layout: post`
+    //     (a child-role layout-composition directive) → NOT a
+    //     fragment. The shared classifier extends `hasLayoutDirective`
+    //     to fire on frontmatter `layout:` / `permalink:` keys so the
+    //     meta entry reports the evidence honestly (the parent layout
+    //     supplies the envelope; the file is part of a multi-file
+    //     layout system, not a leaf fragment).
     const dir = await mkdtemp(join(tmpdir(), "ra11y-fragment-cross-surface-"));
     await mkdir(join(dir, "_includes"), { recursive: true });
     await mkdir(join(dir, "_layouts"), { recursive: true });
@@ -179,6 +183,15 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
     // The bare include partial IS a fragment on every surface — its
     // structural / source / path signals all align with the predicate.
     expect(scanPaths).toContain("_includes/header.html");
+
+    // The Jekyll post with `--- layout: post ---` frontmatter must
+    // NOT be classified as a fragment on any surface. The frontmatter
+    // declares a child-role layout directive — the file participates
+    // in a multi-file layout system, so the meta entry reports the
+    // composition evidence honestly via `hasLayoutDirective: true`
+    // and document-shape rules surface findings rather than silently
+    // suppressing.
+    expect(scanPaths).not.toContain("posts/welcome.md");
   });
 
   it("scan_file agrees with scan_project on the same `_includes/` fragment file", async () => {
