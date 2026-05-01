@@ -52,6 +52,7 @@ import type {
 } from "../types/review.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
 import {
+  couldBeWrongBecauseForVendorBuildArtifact,
   highestCandidateConfidence,
   type ReviewCandidatePriority,
   resolvePriorityForCandidate,
@@ -166,6 +167,25 @@ export interface DedupedReviewCandidate {
   readonly matchOffset?: number;
   /** Byte length of the matched token; pairs with `matchOffset`. */
   readonly matchLength?: number;
+  /**
+   * Structured codes naming the evidence-quality limitations a
+   * downstream consumer should weigh when reading this candidate's
+   * `priority` / `confidence` signal — same vocabulary and present-
+   * when-meaningful semantics as
+   * {@link import("../types/review.ts").ReviewCandidate#couldBeWrongBecause}.
+   *
+   * Currently populated by the materializer when the
+   * minified-vendor-no-sourcemap gate fires (per-file `vendorPathHint:
+   * true` co-occurring with the candidate's path appearing in the
+   * scan-time `buildArtifactPaths` set). The same gate drops `priority`
+   * to `"low"`; the two channels compose at the assembly site so the
+   * agent's dismissal path is "verify the evidence-quality concession"
+   * rather than guessing why the budget dropped.
+   *
+   * Omitted entirely when no limitation applies (per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest" — never sentinel-empty).
+   */
+  readonly couldBeWrongBecause?: readonly string[];
 }
 
 /** Aggregator entry held during the dedup passes. */
@@ -226,12 +246,13 @@ interface DedupAcc {
 export function dedupeReviewCandidatesForSingleFile(
   candidates: readonly ReviewCandidate[],
   criterionLevels: ReadonlyMap<string, string> = new Map(),
+  buildArtifactPaths: ReadonlySet<string> = new Set(),
 ): readonly DedupedReviewCandidate[] {
   const byReasonKey = passOneCollectByReasonKey(candidates);
   const byPositionKey = passTwoCollectByPosition(byReasonKey);
   return [...byPositionKey.values()]
     .sort((a, b) => a.order - b.order)
-    .map((acc) => materializeDedupedCandidate(acc, criterionLevels));
+    .map((acc) => materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths));
 }
 
 // Re-export the helper so callers (e.g. response-assembler) can
@@ -422,6 +443,7 @@ function hasReasonFragment(existing: string, candidate: string): boolean {
 function materializeDedupedCandidate(
   g: DedupAcc,
   criterionLevels: ReadonlyMap<string, string>,
+  buildArtifactPaths: ReadonlySet<string>,
 ): DedupedReviewCandidate {
   const criteria = [...g.criteria].sort();
   // Take the strongest-attention level across the union of criteria
@@ -437,6 +459,14 @@ function materializeDedupedCandidate(
   // type for downstream consumers.
   const confidence: ReviewConfidence =
     highestCandidateConfidence(g.confidences.map((c) => ({ confidence: c }))) ?? "low";
+  // Per-file build-artifact membership — the second leg of the
+  // minified-vendor-no-sourcemap gate. The first leg (`vendorPathHint:
+  // true`) ships verbatim from the finder; the second is corpus-level
+  // evidence the assembler resolved via `collectBuildArtifacts`. When
+  // both fire, the priority resolver drops to `"low"` and the paired
+  // `couldBeWrongBecause: ["minified_vendor_no_sourcemap"]` evidence
+  // stamp lands on the materialized candidate (composed below).
+  const isBuildArtifact = buildArtifactPaths.has(g.filePath);
   // Thread the rolled-up confidence into the priority resolver so a
   // dedup union whose evidence concedes "low" static signal cannot
   // ride at `priority: "high"` on an A/AA criterion. Mirrors the
@@ -445,15 +475,24 @@ function materializeDedupedCandidate(
   // evidence; per `docs/kb/architecture/ai-first-consumer.md`
   // "Reason / priority / fix-description must agree across all
   // three channels", priority must agree with that framing.
-  const priority = resolvePriorityForCandidate({
-    level,
-    evidence: {
-      reason: g.reason,
-      confidence,
-      ...(g.vendorContext === undefined ? {} : { vendorContext: g.vendorContext }),
-      ...(g.predicateConceded === undefined ? {} : { predicateConceded: g.predicateConceded }),
-    },
-  });
+  const evidence = {
+    reason: g.reason,
+    confidence,
+    ...(g.vendorContext === undefined ? {} : { vendorContext: g.vendorContext }),
+    ...(g.predicateConceded === undefined ? {} : { predicateConceded: g.predicateConceded }),
+    ...(g.vendorPathHint === true ? { vendorPathHint: true } : {}),
+    ...(isBuildArtifact ? { isBuildArtifact: true } : {}),
+  };
+  const priority = resolvePriorityForCandidate({ level, evidence });
+  // Pair the priority drop with the structured evidence stamp the
+  // gate concedes — the agent reads BOTH the `"low"` budget signal
+  // AND the `couldBeWrongBecause: ["minified_vendor_no_sourcemap"]`
+  // token so the dismissal path is "verify the predicate-strength
+  // concession the gate names" rather than guessing why the budget
+  // dropped. Helper returns null when no gate fired, so the
+  // conditional spread below leaves the field omitted on ordinary
+  // candidates per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+  const couldBeWrongBecause = couldBeWrongBecauseForVendorBuildArtifact(evidence);
   // Per-emission unique address — sorted-criteria-joined ruleId slot
   // means the same conceptual candidate produces the same id on every
   // surface that ships it (`scan_file`, `scan_project.reviewCandidates`,
@@ -485,5 +524,6 @@ function materializeDedupedCandidate(
     ...(g.sourceCount === undefined ? {} : { sourceCount: g.sourceCount }),
     ...(g.matchOffset === undefined ? {} : { matchOffset: g.matchOffset }),
     ...(g.matchLength === undefined ? {} : { matchLength: g.matchLength }),
+    ...(couldBeWrongBecause === null ? {} : { couldBeWrongBecause }),
   };
 }

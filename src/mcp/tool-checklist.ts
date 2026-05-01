@@ -23,6 +23,7 @@ import type {
 } from "../types/review.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -35,7 +36,10 @@ import {
 } from "./manual-applicability.ts";
 import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
-import { candidateHedges } from "./review-candidate-priority.ts";
+import {
+  candidateHedges,
+  couldBeWrongBecauseForVendorBuildArtifact,
+} from "./review-candidate-priority.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
@@ -255,6 +259,29 @@ interface ChecklistCandidateOut {
    * whose finder does not populate the field.
    */
   readonly dismissalKey?: string;
+  /**
+   * Structured codes naming the evidence-quality limitations a
+   * downstream consumer should weigh when reading this candidate's
+   * `priority` / `confidence` signal. Same vocabulary and present-
+   * when-meaningful semantics as
+   * {@link import("../types/review.ts").ReviewCandidate#couldBeWrongBecause}
+   * and the deduped surface
+   * {@link import("./review-candidate-dedup.ts").DedupedReviewCandidate#couldBeWrongBecause}
+   * — so an agent walking the same conceptual candidate across
+   * `checklist.items[].candidates[]`, `scan_file.reviewCandidates[]`,
+   * and `scan_project.reviewCandidates[]` reads the same evidence
+   * stamps regardless of which surface produced it.
+   *
+   * Currently populated by the materializer when the
+   * minified-vendor-no-sourcemap gate fires (per-candidate
+   * `vendorPathHint: true` co-occurring with the candidate's path
+   * appearing in the scan-time `buildArtifactPaths` set). The same
+   * gate drops the per-item `priority` to `"low"` so the two channels
+   * compose at the assembly site per `docs/kb/architecture/ai-first-
+   * consumer.md` "Reason / priority / fix-description must agree across
+   * all three channels."
+   */
+  readonly couldBeWrongBecause?: readonly string[];
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -393,16 +420,68 @@ function priorityFor(
     readonly confidence: ReviewConfidence;
     readonly vendorContext?: ReviewCandidateVendorContext;
     readonly predicateConceded?: ReviewCandidatePredicateConceded;
+    readonly vendorPathHint?: boolean;
+    readonly path?: string;
   }[],
+  buildArtifactPaths: ReadonlySet<string> = new Set(),
 ): ChecklistPriority {
   if (candidates.length === 0) return "low";
   const base: ChecklistPriority = level === "A" || level === "AA" ? "high" : "medium";
   if (base !== "high") return base;
+  // Two-component minified-vendor-no-sourcemap downgrade — runs FIRST
+  // so an item where every candidate sits on a `vendorPathHint` file
+  // ALSO classified as a build artifact drops attention budget all
+  // the way to `"low"`, paired with the structured
+  // `couldBeWrongBecause: ["minified_vendor_no_sourcemap"]` evidence
+  // stamp materialized on each candidate. Mirrors the per-candidate
+  // gate in `review-candidate-priority.ts`'s `resolvePriorityForCandidate`
+  // so the same conceptual item ranks identically when an agent calls
+  // both `checklist` and `scan_file` on the same input. The all-or-
+  // nothing test mirrors the existing vendorContext / hedging gates:
+  // a single hand-authored candidate keeps the item at `"high"` so
+  // the agent doesn't miss the actionable case among the minified-
+  // vendor-pathed siblings.
+  if (everyCandidateOnMinifiedVendorBuildArtifact(candidates, buildArtifactPaths)) return "low";
   if (everyCandidateHedges(candidates)) return "medium";
   if (everyCandidateHasVendorContext(candidates)) return "medium";
   if (everyCandidateHasPredicateConceded(candidates)) return "medium";
   if (everyCandidateHasLowConfidence(candidates)) return "medium";
   return "high";
+}
+
+/**
+ * True when every grounded candidate's evidence trips the two-component
+ * minified-vendor-no-sourcemap gate: the candidate carries
+ * `vendorPathHint: true` AND its file path appears in the corpus-level
+ * `buildArtifactPaths` set (resolved by the scan-time
+ * `collectBuildArtifacts` pass and threaded through from
+ * `runChecklistTool`). Same predicate the per-candidate resolver in
+ * `review-candidate-priority.ts` runs (`isMinifiedVendorNoSourcemap`),
+ * applied across the per-item rollup so a checklist item doesn't ship
+ * `priority: "high"` while every contained candidate independently
+ * resolves to `priority: "low"` on `scan_file`.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+ * candidate shape must agree across surfaces": the per-item priority
+ * channel cannot disagree with the per-candidate priority channel on
+ * the same evidence. The all-or-nothing test also mirrors the existing
+ * gates in this file so the rationale for keeping a single hand-
+ * authored sibling at `"high"` stays consistent (avoid the silent miss
+ * doctrine warns against under "Failure modes are asymmetric").
+ */
+function everyCandidateOnMinifiedVendorBuildArtifact(
+  candidates: readonly {
+    readonly vendorPathHint?: boolean;
+    readonly path?: string;
+  }[],
+  buildArtifactPaths: ReadonlySet<string>,
+): boolean {
+  if (buildArtifactPaths.size === 0) return false;
+  for (const c of candidates) {
+    if (c.vendorPathHint !== true) return false;
+    if (c.path === undefined || !buildArtifactPaths.has(c.path)) return false;
+  }
+  return true;
 }
 
 /**
@@ -815,6 +894,23 @@ export const checklistTool: McpTool = {
     // honest rather than guessing.
     const stalenessProbe = createGitStalenessProbe(cwd);
     const reportCandidates = report.candidates ?? [];
+    // Resolve the corpus-level build-artifact path set ONCE per
+    // checklist run so the per-item priority resolver and the per-
+    // candidate `couldBeWrongBecause` stamp share one source — same
+    // input the response-assembler uses on `scan_file`/`scan_project`
+    // (`response-assembler.ts` line ~664) so the cross-surface
+    // priority/evidence channels agree on identical cwd. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces" + "Cross-surface
+    // count invariant," the same conceptual candidate must rank and
+    // stamp identically across `checklist`, `scan_file`, and
+    // `scan_project`. Empty set on authored-source corpora — fast
+    // path, the gate never fires.
+    const buildArtifactPaths = new Set(
+      collectBuildArtifacts(files.map((f) => ({ filePath: f.filePath, source: f.source }))).map(
+        (e) => e.path,
+      ),
+    );
     const { needsReview, likelyIrrelevant } = bucketChecklistItems(
       coverage,
       reportCandidates,
@@ -823,6 +919,7 @@ export const checklistTool: McpTool = {
       attestationsByCriterion,
       stalenessProbe,
       session,
+      buildArtifactPaths,
     );
     // Actionable items (concrete candidates) stay in `items`; criteria
     // the finders couldn't ground in code move to `untargeted`. Keeping
@@ -1401,10 +1498,11 @@ function mapCandidates(
   criterionId: string,
   candidates: readonly ReviewCandidate[],
   sources: ReadonlyMap<string, SourceEntry>,
+  buildArtifactPaths: ReadonlySet<string>,
 ): ChecklistCandidateOut[] {
   return candidates
     .filter((c) => c.criterionId === criterionId)
-    .map((c) => mapOneCandidate(c, criterionId, sources));
+    .map((c) => mapOneCandidate(c, criterionId, sources, buildArtifactPaths));
 }
 
 /**
@@ -1420,7 +1518,28 @@ function mapOneCandidate(
   c: ReviewCandidate,
   criterionId: string,
   sources: ReadonlyMap<string, SourceEntry>,
+  buildArtifactPaths: ReadonlySet<string>,
 ): ChecklistCandidateOut {
+  // Compose the structured-evidence-stamp channel that pairs with the
+  // per-item priority drop. The same gate that drops priority to
+  // `"low"` (per-candidate `vendorPathHint: true` + path in
+  // `buildArtifactPaths`) stamps `couldBeWrongBecause:
+  // ["minified_vendor_no_sourcemap"]` on the candidate so the agent
+  // reads BOTH channels from one entry — per
+  // `docs/kb/architecture/ai-first-consumer.md` "Reason / priority /
+  // fix-description must agree across all three channels," a low-
+  // attention candidate must name what its evidence-quality concession
+  // is. Helper returns null when no gate fires; the conditional spread
+  // then leaves the field omitted (CLAUDE.md §1 "Ambiguous field shapes
+  // are dishonest").
+  const couldBeWrongBecause = couldBeWrongBecauseForVendorBuildArtifact({
+    reason: c.reason,
+    confidence: c.confidence,
+    ...(c.vendorContext === undefined ? {} : { vendorContext: c.vendorContext }),
+    ...(c.predicateConceded === undefined ? {} : { predicateConceded: c.predicateConceded }),
+    ...(c.vendorPathHint === true ? { vendorPathHint: true } : {}),
+    ...(buildArtifactPaths.has(c.location.filePath) ? { isBuildArtifact: true } : {}),
+  });
   // Prefer a finder-supplied snippet (cross-file finders sometimes
   // know the right window better than ±3 lines), else fall back to
   // a cache-only lookup. Omit the field when neither is available
@@ -1485,6 +1604,9 @@ function mapOneCandidate(
     // doctrine — strictly additive, never gates suppression. Omitted
     // when the emitting finder did not populate the field.
     ...(c.dismissalKey === undefined ? {} : { dismissalKey: c.dismissalKey }),
+    // Pair with the per-item priority drop on the minified-vendor-no-
+    // sourcemap gate; omitted when the gate did not fire.
+    ...(couldBeWrongBecause === null ? {} : { couldBeWrongBecause }),
   };
 }
 
@@ -1621,8 +1743,9 @@ function buildChecklistItem(
   sources: ReadonlyMap<string, SourceEntry>,
   attestations: readonly AttestationRecord[],
   stalenessProbe: AttestationStalenessProbe | undefined,
+  buildArtifactPaths: ReadonlySet<string>,
 ): { item: ChecklistItemOut; relevant: boolean } {
-  const mapped = mapCandidates(criterion.id, candidates, sources);
+  const mapped = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
   // "low" confidence — by definition the scanner has no specific
@@ -1642,7 +1765,7 @@ function buildChecklistItem(
     criterionId: criterion.id,
     title: criterion.title,
     level: criterion.level,
-    priority: priorityFor(criterion.level, mapped),
+    priority: priorityFor(criterion.level, mapped, buildArtifactPaths),
     confidence: itemConfidence,
     ...(principle === null ? {} : { principle }),
     candidates: mapped,
@@ -1664,6 +1787,7 @@ function bucketChecklistItems(
   attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>,
   stalenessProbe: AttestationStalenessProbe | undefined,
   session: import("./session.ts").McpSession,
+  buildArtifactPaths: ReadonlySet<string>,
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
@@ -1680,6 +1804,7 @@ function bucketChecklistItems(
     sources,
     attestationsByCriterion,
     stalenessProbe,
+    buildArtifactPaths,
   } as const;
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
@@ -1721,6 +1846,7 @@ function pushChecklistItem(
     readonly sources: ReadonlyMap<string, SourceEntry>;
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
+    readonly buildArtifactPaths: ReadonlySet<string>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -1733,6 +1859,7 @@ function pushChecklistItem(
     builderArgs.sources,
     builderArgs.attestationsByCriterion.get(criterion.id) ?? [],
     builderArgs.stalenessProbe,
+    builderArgs.buildArtifactPaths,
   );
   emittedCriterionIds.add(criterion.id);
   (relevant ? needsReview : likelyIrrelevant).push(item);
@@ -1772,6 +1899,7 @@ function appendPartialCriterionItems(
     readonly sources: ReadonlyMap<string, SourceEntry>;
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
+    readonly buildArtifactPaths: ReadonlySet<string>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -1812,6 +1940,7 @@ function appendPartialItemsFromEntry(
     readonly sources: ReadonlyMap<string, SourceEntry>;
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
+    readonly buildArtifactPaths: ReadonlySet<string>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],

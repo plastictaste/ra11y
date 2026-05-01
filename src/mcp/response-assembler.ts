@@ -374,10 +374,15 @@ function maybeDedupeReviewCandidates(args: {
   readonly options: ScanFamilyResponseOptions;
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly criterionLevels: ReadonlyMap<string, string> | undefined;
+  readonly buildArtifactPaths: ReadonlySet<string>;
 }): readonly DedupedReviewCandidate[] | undefined {
-  const { options, reviewCandidates, criterionLevels } = args;
+  const { options, reviewCandidates, criterionLevels, buildArtifactPaths } = args;
   if (options.includeReviewCandidates !== true) return undefined;
-  return dedupeReviewCandidatesForSingleFile(reviewCandidates, criterionLevels ?? new Map());
+  return dedupeReviewCandidatesForSingleFile(
+    reviewCandidates,
+    criterionLevels ?? new Map(),
+    buildArtifactPaths,
+  );
 }
 
 function buildAssemblerWarningsField(args: {
@@ -710,6 +715,14 @@ export function assembleScanFamilyResponse(
     options,
     reviewCandidates,
     criterionLevels,
+    // Same set used at line 666 to enrich findings with build-artifact
+    // path provenance — re-using it for the review-candidate priority
+    // resolution closes the cross-surface gap the doctrine line "Per-
+    // tool review-candidate shape must agree across surfaces" warns
+    // against (a candidate on a vendor `.min.js` shipping `priority:
+    // "high"` here while `tool-checklist.ts`'s `priorityFor()` ranker
+    // shipped the same candidate at `"medium"` via `vendorContext`).
+    buildArtifactPaths,
   });
 
   // (8) Warnings channel — extracted to keep this orchestrator's

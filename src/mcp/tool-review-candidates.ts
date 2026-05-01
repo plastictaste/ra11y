@@ -217,6 +217,9 @@ function mapCandidateOut(
     ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
     ...(c.handlerFunctionName === undefined ? {} : { handlerFunctionName: c.handlerFunctionName }),
     ...(c.dismissalKey === undefined ? {} : { dismissalKey: c.dismissalKey }),
+    ...(c.couldBeWrongBecause === undefined || c.couldBeWrongBecause.length === 0
+      ? {}
+      : { couldBeWrongBecause: [...c.couldBeWrongBecause] }),
   };
 }
 

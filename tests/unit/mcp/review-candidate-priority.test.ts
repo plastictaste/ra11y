@@ -15,6 +15,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildCriterionLevelMap,
   candidateHedges,
+  couldBeWrongBecauseForVendorBuildArtifact,
   highestCandidateConfidence,
   resolvePriorityForCandidate,
   resolvePriorityForReviewCandidate,
@@ -149,6 +150,135 @@ describe("resolvePriorityForCandidate — downgrade gates", () => {
         evidence: { reason: "ordinary reason", confidence: "low" },
       }),
     ).toBe("medium");
+  });
+});
+
+describe("resolvePriorityForCandidate — minified-vendor-no-sourcemap downgrade-to-low", () => {
+  it("vendorPathHint + isBuildArtifact on AA drops to low (not medium)", () => {
+    // The two-component co-occurrence gate runs ahead of the existing
+    // vendorContext / hedging / low-confidence gates so a candidate
+    // whose evidence concedes BOTH vendor-path-shape AND build-
+    // artifact-confirmed-bytes drops attention budget all the way to
+    // "low" — the doctrine line "Reason / priority / fix-description
+    // must agree across all three channels" applied at the limit case
+    // where the cited evidence (a single-letter identifier in minified
+    // bundle) cannot be resolved without a sourcemap.
+    expect(
+      resolvePriorityForCandidate({
+        level: "AA",
+        evidence: { reason: "setTimeout call", vendorPathHint: true, isBuildArtifact: true },
+      }),
+    ).toBe("low");
+  });
+
+  it("vendorPathHint + isBuildArtifact on A drops to low", () => {
+    expect(
+      resolvePriorityForCandidate({
+        level: "A",
+        evidence: { reason: "setTimeout call", vendorPathHint: true, isBuildArtifact: true },
+      }),
+    ).toBe("low");
+  });
+
+  it("vendorPathHint alone (no build-artifact classification) keeps existing gate behavior", () => {
+    // First leg fires but the second does not — the existing fallthrough
+    // logic applies. Without vendorContext / hedging / low confidence, the
+    // candidate stays at "high" so the vendorPathHint-only case (a hand-
+    // readable jquery-1.10.2.js with a real session-timeout setTimeout)
+    // doesn't get silently demoted just because the basename pattern matched.
+    expect(
+      resolvePriorityForCandidate({
+        level: "AA",
+        evidence: { reason: "setTimeout call", vendorPathHint: true },
+      }),
+    ).toBe("high");
+  });
+
+  it("isBuildArtifact alone (no vendorPathHint) keeps existing gate behavior", () => {
+    // Symmetric: a build-artifact classification on a non-vendor file
+    // (e.g. an authored CSS file the build pipeline tagged) does not
+    // trigger the gate by itself — the vendor-path-shape evidence is
+    // what shifts the predicate-strength from "agent reads the file" to
+    // "agent needs a sourcemap." Stays at "high" pending other gates.
+    expect(
+      resolvePriorityForCandidate({
+        level: "A",
+        evidence: { reason: "setTimeout call", isBuildArtifact: true },
+      }),
+    ).toBe("high");
+  });
+
+  it("both flags present on AAA stays medium (base never qualifies for low)", () => {
+    // AAA defaults to base "medium"; the gate only fires when base is
+    // "high" so AAA candidates are unaffected even when both axes hold.
+    expect(
+      resolvePriorityForCandidate({
+        level: "AAA",
+        evidence: { reason: "setTimeout call", vendorPathHint: true, isBuildArtifact: true },
+      }),
+    ).toBe("medium");
+  });
+
+  it("gate runs ahead of vendorContext gate (drops to low, not medium)", () => {
+    // Both conditions hold AND vendorContext is present (the canonical
+    // case for a minified bundle: the timing finder populates BOTH
+    // vendorContext via buildVendorContext AND vendorPathHint via the
+    // same predicate). The minified-vendor-no-sourcemap gate must run
+    // first so the priority drops to "low" rather than the
+    // vendorContext gate intercepting and stopping at "medium".
+    expect(
+      resolvePriorityForCandidate({
+        level: "AA",
+        evidence: {
+          reason: "setTimeout call",
+          vendorContext: { signal: { kind: "minified-shape" } },
+          vendorPathHint: true,
+          isBuildArtifact: true,
+        },
+      }),
+    ).toBe("low");
+  });
+});
+
+describe("couldBeWrongBecauseForVendorBuildArtifact — paired evidence stamp", () => {
+  it("returns ['minified_vendor_no_sourcemap'] when both axes fire", () => {
+    expect(
+      couldBeWrongBecauseForVendorBuildArtifact({
+        reason: "setTimeout call",
+        vendorPathHint: true,
+        isBuildArtifact: true,
+      }),
+    ).toEqual(["minified_vendor_no_sourcemap"]);
+  });
+
+  it("returns null when vendorPathHint absent", () => {
+    expect(
+      couldBeWrongBecauseForVendorBuildArtifact({
+        reason: "setTimeout call",
+        isBuildArtifact: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when isBuildArtifact absent", () => {
+    expect(
+      couldBeWrongBecauseForVendorBuildArtifact({
+        reason: "setTimeout call",
+        vendorPathHint: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null on neither axis", () => {
+    // Ordinary authored-source candidate — the helper returns null so
+    // the materializer's conditional spread leaves the
+    // `couldBeWrongBecause` field omitted (per CLAUDE.md §1 "Ambiguous
+    // field shapes are dishonest" — never sentinel-empty).
+    expect(
+      couldBeWrongBecauseForVendorBuildArtifact({
+        reason: "ordinary",
+      }),
+    ).toBeNull();
   });
 });
 
@@ -292,5 +422,47 @@ describe("resolvePriorityForReviewCandidate — single-criterion convenience", (
     expect(resolvePriorityForReviewCandidate({ candidate, criterionLevels: levels })).toBe(
       "medium",
     );
+  });
+
+  it("drops to 'low' when vendorPathHint candidate's path is in buildArtifactPaths", () => {
+    // Two-component minified-vendor-no-sourcemap gate via the convenience
+    // overload: the candidate carries `vendorPathHint: true` and the
+    // caller-supplied set lists the candidate's filePath as a build
+    // artifact. Mirrors the per-candidate gate the dedup materializer
+    // runs so `resolvePriorityForReviewCandidate` agrees with the path
+    // scan_file/scan_project take through `dedupeReviewCandidatesForSingleFile`.
+    const candidate: ReviewCandidate = {
+      criterionId: "wcag22:2.2.1",
+      location: { filePath: "/vendor/jquery.min.js", line: 1, column: 0 },
+      reason: "setTimeout call",
+      confidence: "medium",
+      vendorPathHint: true,
+    };
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const buildArtifactPaths = new Set(["/vendor/jquery.min.js"]);
+    expect(
+      resolvePriorityForReviewCandidate({ candidate, criterionLevels: levels, buildArtifactPaths }),
+    ).toBe("low");
+  });
+
+  it("stays 'high' when vendorPathHint set but path NOT in buildArtifactPaths", () => {
+    // First leg fires but the second does not — a hand-readable
+    // jquery-1.10.2.js whose basename matches the vendor pattern but
+    // whose content didn't trip the build-artifact classifier (no
+    // `.min.` infix, no long-line predicate). Stays "high" so the agent
+    // still budgets attention against grounded vendor candidates whose
+    // evidence is honestly readable.
+    const candidate: ReviewCandidate = {
+      criterionId: "wcag22:2.2.1",
+      location: { filePath: "/vendor/jquery.js", line: 1, column: 0 },
+      reason: "setTimeout call",
+      confidence: "medium",
+      vendorPathHint: true,
+    };
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const buildArtifactPaths = new Set(["/something/else.min.js"]);
+    expect(
+      resolvePriorityForReviewCandidate({ candidate, criterionLevels: levels, buildArtifactPaths }),
+    ).toBe("high");
   });
 });

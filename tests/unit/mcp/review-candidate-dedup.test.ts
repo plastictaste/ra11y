@@ -287,3 +287,60 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
     expect(out[0]?.confidence).toBe("high");
   });
 });
+
+describe("dedupeReviewCandidatesForSingleFile — minified-vendor-no-sourcemap stamp", () => {
+  it("drops priority to 'low' and stamps couldBeWrongBecause when path is in buildArtifactPaths AND vendorPathHint is true", () => {
+    // The two-component gate (vendorPathHint + path-in-build-artifact-set)
+    // composes both channels at the materializer: priority drops to "low"
+    // AND `couldBeWrongBecause` lands as
+    // `["minified_vendor_no_sourcemap"]` so the agent reads the budget
+    // signal AND the predicate-strength concession from one entry. Per
+    // doctrine "Reason / priority / fix-description must agree across
+    // all three channels."
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const buildArtifactPaths = new Set([FILE]);
+    const out = dedupeReviewCandidatesForSingleFile(
+      [candidate("wcag22:2.2.1", "setTimeout call", 5, 2, { vendorPathHint: true })],
+      levels,
+      buildArtifactPaths,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.priority).toBe("low");
+    expect(out[0]?.couldBeWrongBecause).toEqual(["minified_vendor_no_sourcemap"]);
+  });
+
+  it("vendorPathHint without buildArtifactPaths membership keeps priority, omits couldBeWrongBecause", () => {
+    // First leg fires but the second does not — a hand-readable vendor
+    // file the build-artifact classifier did not flag. Stays "high"
+    // (no other gates trigger), and `couldBeWrongBecause` is omitted
+    // entirely per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const buildArtifactPaths = new Set<string>(); // empty
+    const out = dedupeReviewCandidatesForSingleFile(
+      [candidate("wcag22:2.2.1", "setTimeout call", 5, 2, { vendorPathHint: true })],
+      levels,
+      buildArtifactPaths,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.priority).toBe("high");
+    expect(out[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+
+  it("buildArtifactPaths membership without vendorPathHint keeps existing gates' behavior", () => {
+    // Symmetric: the candidate's path is classified as a build artifact
+    // (e.g. an authored CSS file the bundler tagged) but the finder
+    // didn't populate vendorPathHint — the gate doesn't fire because
+    // the predicate-strength concession the gate names ("can't resolve
+    // without a sourcemap") only applies to vendor-shape evidence.
+    const levels = new Map<string, string>([["wcag22:2.2.1", "A"]]);
+    const buildArtifactPaths = new Set([FILE]);
+    const out = dedupeReviewCandidatesForSingleFile(
+      [candidate("wcag22:2.2.1", "setTimeout call", 5, 2)],
+      levels,
+      buildArtifactPaths,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.priority).toBe("high");
+    expect(out[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+});
