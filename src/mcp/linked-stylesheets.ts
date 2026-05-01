@@ -213,7 +213,7 @@ function isTemplateExpressionHref(href: string): boolean {
 const TEMPLATE_EXPRESSION_PATTERNS: readonly RegExp[] = [
   /\{\{[^}]+\}\}/, // {{ident}} / {{{ident}}}
   /\$\{[^}]+\}/, // ${ident}
-  /<%[=\-]?[^%]+%>/, // <%= ident %> / <% ident %> / <%- ident %>
+  /<%[=-]?[^%]+%>/, // <%= ident %> / <% ident %> / <%- ident %>
   /\{%[^%]+%\}/, // {% raw %} / {% endraw %} / {%- if … %}
   /\{[A-Za-z_][^}]*\}/, // {ident} — single-brace; require leading identifier char to avoid matching `{}` and CSS escapes
 ];
