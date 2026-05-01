@@ -1667,6 +1667,13 @@ function bucketChecklistItems(
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
+  // Track every criterion ID we materialize an item for so the
+  // partial-criterion pass below doesn't double-emit a manual criterion
+  // that already has a candidate. Manual criteria flow through this loop
+  // first regardless of whether they have candidates (untargeted bare-
+  // prompt case is load-bearing); the partial-criterion pass only adds
+  // criteria that this loop never visited.
+  const emittedCriterionIds = new Set<string>();
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
@@ -1681,6 +1688,53 @@ function bucketChecklistItems(
         attestationsByCriterion.get(criterion.id) ?? [],
         stalenessProbe,
       );
+      emittedCriterionIds.add(criterion.id);
+      (relevant ? needsReview : likelyIrrelevant).push(item);
+    }
+  }
+  // Partial-automatable criteria with grounded candidates also belong on
+  // `items` — `summary.actionable.criteria` (per the shared
+  // `tallyManualCriteriaFromCoverage` helper, AI-first doctrine
+  // "Cross-surface count invariant") counts every distinct criterion ID
+  // across shipped candidates regardless of metadata-manual classification.
+  // Limiting the items emission to `manualCriteria` (the metadata-manual
+  // + not-fired subset) silently elided partial-criterion candidates from
+  // the displayed list while the headline still counted them — agents
+  // budgeting against `summary.actionable.criteria` then saw items.length
+  // disagree with `truncated: null`. Closure: surface the same criteria
+  // the headline counts.
+  //
+  // Walks each coverage entry's full in-scope criteria set looking for
+  // partial-automatable criteria (`automatable === "partial"`) that
+  // (a) have at least one shipped candidate and (b) the manual loop above
+  // didn't already emit. `automatable === "full"` criteria are skipped
+  // here — fully automatable criteria with grounded candidates are
+  // unusual but route as automated findings, not review items, so the
+  // checklist surface omits them deliberately. Fired manual criteria
+  // (metadata-manual + a violation present) also stay out — they route
+  // through the failing automated lane per `manualCriteria`'s fired-aware
+  // construction in `buildOne()`, and re-surfacing them here would
+  // contradict that routing.
+  const candidateCriterionIds = new Set<string>();
+  for (const c of candidates) candidateCriterionIds.add(c.criterionId);
+  for (const entry of coverage) {
+    const standard = findStandard(entry.standardId, session);
+    if (!standard) continue;
+    for (const cc of entry.criteria) {
+      if (emittedCriterionIds.has(cc.criterionId)) continue;
+      if (!candidateCriterionIds.has(cc.criterionId)) continue;
+      const criterion = standard.criteria.find((c) => c.id === cc.criterionId);
+      if (!criterion) continue;
+      if (criterion.automatable !== "partial") continue;
+      const { item, relevant } = buildChecklistItem(
+        criterion,
+        candidates,
+        applicability,
+        sources,
+        attestationsByCriterion.get(criterion.id) ?? [],
+        stalenessProbe,
+      );
+      emittedCriterionIds.add(criterion.id);
       (relevant ? needsReview : likelyIrrelevant).push(item);
     }
   }
