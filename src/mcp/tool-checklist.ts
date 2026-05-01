@@ -1674,73 +1674,157 @@ function bucketChecklistItems(
   // prompt case is load-bearing); the partial-criterion pass only adds
   // criteria that this loop never visited.
   const emittedCriterionIds = new Set<string>();
+  const builderArgs = {
+    candidates,
+    applicability,
+    sources,
+    attestationsByCriterion,
+    stalenessProbe,
+  } as const;
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
     for (const criterionId of entry.manualCriteria) {
       const criterion = standard.criteria.find((c) => c.id === criterionId);
       if (!criterion) continue;
-      const { item, relevant } = buildChecklistItem(
-        criterion,
-        candidates,
-        applicability,
-        sources,
-        attestationsByCriterion.get(criterion.id) ?? [],
-        stalenessProbe,
-      );
-      emittedCriterionIds.add(criterion.id);
-      (relevant ? needsReview : likelyIrrelevant).push(item);
+      pushChecklistItem(criterion, builderArgs, emittedCriterionIds, needsReview, likelyIrrelevant);
     }
   }
-  // Partial-automatable criteria with grounded candidates also belong on
-  // `items` — `summary.actionable.criteria` (per the shared
-  // `tallyManualCriteriaFromCoverage` helper, AI-first doctrine
-  // "Cross-surface count invariant") counts every distinct criterion ID
-  // across shipped candidates regardless of metadata-manual classification.
-  // Limiting the items emission to `manualCriteria` (the metadata-manual
-  // + not-fired subset) silently elided partial-criterion candidates from
-  // the displayed list while the headline still counted them — agents
-  // budgeting against `summary.actionable.criteria` then saw items.length
-  // disagree with `truncated: null`. Closure: surface the same criteria
-  // the headline counts.
-  //
-  // Walks each coverage entry's full in-scope criteria set looking for
-  // partial-automatable criteria (`automatable === "partial"`) that
-  // (a) have at least one shipped candidate and (b) the manual loop above
-  // didn't already emit. `automatable === "full"` criteria are skipped
-  // here — fully automatable criteria with grounded candidates are
-  // unusual but route as automated findings, not review items, so the
-  // checklist surface omits them deliberately. Fired manual criteria
-  // (metadata-manual + a violation present) also stay out — they route
-  // through the failing automated lane per `manualCriteria`'s fired-aware
-  // construction in `buildOne()`, and re-surfacing them here would
-  // contradict that routing.
+  appendPartialCriterionItems(
+    coverage,
+    session,
+    candidates,
+    builderArgs,
+    emittedCriterionIds,
+    needsReview,
+    likelyIrrelevant,
+  );
+  const rank: Readonly<Record<ChecklistPriority, number>> = { high: 0, medium: 1, low: 2 };
+  needsReview.sort((a, b) => rank[a.priority] - rank[b.priority]);
+  return { needsReview, likelyIrrelevant };
+}
+
+/**
+ * Builds a checklist item via {@link buildChecklistItem}, records the
+ * criterion ID in {@link emittedCriterionIds}, and routes the result into
+ * {@link needsReview} or {@link likelyIrrelevant}. Extracted from
+ * {@link bucketChecklistItems} so the parent function stays under the
+ * lint's cognitive-complexity ceiling — the two-pass loop (manual then
+ * partial-with-candidates) trips the cap when the build-and-route boilerplate
+ * is inlined twice.
+ */
+function pushChecklistItem(
+  criterion: { id: string; standardId: string; localId: string; title: string; level: string },
+  builderArgs: {
+    readonly candidates: readonly ReviewCandidate[];
+    readonly applicability: Applicability;
+    readonly sources: ReadonlyMap<string, SourceEntry>;
+    readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
+    readonly stalenessProbe: AttestationStalenessProbe | undefined;
+  },
+  emittedCriterionIds: Set<string>,
+  needsReview: ChecklistItemOut[],
+  likelyIrrelevant: ChecklistItemOut[],
+): void {
+  const { item, relevant } = buildChecklistItem(
+    criterion,
+    builderArgs.candidates,
+    builderArgs.applicability,
+    builderArgs.sources,
+    builderArgs.attestationsByCriterion.get(criterion.id) ?? [],
+    builderArgs.stalenessProbe,
+  );
+  emittedCriterionIds.add(criterion.id);
+  (relevant ? needsReview : likelyIrrelevant).push(item);
+}
+
+/**
+ * Second pass for {@link bucketChecklistItems} — emits items for
+ * partial-automatable criteria with grounded candidates that the manual
+ * loop didn't already cover. `summary.actionable.criteria` (per the
+ * shared `tallyManualCriteriaFromCoverage` helper, AI-first doctrine
+ * "Cross-surface count invariant") counts every distinct criterion ID
+ * across shipped candidates regardless of metadata-manual classification.
+ * Limiting the items emission to `manualCriteria` (metadata-manual +
+ * not-fired) silently elided partial-criterion candidates from the
+ * displayed list while the headline still counted them — agents
+ * budgeting against `summary.actionable.criteria` then saw items.length
+ * disagree with `truncated: null`. Surfacing them here closes the gap.
+ *
+ * `automatable === "full"` criteria are skipped — fully automatable
+ * criteria with grounded candidates are unusual but route as automated
+ * findings, not review items, so the checklist surface omits them
+ * deliberately. Fired metadata-manual criteria stay out too — they route
+ * through the failing automated lane per `manualCriteria`'s fired-aware
+ * construction in `buildOne()`, and re-surfacing them here would
+ * contradict that routing.
+ *
+ * Extracted from {@link bucketChecklistItems} so the parent stays under
+ * the lint's cognitive-complexity cap.
+ */
+function appendPartialCriterionItems(
+  coverage: readonly PerStandardCoverage[],
+  session: import("./session.ts").McpSession,
+  candidates: readonly ReviewCandidate[],
+  builderArgs: {
+    readonly candidates: readonly ReviewCandidate[];
+    readonly applicability: Applicability;
+    readonly sources: ReadonlyMap<string, SourceEntry>;
+    readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
+    readonly stalenessProbe: AttestationStalenessProbe | undefined;
+  },
+  emittedCriterionIds: Set<string>,
+  needsReview: ChecklistItemOut[],
+  likelyIrrelevant: ChecklistItemOut[],
+): void {
   const candidateCriterionIds = new Set<string>();
   for (const c of candidates) candidateCriterionIds.add(c.criterionId);
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
-    for (const cc of entry.criteria) {
-      if (emittedCriterionIds.has(cc.criterionId)) continue;
-      if (!candidateCriterionIds.has(cc.criterionId)) continue;
-      const criterion = standard.criteria.find((c) => c.id === cc.criterionId);
-      if (!criterion) continue;
-      if (criterion.automatable !== "partial") continue;
-      const { item, relevant } = buildChecklistItem(
-        criterion,
-        candidates,
-        applicability,
-        sources,
-        attestationsByCriterion.get(criterion.id) ?? [],
-        stalenessProbe,
-      );
-      emittedCriterionIds.add(criterion.id);
-      (relevant ? needsReview : likelyIrrelevant).push(item);
-    }
+    appendPartialItemsFromEntry(
+      entry,
+      standard,
+      candidateCriterionIds,
+      builderArgs,
+      emittedCriterionIds,
+      needsReview,
+      likelyIrrelevant,
+    );
   }
-  const rank: Readonly<Record<ChecklistPriority, number>> = { high: 0, medium: 1, low: 2 };
-  needsReview.sort((a, b) => rank[a.priority] - rank[b.priority]);
-  return { needsReview, likelyIrrelevant };
+}
+
+/**
+ * Per-coverage-entry inner loop for {@link appendPartialCriterionItems}.
+ * Walks the entry's in-scope criteria and emits an item for each
+ * partial-automatable criterion that has a shipped candidate and wasn't
+ * already emitted by the manual-criteria pass. Extracted so the parent
+ * stays under the lint's cognitive-complexity cap; the nested
+ * loop + four-predicate guard is what trips it.
+ */
+function appendPartialItemsFromEntry(
+  entry: PerStandardCoverage,
+  standard: import("../types/standard.ts").Standard,
+  candidateCriterionIds: ReadonlySet<string>,
+  builderArgs: {
+    readonly candidates: readonly ReviewCandidate[];
+    readonly applicability: Applicability;
+    readonly sources: ReadonlyMap<string, SourceEntry>;
+    readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
+    readonly stalenessProbe: AttestationStalenessProbe | undefined;
+  },
+  emittedCriterionIds: Set<string>,
+  needsReview: ChecklistItemOut[],
+  likelyIrrelevant: ChecklistItemOut[],
+): void {
+  for (const cc of entry.criteria) {
+    if (emittedCriterionIds.has(cc.criterionId)) continue;
+    if (!candidateCriterionIds.has(cc.criterionId)) continue;
+    const criterion = standard.criteria.find((c) => c.id === cc.criterionId);
+    if (!criterion) continue;
+    if (criterion.automatable !== "partial") continue;
+    pushChecklistItem(criterion, builderArgs, emittedCriterionIds, needsReview, likelyIrrelevant);
+  }
 }
 
 /**
