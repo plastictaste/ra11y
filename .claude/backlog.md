@@ -442,7 +442,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Heuristic-mislabeled meta sub-fields
 
-- [ ] **Q14-PHP-ISLANDS-STRIPPED-FIRES-ON-BACKEND-ONLY-PHP** `php_islands_stripped` ships on backend-only PHP files (contact-form processors with zero HTML) — the warning name implies HTML islands were detected and stripped, but the predicate fires on file extension alone. Closure: gate emission on actual `<?php …?>` block presence inside an HTML envelope (or `<?= ?>` short-tag in a `.php` file with HTML siblings); back-end-only PHP receives no warning. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
 
 ### Heuristic emission (rule false-positive on speculative composition)
 

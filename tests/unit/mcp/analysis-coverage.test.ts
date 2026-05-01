@@ -1174,6 +1174,75 @@ describe("buildAnalysisCoverage — hints", () => {
       const { analysisCoverage } = buildAnalysisCoverage([xhtmlPage], [], NO_RULES, false);
       expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
     });
+
+    // Backend-only PHP — a `.php` file containing PHP islands but
+    // ZERO HTML envelope around them (contact-form processor, mail
+    // dispatcher, redirect script, pure-PHP class library). Per AI-first
+    // doctrine "Heuristic-mislabeled meta sub-fields are dishonest":
+    // the warning name `php_islands_stripped` implies HTML islands were
+    // detected AND stripped, so it must NOT fire when the parser had
+    // no HTML residue to hand to the HTML parser.
+    it("does NOT flag phpIslandsStripped on a backend-only `.php` file with islands but zero HTML envelope (contact-form processor)", () => {
+      const contactProcessor = htmlFile(
+        "contact-process.php",
+        "<?php\n$email = $_POST['email'];\n$to = 'admin@example.com';\nmail($to, 'Contact form', $email);\nheader('Location: /thanks.html');\n?>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([contactProcessor], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+      expect(analysisCoverage?.["phpIslandsStrippedFiles"]).toBeUndefined();
+    });
+
+    it("does NOT flag phpIslandsStripped on a pure-PHP class library file (no closing `?>`, no HTML)", () => {
+      // Common idiom in modern PHP: omit the closing `?>` to avoid
+      // accidental whitespace output. Pure-PHP class files match
+      // component 1 (opener present) but have zero HTML envelope.
+      const classLib = htmlFile(
+        "src/Auth/SessionManager.php",
+        "<?php\nnamespace App\\Auth;\n\nclass SessionManager {\n    public function login(string $user): void {\n        // ...\n    }\n}\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([classLib], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBeUndefined();
+    });
+
+    it("does NOT lift backend-only `.php` paths onto `phpIslandsStrippedFiles` even when an HTML-bearing `.php` sibling fires the boolean", () => {
+      // Mixed corpus: one HTML-bearing template + one backend-only
+      // processor. The boolean flips on the template, but the
+      // processor must stay out of the per-file evidence list — the
+      // warning's `topFiles` payload promises files where HTML islands
+      // were stripped, not files where the parser found PHP residue
+      // with nothing HTML around it.
+      const template = htmlFile(
+        "templates/header.phtml",
+        "<title><?= $title ?></title>\n<p>body</p>\n",
+      );
+      const processor = htmlFile(
+        "process.php",
+        "<?php $r = $_POST['r']; mail('a@b.c', 'r', $r); ?>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [template, processor],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
+      expect(analysisCoverage?.["phpIslandsStrippedFiles"]).toEqual(["templates/header.phtml"]);
+    });
+
+    it("flags phpIslandsStripped when HTML envelope appears between two PHP control-structure islands (`<?php if (…): ?> <p>…</p> <?php endif; ?>`)", () => {
+      // The "HTML envelope outside the islands" predicate must catch
+      // HTML residue sandwiched between PHP control-structure blocks
+      // — a routine PHP-templating idiom. Without this, conditional
+      // template fragments would silently drop the warning despite
+      // genuinely needing the parser-level signal.
+      const conditional = htmlFile(
+        "templates/welcome.php",
+        "<?php if ($logged_in): ?>\n  <p>Welcome back</p>\n<?php endif; ?>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([conditional], [], NO_RULES, false);
+      expect(analysisCoverage?.["phpIslandsStripped"]).toBe(true);
+      expect(analysisCoverage?.["phpIslandsStrippedFiles"]).toEqual(["templates/welcome.php"]);
+    });
   });
 
   // Prose in `.md` / `.markdown` files routinely QUOTES template

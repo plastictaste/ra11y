@@ -196,17 +196,24 @@ interface CoverageBlock {
   templateDirectiveHandling?: string;
   /**
    * true when at least one
-   * scanned `.php` / `.phtml` file ran through the {@link parsePhp}
-   * adapter's island-stripping pass and contained at least one PHP
-   * block (`<?php … ?>`, `<?= … ?>`, or `<? … ?>`). Tracked alongside
-   * `templateInterpolationFound` because PHP islands are a parser-level
-   * template substrate the HTML parser would otherwise see as literal
-   * text. The warnings layer fires `php_islands_stripped` off this
-   * flag so an agent reading the response sees the parser-level
-   * evidence that PHP residue was processed (rather than the file
-   * being dropped at discovery — the historical behavior before
-   * `.php` joined PARSEABLE_EXTENSIONS). Present-when-meaningful:
-   * omitted when no scanned file ran PHP-island stripping.
+   * scanned `.php` / `.phtml` file BOTH (1) contained at least one PHP
+   * island opener (`<?php`, `<?=`, or `<?`) AND (2) had HTML envelope
+   * content (`<!DOCTYPE`, `<html>`, or any HTML tag) outside those
+   * islands. The two-component predicate keeps the warning name honest
+   * per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+   * dishonest": the warning name implies HTML islands were detected
+   * AND stripped, so backend-only PHP files (contact-form processors,
+   * mail dispatchers, pure-PHP class libraries) — which match
+   * component 1 but have zero HTML residue around the islands —
+   * correctly stay off. Tracked alongside `templateInterpolationFound`
+   * because PHP islands are a parser-level template substrate the HTML
+   * parser would otherwise see as literal text. The warnings layer
+   * fires `php_islands_stripped` off this flag so an agent reading the
+   * response sees the parser-level evidence that PHP residue was
+   * processed (rather than the file being dropped at discovery — the
+   * historical behavior before `.php` joined PARSEABLE_EXTENSIONS).
+   * Present-when-meaningful: omitted when no scanned file met both
+   * components of the predicate.
    */
   phpIslandsStripped?: boolean;
   /**
@@ -384,6 +391,33 @@ interface CoverageBlock {
  * signal.
  */
 const PHP_ISLAND_OPENER_RE = /<\?(?:php(?![A-Za-z_])|=|(?!xml))/i;
+
+/**
+ * Matches every PHP island span — `<?php … ?>`, `<?= … ?>`, or
+ * `<? … ?>` (excluding `<?xml`). The closer is greedy-minimal to match
+ * {@link parsePhp}'s "first `?>` after the opener" semantics. Paired
+ * with {@link HTML_ENVELOPE_OPENER_RE} in
+ * {@link hasHtmlEnvelopeOutsidePhpIslands}: blank PHP regions, then
+ * probe the residue for an HTML envelope. Backend-only PHP files
+ * (contact-form processors, mail dispatchers, pure-PHP class libraries)
+ * blank to whitespace residue and stay off the warning — closing the
+ * silent-miss shape per AI-first doctrine "Heuristic-mislabeled meta
+ * sub-fields are dishonest" where `php_islands_stripped` fired despite
+ * stripping nothing the HTML parser would have cared about.
+ */
+const PHP_ISLAND_SPAN_RE = /<\?(?:php(?![A-Za-z_])|=|(?!xml))[\s\S]*?\?>/gi;
+
+/**
+ * Matches an HTML envelope opener in the residue after PHP islands are
+ * blanked: `<!DOCTYPE …>`, `<html …>`, or any `<lowercase-tag …>`
+ * opener — the predicate the `php_islands_stripped` warning name
+ * promises.
+ */
+const HTML_ENVELOPE_OPENER_RE = /<(?:!doctype\b|html\b|[a-z][a-z0-9-]*[\s>/])/i;
+
+function hasHtmlEnvelopeOutsidePhpIslands(source: string): boolean {
+  return HTML_ENVELOPE_OPENER_RE.test(source.replace(PHP_ISLAND_SPAN_RE, " "));
+}
 
 interface CoverageAccumulator {
   /**
@@ -1095,17 +1129,24 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
     acc.frontmatterFenceFiles.push(file.filePath);
   }
   if (isPhpFile(file.filePath)) {
-    // Detect PHP island openers in the original source. The
-    // {@link parsePhp} adapter blanks the islands before the AST is
-    // built, so the AST itself carries no PHP residue; scanning the
-    // original `file.source` recovers the parser-level signal without
-    // re-routing through the adapter. Extension gate keeps stray `<?`
-    // text in non-PHP files (e.g. an `.html` page documenting the
-    // syntax) from tripping the flag. Each matching file's path is
-    // recorded so the warnings-module summarizer can emit the
-    // `{fileCount, topFiles, extensions}` payload off the coverage
-    // block without re-walking parsed sources.
-    if (PHP_ISLAND_OPENER_RE.test(file.source)) {
+    // Two-component predicate per AI-first doctrine
+    // "Heuristic-mislabeled meta sub-fields are dishonest": the warning
+    // name `php_islands_stripped` implies HTML islands were detected
+    // AND stripped, so emission requires both (1) a PHP island opener
+    // present in the original source — recovered from `file.source`
+    // because the {@link parsePhp} adapter has already blanked the
+    // islands in the AST — AND (2) an HTML envelope opener
+    // (`<!DOCTYPE`, `<html>`, or any HTML tag) present in the residue
+    // outside those islands. Component 2 closes the backend-only-PHP
+    // silent miss: a contact-form processor like
+    // `<?php mail($to, $subj, $body); ?>` matches component 1 but its
+    // residue contains no HTML, so the warning correctly stays off.
+    // Extension gate keeps stray `<?` text in non-PHP files (e.g. an
+    // `.html` page documenting the syntax) from tripping the flag.
+    // Each matching file's path is recorded so the warnings-module
+    // summarizer can emit the `{fileCount, topFiles, extensions}`
+    // payload off the coverage block without re-walking parsed sources.
+    if (PHP_ISLAND_OPENER_RE.test(file.source) && hasHtmlEnvelopeOutsidePhpIslands(file.source)) {
       acc.phpIslandsStripped = true;
       acc.phpIslandsStrippedFiles.push(file.filePath);
     }
