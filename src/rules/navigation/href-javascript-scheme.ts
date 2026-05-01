@@ -83,7 +83,7 @@ export const rule = defineRule({
   },
   check(ctx) {
     if (ctx.language === "html") {
-      checkHtml(ctx.ast as HtmlDocument, (v) => ctx.emit(v));
+      checkHtml(ctx.ast as HtmlDocument, ctx.source, (v) => ctx.emit(v));
     } else if (
       ctx.language === "tsx" ||
       ctx.language === "jsx" ||
@@ -97,10 +97,44 @@ export const rule = defineRule({
       // interpolates. Only act on JSX nodes parsed out of `.tsx` / `.jsx`
       // (and the JSX-bearing `.mdx` / `.astro` aliases).
       if (!isDomOriginExtension(ctx.filePath)) return;
-      checkJsx(ctx.ast as TsxModule, (v) => ctx.emit(v));
+      checkJsx(ctx.ast as TsxModule, ctx.source, (v) => ctx.emit(v));
     }
   },
 });
+
+/**
+ * Extracts the literal opening-tag text starting at `startOffset` in
+ * `source` — `<a href="..." onClick={...}>` for the cases this rule fires
+ * on. Walks one character at a time tracking the active quote so an
+ * attribute value containing `>` (e.g. `data-x="a>b"`) doesn't end the
+ * opener early. Returns `undefined` when the parser-supplied offset does
+ * not point at a tag opener (defensive — should not happen in practice
+ * since we get the offset from the AST node's `range.start`).
+ *
+ * Feeds `Violation.snippet`, which the engine then canonicalizes into
+ * `Violation.patternId` (see `src/utils/pattern-id.ts`). The cross-template
+ * dedupe affordance only reaches the wire on snippet-emitting rules; this
+ * rule is one of them — see `docs/kb/architecture/ai-first-consumer.md`
+ * "advertising an affordance that never reaches the wire is dishonest."
+ */
+function extractOpener(source: string, startOffset: number): string | undefined {
+  if (startOffset < 0 || startOffset >= source.length) return undefined;
+  if (source[startOffset] !== "<") return undefined;
+  let cursor = startOffset;
+  let quote: '"' | "'" | null = null;
+  while (cursor < source.length) {
+    const ch = source[cursor];
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ">") {
+      return source.slice(startOffset, cursor + 1);
+    }
+    cursor++;
+  }
+  return undefined;
+}
 
 /**
  * Tag/component names whose presence as an ancestor of a flagged anchor
@@ -225,9 +259,10 @@ type Emit = (v: {
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  snippet?: string;
 }) => void;
 
-function checkHtml(doc: HtmlDocument, emit: Emit): void {
+function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   const anchors = findHtmlElementsByTag(doc, "a");
   if (anchors.length === 0) return;
   // Build the parent map lazily — only when there's at least one anchor.
@@ -238,11 +273,12 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     if (!isJavascriptScheme(hrefValue)) continue;
     parents ??= buildHtmlParentMap(doc);
     const exampleHint = findHtmlExampleHint(anchor, parents);
-    emit(buildViolation(anchor.loc.start, hrefValue ?? "", exampleHint));
+    const snippet = extractOpener(source, anchor.range.start);
+    emit(buildViolation(anchor.loc.start, hrefValue ?? "", exampleHint, snippet));
   }
 }
 
-function checkJsx(module: TsxModule, emit: Emit): void {
+function checkJsx(module: TsxModule, source: string, emit: Emit): void {
   const anchors = findJsxElementsByTag(module, "a");
   if (anchors.length === 0) return;
   let parents: Map<JsxElement, JsxElement> | null = null;
@@ -257,7 +293,8 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     if (!isJavascriptScheme(attr.value.value)) continue;
     parents ??= buildJsxParentMap(module);
     const exampleHint = findJsxExampleHint(anchor, parents);
-    emit(buildViolation(anchor.loc.start, attr.value.value, exampleHint));
+    const snippet = extractOpener(source, anchor.range.start);
+    emit(buildViolation(anchor.loc.start, attr.value.value, exampleHint, snippet));
   }
 }
 
@@ -265,11 +302,13 @@ function buildViolation(
   loc: { line: number; column: number },
   rawHref: string,
   exampleHint: ExampleHint | null,
+  snippet: string | undefined,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
+  snippet?: string;
 } {
   const display = rawHref.length > 60 ? `${rawHref.slice(0, 60)}…` : rawHref;
   // Reason-enrichment only — severity stays `error`. When the anchor sits
@@ -284,5 +323,11 @@ function buildViolation(
     location: { filePath: "", line: loc.line, column: loc.column },
     message: `<a href="${display}"> uses a javascript: scheme — the anchor announces as a link but does not navigate, contradicting its role.${exampleSuffix}`,
     suggestion: `change \`<a href="${display}">\` to \`<button type="button">\` — this control does not navigate, so it should announce as a button, not a link. If you need anchor-style visuals, style the <button> with CSS instead of giving an anchor a non-URL href. If the handler actually navigates somewhere, put that URL directly in href and drop the javascript: wrapper.${exampleSuffix}`,
+    // Conditional spread keeps `snippet: ""` / `snippet: undefined` off the
+    // wire per CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
+    // opener extraction succeeds (the common case from AST byte-offsets),
+    // the snippet flows to `Violation.snippet`, where the engine canonicalizes
+    // it into `Violation.patternId` for cross-template dedupe.
+    ...(snippet !== undefined && snippet.length > 0 ? { snippet } : {}),
   };
 }

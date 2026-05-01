@@ -291,4 +291,79 @@ describe("rule navigation/href-javascript-scheme", () => {
       expect(rule.satisfies).toContain("wcag21:2.1.1");
     });
   });
+
+  // Snippet emission feeds Violation.patternId (canonicalized cross-template
+  // fingerprint — see src/utils/pattern-id.ts). Without a snippet from the
+  // producer side, the affordance never reaches the wire and vendor-dedupe
+  // / bulk-dismiss workflows lose the dedupe key. These assertions pin the
+  // producer-side contract on this rule; engine canonicalization +
+  // cross-file invariants are pinned downstream by
+  // tests/unit/engine/pattern-id.test.ts.
+  describe("snippet emission for cross-template patternId", () => {
+    it("HTML: emits a snippet capturing the offending opening tag", () => {
+      const violations = runRule(rule, `<a href="javascript:void(0)" onclick="doit()">Click</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      const snippet = violations[0]?.snippet;
+      expect(snippet).toBeDefined();
+      // Snippet captures the opener — closing `>` included, no children.
+      expect(snippet).toBe(`<a href="javascript:void(0)" onclick="doit()">`);
+    });
+
+    it("JSX: emits a snippet capturing the offending opening tag", () => {
+      const violations = runRule(rule, `function F(){return <a href="javascript:void(0)">x</a>}`, {
+        filePath: "Page.tsx",
+      });
+      expect(violations).toHaveLength(1);
+      const snippet = violations[0]?.snippet;
+      expect(snippet).toBeDefined();
+      expect(snippet).toBe(`<a href="javascript:void(0)">`);
+    });
+
+    it("HTML: snippet survives a `>` inside a quoted attribute value", () => {
+      // Defensive: the opener walker tracks active quotes so an attribute
+      // value containing `>` does not end the opener early. Without quote
+      // tracking, the snippet would clip after `data-cmp="a` and drop the
+      // href the rule fires on.
+      const violations = runRule(rule, `<a data-cmp="a>b" href="javascript:void(0)">Click</a>`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.snippet).toBe(`<a data-cmp="a>b" href="javascript:void(0)">`);
+    });
+
+    it("byte-identical snippets across two files match byte-for-byte (the patternId input)", () => {
+      // Producer-side proof: the rule emits identical `snippet` text on
+      // identical openers across sibling template files. The engine then
+      // canonicalizes the snippet into one shared `patternId` (assertion
+      // covered end-to-end in tests/unit/engine/pattern-id.test.ts under
+      // "byte-identical snippet in two files → same patternId").
+      const aViolations = runRule(rule, `<a href="javascript:void(0)">Click</a>`, {
+        filePath: "templates/agency/index.html",
+      });
+      const bViolations = runRule(rule, `<a href="javascript:void(0)">Click</a>`, {
+        filePath: "templates/grayscale/index.html",
+      });
+      expect(aViolations).toHaveLength(1);
+      expect(bViolations).toHaveLength(1);
+      expect(aViolations[0]?.snippet).toBe(bViolations[0]?.snippet);
+    });
+
+    it("snippet is never the empty string on the wire (conditional spread)", () => {
+      // Invariant guard for "Ambiguous field shapes are dishonest." The
+      // conditional spread keeps `snippet: ""` off the wire so an agent
+      // never has to disambiguate "no snippet available" from "empty
+      // snippet." When the key is present, the value is a non-empty string.
+      const violations = runRule(rule, `<a href="javascript:void(0)">x</a>`, {
+        filePath: "index.html",
+      });
+      const v = violations[0];
+      expect(v).toBeDefined();
+      const hasKey = Object.hasOwn(v as object, "snippet");
+      if (hasKey) {
+        expect((v as { snippet: string }).snippet.length).toBeGreaterThan(0);
+      }
+    });
+  });
 });
