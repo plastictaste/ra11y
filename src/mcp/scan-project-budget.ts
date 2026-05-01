@@ -566,6 +566,9 @@ function buildSlimScanProjectEnvelope(args: {
   // corpora because:
   //   - `plan.topRules` carries up to {@link TOP_RULES_DEFAULT_LIMIT}
   //     entries (~250 chars/entry → 2.5KB).
+  //   - `plan.findingsByFile` carries up to
+  //     {@link import("./scan-assembly.ts").FINDINGS_BY_FILE_DEFAULT_LIMIT}
+  //     entries (~60–120 chars/entry → 2.4KB).
   //   - `warningsDetails.bulk_catalog_detected.suggestedExcludes`
   //     carries scanner-derived globs, one per top vendor basename.
   //   - `warningsDetails.scanned_minified_file.files` and
@@ -750,6 +753,22 @@ const SLIM_META_KEYS: readonly string[] = [
 const SLIM_TOP_RULES_CAP = 3;
 
 /**
+ * Head-slice cap for `plan.findingsByFile` on the slim envelope. The
+ * full rollup carries up to {@link import("./scan-assembly.ts").FINDINGS_BY_FILE_DEFAULT_LIMIT}
+ * (20) entries at ~60–120 chars each, accounting for ~2.4KB on the wire.
+ * The slim path keeps the top-3 so the agent still sees the dominant
+ * file clusters ("scope down to this subtree") without paying the long-
+ * tail cost; the truncated count lands in
+ * `warningsDetails.response_dropped_files_oversize.slimTruncations`. The
+ * `findingsByFileTruncated: true` companion flag — already stamped by
+ * `withFindingsByFile` whenever the rollup clipped a longer error+
+ * warning tail — is preserved on the slim plan; the slim path's further
+ * head-slice is reported through `slimTruncations` rather than
+ * overloading the same boolean.
+ */
+const SLIM_FINDINGS_BY_FILE_CAP = 3;
+
+/**
  * Head-slice cap for `warningsDetails.bulk_catalog_detected.suggestedExcludes`
  * on the slim envelope. The full list mirrors the top vendor basenames
  * the scan saw — typically 5–20 globs on a bulk-template corpus. Keeping
@@ -778,10 +797,18 @@ interface SlimTruncationEntry {
 
 /**
  * Head-slices verbose arrays on the `plan` block that survive the slim
- * envelope's drop of `files[]` and the meta-key trim. Today only
- * `plan.topRules` qualifies — the only `plan` field that grows linearly
- * with rule fan-out. Returns a `{ plan, truncations }` pair so the
- * caller threads the truncation summary into the warnings-channel
+ * envelope's drop of `files[]` and the meta-key trim. Two `plan` fields
+ * grow linearly with input fan-out today:
+ *
+ *   - `plan.topRules` — one entry per distinct rule that fired (rule
+ *     fan-out axis).
+ *   - `plan.findingsByFile` — one entry per file with at least one
+ *     error/warning finding (file fan-out axis).
+ *
+ * Each gets its own cap; the truncations array reports both fields
+ * independently so `slimTruncations` carries the per-field shown/total
+ * pair the agent can act on. Returns a `{ plan, truncations }` pair so
+ * the caller threads the truncation summary into the warnings-channel
  * payload.
  *
  * Pure: never mutates the input. When no array crosses its cap, the
@@ -793,15 +820,18 @@ function slimPlanForSlimEnvelope(plan: Record<string, unknown>): {
   readonly plan: Record<string, unknown>;
   readonly truncations: readonly SlimTruncationEntry[];
 } {
-  const topRules = plan["topRules"];
-  if (!Array.isArray(topRules) || topRules.length <= SLIM_TOP_RULES_CAP) {
-    return { plan, truncations: [] };
-  }
-  const truncated = topRules.slice(0, SLIM_TOP_RULES_CAP);
-  return {
-    plan: { ...plan, topRules: truncated },
-    truncations: [{ fieldPath: "plan.topRules", shown: truncated.length, total: topRules.length }],
+  let next: Record<string, unknown> = plan;
+  const truncations: SlimTruncationEntry[] = [];
+  const slimField = (key: string, cap: number): void => {
+    const value = plan[key];
+    if (!Array.isArray(value) || value.length <= cap) return;
+    const trimmed = value.slice(0, cap);
+    next = { ...next, [key]: trimmed };
+    truncations.push({ fieldPath: `plan.${key}`, shown: trimmed.length, total: value.length });
   };
+  slimField("topRules", SLIM_TOP_RULES_CAP);
+  slimField("findingsByFile", SLIM_FINDINGS_BY_FILE_CAP);
+  return { plan: next, truncations };
 }
 
 /**

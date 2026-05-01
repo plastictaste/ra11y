@@ -565,7 +565,6 @@ No item here proposes new rule detection logic — Track V is about honesty surf
 
 Response shape / honesty:
 
-- [ ] **V1-SCAN-PROJECT-FINDINGS-BY-FILE-HISTOGRAM** `scan_project` exposes `totalFilesWithFindings: N` but no per-file or per-rule distribution at the response root — agents paginating to understand distribution walk every page blind. Fix: add `plan.findingsByFile: [{path, count}]` (top-N rank-ordered) OR `plan.findingsByRule: {ruleId: count}` (whole-scan histogram). Pairs with V1-CROSS-FILE-ROLLUP-PRIMITIVE (top rules) — this item is the per-file orthogonal. Additive; no information loss. Doctrine: one tool call should answer "what next?" on scale.
 - [ ] **V1-COVERAGE-MANUAL-CANDIDATES-TOTAL-CROSS-SURFACE** `checklist.summary.totalCandidates` (pre-paging per-candidate count) has no sibling on `coverage` — an agent asking "how many manual-review items" reads `coverage.manualWithCandidates: N` (criteria count) and `checklist.summary.actionable: M` (same criteria count) and `checklist.totalCandidates: K` (candidate count) — three numbers, one concept, disambiguated only by reading field names carefully. Fix: expose `coverage.manualCandidatesTotal: K` alongside the existing criteria-level counters, with the "candidates vs criteria" split explicit in both `coverage` and `checklist`. Doctrine: composite headline counts are dishonest; labels must make kind explicit.
 Tool-orchestration / bootstrap / suppress / write-gate:
 

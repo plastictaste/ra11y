@@ -29,6 +29,11 @@ import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
 
+// Re-export from `./findings-by-file.ts` — same file-size-budget split
+// rationale as the linked-stylesheet detector above. Keeps callers
+// stamping `plan.findingsByFile` next to `withTopRules` on one import.
+// biome-ignore format: kept on one line for the file-line budget
+export { computeFindingsByFile, FINDINGS_BY_FILE_DEFAULT_LIMIT, type FindingsByFileEntry, withFindingsByFile } from "./findings-by-file.ts";
 // Re-export the linked-stylesheet detector + its result shape so call
 // sites that already import from `scan-assembly.ts` (response-assembler,
 // scan-time-warnings, tool-scan-project) keep one canonical entry

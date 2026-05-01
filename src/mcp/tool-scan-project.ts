@@ -48,6 +48,7 @@ import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
+  withFindingsByFile,
   withTopRules,
   withViolationsByScanKind,
 } from "./scan-assembly.ts";
@@ -353,8 +354,11 @@ export const scanProjectTool: McpTool = {
     const formattedWithScanKind: ScanFormatted = {
       ...formatted,
       plan: withByGroup(
-        withTopRules(
-          withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+        withFindingsByFile(
+          withTopRules(
+            withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+            formatted.files,
+          ),
           formatted.files,
         ),
         formatted.files,

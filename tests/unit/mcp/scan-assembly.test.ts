@@ -26,14 +26,17 @@ import {
   applyParseErrorAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
+  computeFindingsByFile,
   computeTopRules,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
+  FINDINGS_BY_FILE_DEFAULT_LIMIT,
   isPerRuleCoverageUniformlyHigh,
   PER_RULE_COVERAGE_CAP,
   splitViolationsByScanKind,
   sumFindingsAcrossFiles,
   sumFindingsEmitted,
+  withFindingsByFile,
   withTopRules,
   withViolationsByScanKind,
 } from "../../../src/mcp/scan-assembly.ts";
@@ -1553,6 +1556,136 @@ describe("withTopRules — plan-stamping helper", () => {
     }));
     const out = withTopRules(plan, files, 3);
     expect((out["topRules"] as readonly { ruleId: string }[]).length).toBe(3);
+  });
+});
+
+describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
+  // Per-file analogue of `computeTopRules`. Surfaces "where the work
+  // clusters" at the response top level so an agent can route triage
+  // by file without paging through `files[]`.
+  const E = () => ({ severity: "error" });
+  const W = () => ({ severity: "warning" });
+  const I = () => ({ severity: "info" });
+
+  it("ranks files by error+warning count descending, then path ascending for ties", () => {
+    const out = computeFindingsByFile([
+      { path: "src/zzz.tsx", findings: [E(), E()] }, // count 2
+      { path: "src/a.tsx", findings: [E(), E(), E(), W()] }, // count 4
+      { path: "src/m.tsx", findings: [E(), W()] }, // count 2 (tie with zzz)
+    ]);
+    expect(out.map((entry) => entry.path)).toEqual(["src/a.tsx", "src/m.tsx", "src/zzz.tsx"]);
+    expect(out[0]).toEqual({ path: "src/a.tsx", count: 4 });
+    expect(out[1]).toEqual({ path: "src/m.tsx", count: 2 });
+    expect(out[2]).toEqual({ path: "src/zzz.tsx", count: 2 });
+  });
+
+  it("excludes info-severity findings from the count axis", () => {
+    // Same axis as `computeTopRules`'s severity filter — info-only
+    // files would crowd the rollup with non-actionable context.
+    const out = computeFindingsByFile([
+      { path: "src/a.tsx", findings: [I(), I(), I()] }, // info-only → excluded
+      { path: "src/b.tsx", findings: [E(), I()] }, // count 1 (info skipped)
+    ]);
+    expect(out).toEqual([{ path: "src/b.tsx", count: 1 }]);
+  });
+
+  it("truncates to the limit (default 20) on ranked output", () => {
+    const files = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/${String(i).padStart(2, "0")}.tsx`,
+      findings: [E()],
+    }));
+    expect(computeFindingsByFile(files).length).toBe(FINDINGS_BY_FILE_DEFAULT_LIMIT);
+    expect(computeFindingsByFile(files, 5).length).toBe(5);
+  });
+
+  it("returns all files when fewer than the limit carry findings (no zero-count padding)", () => {
+    // No padding with zero-count rows — that would be a noise-not-
+    // signal shape per "Ambiguous field shapes are dishonest."
+    const out = computeFindingsByFile([
+      { path: "src/a.tsx", findings: [E()] },
+      { path: "src/b.tsx", findings: [W()] },
+      { path: "src/clean.tsx", findings: [] },
+    ]);
+    expect(out.length).toBe(2);
+    expect(out.map((e) => e.path)).toEqual(["src/a.tsx", "src/b.tsx"]);
+  });
+
+  it("returns an empty array on a clean scan — caller conditional-spreads the field off the wire", () => {
+    expect(computeFindingsByFile([])).toEqual([]);
+    expect(computeFindingsByFile([{ path: "src/x.tsx", findings: [] }])).toEqual([]);
+    // Info-only scan — same severity filter as `computeTopRules`;
+    // `plan.notes` carries that surface separately.
+    expect(computeFindingsByFile([{ path: "src/x.tsx", findings: [I()] }])).toEqual([]);
+  });
+});
+
+describe("withFindingsByFile — plan-stamping helper", () => {
+  const E = () => ({ severity: "error" });
+  const W = () => ({ severity: "warning" });
+
+  it("stamps `plan.findingsByFile` when at least one file carries error/warning findings", () => {
+    const plan = {
+      notes: 0,
+      fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
+    } satisfies Record<string, unknown>;
+    const out = withFindingsByFile(plan, [
+      { path: "src/a.tsx", findings: [E(), W()] },
+      { path: "src/b.tsx", findings: [E()] },
+    ]);
+    expect(out["findingsByFile"]).toEqual([
+      { path: "src/a.tsx", count: 2 },
+      { path: "src/b.tsx", count: 1 },
+    ]);
+    // No truncation flag when the rollup carries the full inventory.
+    expect(out["findingsByFileTruncated"]).toBeUndefined();
+    // Existing plan fields preserved — additive enrichment only.
+    expect(out["notes"]).toBe(0);
+    expect(out["fixesByClass"]).toEqual({
+      mechanical: 3,
+      guidance: 0,
+      runtimeOnly: 0,
+      verifyInSource: 0,
+    });
+  });
+
+  it("stamps `findingsByFileTruncated: true` when the head-slice clipped a longer error+warning tail", () => {
+    // Sibling boolean lets the agent distinguish "complete inventory"
+    // from "head-slice clipped" without recomputing inventory size from
+    // `totalFilesWithFindings` (which sits one layer up).
+    const files = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/${String(i).padStart(2, "0")}.tsx`,
+      findings: [E()],
+    }));
+    const out = withFindingsByFile({}, files);
+    expect((out["findingsByFile"] as readonly unknown[]).length).toBe(
+      FINDINGS_BY_FILE_DEFAULT_LIMIT,
+    );
+    expect(out["findingsByFileTruncated"]).toBe(true);
+  });
+
+  it("returns the input plan by identity (no shallow copy) when no files carried findings", () => {
+    // Conditional-spread on emptiness keeps `findingsByFile` off the wire
+    // on clean scans; `[]` would force the agent to read a field whose
+    // only signal is "nothing here."
+    const plan = {
+      notes: 0,
+      summary: "No accessibility violations found.",
+    } satisfies Record<string, unknown>;
+    const out = withFindingsByFile(plan, [{ path: "src/a.tsx", findings: [] }]);
+    expect(out).toBe(plan);
+    expect(out["findingsByFile"]).toBeUndefined();
+    expect(out["findingsByFileTruncated"]).toBeUndefined();
+  });
+
+  it("respects an explicit limit when the caller overrides the default", () => {
+    const plan = {} satisfies Record<string, unknown>;
+    const files = Array.from({ length: 6 }, (_, i) => ({
+      path: `src/${String(i).padStart(2, "0")}.tsx`,
+      findings: [E()],
+    }));
+    const out = withFindingsByFile(plan, files, 3);
+    expect((out["findingsByFile"] as readonly unknown[]).length).toBe(3);
+    expect(out["findingsByFileTruncated"]).toBe(true);
   });
 });
 
