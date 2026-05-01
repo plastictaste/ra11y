@@ -1142,11 +1142,16 @@ describe("rule semantics/landmark-main", () => {
   // children of <body> with at most one non-<script> element.
   // ─────────────────────────────────────────────────────────────────────────
   describe("isolated-component-demo qualifier", () => {
-    it("attaches couldBeWrongBecause when body has a single wrapper element", () => {
+    it("attaches couldBeWrongBecause AND downgrades severity to info on demo body shape", () => {
       // theme-clock canonical demo shape: a single <div> wrapper. The
       // missing-<main> emit still fires (surface-don't-suppress) but
       // carries the demo-page code so the agent can route the finding
       // to the real-page consumer rather than acting on it directly.
+      // Severity downgrades from `warning` to `info` to match the
+      // conceded uncertainty in `couldBeWrongBecause` — per
+      // docs/kb/architecture/ai-first-consumer.md "Reason text and
+      // severity must agree" + "Heuristic emission is the symmetric
+      // twin of heuristic suppression."
       const v = runRule(
         rule,
         [
@@ -1162,13 +1167,18 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "clock.html" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
+      // Please-verify framing in the message text — the headline
+      // concedes the predicate may not apply rather than asserting it.
+      expect(v[0]?.message).toContain("verify whether this file is the full page envelope");
     });
 
     it("attaches couldBeWrongBecause when body has one wrapper + a <script>", () => {
       // examples / demo SPA shape: one component wrapper with the
       // bootstrap script. The script is the "+ maybe a script" allowance.
+      // Severity also downgrades to `info` on this shape — same
+      // attention-budgeting agreement rationale as the bare-wrapper case.
       const v = runRule(
         rule,
         [
@@ -1186,6 +1196,7 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "gallery.html" },
       );
       expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
     });
 
@@ -1194,6 +1205,8 @@ describe("rule semantics/landmark-main", () => {
       // body children. Real authored content with multiple sibling
       // elements — the demo-page heuristic must not fire so the agent
       // does not mis-route a real page as "probably composed elsewhere."
+      // Severity stays at `warning` because the qualifier is absent —
+      // the file is structurally a real page that lacks a landmark.
       const v = runRule(
         rule,
         [
@@ -1211,6 +1224,7 @@ describe("rule semantics/landmark-main", () => {
       );
       expect(v).toHaveLength(1);
       expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(v[0]?.severity).toBe("warning");
     });
 
     it("does NOT attach the qualifier when body has 3+ element children", () => {

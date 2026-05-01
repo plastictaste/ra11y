@@ -195,18 +195,21 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
  * whose only visible direct child is a single component wrapper, with
  * an optional `<script>` tag (the visual-test / examples / demos
  * shape). When the shape matches we attach `couldBeWrongBecause:
- * ["isolated_component_demo_page"]` so the agent can route the finding
- * to a real-page consumer rather than dismissing at full confidence
- * without context, while severity stays at `warning` (per
- * docs/kb/architecture/ai-first-consumer.md "Surface, don't suppress"
- * + "Don't downgrade priority to hide things"). The predicate is in-
- * file only — we don't depend on cross-context build-artifact
- * classification because the agent already has that signal from
- * `scannedBuildArtifacts` in scan_project meta. The layout-partial
- * branch already carries its own stronger code and is not double-
- * tagged: a layout/partial is provably not a demo page (it has a
- * composition directive), and stacking codes dilutes the per-finding
- * signal the agent reads first.
+ * ["isolated_component_demo_page"]` AND downgrade severity to `info`
+ * with please-verify framing in the message — per
+ * docs/kb/architecture/ai-first-consumer.md "Reason text and severity
+ * must agree" and "Heuristic emission is the symmetric twin of
+ * heuristic suppression": a `couldBeWrongBecause` token that concedes
+ * the file may be composed elsewhere must not ship alongside `warning`
+ * severity. The candidate stays in the primary list (surface-don't-
+ * suppress) but the attention-budgeting signal matches the conceded
+ * uncertainty. The predicate is in-file only — we don't depend on
+ * cross-context build-artifact classification because the agent already
+ * has that signal from `scannedBuildArtifacts` in scan_project meta.
+ * The layout-partial branch already carries its own stronger code and
+ * is not double-tagged: a layout/partial is provably not a demo page
+ * (it has a composition directive), and stacking codes dilutes the
+ * per-finding signal the agent reads first.
  */
 function emitMissingMain(
   ctx: FileContext,
@@ -225,10 +228,23 @@ function emitMissingMain(
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
   const isolatedDemo = body ? isIsolatedComponentBodyShape(body) : false;
+  // Severity downgrade gate: when the body shape matches the isolated-
+  // component-demo predicate, the `couldBeWrongBecause` code concedes
+  // the page may be composed elsewhere into a real document envelope.
+  // Per "Reason text and severity must agree," a `warning` severity
+  // alongside a "may not apply" reason is a dishonest shape; downgrade
+  // to `info` so the attention-budgeting signal matches the conceded
+  // uncertainty. The candidate still surfaces (surface-don't-suppress);
+  // the agent reads the demo-page code and please-verify message and
+  // either confirms or dismisses.
+  const severity: "warning" | "info" = isolatedDemo ? "info" : "warning";
+  const headlineMessage = isolatedDemo
+    ? "Document has no <main> landmark, but the body shape (single wrapper element +/- a <script>) matches an isolated component demo page — verify whether this file is the full page envelope or a single-component demo composed into a parent layout elsewhere."
+    : "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.";
   ctx.emit({
-    severity: "warning",
+    severity,
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.${shapeSuffix}${candidateSuffix}`,
+    message: `${headlineMessage}${shapeSuffix}${candidateSuffix}`,
     suggestion: buildMissingMainSuggestion(probable),
     ...(isolatedDemo ? { couldBeWrongBecause: [ISOLATED_COMPONENT_DEMO_CODE] } : {}),
     ...(probable ? { evidence: probableCandidateEvidence(probable) } : {}),
@@ -247,12 +263,13 @@ function emitMissingMain(
  * dozens of identical fires the agent has to dismiss one-by-one.
  *
  * The code is additive enrichment, not suppression — the candidate
- * stays in the primary list at warning severity, the agent reads the
- * code and decides whether the file is in fact a real page that lacks
- * a landmark or an isolated component demo composed elsewhere. Per
- * docs/kb/architecture/ai-first-consumer.md "No heuristic suppression"
- * + "Surface, don't suppress," `couldBeWrongBecause` is the right slot
- * for additive doubt at warning severity.
+ * stays in the primary list, the agent reads the code and decides
+ * whether the file is in fact a real page that lacks a landmark or an
+ * isolated component demo composed elsewhere. Severity is downgraded
+ * to `info` on this branch so the attention-budgeting signal matches
+ * the conceded uncertainty — per docs/kb/architecture/ai-first-
+ * consumer.md "Reason text and severity must agree" and "Heuristic
+ * emission is the symmetric twin of heuristic suppression."
  *
  * Predicate is in-file only (does not consult cross-context
  * `scannedBuildArtifacts` or path-segment classification) — when a
