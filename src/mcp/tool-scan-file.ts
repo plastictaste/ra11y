@@ -25,6 +25,7 @@ import {
   naturalParserFor,
   parseableExtensions,
 } from "../utils/path.ts";
+import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
@@ -33,6 +34,7 @@ import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
+import { withViolationsByScanKind } from "./scan-assembly.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
@@ -377,6 +379,29 @@ function applyCrossSurfaceWarnings(args: {
     ...assembled.meta,
     ...scanTime.buildArtifactsMetaField,
   };
+  // Cross-surface lane parity: route the assembled `plan` through
+  // {@link withViolationsByScanKind} so `scan_file` on a vendor
+  // stylesheet stamps `plan.violationsByScanKind: { source,
+  // buildArtifact }` the same way `scan_project` on the identical
+  // path does. Without this, an agent calling `scan_file` on
+  // `bootstrap.min.css` got `plan.violationsByScanKind: undefined`
+  // while `scan_project` on the same path classified the findings
+  // under the buildArtifact lane — silent structural drift per
+  // `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+  // warning-set classification must agree." The classifier reuses
+  // {@link collectBuildArtifacts} so the predicate matches the one
+  // `scan_project` and the assembler-internal per-finding pass
+  // already evaluate. Identity-stable when the file is not a build
+  // artifact (vendor path set is empty; helper short-circuits and
+  // returns the input plan unchanged).
+  const buildArtifactPaths = new Set<string>(
+    collectBuildArtifacts([parsed]).map((entry) => entry.path),
+  );
+  const planWithLane = withViolationsByScanKind(
+    assembled.plan,
+    assembled.files,
+    buildArtifactPaths,
+  );
   // Total replacement of the warnings channel: the shared helper is
   // a strict superset over the assembler-internal call (it folds in
   // build-artifact classification, scss-unresolved-variables,
@@ -391,6 +416,7 @@ function applyCrossSurfaceWarnings(args: {
   } = assembled;
   return {
     ...assembledWithoutWarnings,
+    plan: planWithLane,
     meta: nextMeta,
     ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
     ...(scanTime.warningsDetails === undefined
