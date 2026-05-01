@@ -601,38 +601,44 @@ export {
 } from "./parse-error-adjustment.ts";
 
 /**
- * returns the subset of
- * scanned `.scss` files that declare top-level `$variable: …`
- * statements but produced zero literal-color usages downstream after
- * the SCSS preprocessor's substitution pass — the canonical
- * "token-only theme partial" / `_variables.scss` shape that reads as
- * `findings: []` with `coverageConfidence: "high"` despite the
- * scanner having no contrast evidence to evaluate.
+ * returns the subset of scanned `.scss` files that declare top-level
+ * `$variable: …` statements but produced zero literal-color usages
+ * downstream after the SCSS preprocessor's substitution pass — the
+ * canonical token-only-consumer shape that reads as `findings: []`
+ * with `coverageConfidence: "high"` despite the scanner having no
+ * contrast evidence to evaluate.
  *
  * Pure over its inputs; runs `scssVariableDeclarationsLikelyUnresolved`
- * on every parsed `.scss` file. The result drives both the
- * `coverageConfidenceReason: "scss-unresolved-variables"` per-rule
- * downgrade ({@link applyScssUnresolvedVariablesAdjustment}) and the
- * top-level `scss_unresolved_variables` warning code's
- * `warningsDetails.scss_unresolved_variables.files` payload — so the
- * agent reading either surface gets the same file list and decides
- * whether to scan the compiled CSS output for full coverage.
+ * on every parsed `.scss` file, then filters out files whose basename
+ * matches the Sass declaring-partial convention (`_variables.scss`,
+ * `_tokens.scss`, `_colors.scss`/`_colours.scss`, `_theme.scss`,
+ * `_vars.scss`) per AI-first doctrine "Heuristic-mislabeled meta
+ * sub-fields are dishonest" — a file declaring the variables IS the
+ * declaring source, not a downstream consumer that failed to resolve
+ * them; listing it as "unresolved against an absent declaring file"
+ * lies. The basename match anchors on both signals (leading `_`
+ * partial-prefix AND token-vocabulary stem) so a `theme.scss`
+ * entry-point stays classified by substitution result.
  *
- * Returns paths in sorted order so wire output is deterministic across
- * runs. Empty array (not `undefined`) when no files match — callers
- * conditional-spread on `length > 0`.
+ * Drives both the `coverageConfidenceReason:
+ * "scss-unresolved-variables"` per-rule downgrade
+ * ({@link applyScssUnresolvedVariablesAdjustment}) and the top-level
+ * `scss_unresolved_variables` warning payload — same file list across
+ * surfaces. Returns paths in sorted order; empty array when no files
+ * match — callers conditional-spread on `length > 0`.
  */
+// biome-ignore format: keep the regex on one line for the file-line budget
+const SCSS_DECLARING_PARTIAL_RE = /(?:^|[/\\])_(?:variables|vars|tokens|colors|colours|theme)\.scss$/i;
 export function detectScssUnresolvedVariableFiles(files: readonly ParsedFile[]): readonly string[] {
   const out: string[] = [];
   for (const file of files) {
-    if (!file.filePath.toLowerCase().endsWith(".scss")) continue;
     if (file.ast.language !== "css") continue;
-    if (scssVariableDeclarationsLikelyUnresolved(file.source, file.ast.root)) {
-      out.push(file.filePath);
-    }
+    if (!file.filePath.toLowerCase().endsWith(".scss")) continue;
+    if (SCSS_DECLARING_PARTIAL_RE.test(file.filePath)) continue;
+    if (!scssVariableDeclarationsLikelyUnresolved(file.source, file.ast.root)) continue;
+    out.push(file.filePath);
   }
-  out.sort();
-  return out;
+  return out.sort();
 }
 
 /**

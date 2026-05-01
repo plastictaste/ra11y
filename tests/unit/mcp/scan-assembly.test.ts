@@ -898,9 +898,46 @@ describe("detectScssUnresolvedVariableFiles", () => {
     };
   }
 
-  it("identifies a token-only `_variables.scss` partial whose substitution produced no rules", () => {
+  it("excludes a `_variables.scss` partial — it IS the declaring file, not a downstream consumer that failed to resolve", () => {
+    // Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+    // dishonest": a file declaring the variables cannot be "unresolved
+    // against an absent declaring file" — it is the declaring file.
+    // Listing it under `scss_unresolved_variables.files` would let an
+    // agent waste a triage step looking for "the missing
+    // `_variables.scss`" that's already in the file list.
     const file = scssFile("theme/_variables.scss", "$primary: #0d6efd;\n$secondary: #6c757d;\n");
-    expect(detectScssUnresolvedVariableFiles([file])).toEqual(["theme/_variables.scss"]);
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual([]);
+  });
+
+  it("identifies a token-only consumer SCSS file whose substitution produced no literals (non-declaring filename)", () => {
+    // A file like `theme.scss` (no `_` prefix, not a recognized
+    // declaring-partial basename) that declares variables but produces
+    // no resolved color literals downstream is the canonical
+    // "consumer that didn't reach a literal" case the warning targets.
+    const file = scssFile("theme.scss", "$brand: var(--brand);\n.btn { color: $brand; }\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual(["theme.scss"]);
+  });
+
+  it("excludes the conventional declaring-partial basenames (`_variables`, `_vars`, `_tokens`, `_colors`, `_theme`)", () => {
+    // The filename heuristic anchors on the Sass partial-prefix
+    // convention (`_<name>.scss`) plus a token-vocabulary basename.
+    const fixtures = [
+      scssFile("a/_variables.scss", "$a: #fff;\n"),
+      scssFile("b/_vars.scss", "$b: #fff;\n"),
+      scssFile("c/_tokens.scss", "$c: #fff;\n"),
+      scssFile("d/_colors.scss", "$d: #fff;\n"),
+      scssFile("e/_colours.scss", "$e: #fff;\n"),
+      scssFile("f/_theme.scss", "$f: #fff;\n"),
+    ];
+    expect(detectScssUnresolvedVariableFiles(fixtures)).toEqual([]);
+  });
+
+  it("does not exclude a file whose basename matches the vocabulary but lacks the `_` partial prefix", () => {
+    // `variables.scss` (no leading `_`) is not a Sass partial — it's
+    // an entry-point compiled directly. Treat it as a downstream
+    // consumer for the purposes of this detector.
+    const file = scssFile("variables.scss", "$a: var(--a);\n.btn { color: $a; }\n");
+    expect(detectScssUnresolvedVariableFiles([file])).toEqual(["variables.scss"]);
   });
 
   it("does NOT flag an SCSS file whose declarations resolved to literal hex colors", () => {

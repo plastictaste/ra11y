@@ -857,17 +857,22 @@ describe("per-rule coverage end-to-end", () => {
   // "scss-unresolved-variables"` so the agent reading per-rule
   // coverage as scan-confidence telemetry knows to scan the compiled
   // CSS output for full coverage rather than trusting a clean tally.
-  it("downgrades color-token-driven rules to medium with scss-unresolved-variables reason when token-only .scss files are scanned", () => {
-    // Fixture: one token-only `_variables.scss` partial (declares
-    // `$primary` / `$secondary` but never uses them in literal-color
-    // contexts — the canonical Bootstrap-style design-token shape) plus
-    // one HTML page so the scan has a non-SCSS substrate too. The
-    // SCSS file lands in `scss_unresolved_variables.files[]`; the HTML
-    // file is unaffected.
-    const variablesScss = "$primary: #0d6efd;\n$secondary: #6c757d;\n";
+  it("downgrades color-token-driven rules to medium with scss-unresolved-variables reason when consumer .scss files don't reach a literal color", () => {
+    // Fixture: one consumer-shaped SCSS file (`theme/buttons.scss` —
+    // no `_<vocabulary>` partial-prefix) declaring `$primary` /
+    // `$secondary` but only emitting `var(--token)` references whose
+    // resolution lives in the cascade layer the static scanner can't
+    // reach. This is the canonical "consumer that didn't reach a
+    // literal" shape the warning targets — distinct from a
+    // `_variables.scss` declaring partial which IS the source of the
+    // tokens and is excluded from the unresolved list per
+    // `detectScssUnresolvedVariableFiles`. Plus one HTML page so the
+    // scan has a non-SCSS substrate too.
+    const buttonsScss =
+      "$primary: var(--brand);\n$secondary: var(--accent);\n.btn { color: $primary; background: $secondary; }\n";
     const indexHtml = `<!doctype html><html lang="en"><head><title>p</title></head><body><main><h1>p</h1></main></body></html>`;
     const files = [
-      scssFile("theme/_variables.scss", variablesScss),
+      scssFile("theme/buttons.scss", buttonsScss),
       htmlFile("site/index.html", indexHtml),
     ];
     const { result, perRuleCoverage } = runScan({
