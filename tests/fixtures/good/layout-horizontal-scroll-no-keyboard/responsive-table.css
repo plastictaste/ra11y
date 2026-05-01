@@ -35,3 +35,25 @@
   color: red;
   padding: 1rem;
 }
+
+/*
+ * Reset CSS pattern. <textarea>, <input>, <select>, <button> and
+ * <iframe> are intrinsically focusable — they enter the tab order
+ * by default. The rule's recommended fix (`tabindex="0"` plus
+ * `aria-label`) would be redundant on these elements, so the rule
+ * does NOT fire on a focusable subject. This is the textbook reset
+ * stylesheet pattern that the rule's earlier predicate flagged as a
+ * false positive.
+ */
+textarea {
+  overflow: auto;
+  resize: vertical;
+}
+
+a[href] {
+  overflow-x: auto;
+}
+
+[tabindex="0"] {
+  overflow-x: auto;
+}
