@@ -3630,11 +3630,7 @@ describe("computeScanWarnings — template_expression_in_href", () => {
     expect(detail).toBeDefined();
     expect(detail?.templateExpressionHrefCount).toBe(3);
     expect(detail?.files?.length).toBe(2);
-    expect(detail?.topTemplateExpressionHrefs).toEqual([
-      "{extraCss}",
-      "{{theme}}",
-      "<%= css %>",
-    ]);
+    expect(detail?.topTemplateExpressionHrefs).toEqual(["{extraCss}", "{{theme}}", "<%= css %>"]);
   });
 });
 
