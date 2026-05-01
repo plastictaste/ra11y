@@ -567,10 +567,7 @@ function detectBuildDirMarker(filePath: string): BuildArtifactSignal | null {
  * authored SCSS partials adopting the convention and cannot stand
  * alone — see the call site for the doctrine bar.
  */
-function detectCuratedBannerSignal(
-  filePath: string,
-  source: string,
-): BuildArtifactSignal | null {
+function detectCuratedBannerSignal(filePath: string, source: string): BuildArtifactSignal | null {
   const banner = detectVendorLibraryForFile(filePath, source);
   return banner === null ? null : formatVendorBannerSignal(banner);
 }
