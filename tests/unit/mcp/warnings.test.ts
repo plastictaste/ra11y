@@ -3495,6 +3495,9 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
         unresolvedHrefCount: 14,
         htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
         topUnresolvedHrefs: ["css/bootstrap.min.css"],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
       },
     });
     expect(codes).toContain("linked_stylesheet_not_resolved_for_contrast");
@@ -3522,6 +3525,9 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
         unresolvedHrefCount: 0,
         htmlFiles: [],
         topUnresolvedHrefs: [],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
       },
     });
     expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
@@ -3538,6 +3544,9 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
         unresolvedHrefCount: 28,
         htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
         topUnresolvedHrefs: ["css/bootstrap.min.css", "css/theme.css"],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
       },
     });
     expect(out.warnings).toContain("linked_stylesheet_not_resolved_for_contrast");
@@ -3546,6 +3555,86 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
     expect(detail?.unresolvedHrefCount).toBe(28);
     expect(detail?.htmlFiles?.length).toBe(2);
     expect(detail?.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// template_expression_in_href — emission predicate + payload
+// ---------------------------------------------------------------------------
+// `<link rel="stylesheet" href="{extraCss}">` and similar templating
+// directives the parser saw as text are NOT actually-fetched-but-failed
+// hrefs — surfacing them under `topUnresolvedHrefs` would frame a
+// templating directive as "a real stylesheet failed to load." Per AI-
+// first doctrine "Heuristic-mislabeled meta sub-fields are dishonest,"
+// the partition lives on a separate code so the resolution warning's
+// predicate stays honest and the agent can act on each kind
+// independently.
+
+describe("computeScanWarnings — template_expression_in_href", () => {
+  it("fires when at least one HTML file declared a template-expression href", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        unresolvedHrefCount: 0,
+        htmlFiles: [],
+        topUnresolvedHrefs: [],
+        templateExpressionHrefCount: 2,
+        templateExpressionFiles: ["/proj/layout.html"],
+        templateExpressionHrefs: ["{extraCss}", "{{theme}}"],
+      },
+    });
+    expect(codes).toContain("template_expression_in_href");
+  });
+
+  it("does NOT fire when the template-expression count is zero", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        unresolvedHrefCount: 1,
+        htmlFiles: ["/proj/page.html"],
+        topUnresolvedHrefs: ["css/bootstrap.min.css"],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
+      },
+    });
+    expect(codes ?? []).not.toContain("template_expression_in_href");
+  });
+
+  it("payload carries templateExpressionHrefCount, files, and topTemplateExpressionHrefs", () => {
+    const out = warningsField({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        unresolvedHrefCount: 0,
+        htmlFiles: [],
+        topUnresolvedHrefs: [],
+        templateExpressionHrefCount: 3,
+        templateExpressionFiles: ["/proj/layout.html", "/proj/page.html"],
+        templateExpressionHrefs: ["{extraCss}", "{{theme}}", "<%= css %>"],
+      },
+    });
+    expect(out.warnings).toContain("template_expression_in_href");
+    const detail = out.warningsDetails?.template_expression_in_href;
+    expect(detail).toBeDefined();
+    expect(detail?.templateExpressionHrefCount).toBe(3);
+    expect(detail?.files?.length).toBe(2);
+    expect(detail?.topTemplateExpressionHrefs).toEqual([
+      "{extraCss}",
+      "{{theme}}",
+      "<%= css %>",
+    ]);
   });
 });
 

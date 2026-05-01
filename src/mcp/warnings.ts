@@ -571,6 +571,28 @@ export type ScanWarningCode =
   // the agent branches on identity (which pages, which hrefs?) without
   // re-walking the per-file AST.
   | "linked_stylesheet_not_resolved_for_contrast"
+  // at least one HTML file in the scan declared a `<link
+  // rel="stylesheet" href="…">` whose href value carried a templating-
+  // directive shape (`{extraCss}`, `{{styles}}`, `<%= css %>`,
+  // `${theme}`, `{% raw %}`) the parser saw as text rather than a
+  // resolved URL. Distinct from `linked_stylesheet_not_resolved_for_contrast`
+  // which names "actually fetched but failed to resolve" — template
+  // expressions never ran the resolution path because the href was a
+  // directive, not a URL. Splitting the codes keeps the resolution
+  // warning's predicate honest per AI-first doctrine "Heuristic-
+  // mislabeled meta sub-fields are dishonest": surfacing `{extraCss}`
+  // under `topUnresolvedHrefs` would frame a templating directive the
+  // parser saw as text as a real stylesheet that failed to load. The
+  // detector at the assembly seam
+  // (`detectLinkedStylesheetsNotResolvedForContrast` in
+  // `./linked-stylesheets.ts`) partitions hrefs by string-shape; this
+  // module stays pure over its inputs. Paired payload:
+  // `warningsDetails.template_expression_in_href` carries `{ files }`
+  // where each entry names the HTML file plus the verbatim template-
+  // expression hrefs it contained — the agent reads the literal token
+  // (`{extraCss}`) to recognize the templating system in use rather
+  // than mistaking it for a missing bundle path.
+  | "template_expression_in_href"
   // at least one `.js` file in the
   // scan was successfully routed through the in-house TSX parser.
   // Telemetry-only — no behavioral change. The dispatcher in
@@ -2384,6 +2406,42 @@ export interface ScanWarningDetails {
     readonly topUnresolvedHrefs: readonly string[];
   };
   /**
+   * Payload for `template_expression_in_href`. Carries the per-file
+   * list of HTML files whose `<link rel="stylesheet" href="…">`
+   * carried template-directive shapes (`{extraCss}`, `{{styles}}`,
+   * `<%= css %>`, `${theme}`, `{% raw %}`) the parser saw as text
+   * rather than a resolved URL.
+   *
+   * - `templateExpressionHrefCount` — total number of `(htmlFile,
+   *   href)` pairs across the scan, pre-cap. Same naming discipline as
+   *   the resolution warning's `unresolvedHrefCount`: distinct from
+   *   `files.length` (one page can carry multiple template-expression
+   *   links) and from `topTemplateExpressionHrefs.length` (one
+   *   directive token can repeat across pages).
+   * - `files` — sorted-ascending list of HTML files where at least one
+   *   such href appeared.
+   * - `topTemplateExpressionHrefs` — sorted-ascending, de-duplicated
+   *   slice of the verbatim template-expression href values across
+   *   those files (capped at the implementation's top-paths limit).
+   *   The agent reads the literal token (`{extraCss}`, `{{theme}}`) to
+   *   recognize the templating system in use — handlebars-lite vs.
+   *   mustache vs. ERB vs. JS template literal — and decide whether
+   *   the page is a template fragment that needs a different scope or
+   *   a config to surface the resolved CSS.
+   *
+   * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+   * dishonest" — `topUnresolvedHrefs` on the sister warning is reserved
+   * for actually-fetched-but-failed values; template directives belong
+   * here on a separate code so the agent can act on each kind
+   * independently. Paired predicate:
+   * {@link hasTemplateExpressionInHref}.
+   */
+  readonly template_expression_in_href?: {
+    readonly templateExpressionHrefCount: number;
+    readonly files: readonly string[];
+    readonly topTemplateExpressionHrefs: readonly string[];
+  };
+  /**
    * Payload for `parser_bailed_on_non_jsx_in_tsx_route`. Carries the
    * sorted list of `.js` files where the TSX parser bailed AND zero
    * rules fired — the actual bail evidence the warning code names.
@@ -2598,6 +2656,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
   "linked_stylesheet_not_resolved_for_contrast",
+  "template_expression_in_href",
   "parser_bailed_on_non_jsx_in_tsx_route",
   "coverage_confidence_uniformly_high_with_parse_errors",
   "scan_file_parser_bail_no_findings",
@@ -3042,6 +3101,9 @@ function routingTelemetryCodes(inputs: WarningInputs): readonly ScanWarningCode[
   if (hasLinkedStylesheetsUnresolvedForContrast(inputs.linkedStylesheetsUnresolvedForContrast)) {
     out.push("linked_stylesheet_not_resolved_for_contrast");
   }
+  if (hasTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast)) {
+    out.push("template_expression_in_href");
+  }
   if (jsRoutedThroughTsxSucceeded(inputs)) {
     out.push("parser_bailed_on_non_jsx_in_tsx_route");
   }
@@ -3086,6 +3148,30 @@ function hasLinkedStylesheetsUnresolvedForContrast(
   if (detection === undefined) return false;
   if (detection.unresolvedHrefCount <= 0) return false;
   return detection.htmlFiles.length > 0;
+}
+
+/**
+ * Predicate for `template_expression_in_href`. Returns `true` when the
+ * caller-supplied detection carries a non-zero template-expression
+ * pair count AND a non-empty file list. Pure over its input; the
+ * partition between literal-href and template-expression-href values
+ * lives at the call site (`detectLinkedStylesheetsNotResolvedForContrast`
+ * in `./linked-stylesheets.ts`) so this module stays decoupled from
+ * the parser-AST traversal AND from the string-shape predicate the
+ * detector uses to recognize template tokens.
+ *
+ * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+ * dishonest" — the partition is deterministic (a directive token
+ * either matched the predicate or it did not), not a labeled-bucket
+ * heuristic; surfacing it on a separate code lets the agent triage
+ * "page uses templating" independently of "stylesheet failed to load."
+ */
+function hasTemplateExpressionInHref(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): boolean {
+  if (detection === undefined) return false;
+  if (detection.templateExpressionHrefCount <= 0) return false;
+  return detection.templateExpressionFiles.length > 0;
 }
 
 /**
@@ -3926,6 +4012,11 @@ function buildScanWarningDetailsDispatch(
         ),
     },
     {
+      code: "template_expression_in_href",
+      summarize: () =>
+        summarizeTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast),
+    },
+    {
       code: "scan_file_parser_bail_no_findings",
       summarize: () => summarizeScanFileParserBailNoFindings(inputs.scanFileParserBailNoFindings),
     },
@@ -4459,6 +4550,31 @@ function summarizeLinkedStylesheetsUnresolvedForContrast(
     unresolvedHrefCount: detection.unresolvedHrefCount,
     htmlFiles: detection.htmlFiles,
     topUnresolvedHrefs: detection.topUnresolvedHrefs,
+  };
+}
+
+/**
+ * Builds the `template_expression_in_href` payload from the caller-
+ * supplied detection. Returns `undefined` when the detection is absent,
+ * when the template-expression count is zero, or when the per-file list
+ * is empty — any of those indicate the predicate did not honestly fire
+ * and surfacing a degenerate payload would lie about the evidence
+ * (per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+ * dishonest"). Pure shape-builder; the partition between literal-href
+ * and template-expression-href values is computed at the call site
+ * (`detectLinkedStylesheetsNotResolvedForContrast` in
+ * `./linked-stylesheets.ts`).
+ */
+function summarizeTemplateExpressionInHref(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): NonNullable<ScanWarningDetails["template_expression_in_href"]> | undefined {
+  if (detection === undefined) return undefined;
+  if (detection.templateExpressionHrefCount <= 0) return undefined;
+  if (detection.templateExpressionFiles.length === 0) return undefined;
+  return {
+    templateExpressionHrefCount: detection.templateExpressionHrefCount,
+    files: detection.templateExpressionFiles,
+    topTemplateExpressionHrefs: detection.templateExpressionHrefs,
   };
 }
 

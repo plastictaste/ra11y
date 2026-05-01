@@ -41,29 +41,61 @@ import type { HtmlDocument } from "../types/ast.ts";
  *   did not resolve. Per AI-first doctrine "Sibling fields naming the
  *   same concept must use one shape," the file-count is derivable from
  *   `htmlFiles.length` rather than shipped as a parallel scalar twin.
+ *   Houses ONLY pages with literal-href references (e.g.
+ *   `bootstrap.min.css`); pages whose only `<link>` references resolved
+ *   to template expressions (`{extraCss}`, `{{styles}}`, `<%= css %>`)
+ *   are accounted for under {@link templateExpressionFiles} instead so
+ *   the contrast-resolution warning's predicate stays "actually failed
+ *   to load" (per AI-first doctrine "Heuristic-mislabeled meta sub-
+ *   fields are dishonest").
  * - `topUnresolvedHrefs` — sorted, de-duplicated list of distinct href
  *   values across those files (capped at
  *   {@link LINKED_STYLESHEET_TOP_HREFS_CAP} entries) so an agent reading
  *   the warning has concrete identifiers to scope a follow-up against
  *   without descending into the per-file AST. The capped distinct-href
  *   count is `topUnresolvedHrefs.length` (post-cap) — distinct from
- *   `unresolvedHrefCount` below.
- * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs the
- *   detector saw, pre-cap. Names the slice precisely so the three sibling
- *   counts in the payload (`unresolvedHrefCount`, `htmlFiles.length`,
+ *   `unresolvedHrefCount` below. Excludes template-expression hrefs
+ *   (see {@link templateExpressionHrefs}) — those are not actually-
+ *   fetched-but-failed values, they're directives the parser saw as
+ *   text, and surfacing them under "unresolved href" reads as "a real
+ *   stylesheet failed to load."
+ * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs
+ *   with literal href values the detector saw, pre-cap. Names the slice
+ *   precisely so the three sibling counts in the payload
+ *   (`unresolvedHrefCount`, `htmlFiles.length`,
  *   `topUnresolvedHrefs.length`) cannot collide on the generic name
  *   `count`. One href can repeat across multiple pages and one page can
  *   carry multiple links, so this number is generally different from
  *   both the file count and the capped distinct-href count.
+ * - `templateExpressionFiles` — sorted list of HTML files whose `<link
+ *   rel="stylesheet" href="…">` carried a template-token shape (single-
+ *   brace `{ident}`, mustache/Handlebars `{{ident}}`, ERB/EJS
+ *   `<%= ident %>`, template-literal `${ident}`, Jinja `{% raw %}`,
+ *   etc.). Drives the separate `template_expression_in_href` warning
+ *   code; reserved out of `htmlFiles` so the contrast-resolution
+ *   warning stays honest.
+ * - `templateExpressionHrefs` — sorted, de-duplicated list of the
+ *   template-expression href values across those files (capped at
+ *   {@link LINKED_STYLESHEET_TOP_HREFS_CAP}). Same shape as
+ *   `topUnresolvedHrefs` but for the template-expression slice — the
+ *   agent reads the literal token (`{extraCss}`, `{{theme}}`) to recognize
+ *   the templating system in use rather than mistaking it for a missing
+ *   bundle path.
+ * - `templateExpressionHrefCount` — total number of `(htmlFile, href)`
+ *   pairs with template-expression values, pre-cap. Same naming
+ *   discipline as `unresolvedHrefCount`.
  *
- * Empty arrays + zero `unresolvedHrefCount` when no link-stylesheet
- * references were present — callers conditional-spread on
- * `unresolvedHrefCount > 0`.
+ * Empty arrays + zero `unresolvedHrefCount` / `templateExpressionHrefCount`
+ * when no link-stylesheet references of the given kind were present —
+ * callers conditional-spread on the kind-specific count being positive.
  */
 export interface LinkedStylesheetsUnresolvedForContrast {
   readonly unresolvedHrefCount: number;
   readonly htmlFiles: readonly string[];
   readonly topUnresolvedHrefs: readonly string[];
+  readonly templateExpressionHrefCount: number;
+  readonly templateExpressionFiles: readonly string[];
+  readonly templateExpressionHrefs: readonly string[];
 }
 
 /**
@@ -102,24 +134,89 @@ export function detectLinkedStylesheetsNotResolvedForContrast(
   const htmlFiles = new Set<string>();
   const allHrefs = new Set<string>();
   let pairCount = 0;
+  const templateFiles = new Set<string>();
+  const templateHrefs = new Set<string>();
+  let templatePairCount = 0;
   for (const file of files) {
     if (!isPageHtmlFile(file)) continue;
     const fileHrefs = collectStylesheetHrefs(file.ast.root as HtmlDocument);
     if (fileHrefs.length === 0) continue;
-    htmlFiles.add(file.filePath);
     for (const href of fileHrefs) {
+      if (isTemplateExpressionHref(href)) {
+        templateFiles.add(file.filePath);
+        templateHrefs.add(href);
+        templatePairCount++;
+        continue;
+      }
+      htmlFiles.add(file.filePath);
       pairCount++;
       allHrefs.add(href);
     }
   }
   const sortedFiles = [...htmlFiles].sort();
   const sortedHrefs = [...allHrefs].sort();
+  const sortedTemplateFiles = [...templateFiles].sort();
+  const sortedTemplateHrefs = [...templateHrefs].sort();
   return {
     unresolvedHrefCount: pairCount,
     htmlFiles: sortedFiles,
     topUnresolvedHrefs: sortedHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
+    templateExpressionHrefCount: templatePairCount,
+    templateExpressionFiles: sortedTemplateFiles,
+    templateExpressionHrefs: sortedTemplateHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
   };
 }
+
+/**
+ * Predicate: returns `true` when an href STRING value carries a
+ * templating-directive shape the parser saw as text rather than a
+ * resolved URL. Detection is intentionally string-shape only — the
+ * scanner does not attempt to identify the templating system or
+ * resolve the variable, just to recognize that the value is a directive
+ * and therefore not "actually fetched but failed."
+ *
+ * Recognized shapes (case-sensitive on the bracket tokens; identifier
+ * content is permissive — see {@link TEMPLATE_EXPRESSION_PATTERNS}):
+ *
+ *   - single-brace `{ident}` — handlebars-lite, .NET String.Format,
+ *     custom interpolation.
+ *   - mustache / Handlebars / Vue `{{ident}}`, `{{{ident}}}`.
+ *   - ERB / EJS `<%= ident %>`, `<% ident %>`, `<%- ident %>`.
+ *   - JS template-literal interpolation already in source: `${ident}`.
+ *   - Jinja / Liquid block tags: `{% raw %}`, `{%- if … %}`,
+ *     `{%- endraw -%}`.
+ *
+ * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+ * dishonest" — `topUnresolvedHrefs` reads as "real stylesheet failed to
+ * load," and a template token is provably-different evidence (a
+ * directive token co-occurrence on the href value) so the partition is
+ * deterministic, not heuristic. Out-of-scope shapes that look like
+ * literal hrefs (`/path/with-dashes.css`, `?v=hash` query strings)
+ * stay under the unresolved-href bucket where they belong.
+ */
+function isTemplateExpressionHref(href: string): boolean {
+  for (const pattern of TEMPLATE_EXPRESSION_PATTERNS) {
+    if (pattern.test(href)) return true;
+  }
+  return false;
+}
+
+/**
+ * Template-token shapes recognized by {@link isTemplateExpressionHref}.
+ * Each pattern requires at least one non-bracket character inside the
+ * delimiters so the empty literal `{}` does not match (a bare `{}` is
+ * almost always a CSS class-glob escape or a stray brace, not a
+ * directive). Patterns are ordered by approximate frequency on real
+ * corpora — mustache/Handlebars first, then JS template literals, then
+ * the ERB/EJS family, then single-brace, then Jinja/Liquid blocks.
+ */
+const TEMPLATE_EXPRESSION_PATTERNS: readonly RegExp[] = [
+  /\{\{[^}]+\}\}/, // {{ident}} / {{{ident}}}
+  /\$\{[^}]+\}/, // ${ident}
+  /<%[=\-]?[^%]+%>/, // <%= ident %> / <% ident %> / <%- ident %>
+  /\{%[^%]+%\}/, // {% raw %} / {% endraw %} / {%- if … %}
+  /\{[A-Za-z_][^}]*\}/, // {ident} — single-brace; require leading identifier char to avoid matching `{}` and CSS escapes
+];
 
 /**
  * Page-shaped HTML predicate: parsed-HTML language tag plus a non-

@@ -961,6 +961,63 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
     expect(result.unresolvedHrefCount).toBe(0);
     expect(result.htmlFiles).toEqual([]);
     expect(result.topUnresolvedHrefs).toEqual([]);
+    expect(result.templateExpressionHrefCount).toBe(0);
+    expect(result.templateExpressionFiles).toEqual([]);
+    expect(result.templateExpressionHrefs).toEqual([]);
+  });
+
+  it("partitions template-expression hrefs ({extraCss}, {{theme}}, <%= css %>, ${theme}, {% raw %}) out of the unresolved-href tally", () => {
+    // `{extraCss}` is a templating directive the parser saw as text;
+    // surfacing it under `topUnresolvedHrefs` would mis-frame a
+    // templating directive as a real stylesheet that failed to load.
+    // Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+    // dishonest," the partition lives on a separate field so the
+    // resolution-warning's predicate stays "actually failed to load."
+    const html = htmlFile(
+      "/proj/layout.html",
+      `<!DOCTYPE html><html lang="en"><head>` +
+        `<link rel="stylesheet" href="{extraCss}">` +
+        `<link rel="stylesheet" href="{{theme}}">` +
+        `<link rel="stylesheet" href="<%= css %>">` +
+        `<link rel="stylesheet" href="\${themePath}">` +
+        `<link rel="stylesheet" href="{% raw %}">` +
+        `<link rel="stylesheet" href="css/bootstrap.min.css">` +
+        `</head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    // The literal href stays under unresolvedHrefCount / topUnresolvedHrefs.
+    expect(result.unresolvedHrefCount).toBe(1);
+    expect(result.htmlFiles).toEqual(["/proj/layout.html"]);
+    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+    // Template-expression hrefs are partitioned to their own slice.
+    expect(result.templateExpressionHrefCount).toBe(5);
+    expect(result.templateExpressionFiles).toEqual(["/proj/layout.html"]);
+    expect(result.templateExpressionHrefs).toContain("{extraCss}");
+    expect(result.templateExpressionHrefs).toContain("{{theme}}");
+    expect(result.templateExpressionHrefs).toContain("<%= css %>");
+    expect(result.templateExpressionHrefs).toContain("${themePath}");
+    expect(result.templateExpressionHrefs).toContain("{% raw %}");
+    // The literal `bootstrap.min.css` does NOT appear in the template
+    // slice — partition is exclusive on string-shape evidence.
+    expect(result.templateExpressionHrefs).not.toContain("css/bootstrap.min.css");
+    // And the template tokens do NOT appear in topUnresolvedHrefs.
+    expect(result.topUnresolvedHrefs).not.toContain("{extraCss}");
+  });
+
+  it("a page whose only stylesheet link is a template expression ships under the template slice (not unresolved)", () => {
+    const html = htmlFile(
+      "/proj/template-only.html",
+      `<!DOCTYPE html><html lang="en"><head>` +
+        `<link rel="stylesheet" href="{extraCss}">` +
+        `</head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.unresolvedHrefCount).toBe(0);
+    expect(result.htmlFiles).toEqual([]);
+    expect(result.topUnresolvedHrefs).toEqual([]);
+    expect(result.templateExpressionHrefCount).toBe(1);
+    expect(result.templateExpressionFiles).toEqual(["/proj/template-only.html"]);
+    expect(result.templateExpressionHrefs).toEqual(["{extraCss}"]);
   });
 
   it('ignores `rel="alternate stylesheet"` and preload-shaped variants (different resolution paths)', () => {
