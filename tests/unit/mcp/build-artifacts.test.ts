@@ -1139,14 +1139,19 @@ describe("classifyBuildArtifact — generic copyright-banner vendor-distribution
     });
   });
 
-  it("labels a `jquery-scrolltofixed` bundle with no curated entry as `likely-vendor-distribution` via the generic copyright-banner branch", () => {
+  it("labels a `jquery-scrolltofixed`-style bundle as `likely-vendor-distribution` when the body also crosses the long-line corroborator", () => {
     // jquery-scrolltofixed is not on the curated `VENDOR_LIBRARY_BANNERS`
     // table (the long tail of jQuery plugins is too broad to enumerate).
     // Its banner follows the publishing convention: `/*!` opener +
-    // `Copyright` + `Released under` + a license identifier. The
-    // generic branch catches the shape without needing a curated entry.
-    const source =
-      "/*!\n * jQuery scrollToFixed Plugin\n * Copyright (c) 2011-2014 Joseph Cava-Lynch\n * Released under the MIT license\n */\n(function($) { $.fn.scrollToFixed = function() { return this; }; })(jQuery);\n";
+    // `Copyright` + `Released under` + a license identifier. Under the
+    // co-occurrence rule, the generic banner alone does not earn the
+    // verdict — banner-only matches an authored SCSS partial that
+    // adopted the publishing convention. The body must ALSO cross the
+    // long-line minification corroborator (here: three 600-char lines)
+    // for the verdict to fire. The banner wins the signal slot because
+    // it names the more informative "vendor distribution" verdict.
+    const longLine = "x".repeat(600);
+    const source = `/*!\n * jQuery scrollToFixed Plugin\n * Copyright (c) 2011-2014 Joseph Cava-Lynch\n * Released under the MIT license\n */\nvar a = "${longLine}";\nvar b = "${longLine}";\nvar c = "${longLine}";\n`;
     const result = classifyBuildArtifactDetailed("vendor/jquery-scrolltofixed.js", source);
     expect(result?.classification).toBe("likely-vendor-distribution");
     expect(result?.signal.kind).toBe("vendor-copyright-banner");
@@ -1157,11 +1162,16 @@ describe("classifyBuildArtifact — generic copyright-banner vendor-distribution
     );
   });
 
-  it("labels a generic vendor bundle whose banner cites the Apache license", () => {
+  it("labels a generic vendor bundle whose banner cites the Apache license when the body also crosses the long-line corroborator", () => {
     // SPDX identifiers (Apache, MIT, GPL, BSD) are word-bounded in the
     // matcher so a coincidental substring inside a longer identifier
     // never over-fires. Apache is one of the canonical license tokens.
-    const source = "/*! some-vendor-lib v0.1 | Apache 2.0 License */\nfunction foo() {}\n";
+    // Under the co-occurrence rule, the body must also cross the long-
+    // line minification corroborator for the verdict to fire — banner
+    // alone matches authored partials that adopted the publishing
+    // convention.
+    const longLine = "y".repeat(600);
+    const source = `/*! some-vendor-lib v0.1 | Apache 2.0 License */\nvar a = "${longLine}";\nvar b = "${longLine}";\nvar c = "${longLine}";\n`;
     const result = classifyBuildArtifactDetailed("vendor/some-lib.js", source);
     expect(result?.classification).toBe("likely-vendor-distribution");
     expect(result?.signal.kind).toBe("vendor-copyright-banner");
@@ -1209,8 +1219,15 @@ describe("classifyBuildArtifact — generic copyright-banner vendor-distribution
     expect(classifyBuildArtifact("src/utils.js", source)).toBe(null);
   });
 
-  it("captures the matched banner opener as the signal `value` for greppability", () => {
-    const source = "/*! my-lib v2 | (c) 2024 Author | Released under MIT */\nfunction lib() {}\n";
+  it("captures the matched banner opener as the signal `value` for greppability when the long-line corroborator co-fires", () => {
+    // The signal `value` shape is independent of the co-occurrence
+    // gate; the helper that produces it (`detectVendorCopyrightBanner`)
+    // is the same function in both branches. To exercise the value-
+    // shape contract through the public classifier, the co-occurrence
+    // gate must be satisfied — three 600-char lines stand in for the
+    // bundle-shape body of a real vendored release.
+    const longLine = "z".repeat(600);
+    const source = `/*! my-lib v2 | (c) 2024 Author | Released under MIT */\nvar a = "${longLine}";\nvar b = "${longLine}";\nvar c = "${longLine}";\n`;
     const result = classifyBuildArtifactDetailed("vendor/my-lib.js", source);
     expect(result?.signal.kind).toBe("vendor-copyright-banner");
     if (result?.signal.kind === "vendor-copyright-banner") {
@@ -1233,6 +1250,40 @@ describe("classifyBuildArtifact — generic copyright-banner vendor-distribution
     const result = classifyBuildArtifactDetailed("vendor/some-vendor.js", source);
     expect(result?.classification).toBe("likely-vendor-distribution");
     expect(result?.signal.kind).toBe("vendor-copyright-banner");
+  });
+
+  it("does NOT label a hand-authored SCSS partial whose only vendor-shaped signal is a `/*!` banner with a copyright token", () => {
+    // Field-report shape: hand-authored design-system / theme partials
+    // commonly adopt the `/*!` + license publishing convention so
+    // downstream minifiers preserve the legal banner ("/*! Author
+    // copyright 2024 | MIT */"). Per `docs/kb/architecture/ai-first-
+    // consumer.md` "Heuristic-mislabeled meta sub-fields are
+    // dishonest", banner-only is too weak to drive a
+    // `likely-vendor-distribution` verdict — the agent reading the
+    // classification budgets the file as not-its-problem and silently
+    // misses authored source. Co-occurrence with the long-line
+    // corroborator is required; a normal authored partial (short-line
+    // body throughout) returns null. The SCSS partial here uses the
+    // canonical `_partial.scss` Sass-partial filename + path that the
+    // field report named, with a banner adopting the publishing
+    // convention but no minification-shape body.
+    const source =
+      "/*! Author copyright 2024 | MIT */\n$primary-color: #1a73e8;\n$accent-color: #ff5722;\n\n@mixin button-base {\n  display: inline-flex;\n  align-items: center;\n  padding: 0.5rem 1rem;\n  border-radius: 0.25rem;\n}\n";
+    expect(classifyBuildArtifact("src/styles/_partial.scss", source)).toBe(null);
+  });
+
+  it("does NOT label a hand-authored utility module whose only vendor-shaped signal is a `/*!` banner naming a license", () => {
+    // Companion to the SCSS partial test — same shape on the JS axis.
+    // An authored utility module that opens with a `/*!` license
+    // banner (a publishing convention some teams adopt for internally-
+    // shared modules) must not get the `likely-vendor-distribution`
+    // verdict on banner alone. The body is short-line throughout, so
+    // the long-line corroborator does not co-fire and the predicate
+    // returns null — the honest verdict for an authored module the
+    // agent should still budget findings against.
+    const source =
+      "/*! Internal Tools Library | Copyright 2024 Acme | Apache-2.0 */\nexport function formatDate(date) {\n  return date.toISOString().split('T')[0];\n}\n\nexport function parseQuery(input) {\n  return new URLSearchParams(input);\n}\n";
+    expect(classifyBuildArtifact("src/utils/internal-tools.js", source)).toBe(null);
   });
 });
 

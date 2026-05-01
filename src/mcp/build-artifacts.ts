@@ -129,23 +129,28 @@
  *      non-blank line matches a curated `VENDOR_LIBRARY_BANNERS`
  *      opener (Bootstrap, jQuery, Font Awesome, Modernizr,
  *      normalize.css, animate.css, Eric Meyer reset.css, fancyBox,
- *      jQuery UI), OR (b) the leading 1024 chars carry a `/*!`
+ *      jQuery UI) — the curated table is restricted to library-
+ *      identifier banners with tokens unique enough that authored
+ *      files do not coincidentally produce them, so a curated match
+ *      stands alone — OR (b) the leading 1024 chars carry a `/*!`
  *      bang-comment opener paired with one of the curated license /
  *      copyright tokens (Copyright, License, Released under, MIT,
- *      Apache, GPL, BSD). The curated table runs first so libraries
- *      with a canonical version slot get the more informative
- *      `vendor-banner-version` signal; the generic copyright-banner
- *      branch catches the long tail of jQuery plugins, internal
- *      forks, and bundles whose banner follows the publishing
- *      convention without matching a curated entry. Banner-comment
- *      shapes are heuristic — a hand-authored file COULD include a
- *      vendor-style banner — but the curated table is restricted to
- *      banners that include a library-specific token unique enough
- *      that authored files do not coincidentally produce them, and
- *      the generic branch requires the bang-comment opener (`/*!` is
- *      specifically the "minifier-preserve-this-comment" marker,
- *      rare in authored sources) paired with a license token. The
- *      `likely-` prefix names the residual uncertainty.
+ *      Apache, GPL, BSD) AND the long-line minification corroborator
+ *      from rule 8 also fires. The generic banner alone is not
+ *      sufficient: hand-authored SCSS partials and design-system
+ *      stylesheets routinely adopt the bang-comment + license
+ *      publishing convention (an `_partial.scss` opening
+ *      `slash-bang Author copyright 2024 | MIT slash`), and per
+ *      `docs/kb/architecture/ai-first-consumer.md` "Heuristic-
+ *      mislabeled meta sub-fields are dishonest" the verdict cannot
+ *      rest on a banner-only signal — the agent reading the
+ *      classification budgets the file as not-its-problem and
+ *      silently misses authored source. Co-occurrence with the
+ *      long-line corroborator distinguishes the canonical
+ *      `jquery-scrolltofixed`-style readable bundle (banner +
+ *      bundle-shape body) from the SCSS-partial false-positive
+ *      shape (banner + short-line authored body). The `likely-`
+ *      prefix names the residual uncertainty even when both fire.
  *   8. `likely-minified-by-line-stats`. The source text crosses the
  *      single-long-line probe (> {@link MINIFIED_LINE_THRESHOLD}
  *      chars on one line) AND a second-tier corroborator also
@@ -480,19 +485,50 @@ export function classifyBuildArtifactDetailed(
   if (sourcemapPointerSignal !== null) {
     return { classification: "definite-vendor-distribution", signal: sourcemapPointerSignal };
   }
-  // Banner-driven `likely-vendor-distribution`: defers first to the
-  // curated `VENDOR_LIBRARY_BANNERS` table (more informative
-  // `vendor-banner-version` signal carrying `<library> v<version>`)
-  // and falls back to the generic `/*!` + license-token shape so the
-  // long tail of jQuery plugins, internal forks, and bundles whose
-  // banner does not match a curated entry still get classified.
-  // Without the generic branch, those files fell through to the
-  // long-line probe and were mislabeled `likely-minified-by-line-stats`.
-  const bannerSignal = detectBannerSignal(filePath, source);
-  if (bannerSignal !== null) {
-    return { classification: "likely-vendor-distribution", signal: bannerSignal };
+  // Banner-driven `likely-vendor-distribution`: the curated
+  // `VENDOR_LIBRARY_BANNERS` table is restricted to library-specific
+  // banner shapes unique enough that authored files do not
+  // coincidentally produce them, so a curated match alone earns the
+  // classification (more informative `vendor-banner-version` signal
+  // carrying `<library> v<version>`).
+  //
+  // The generic `/*!` + license-token fallback is *not* sufficient on
+  // its own. Hand-authored SCSS partials and design-system stylesheets
+  // routinely adopt the bang-comment + license publishing convention
+  // (`_partial.scss` opening `/*! Author copyright 2024 | MIT */`),
+  // and labeling them `likely-vendor-distribution` is the canonical
+  // false-positive shape this file's previous heuristic produced. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+  // meta sub-fields are dishonest," banner-only is too weak to drive
+  // a vendor-distribution verdict — the agent reading the
+  // classification budgets the file as not-its-problem and silently
+  // misses authored source. Co-occurrence with a second signal (the
+  // long-line minification corroborator below) earns the
+  // classification; banner-only does not. Path / sourcemap / hashed-
+  // name signals already short-circuit upstream of this branch, so
+  // the long-line probe is the only co-occurrence path available
+  // here. The original field-report shape this branch closed
+  // (`jquery-scrolltofixed`-style readable bundles whose body crosses
+  // the line-stats threshold) still classifies as
+  // `likely-vendor-distribution` because the long-line corroborator
+  // fires on its body; bundles whose body is short-line stay
+  // unclassified, which is the honest verdict (banner alone cannot
+  // distinguish them from a hand-authored partial that adopted the
+  // banner publishing convention).
+  const curatedBannerSignal = detectCuratedBannerSignal(filePath, source);
+  if (curatedBannerSignal !== null) {
+    return { classification: "likely-vendor-distribution", signal: curatedBannerSignal };
   }
+  const genericBannerSignal = detectVendorCopyrightBanner(source);
   const longLineSignal = detectLongMinifiedLine(source);
+  if (genericBannerSignal !== null && longLineSignal !== null) {
+    // Banner + long-line co-occurrence: the banner is the more
+    // informative slot label (names "vendor distribution" rather than
+    // "minified bytes") and wins the signal slot; the long-line
+    // evidence corroborated the banner verdict but stays implicit
+    // (the agent reads the surrounding bytes to confirm).
+    return { classification: "likely-vendor-distribution", signal: genericBannerSignal };
+  }
   if (longLineSignal !== null) {
     return { classification: "likely-minified-by-line-stats", signal: longLineSignal };
   }
@@ -515,15 +551,28 @@ function detectBuildDirMarker(filePath: string): BuildArtifactSignal | null {
 }
 
 /**
- * Returns the banner-shape signal for `likely-vendor-distribution`:
- * curated `VENDOR_LIBRARY_BANNERS` entry first (more informative
- * `vendor-banner-version` signal), generic `/*!` + license-token
- * fallback second (`vendor-copyright-banner`); `null` when neither
- * fires.
+ * Returns the curated `vendor-banner-version` signal when the file's
+ * first non-blank line matches one of the library-specific banner
+ * regexes in `VENDOR_LIBRARY_BANNERS`; `null` otherwise.
+ *
+ * The curated table is restricted to library-identifier banners with
+ * tokens unique enough that authored files do not coincidentally
+ * produce them (`Bootstrap v3.3.7`, `jQuery JavaScript Library v1.12.4`,
+ * `modernizr 3.6.0`, `Font Awesome Free 5.15.4`, etc.). A curated match
+ * is therefore strong enough to drive the `likely-vendor-distribution`
+ * classification on its own. The caller (`classifyBuildArtifactDetailed`)
+ * couples the generic `/*!` + license-token fallback
+ * (`detectVendorCopyrightBanner`) with the long-line corroborator
+ * separately because the generic publishing-convention banner fires on
+ * authored SCSS partials adopting the convention and cannot stand
+ * alone — see the call site for the doctrine bar.
  */
-function detectBannerSignal(filePath: string, source: string): BuildArtifactSignal | null {
+function detectCuratedBannerSignal(
+  filePath: string,
+  source: string,
+): BuildArtifactSignal | null {
   const banner = detectVendorLibraryForFile(filePath, source);
-  return banner === null ? detectVendorCopyrightBanner(source) : formatVendorBannerSignal(banner);
+  return banner === null ? null : formatVendorBannerSignal(banner);
 }
 
 function detectMinInfix(filePath: string): BuildArtifactSignal | null {
