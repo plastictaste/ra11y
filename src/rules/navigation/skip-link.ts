@@ -81,6 +81,66 @@ import type { FileContext } from "../../types/rule.ts";
 
 const NAV_LINK_MIN = 2;
 
+/**
+ * Structured `couldBeWrongBecause` code for the cross-file IDREF
+ * blindspot. The skip-link target (`#main`, `#content`, …) and the
+ * "no in-file skip link" verdict can both be answered by a sibling
+ * layout partial / include / server-rendered wrapper the scanner never
+ * parses in this call — the same blindspot the rule's
+ * `crossFileCapable: false` declaration names structurally.
+ *
+ * Value matches the per-rule reason in
+ * `src/engine/per-rule-coverage.ts` `CROSS_FILE_BOUND_REASONS` for
+ * `navigation/skip-link`. The MCP per-finding propagation helper
+ * (`src/mcp/per-finding-confidence-parity.ts`) appends the per-rule
+ * reason to every finding's `couldBeWrongBecause` for degraded rules;
+ * matching the value here means the propagation helper's dedup gate
+ * (`existing?.includes(code)`) collapses the two paths to a single
+ * code rather than shipping two contradictory variants on the same
+ * finding.
+ */
+const CROSS_FILE_IDREF_RESOLUTION_NOT_ATTEMPTED =
+  "cross_file_idref_resolution_not_attempted_by_rule";
+
+/**
+ * Per-finding attention-budget fields stamped on every emit so the
+ * per-finding label mirrors the per-rule `coverageConfidence: "medium"`
+ * the engine records for this rule (`crossFileCapable: false`).
+ *
+ * Per the AI-first consumer doctrine "Per-finding confidence must
+ * reflect per-rule coverage limitations" (docs/kb/architecture/
+ * ai-first-consumer.md): when the per-rule coverage is degraded with
+ * a documented cross-file reason, every per-finding emission from the
+ * same rule must propagate the limitation — either by downgrading the
+ * per-finding `confidence` to match the per-rule label OR by echoing
+ * the reason as additive context. This rule does both: severity drops
+ * from `warning` to `info`, `confidence` drops to `"medium"`, AND the
+ * structured reason code rides on `couldBeWrongBecause` so the agent
+ * has a machine-routable triage axis. The IDREF the rule is checking
+ * for (the skip-link target, or the absence of a skip link entirely)
+ * may be supplied by a parent layout this scanner never sees — so the
+ * per-finding attention-budget signal must concede the same uncertainty
+ * the per-rule layer already concedes.
+ *
+ * Path 3 (opaque-navigation component) ALSO routes through this helper
+ * even though it already emits at `info` — the `confidence: "medium"`
+ * + `couldBeWrongBecause` stamp keeps every emission of this rule
+ * carrying identical attention-budget metadata, so the agent reading
+ * the response can branch on `confidence` without per-finding shape
+ * variance.
+ */
+function crossFileIdrefBoundedFields(): {
+  readonly severity: "info";
+  readonly confidence: "medium";
+  readonly couldBeWrongBecause: readonly [string];
+} {
+  return {
+    severity: "info",
+    confidence: "medium",
+    couldBeWrongBecause: [CROSS_FILE_IDREF_RESOLUTION_NOT_ATTEMPTED],
+  };
+}
+
 export const rule = defineRule({
   id: "navigation/skip-link",
   satisfies: ["wcag22:2.4.1", "wcag21:2.4.1"],
@@ -167,7 +227,7 @@ function checkSkipLinkShapedAnchors(
     if (ids.has(targetId)) continue;
     const echoTargetId = truncateForEcho(targetId);
     ctx.emit({
-      severity: "warning",
+      ...crossFileIdrefBoundedFields(),
       location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
       message: `Skip link targets '#${echoTargetId}' but no element in the document has that id.`,
       suggestion: `Add id="${echoTargetId}" to the landing element (usually your <main> landmark) so focus lands there on activation. If the target lives in a different file (e.g. a shared layout), move the skip link into the same document as its target — in-page anchors don't resolve across files.`,
@@ -330,7 +390,7 @@ function checkOpaqueNavComponent(ctx: FileContext, doc: HtmlDocument): void {
   if (!(first && isOpaqueNavComponent(first))) return;
   const echoName = truncateForEcho(first.tagName);
   ctx.emit({
-    severity: "info",
+    ...crossFileIdrefBoundedFields(),
     location: {
       filePath: "",
       line: first.loc.start.line,
@@ -446,7 +506,7 @@ function emitNoSkipLinkPrecedesPrimaryNav(
   if (enclosedByHeader && bodyHasTopLevelSkipLinkAnchor(doc)) return;
   const navLabel = primaryNav.kind === "nav" ? "<nav>" : "<header>";
   ctx.emit({
-    severity: "warning",
+    ...crossFileIdrefBoundedFields(),
     location: {
       filePath: "",
       line: primaryNav.element.loc.start.line,
@@ -508,7 +568,7 @@ function checkPrimaryNavPath(
   const href = getHtmlAttribute(firstLink, "href") ?? "";
   if (!href.startsWith("#") || href === "#") {
     ctx.emit({
-      severity: "warning",
+      ...crossFileIdrefBoundedFields(),
       location: {
         filePath: "",
         line: firstLink.loc.start.line,
@@ -535,7 +595,7 @@ function checkPrimaryNavPath(
     // interpolation.
     const echoTargetId = truncateForEcho(targetId);
     ctx.emit({
-      severity: "warning",
+      ...crossFileIdrefBoundedFields(),
       location: {
         filePath: "",
         line: firstLink.loc.start.line,

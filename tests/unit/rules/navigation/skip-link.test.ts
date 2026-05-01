@@ -303,9 +303,14 @@ describe("rule navigation/skip-link", () => {
         </body></html>`;
       const v = runRule(rule, html, { filePath: "layout.html" });
       // Path 1 emits "no skip link precedes the primary <nav>" (one
-      // warning). Path 3 stays silent because path 1 was applicable.
+      // finding). Path 3 stays silent because path 1 was applicable.
+      // Severity is `info` per the cross-file IDREF blindspot
+      // downgrade — this rule's per-rule `coverageConfidence: "medium"`
+      // (`crossFileCapable: false`) propagates to per-finding severity
+      // so the attention-budget signal agrees with the conceded
+      // uncertainty (the layout partial may supply the missing piece).
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain("No skip link");
     });
 
@@ -351,7 +356,11 @@ describe("rule navigation/skip-link", () => {
         </body></html>`;
       const v = runRule(rule, html, { filePath: "layout.html" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      // Severity is `info` per the cross-file IDREF blindspot downgrade
+      // (per-rule `coverageConfidence: "medium"` propagates to per-
+      // finding severity); see the `crossFileIdrefBoundedFields`
+      // helper in `src/rules/navigation/skip-link.ts`.
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain("No skip link");
       expect(v[0]?.message).toContain("<header>");
     });
@@ -373,7 +382,9 @@ describe("rule navigation/skip-link", () => {
         </body></html>`;
       const v = runRule(rule, html, { filePath: "layout.html" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      // Same per-finding severity downgrade rationale as the sibling
+      // case: per-rule `coverageConfidence: "medium"` propagates.
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain("<header>");
     });
 
@@ -489,7 +500,9 @@ describe("rule navigation/skip-link", () => {
         </body></html>`;
       const v = runRule(rule, html, { filePath: "layout.html" });
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("warning");
+      // Severity downgraded to `info` per the cross-file IDREF
+      // blindspot — see the `crossFileIdrefBoundedFields` helper.
+      expect(v[0]?.severity).toBe("info");
       expect(v[0]?.message).toContain("No skip link");
     });
 
@@ -588,6 +601,108 @@ describe("rule navigation/skip-link", () => {
       const v = runRule(rule, html, { filePath: "layout.html" });
       // No path-3 info-severity finding either; suppression is total.
       expect(v).toHaveLength(0);
+    });
+  });
+
+  // Regression for the cross-file IDREF blindspot per-finding
+  // attention-budget downgrade. The rule declares `crossFileCapable:
+  // false`, which routes its per-rule `coverageConfidence` to
+  // `"medium"` with the `cross_file_idref_resolution_not_attempted_by_rule`
+  // reason. Per AI-first doctrine "Per-finding confidence must reflect
+  // per-rule coverage limitations" (docs/kb/architecture/ai-first-
+  // consumer.md), every per-finding emission from this rule must
+  // propagate the limitation: severity drops from `warning` to `info`,
+  // confidence drops to `"medium"`, and the structured reason code
+  // rides on `couldBeWrongBecause`. Without this propagation, the
+  // per-finding label contradicts the per-rule label in the same
+  // response — the canonical "reason text and severity must agree" /
+  // "Per-finding confidence must reflect per-rule coverage" failure
+  // mode at a different layer of the response.
+  describe("cross-file IDREF blindspot per-finding attention budget", () => {
+    const expectedFields = {
+      severity: "info" as const,
+      confidence: "medium" as const,
+      couldBeWrongBecauseToken: "cross_file_idref_resolution_not_attempted_by_rule",
+    };
+
+    it("path 1 'no skip link precedes nav' carries info+medium+code", () => {
+      const html = `<html><body>
+          <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe(expectedFields.severity);
+      expect(v[0]?.confidence).toBe(expectedFields.confidence);
+      expect(v[0]?.couldBeWrongBecause).toEqual([expectedFields.couldBeWrongBecauseToken]);
+    });
+
+    it("path 1 'first link not skip link' carries info+medium+code", () => {
+      const html = `<html><body>
+          <a href="/external">External</a>
+          <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe(expectedFields.severity);
+      expect(v[0]?.confidence).toBe(expectedFields.confidence);
+      expect(v[0]?.couldBeWrongBecause).toEqual([expectedFields.couldBeWrongBecauseToken]);
+    });
+
+    it("path 1 'skip link target id missing' carries info+medium+code", () => {
+      const html = `<html><body>
+          <a href="#missing">Skip to main content</a>
+          <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          <section>No id=missing anywhere</section>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe(expectedFields.severity);
+      expect(v[0]?.confidence).toBe(expectedFields.confidence);
+      expect(v[0]?.couldBeWrongBecause).toEqual([expectedFields.couldBeWrongBecauseToken]);
+    });
+
+    it("path 2 'skip-link-shaped anchor with missing id' carries info+medium+code", () => {
+      const html = `<html><body>
+          <a class="skip-link" href="#content">Skip to main content</a>
+          <main>Content</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "a.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe(expectedFields.severity);
+      expect(v[0]?.confidence).toBe(expectedFields.confidence);
+      expect(v[0]?.couldBeWrongBecause).toEqual([expectedFields.couldBeWrongBecauseToken]);
+    });
+
+    it("path 3 'opaque-nav component' carries info+medium+code", () => {
+      // Path 3 already emitted at `info` pre-fix, but the
+      // `confidence: "medium"` and `couldBeWrongBecause` stamp now
+      // ride on every emission of this rule so the agent can branch
+      // on `confidence` without per-finding shape variance.
+      const html = "<html><body><Header /><main>x</main></body></html>";
+      const v = runRule(rule, html, { filePath: "layout.html" });
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe(expectedFields.severity);
+      expect(v[0]?.confidence).toBe(expectedFields.confidence);
+      expect(v[0]?.couldBeWrongBecause).toEqual([expectedFields.couldBeWrongBecauseToken]);
+    });
+
+    // Token value must equal the per-rule reason in
+    // `src/engine/per-rule-coverage.ts` `CROSS_FILE_BOUND_REASONS` for
+    // `navigation/skip-link` so the MCP per-finding propagation helper
+    // (`src/mcp/per-finding-confidence-parity.ts`) dedup-gates the
+    // two paths to a single code rather than shipping two
+    // contradictory variants on the same finding.
+    it("token value matches the per-rule reason code shipped by per-rule-coverage", () => {
+      const html = `<html><body>
+          <nav><a href="/">Home</a><a href="/about">About</a></nav>
+          <main id="main">x</main>
+        </body></html>`;
+      const v = runRule(rule, html, { filePath: "a.html" });
+      expect(v[0]?.couldBeWrongBecause?.[0]).toBe(
+        "cross_file_idref_resolution_not_attempted_by_rule",
+      );
     });
   });
 });
