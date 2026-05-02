@@ -132,7 +132,7 @@ describe("scan_project: topRules fixClass partitions the per-class plan tally", 
       const topRules = plan["topRules"] as readonly TopRule[] | undefined;
       expect(fixesByClass).toBeDefined();
       expect(topRules).toBeDefined();
-      if (!fixesByClass || !topRules) throw new Error("fixesByClass or topRules missing");
+      if (!(fixesByClass && topRules)) throw new Error("fixesByClass or topRules missing");
 
       // Every populated lane must have at least one topRules entry
       // carrying that fixClass attribution. The agent reads the
