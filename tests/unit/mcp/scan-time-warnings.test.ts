@@ -11,7 +11,10 @@
 
 import { describe, expect, it } from "bun:test";
 import { parseTsx } from "../../../src/input/parsers/tsx.ts";
-import { buildScanTimeWarnings } from "../../../src/mcp/scan-time-warnings.ts";
+import {
+  buildScanTimeWarnings,
+  combineTemplateLiteralFiles,
+} from "../../../src/mcp/scan-time-warnings.ts";
 import type { Violation } from "../../../src/types/violation.ts";
 
 /**
@@ -206,5 +209,142 @@ describe("buildScanTimeWarnings — parser-route telemetry", () => {
       filesByExtension: { ".tsx": 1 },
     });
     expect(result.warnings ?? []).not.toContain("parser_bailed_on_non_jsx_in_tsx_route");
+  });
+});
+
+describe("combineTemplateLiteralFiles — fragment-vs-template mutual exclusion", () => {
+  // Cross-surface invariant per the AI-first consumer model "Sibling
+  // fields naming the same concept must use one shape" + "Heuristic-
+  // mislabeled meta sub-fields are dishonest": a file appearing as both
+  // `analysisCoverage.fragmentFiles[]` and
+  // `warningsDetails.template_files_parsed_as_literal.files` ships two
+  // competing narratives about why the file produced no findings. The
+  // fragment classifier (more nuanced kind enumeration) is the
+  // canonical source-of-truth; the warning-channel payload deduplicates
+  // against it at this assembly seam.
+  it("excludes a path that already appears in fragmentFiles[] from the frontmatter-fence subset", () => {
+    // Canonical case: a Jekyll-style include `_partials/header.html`
+    // opens with `---\n…\n---\n` (frontmatter fence) AND has no
+    // `<html>` opener (fragment). The fragment classifier wins; the
+    // template-literal payload must omit the path.
+    const out = combineTemplateLiteralFiles(
+      {
+        frontmatterFenceFiles: ["_partials/header.html", "page.html"],
+        fragmentFiles: [
+          {
+            path: "_partials/header.html",
+            kind: "html_partial",
+            fragmentClassificationSignals: {
+              hasHtmlOpener: false,
+              hasLayoutDirective: false,
+              inLayoutsDir: false,
+            },
+          },
+        ],
+      },
+      new Set<string>(),
+    );
+    expect(out).toEqual(["page.html"]);
+  });
+
+  it("excludes a path that already appears in fragmentFiles[] from the overlap-confirmed directive subset", () => {
+    // Mirror case: a `partial.html` whose findings overlap with
+    // `{{ x }}` directive lines AND is classified as a fragment (no
+    // `<html>` opener). The overlap path would normally feed the
+    // payload; mutual exclusion drops it.
+    const out = combineTemplateLiteralFiles(
+      {
+        fragmentFiles: [
+          {
+            path: "partial.html",
+            kind: "html_partial",
+            fragmentClassificationSignals: {
+              hasHtmlOpener: false,
+              hasLayoutDirective: false,
+              inLayoutsDir: false,
+            },
+          },
+        ],
+      },
+      new Set<string>(["partial.html", "base.jinja.html"]),
+    );
+    expect(out).toEqual(["base.jinja.html"]);
+  });
+
+  it("returns the union when no fragmentFiles[] entry overlaps either subset (regression guard)", () => {
+    // The dedup must be a no-op when no path is in both sets — the
+    // historical behavior (sorted union of frontmatter + overlap) is
+    // preserved on inputs the new branch doesn't fire on.
+    const out = combineTemplateLiteralFiles(
+      {
+        frontmatterFenceFiles: ["a.md", "b.md"],
+        fragmentFiles: [
+          {
+            path: "_includes/footer.html",
+            kind: "layout_include_partial",
+            fragmentClassificationSignals: {
+              hasHtmlOpener: false,
+              hasLayoutDirective: false,
+              inLayoutsDir: false,
+            },
+          },
+        ],
+      },
+      new Set<string>(["c.html"]),
+    );
+    expect(out).toEqual(["a.md", "b.md", "c.html"]);
+  });
+
+  it("returns an empty array when every contributing path is also a fragment file", () => {
+    // Edge case: all evidence collapses to fragment classification.
+    // The combined list goes empty so the caller's conditional spread
+    // omits the field — the `template_files_parsed_as_literal` warning
+    // code's `BinaryPresenceMarker` fallback then carries the bare
+    // signal, but no per-file payload (which would have lied).
+    const out = combineTemplateLiteralFiles(
+      {
+        frontmatterFenceFiles: ["fragment.html"],
+        fragmentFiles: [
+          {
+            path: "fragment.html",
+            kind: "html_partial",
+            fragmentClassificationSignals: {
+              hasHtmlOpener: false,
+              hasLayoutDirective: false,
+              inLayoutsDir: false,
+            },
+          },
+        ],
+      },
+      new Set<string>(["fragment.html"]),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("treats absent / malformed fragmentFiles[] as no-classification (no exception, no dedup)", () => {
+    // Defensive shape — the helper accepts a `Record<string, unknown>`
+    // whose `fragmentFiles` slot may be undefined, an empty array, or
+    // a malformed entry shape. Each path falls through to the historical
+    // behavior so the dedup degrades to a no-op rather than throwing.
+    const noFragmentFiles = combineTemplateLiteralFiles(
+      { frontmatterFenceFiles: ["a.html"] },
+      new Set<string>(["b.html"]),
+    );
+    expect(noFragmentFiles).toEqual(["a.html", "b.html"]);
+
+    const emptyFragmentFiles = combineTemplateLiteralFiles(
+      { frontmatterFenceFiles: ["a.html"], fragmentFiles: [] },
+      new Set<string>(["b.html"]),
+    );
+    expect(emptyFragmentFiles).toEqual(["a.html", "b.html"]);
+
+    const malformedEntries = combineTemplateLiteralFiles(
+      {
+        frontmatterFenceFiles: ["a.html"],
+        fragmentFiles: [null, { path: 42 }, { kind: "html_partial" }],
+      },
+      new Set<string>(["b.html"]),
+    );
+    expect(malformedEntries).toEqual(["a.html", "b.html"]);
   });
 });

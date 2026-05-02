@@ -174,6 +174,44 @@ describe("scan_project emits top-level `warnings` for silent-failure modes", () 
     assertTemplateLiteralPayload(detail, "template-directives/source");
   });
 
+  it("template_files_parsed_as_literal: payload files[] is disjoint from analysisCoverage.fragmentFiles[] (mutual-exclusion invariant)", async () => {
+    // Per AI-first consumer doctrine "Sibling fields naming the same
+    // concept must use one shape" + "Heuristic-mislabeled meta sub-
+    // fields are dishonest": a file appearing simultaneously in
+    // `analysisCoverage.fragmentFiles[]` AND in
+    // `warningsDetails.template_files_parsed_as_literal.files` ships two
+    // contradictory descriptors for the same file. The fragment
+    // classifier is the canonical source-of-truth (more nuanced kind
+    // enumeration), so the warning-channel payload deduplicates against
+    // it. The template-directives fixture's `partial.html` is the
+    // canonical case: it has no `<html>` opener (fragment) AND its
+    // findings overlap with `{{ }}` directive lines (would otherwise
+    // contribute to template_files_parsed_as_literal). The dedup keeps
+    // it on the fragment side only.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: TEMPLATE_FIXTURE, verboseMeta: true }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+      meta?: { analysisCoverage?: { fragmentFiles?: readonly { path: string }[] } };
+    };
+    const fragmentPaths = new Set<string>(
+      (body.meta?.analysisCoverage?.fragmentFiles ?? []).map((entry) => entry.path),
+    );
+    // Fixture must contribute at least one fragment file — otherwise
+    // the invariant is vacuous.
+    expect(fragmentPaths.size).toBeGreaterThan(0);
+    const detail = body.warningsDetails?.["template_files_parsed_as_literal"] as
+      | { files?: readonly string[] }
+      | undefined;
+    const literalFiles = detail?.files ?? [];
+    for (const path of literalFiles) {
+      expect(fragmentPaths.has(path)).toBe(false);
+    }
+  });
+
   it("a healthy scan omits the `warnings` field entirely (not `warnings: []`)", async () => {
     const responses = await mcpSession([
       initMsg(1),

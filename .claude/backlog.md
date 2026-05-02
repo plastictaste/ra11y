@@ -369,7 +369,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Parser routing skips
 
-- [ ] **Q13-TEMPLATE-LITERAL-FRAGMENT-DUAL-DESCRIPTOR** Templated-fragment files appear simultaneously in `template_files_parsed_as_literal.files` AND in `meta.analysisCoverage.fragmentFiles[].kind: "html_partial"` — two contradictory descriptors for the same files. Agent gets two competing narratives about why the file produced no findings. Fix: one canonical descriptor per file (template-literal route OR fragment-classification, not both); cross-classify the same file once and reflect on both surfaces consistently. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest" + "Routing skips that drop content."
 - [ ] **Q13-TEXT-SOURCE-SKIPPED-DOMINATED-BY-SINGLE-EXTENSION** `text_source_skipped.extensions` lumps actionable text-source extensions (`.rmd`, `.coffee`, `.xml`) under one summary dominated by a single high-count extension — agent has no per-extension breakdown for the actionable subset. Fix: emit per-extension counts so the actionable subset is visible; the topExtension scalar names the dominant entry but the array enumerates all. Per AI-first doctrine "Routing skips that drop content are the symmetric twin of suppression" (per-extension-split closure path).
 
 ### suggest_fix shape contradictions

@@ -425,22 +425,76 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
  * empty array when neither subset contributed evidence; the caller
  * conditional-spreads the field away in that case so the wire shape
  * stays present-when-meaningful.
+ *
+ * Mutual-exclusion with `analysisCoverage.fragmentFiles[]`: when a file
+ * has already been classified as a fragment (no `<html>` opener,
+ * categorical `kind` per
+ * {@link import("./analysis-coverage-types.ts").FragmentFileEntry}), it
+ * is excluded from this list. Per AI-first consumer doctrine "Sibling
+ * fields naming the same concept must use one shape" + "Heuristic-
+ * mislabeled meta sub-fields are dishonest": a file appearing
+ * simultaneously as `fragmentFiles[].kind: "html_partial" |
+ * "layout_include_partial" | "markdown_residue" | "markdown_unclassified"
+ * | "svg_standalone"` AND in `template_files_parsed_as_literal.files`
+ * ships two competing narratives about why the file produced no
+ * findings — the agent reads contradictory descriptors for the same
+ * substrate. The fragment classifier is the canonical source-of-truth
+ * (more nuanced kind enumeration), so the warning-channel payload
+ * deduplicates against it at this assembly seam. The
+ * `template_files_parsed_as_literal` warning code itself can still fire
+ * on the corpus when other evidence sources exist (frontmatter +
+ * overlap on non-fragment files); only the per-file payload partitions
+ * to keep each file under exactly one descriptor.
  */
 export function combineTemplateLiteralFiles(
   analysisCoverage: Record<string, unknown> | undefined,
   overlapFiles: ReadonlySet<string>,
 ): readonly string[] {
+  const fragmentPaths = collectFragmentFilePaths(analysisCoverage);
   const out = new Set<string>();
   if (analysisCoverage !== undefined) {
     const fence = analysisCoverage["frontmatterFenceFiles"];
     if (Array.isArray(fence)) {
-      for (const path of fence) if (typeof path === "string") out.add(path);
+      for (const path of fence) {
+        if (typeof path !== "string") continue;
+        if (fragmentPaths.has(path)) continue;
+        out.add(path);
+      }
     }
   }
-  for (const path of overlapFiles) out.add(path);
+  for (const path of overlapFiles) {
+    if (fragmentPaths.has(path)) continue;
+    out.add(path);
+  }
   if (out.size === 0) return [];
   return [...out].sort();
 }
+
+/**
+ * Reads the `fragmentFiles[].path` set off the coverage block when
+ * present. Returns an empty set when the block, the field, or any
+ * entry shape isn't recognizable — the caller treats absent / malformed
+ * input as "no fragment classification observed" so the dedup degrades
+ * to a no-op rather than an exception. Tolerant of the structural-cast
+ * shape every consumer of this function passes (a
+ * `Record<string, unknown>` produced by `buildAnalysisCoverage`).
+ */
+function collectFragmentFilePaths(
+  analysisCoverage: Record<string, unknown> | undefined,
+): ReadonlySet<string> {
+  if (analysisCoverage === undefined) return EMPTY_FRAGMENT_PATHS;
+  const fragmentFiles = analysisCoverage["fragmentFiles"];
+  if (!Array.isArray(fragmentFiles) || fragmentFiles.length === 0) return EMPTY_FRAGMENT_PATHS;
+  const out = new Set<string>();
+  for (const entry of fragmentFiles) {
+    if (entry === null || typeof entry !== "object") continue;
+    const path = (entry as { readonly path?: unknown }).path;
+    if (typeof path === "string") out.add(path);
+  }
+  return out;
+}
+
+const EMPTY_FRAGMENT_PATHS: ReadonlySet<string> = new Set<string>();
 
 /**
  * Collects `.js` files (case-insensitive extension match) where the
