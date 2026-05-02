@@ -43,7 +43,7 @@ export const assertions: FixtureAssertions = {
     "`<header>` landmark element must classify in `fragmentFiles[]` with " +
     "kind `composition_shell` — NOT `layout_include_partial` — because the " +
     "AST evidence is more specific about role. The companion " +
-    "`fragmentRoleSignals.topLevelLandmarkTags` surfaces `[\"header\"]` as " +
+    '`fragmentRoleSignals.topLevelLandmarkTags` surfaces `["header"]` as ' +
     "the structural evidence the predicate consumed.",
   origin: {
     notes:
