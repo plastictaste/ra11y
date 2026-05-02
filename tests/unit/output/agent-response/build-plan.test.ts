@@ -102,6 +102,7 @@ describe("buildAgentPlan: fixesByClass structured tally", () => {
       guidance: { source: 0, buildArtifact: 0 },
       runtimeOnly: { source: 0, buildArtifact: 0 },
       verifyInSource: { source: 0, buildArtifact: 0 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 });
@@ -242,7 +243,8 @@ describe("buildAgentPlan: dropped violations composite", () => {
       laneSum(plan.fixesByClass.mechanical) +
       laneSum(plan.fixesByClass.guidance) +
       laneSum(plan.fixesByClass.runtimeOnly) +
-      laneSum(plan.fixesByClass.verifyInSource);
+      laneSum(plan.fixesByClass.verifyInSource) +
+      laneSum(plan.fixesByClass.suppressRecommended);
     // makeViolations() seeds one violation per lane.
     expect(flatTotal).toBe(4);
   });
@@ -277,13 +279,14 @@ describe("buildAgentPlan: summary string", () => {
 
 describe("countFixesByClass helper", () => {
   it("tallies an empty violation array as all zero pairs", () => {
-    // Defensive: the helper must return the full four-key shape so
+    // Defensive: the helper must return the full five-key shape so
     // downstream consumers never have to check for missing keys.
     expect(countFixesByClass([])).toEqual({
       mechanical: { source: 0, buildArtifact: 0 },
       guidance: { source: 0, buildArtifact: 0 },
       runtimeOnly: { source: 0, buildArtifact: 0 },
       verifyInSource: { source: 0, buildArtifact: 0 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 
@@ -294,6 +297,7 @@ describe("countFixesByClass helper", () => {
       guidance: { source: 1, buildArtifact: 0 },
       runtimeOnly: { source: 1, buildArtifact: 0 },
       verifyInSource: { source: 1, buildArtifact: 0 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 
@@ -310,6 +314,35 @@ describe("countFixesByClass helper", () => {
       guidance: { source: 0, buildArtifact: 1 },
       runtimeOnly: { source: 0, buildArtifact: 1 },
       verifyInSource: { source: 0, buildArtifact: 1 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
+  });
+
+  it("routes suppression-flavored emissions into suppressRecommended regardless of declared fixClass", () => {
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Per-call shape
+    // must agree with per-class plan tally," the per-emission
+    // suppression-flavored predicate (suggestion mentions
+    // `ra11y-disable` or `suppress with`) routes into the dedicated
+    // lane. The declared `fixClass` stays at its rule-level value, but
+    // the per-violation count moves so the plan tally agrees with
+    // suggest_fix's `kind: "suppress-recommended"` per-call shape.
+    const suppressFlavored = withFindingIds([
+      {
+        ruleId: "semantics/heading-hierarchy",
+        // Rule-level lane is `verify-in-source`, but the suggestion's
+        // pragma reference partitions this emission into
+        // `suppressRecommended`.
+        fixClass: "verify-in-source",
+        criteria: ["wcag22:1.3.1"],
+        severity: "warning",
+        location: { filePath: "src/a.html", line: 1, column: 1 },
+        message: "Document has no <h1>.",
+        suggestion:
+          "A document without an <h1> loses the single top-of-document landmark; verify the page has a designated main heading. If this page is a fragment, suppress with <!-- ra11y-disable wcag22:1.3.1 -->.",
+      },
+    ])[0] as Violation;
+    const result = countFixesByClass([suppressFlavored]);
+    expect(result.verifyInSource).toEqual({ source: 0, buildArtifact: 0 });
+    expect(result.suppressRecommended).toEqual({ source: 1, buildArtifact: 0 });
   });
 });

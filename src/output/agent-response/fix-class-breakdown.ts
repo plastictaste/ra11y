@@ -19,30 +19,51 @@
 
 import type { FixClass } from "../../types/rule.ts";
 
-/** Count of violations per `fixClass` lane, used by the summary prose. */
-export type FixClassCounts = Readonly<Record<FixClass, number>>;
+/**
+ * Count of violations per `fixClass` lane plus the per-emission
+ * `suppress-recommended` derivation lane, used by the summary prose.
+ *
+ * `suppress-recommended` is a per-violation classification (the
+ * suggestion prose names the source-level disable as the dismissal
+ * path) rather than a per-rule lane — see
+ * `FixesByClass.suppressRecommended` in `./types.ts` and the
+ * predicate in `src/utils/suppression-flavored-suggestion.ts`. Tracked
+ * alongside the four `FixClass` lanes here because the summary
+ * parenthetical reads as a single inventory line and an honest
+ * suppress-recommended count keeps the agent's "what kind of work do
+ * I have here?" budget accurate.
+ */
+export type FixClassCounts = Readonly<Record<FixClass | "suppress-recommended", number>>;
 
 /**
  * Build the parenthetical `fixClass` breakdown appended to the violations
  * count in the plan summary, e.g. `" (31 mechanical, 30 guidance,
- * 24 runtime-only, 46 verify-in-source)"`. Zero-count lanes are omitted —
- * they add noise without signal. Lane order is stable:
- * `mechanical → guidance → runtime-only → verify-in-source`.
+ * 24 runtime-only, 46 verify-in-source, 8 suppress-recommended)"`.
+ * Zero-count lanes are omitted — they add noise without signal. Lane
+ * order is stable:
+ * `mechanical → guidance → runtime-only → verify-in-source → suppress-recommended`.
  *
  * Returns an empty string when no lane has any violations (defensive —
  * callers already check `violations > 0`, but a rule that emits a
  * violation without a `fixClass` would otherwise produce `" ()"`).
  *
- * @param counts - Per-lane violation counts keyed by `FixClass`.
+ * @param counts - Per-lane violation counts keyed by `FixClass` plus
+ *   the per-emission `suppress-recommended` derivation.
  * @returns A space-prefixed parenthetical string, or `""` when all
  *   lane counts are zero.
  *
  * @example
- * buildFixClassBreakdown({ mechanical: 2, guidance: 0, "runtime-only": 1, "verify-in-source": 0 })
+ * buildFixClassBreakdown({ mechanical: 2, guidance: 0, "runtime-only": 1, "verify-in-source": 0, "suppress-recommended": 0 })
  * // => " (2 mechanical, 1 runtime-only)"
  */
 export function buildFixClassBreakdown(counts: FixClassCounts): string {
-  const lanes: readonly FixClass[] = ["mechanical", "guidance", "runtime-only", "verify-in-source"];
+  const lanes: readonly (FixClass | "suppress-recommended")[] = [
+    "mechanical",
+    "guidance",
+    "runtime-only",
+    "verify-in-source",
+    "suppress-recommended",
+  ];
   const bits: string[] = [];
   for (const lane of lanes) {
     const n = counts[lane];

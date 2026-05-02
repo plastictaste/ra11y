@@ -45,6 +45,7 @@
 
 import type { FixClass } from "../../types/rule.ts";
 import type { Violation } from "../../types/violation.ts";
+import { isSuppressionFlavoredSuggestion } from "../../utils/suppression-flavored-suggestion.ts";
 import { buildFixClassBreakdown, type FixClassCounts } from "./fix-class-breakdown.ts";
 import type { AgentFile, AgentPlan, Effort, FixesByClass, FixesByClassLane } from "./types.ts";
 
@@ -238,9 +239,26 @@ export function countFixesByClass(
     "runtime-only": { source: 0, buildArtifact: 0 },
     "verify-in-source": { source: 0, buildArtifact: 0 },
   };
+  let suppressRecommended: FixesByClassLane = { source: 0, buildArtifact: 0 };
   for (const v of violations) {
-    const lane = counts[v.fixClass];
     const isBuildArtifact = vendorPaths.has(v.location.filePath);
+    // Per-violation suppression-flavored emissions route into the
+    // dedicated lane regardless of the rule's declared `fixClass` —
+    // see `FixesByClass.suppressRecommended` for the rationale.
+    // Mirrors `suggest_fix`'s `kind: "suppress-recommended"` per-call
+    // discriminator so the per-class plan tally agrees with the
+    // per-call shape (`docs/kb/architecture/ai-first-consumer.md`
+    // "Per-call shape must agree with per-class plan tally"). The
+    // lanes partition the violation set: a violation lands in exactly
+    // one bucket.
+    if (isSuppressionFlavoredSuggestion(v.suggestion)) {
+      suppressRecommended = {
+        source: suppressRecommended.source + (isBuildArtifact ? 0 : 1),
+        buildArtifact: suppressRecommended.buildArtifact + (isBuildArtifact ? 1 : 0),
+      };
+      continue;
+    }
+    const lane = counts[v.fixClass];
     counts[v.fixClass] = {
       source: lane.source + (isBuildArtifact ? 0 : 1),
       buildArtifact: lane.buildArtifact + (isBuildArtifact ? 1 : 0),
@@ -251,6 +269,7 @@ export function countFixesByClass(
     guidance: counts.guidance,
     runtimeOnly: counts["runtime-only"],
     verifyInSource: counts["verify-in-source"],
+    suppressRecommended,
   };
 }
 
@@ -345,6 +364,7 @@ export function buildAgentPlan(
     guidance: laneTotal(fixesByClass.guidance),
     "runtime-only": laneTotal(fixesByClass.runtimeOnly),
     "verify-in-source": laneTotal(fixesByClass.verifyInSource),
+    "suppress-recommended": laneTotal(fixesByClass.suppressRecommended),
   };
 
   const summary = buildSummary(

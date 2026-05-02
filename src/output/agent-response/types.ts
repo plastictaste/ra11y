@@ -543,12 +543,29 @@ export interface FixesByClassLane {
  * per-lane × per-scan-kind without a guess; callers that want the
  * flat per-lane number sum the two sub-keys themselves
  * (`fixesByClass.mechanical.source + fixesByClass.mechanical.buildArtifact`).
+ *
+ * `suppressRecommended` is the per-violation derivation lane: it
+ * routes findings whose `suggestion` prose advances "verify and add a
+ * source-level pragma if intentional" rather than a real fix
+ * direction. The detection happens on emission text (the literal
+ * `ra11y-disable` token), not on rule-level `fixClass` — a single
+ * rule may emit ordinary guidance on its primary substrate and
+ * suppression-flavored guidance on a fragment substrate, and the
+ * lane has to reflect that per-emission deviation. Mirrors
+ * `suggest_fix`'s `kind: "suppress-recommended"` discriminator
+ * one-to-one so the per-call shape and per-class plan tally agree
+ * (`docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally"). A violation routed into
+ * `suppressRecommended` is NOT also counted in its declared `fixClass`
+ * lane — the lanes partition the violation set, so summing the five
+ * lanes recovers the violation total.
  */
 export interface FixesByClass {
   readonly mechanical: FixesByClassLane;
   readonly guidance: FixesByClassLane;
   readonly runtimeOnly: FixesByClassLane;
   readonly verifyInSource: FixesByClassLane;
+  readonly suppressRecommended: FixesByClassLane;
 }
 
 /**

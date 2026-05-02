@@ -1,18 +1,26 @@
+// ra11y-limits-exempt: four-lane outcome composer (edit / guidance / suppress-recommended / poisoned-drop) sharing one sanitize+widen pipeline; splitting further scatters the outcome shape across tiny files and obscures the discriminator partition.
+
 /**
- * Builds the `kind: "edit"` or `kind: "guidance"` branch of
- * `buildSuggestFixPayload` when the matched violation carries
- * `fixPaths`. Extracted into its own module so the parent file stays
- * under the MCP-handler line budget (`scripts/check-limits.ts`).
+ * Builds the `kind: "edit"` / `kind: "guidance"` /
+ * `kind: "suppress-recommended"` branches of `buildSuggestFixPayload`
+ * when the matched violation carries `fixPaths`. Extracted into its own
+ * module so the parent file stays under the MCP-handler line budget
+ * (`scripts/check-limits.ts`).
  *
- * Three concerns layered into one outcome:
+ * Four concerns layered into one outcome:
  *   1. Template-directive poison sanitization on primary + alternatives
  *      (see `suggest-fix-sanitize.ts`).
  *   2. `widenToUniqueAnchor` so apply_fix's literal find-and-replace
  *      has exactly one match site (see `unique-anchor.ts`).
- *   3. `kind` split: mechanical-edit lane keeps the flat FixPath shape,
+ *   3. `kind` split: mechanical-edit lane keeps the flat FixPath shape;
  *      guidance lane nests under `primary: { approach, explanation,
  *      sourceContext, confidence }` with optional `alternatives` per
- *      Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY.
+ *      Q-SHARED-SUGGEST-FIX-GUIDANCE-PRIMARY; suppress-recommended
+ *      partition based on suggestion-text predicate (see
+ *      `suggest-fix-suppress-recommended.ts`).
+ *   4. Caveat re-threading on the suppress-recommended branch so the
+ *      template-directive poison drop and widen-anchor non-unique
+ *      check still surface alongside the partition.
  *
  * Pure function, no I/O.
  */
@@ -25,6 +33,10 @@ import {
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
 import { POISONED_NEWTEXT_CAVEAT, sanitizeFixPathAgainstPoison } from "./suggest-fix-sanitize.ts";
+import {
+  buildSuppressRecommendedOutcome,
+  isSuppressionFlavoredSuggestion,
+} from "./suggest-fix-suppress-recommended.ts";
 
 export interface BuildFixPathsOutcomeInputs {
   readonly match: Violation;
@@ -190,6 +202,27 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
       match.location.line,
       match.criteria,
     );
+  // When the rule's suggestion text concedes via "suppress with …
+  // ra11y-disable …" prose, the honest discriminator is
+  // `kind: "suppress-recommended"` — same parity as the prose-only
+  // fallback lane in `tool-suggest-fix-routing.ts`. The caveat field
+  // (template-directive poison drop, widen-anchor non-unique) still
+  // rides since both signals are independent of the suppress framing.
+  if (isSuppressionFlavoredSuggestion(explanation)) {
+    return buildSuppressRecommendedFixPathsOutcome({
+      explanation,
+      label: primary.label,
+      sourceContext,
+      confidence,
+      match,
+      snippetField,
+      verify,
+      warningsField,
+      disambiguationNoteField,
+      guidanceAlternatives,
+      caveatField,
+    });
+  }
   return {
     kind: "guidance",
     primary: {
@@ -205,4 +238,47 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
     ...warningsField,
     ...disambiguationNoteField,
   };
+}
+
+/**
+ * Builds the `kind: "suppress-recommended"` payload for the
+ * fixPaths-with-no-mechanical-edit branch. Extracted so
+ * {@link buildFixPathsOutcome} stays under the cognitive-complexity
+ * cap (`scripts/check-limits.ts`). Re-threads the caveat field after
+ * delegating to {@link buildSuppressRecommendedOutcome}: the
+ * template-directive poison drop and the widen-anchor non-unique
+ * check are independent of the suppress framing, but
+ * {@link buildSuppressRecommendedOutcome} doesn't know about either
+ * — the parent's caveat already covers them, so we splice it back in
+ * after the outcome is composed.
+ */
+function buildSuppressRecommendedFixPathsOutcome(args: {
+  readonly explanation: string;
+  readonly label: string;
+  readonly sourceContext: string;
+  readonly confidence: "high" | "medium";
+  readonly match: Violation;
+  readonly snippetField: { readonly snippet?: string };
+  readonly verify: BuildFixPathsOutcomeInputs["verify"];
+  readonly warningsField: { readonly warnings?: readonly string[] };
+  readonly disambiguationNoteField: { readonly disambiguationNote?: string };
+  readonly guidanceAlternatives:
+    | ReadonlyArray<{ readonly approach: string; readonly explanation: string }>
+    | undefined;
+  readonly caveatField: { readonly caveat?: string };
+}): Record<string, unknown> {
+  const base = buildSuppressRecommendedOutcome({
+    explanation: args.explanation,
+    approach: args.label,
+    sourceContext: args.sourceContext,
+    confidence: args.confidence,
+    criteria: args.match.criteria,
+    filePath: args.match.location.filePath,
+    snippetField: args.snippetField,
+    verify: args.verify,
+    warningsField: args.warningsField,
+    disambiguationNoteField: args.disambiguationNoteField,
+    ...(args.guidanceAlternatives ? { alternatives: args.guidanceAlternatives } : {}),
+  });
+  return Object.keys(args.caveatField).length > 0 ? { ...base, ...args.caveatField } : base;
 }

@@ -1389,6 +1389,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
       guidance: { source: 0, buildArtifact: 0 },
       runtimeOnly: { source: 0, buildArtifact: 0 },
       verifyInSource: { source: 0, buildArtifact: 0 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 
@@ -1436,6 +1437,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
       guidance: { source: 0, buildArtifact: 1 },
       runtimeOnly: { source: 0, buildArtifact: 0 },
       verifyInSource: { source: 0, buildArtifact: 1 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 
@@ -1464,6 +1466,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
       guidance: { source: 0, buildArtifact: 0 },
       runtimeOnly: { source: 0, buildArtifact: 0 },
       verifyInSource: { source: 2, buildArtifact: 0 },
+      suppressRecommended: { source: 0, buildArtifact: 0 },
     });
   });
 });

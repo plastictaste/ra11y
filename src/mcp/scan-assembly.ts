@@ -27,6 +27,7 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLimitation } from "./external-handler-limitation.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
+import { splitFixesByClassByScanKind } from "./scan-assembly-fixes-by-scan-kind.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
@@ -1142,68 +1143,9 @@ export function withViolationsByScanKind(
   return { ...planWithFixesByClass, violationsByScanKind: split };
 }
 
-/**
- * Re-derives `plan.fixesByClass` per-scan-kind from the per-file
- * finding buckets and the build-artifact path set. Mirrors
- * {@link splitViolationsByScanKind} on the per-remediation-lane axis
- * — each lane gets its own `{ source, buildArtifact }` pair, and
- * `sum(*.source) === splitViolationsByScanKind(...).source` (and
- * same for `buildArtifact`). Findings without a `fixClass` field on
- * the per-file shape (legacy callers) route into the lane mix the
- * upstream `countFixesByClass` would have produced — currently a
- * pure no-op on missing metadata.
- *
- * Severity filter — info-severity findings are excluded the same
- * way `splitViolationsByScanKind` excludes them, so both surfaces
- * split the same error+warning corpus.
- */
-function splitFixesByClassByScanKind(
-  files: readonly {
-    readonly path: string;
-    readonly findings: readonly { readonly severity: string; readonly fixClass?: string }[];
-  }[],
-  vendorPaths: ReadonlySet<string>,
-): {
-  readonly mechanical: { readonly source: number; readonly buildArtifact: number };
-  readonly guidance: { readonly source: number; readonly buildArtifact: number };
-  readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
-  readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
-} {
-  const lanes = {
-    mechanical: { source: 0, buildArtifact: 0 },
-    guidance: { source: 0, buildArtifact: 0 },
-    runtimeOnly: { source: 0, buildArtifact: 0 },
-    verifyInSource: { source: 0, buildArtifact: 0 },
-  };
-  for (const f of files) {
-    const isBuildArtifact = vendorPaths.has(f.path);
-    const kind: "source" | "buildArtifact" = isBuildArtifact ? "buildArtifact" : "source";
-    for (const finding of f.findings) {
-      if (finding.severity === "info") continue;
-      const lane = laneKeyFor(finding.fixClass);
-      if (lane === null) continue;
-      lanes[lane][kind] += 1;
-    }
-  }
-  return lanes;
-}
-
-function laneKeyFor(
-  fixClass: string | undefined,
-): "mechanical" | "guidance" | "runtimeOnly" | "verifyInSource" | null {
-  switch (fixClass) {
-    case "mechanical":
-      return "mechanical";
-    case "guidance":
-      return "guidance";
-    case "runtime-only":
-      return "runtimeOnly";
-    case "verify-in-source":
-      return "verifyInSource";
-    default:
-      return null;
-  }
-}
+// `splitFixesByClassByScanKind` lives in
+// `./scan-assembly-fixes-by-scan-kind.ts` so this file stays under
+// the 500-line file budget enforced by `scripts/check-limits.ts`.
 
 /**
  * Default cap for the {@link computeTopRules} headline rollup. Bulk-

@@ -20,6 +20,10 @@ import {
   deriveApproachFromProse,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
+import {
+  buildSuppressRecommendedOutcome,
+  isSuppressionFlavoredSuggestion,
+} from "./suggest-fix-suppress-recommended.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
 import type { BuildSuggestFixPayloadArgs } from "./tool-suggest-fix-payload-args.ts";
@@ -161,6 +165,28 @@ function routeMatchedFallback(args: {
   // is real, not a phantom. See `suggest-fix-guidance-shape.ts`
   // `buildPerCallEnrichmentAlternatives` for the doctrine rationale.
   const enrichments = buildPerCallEnrichmentAlternatives(a.filePath, a.line, match.criteria);
+  // When the rule's suggestion text concedes the criterion may not
+  // apply on this substrate and points the agent at the source-level
+  // disable pragma ("suppress with <!-- ra11y-disable wcag22:1.3.1 -->"),
+  // the honest discriminator is `kind: "suppress-recommended"` — not
+  // `kind: "guidance"` (which advertises a real fix direction). The
+  // detection fires on the literal `ra11y-disable` token; see
+  // `suggest-fix-suppress-recommended.ts` for the predicate doctrine.
+  if (isSuppressionFlavoredSuggestion(explanation)) {
+    return buildSuppressRecommendedOutcome({
+      explanation,
+      approach: deriveApproachFromProse(explanation),
+      sourceContext: a.sourceContext,
+      confidence: primaryConfidence,
+      criteria: match.criteria,
+      filePath: a.filePath,
+      snippetField,
+      verify: shared.verify,
+      warningsField: shared.warningsField,
+      disambiguationNoteField: shared.disambiguationNoteField,
+      ...(enrichments ? { alternatives: enrichments } : {}),
+    });
+  }
   return {
     kind: "guidance",
     primary: {

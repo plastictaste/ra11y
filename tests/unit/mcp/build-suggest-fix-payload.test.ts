@@ -928,7 +928,12 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
     const payload = buildSuggestFixPayload(
       baseArgs(outlineViolation(), { tailwindDetected: true }),
     );
-    expect(payload["kind"]).toBe("guidance");
+    // The kept hint contains `ra11y-disable-next-line` (the rule's
+    // explicit suppression-pragma reference), so the per-call shape
+    // partitions into `kind: "suppress-recommended"` rather than the
+    // generic `guidance` kind. The explanation prose is identical
+    // either way — the discriminator is the only thing that moves.
+    expect(payload["kind"]).toBe("suppress-recommended");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toContain("Tailwind");
     expect(primary.explanation).toContain("focus-visible:ring");
@@ -974,7 +979,12 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       },
     });
     const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: true }));
-    expect(payload["kind"]).toBe("guidance");
+    // The kept hint contains `ra11y-disable-next-line`, so the
+    // per-call discriminator partitions into `kind:
+    // "suppress-recommended"` (mirroring the per-class plan tally's
+    // `fixesByClass.suppressRecommended` lane). The Tailwind-bearing
+    // prose still rides under `primary.explanation`.
+    expect(payload["kind"]).toBe("suppress-recommended");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toContain("Tailwind");
   });
