@@ -363,7 +363,13 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
 // shape" — the candidate-vs-criteria split is named, not implied.
 describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
   it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
-    const dir = await makeFiredManualCriterionFixture();
+    // Media-present fixture seeds grounded candidates via the
+    // `review/media-variants` finder fanning out wcag22:1.2.* criteria
+    // — the fired-manual fixture used by the criteria-axis invariants
+    // above only emits a violation, so its candidate-axis count is 0
+    // and an equality assertion on the candidate-axis would pass
+    // vacuously without exercising the new field.
+    const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "coverage", { cwd: dir }),
@@ -374,9 +380,9 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
     const coverageCandidatesTotal = coverageEnvelope.manualCandidatesTotal ?? 0;
     const checklistUncapped = checklistBody.summary.actionable.candidatesUncapped;
     const checklistTotal = checklistBody.totalCandidates ?? 0;
-    // Sanity floor — the fixture seeds a fired manual criterion with at
-    // least one grounded candidate; a 0/0/0 result here would mean the
-    // fixture stopped firing and the assertion would pass vacuously.
+    // Sanity floor — the media-present fixture must emit at least one
+    // grounded candidate; a 0/0/0 result here would mean the finders
+    // stopped firing and the assertion would pass vacuously.
     expect(coverageCandidatesTotal).toBeGreaterThan(0);
     expect(coverageCandidatesTotal).toBe(checklistUncapped);
     expect(coverageCandidatesTotal).toBe(checklistTotal);
@@ -391,7 +397,7 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
     // Both must agree — they read the same underlying tally; a
     // disagreement would be the dishonest two-sibling-fields-naming-
     // the-same-concept shape the doctrine warns against.
-    const dir = await makeFiredManualCriterionFixture();
+    const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
     expect(coverageEnvelope.summary?.actionable?.candidates).toBe(

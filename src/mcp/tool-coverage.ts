@@ -8,6 +8,7 @@
 import type { Registry } from "../engine/registry/registry.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { buildCoverageReport } from "../reports/coverage.ts";
+import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
@@ -134,25 +135,12 @@ export const coverageTool: McpTool = {
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
     // Per-criterion candidate counts the per-entry
-    // `manualCandidatesTotal` reads off. The map keys on `criterionId`
-    // so a single pass over the candidate stream populates every entry
-    // the per-standard split below needs; the standard-level filter
-    // happens at read time when we sum over `withCandidates` (level-
-    // filtered, in-scope criteria for this entry). Doctrine: candidates
-    // and criteria are categorically different units — sibling counters
-    // must say which is which by name
-    // (`docs/kb/architecture/ai-first-consumer.md` "Sibling fields
-    // naming the same concept must use one shape"). Cross-surface
-    // invariant: the sum agrees with
-    // `checklist.summary.actionable.candidatesUncapped` and
-    // `checklist.totalCandidates` on identical cwd.
-    const candidateCountByCriterion = new Map<string, number>();
-    for (const c of report.candidates ?? []) {
-      candidateCountByCriterion.set(
-        c.criterionId,
-        (candidateCountByCriterion.get(c.criterionId) ?? 0) + 1,
-      );
-    }
+    // `manualCandidatesTotal` reads off. Single pass over the candidate
+    // stream populates every entry the per-standard split below needs;
+    // the standard-level filter happens at read time when we sum over
+    // `withCandidates` (level-filtered, in-scope criteria for the
+    // entry). See {@link buildCandidateCountByCriterion} for doctrine.
+    const candidateCountByCriterion = buildCandidateCountByCriterion(report.candidates ?? []);
     const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
@@ -241,20 +229,21 @@ export const coverageTool: McpTool = {
         .map((cc) => cc.criterionId)
         .filter((id) => candidateCriteria.has(id));
       // Candidate-level total scoped to the same in-scope, level-
-      // filtered criteria `withCandidates` is computed from. Sums per-
-      // criterion candidate counts so the value agrees with
-      // `checklist.totalCandidates` and
+      // filtered criteria `withCandidates` is computed from.
+      // `withCandidates.length` / `actionableManualItems` is the
+      // criteria-axis sibling; `manualCandidatesTotal` is the
+      // candidate-axis sibling — names make the kind explicit so an
+      // agent reading both does not silently reconcile two numbers
+      // that measure different units (per
+      // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+      // naming the same concept must use one shape"). Cross-surface
+      // invariant: agrees with `checklist.totalCandidates` and
       // `checklist.summary.actionable.candidatesUncapped` on identical
-      // cwd (same scope: level-filtered, in-scope criteria with at
-      // least one shipped candidate). `withCandidates.length` /
-      // `actionableManualItems` is the criteria-axis sibling;
-      // `manualCandidatesTotal` is the candidate-axis sibling. Names
-      // make the kind explicit so an agent reading both does not
-      // silently reconcile two numbers that measure different units.
-      let manualCandidatesTotal = 0;
-      for (const id of withCandidates) {
-        manualCandidatesTotal += candidateCountByCriterion.get(id) ?? 0;
-      }
+      // cwd.
+      const manualCandidatesTotal = sumCandidatesAcrossCriteria(
+        withCandidates,
+        candidateCountByCriterion,
+      );
       const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
       const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
         c.failingCriteria,
@@ -970,6 +959,50 @@ function countFilesByExtension(files: readonly ParsedFile[]): Record<string, num
     counts.set(ext, (counts.get(ext) ?? 0) + 1);
   }
   return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/**
+ * Indexes shipped review candidates by criterion ID with per-criterion
+ * counts. Extracted so the handler stays under the lint's cognitive-
+ * complexity ceiling. Doctrine: candidates and criteria are
+ * categorically different units — sibling counters must say which is
+ * which by name (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+ * the same concept must use one shape").
+ */
+function buildCandidateCountByCriterion(
+  candidates: readonly ReviewCandidate[],
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const c of candidates) {
+    counts.set(c.criterionId, (counts.get(c.criterionId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Sums per-criterion candidate counts over the supplied criterion-ID
+ * list. Extracted so the per-entry build inside
+ * `entries = coverage.map(...)` stays under the lint's cognitive-
+ * complexity ceiling. Returns 0 when the list is empty or no criterion
+ * has a counted candidate.
+ *
+ * Doctrine: `manualCandidatesTotal` is the candidate-axis sibling to
+ * `actionableManualItems` (criteria-axis); the value must agree with
+ * `checklist.totalCandidates` and
+ * `checklist.summary.actionable.candidatesUncapped` on identical cwd
+ * via the cross-surface count invariant in
+ * `docs/kb/architecture/ai-first-consumer.md`.
+ */
+function sumCandidatesAcrossCriteria(
+  criteriaWithCandidates: readonly string[],
+  candidateCountByCriterion: ReadonlyMap<string, number>,
+): number {
+  let total = 0;
+  for (const id of criteriaWithCandidates) {
+    total += candidateCountByCriterion.get(id) ?? 0;
+  }
+  return total;
 }
 
 /**
