@@ -149,11 +149,11 @@ function walkBackBeforeUnclosedBacktick(text: string, cap: number): number {
   let inside = false;
   for (let i = 0; i < cap; i++) {
     if (text[i] !== "`") continue;
-    if (!inside) {
+    if (inside) {
+      inside = false;
+    } else {
       openIdx = i;
       inside = true;
-    } else {
-      inside = false;
     }
   }
   return inside ? openIdx : cap;
