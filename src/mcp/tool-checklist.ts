@@ -108,6 +108,35 @@ interface ChecklistCandidateOut {
   readonly path: string;
   readonly line: number;
   readonly reason: string;
+  /**
+   * Attention-budget signal — same enum/semantics as the per-item
+   * `priority` field on the parent {@link ChecklistItemOut} and the
+   * per-candidate `priority` field on
+   * {@link import("./review-candidate-dedup.ts").DedupedReviewCandidate}
+   * (the `scan_file.reviewCandidates[]` shape). Inherited from the
+   * parent item's resolved priority so the per-candidate channel
+   * cannot disagree with the per-item channel on identical evidence.
+   *
+   * Required — agents budget against this signal and a missing or
+   * `null` value is the dishonest shape per
+   * `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+   * shapes are dishonest." Pre-closure the field was absent from the
+   * checklist candidate shape while the same conceptual candidate on
+   * `scan_file.reviewCandidates[]` shipped a populated value — an
+   * agent walking the candidate from a checklist row alone could not
+   * distinguish "priority unavailable" from "priority absent." Per
+   * AI-first doctrine "Per-tool review-candidate shape must agree
+   * across surfaces" the same `findingId` carries the same priority
+   * regardless of which surface produced it.
+   *
+   * Inheriting from the parent item (rather than re-resolving per
+   * candidate via `resolvePriorityForCandidate`) is the authoritative
+   * shape on the checklist surface: the parent item's priority is
+   * the criterion-level attention budget the surface ranks items by,
+   * and the candidates are the per-finding instantiation of that
+   * criterion — they share the same budget by construction.
+   */
+  readonly priority: ChecklistPriority;
   readonly confidence: ReviewConfidence;
   readonly snippet?: string;
   /**
@@ -1599,12 +1628,26 @@ function buildChecklistMetaField(args: {
   };
 }
 
+/**
+ * Pre-priority shape returned by {@link mapCandidates} /
+ * {@link mapOneCandidate}. The `priority` field is stamped by
+ * {@link buildChecklistItem} after the per-item priority is resolved
+ * via {@link priorityFor} (which depends on the mapped candidate
+ * list — chicken-and-egg). Per `docs/kb/architecture/ai-first-
+ * consumer.md` "Per-tool review-candidate shape must agree across
+ * surfaces" the candidate's `priority` inherits the parent item's
+ * priority by construction; mapping to a pre-priority shape and
+ * stamping at the assembly site keeps the dependency direction
+ * acyclic without re-resolving the priority per candidate.
+ */
+type PrePriorityChecklistCandidate = Omit<ChecklistCandidateOut, "priority">;
+
 function mapCandidates(
   criterionId: string,
   candidates: readonly ReviewCandidate[],
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
-): ChecklistCandidateOut[] {
+): PrePriorityChecklistCandidate[] {
   return candidates
     .filter((c) => c.criterionId === criterionId)
     .map((c) => mapOneCandidate(c, criterionId, sources, buildArtifactPaths));
@@ -1624,7 +1667,7 @@ function mapOneCandidate(
   criterionId: string,
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
-): ChecklistCandidateOut {
+): PrePriorityChecklistCandidate {
   // Compose the structured-evidence-stamp channel that pairs with the
   // per-item priority drop. The same gate that drops priority to
   // `"low"` (per-candidate `vendorPathHint: true` + path in
@@ -1692,7 +1735,7 @@ function mapOneCandidateAdditiveFields(
   snippet: string | undefined,
   couldBeWrongBecause: readonly string[] | null,
   buildArtifactPaths: ReadonlySet<string>,
-): Partial<ChecklistCandidateOut> {
+): Partial<PrePriorityChecklistCandidate> {
   return {
     ...(snippet === undefined ? {} : { snippet }),
     // Pass aggregated siblingOccurrences through to the checklist
@@ -1897,9 +1940,9 @@ function finderOrBuiltSnippet(
  * fast path) — every candidate scores 0 and the upstream order survives.
  */
 function partitionVendorCandidatesLast(
-  mapped: readonly ChecklistCandidateOut[],
+  mapped: readonly PrePriorityChecklistCandidate[],
   buildArtifactPaths: ReadonlySet<string>,
-): ChecklistCandidateOut[] {
+): PrePriorityChecklistCandidate[] {
   if (buildArtifactPaths.size === 0) return [...mapped];
   // Carry the upstream index so the comparator is a stable sort: ties
   // preserve `compareCandidates`'s filename-then-line ordering.
@@ -1934,6 +1977,23 @@ function buildChecklistItem(
   // single "high" hit sizes the item honestly even when other hits
   // are lower-signal.
   const itemConfidence: ReviewConfidence = highestConfidence(mapped) ?? "low";
+  const itemPriority = priorityFor(criterion.level, mapped, buildArtifactPaths);
+  // Stamp the per-item priority onto every candidate so the
+  // per-candidate `priority` channel cannot disagree with the per-item
+  // channel on identical evidence. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+  // candidate shape must agree across surfaces" the same `findingId`
+  // carries the same priority across `scan_file.reviewCandidates[]`,
+  // `scan_project.reviewCandidates[]`, and `checklist.items[].
+  // candidates[]`. Pre-closure the field was absent from the checklist
+  // candidate shape while scan_file's deduped shape populated it — an
+  // agent walking a checklist candidate alone could not distinguish
+  // "priority unavailable" from "priority absent." Inheritance from
+  // the parent item is the authoritative shape on this surface (the
+  // criterion-level priority IS the per-finding priority by
+  // construction). See `tests/integration/mcp-consistency/scan-file-
+  // checklist-candidate-shape.test.ts` for the cross-surface pin.
+  const candidatesWithPriority = mapped.map((c) => ({ ...c, priority: itemPriority }));
   // Attestation surfacing: "surface, don't suppress" — attestations
   // appear on the item so the agent can decide whether to trust or
   // re-verify. They never filter the criterion out. `stale: true`
@@ -1945,10 +2005,10 @@ function buildChecklistItem(
     criterionId: criterion.id,
     title: criterion.title,
     level: criterion.level,
-    priority: priorityFor(criterion.level, mapped, buildArtifactPaths),
+    priority: itemPriority,
     confidence: itemConfidence,
     ...(principle === null ? {} : { principle }),
-    candidates: mapped,
+    candidates: candidatesWithPriority,
     ...(attestation === undefined ? {} : { attestation }),
   };
   if (!isLikelyIrrelevant(criterion.id, applicability)) return { item: base, relevant: true };

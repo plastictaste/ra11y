@@ -99,8 +99,10 @@ interface ChecklistBody {
     readonly priority: string;
     readonly confidence: string;
     readonly candidates: ReadonlyArray<{
+      readonly findingId?: string;
       readonly path: string;
       readonly line: number;
+      readonly priority?: string;
       readonly confidence: string;
     }>;
   }>;
@@ -173,5 +175,24 @@ describe("MCP invariant: scan_file and checklist agree on candidate priority / c
     expect(checklistCandidate).toBeDefined();
     if (checklistCandidate === undefined) return;
     expect(scanEntry.confidence).toBe(checklistCandidate.confidence);
+
+    // Per-candidate priority on the checklist surface mirrors the
+    // per-item priority — and matches scan_file's per-candidate
+    // priority for the same conceptual candidate. Pre-closure the
+    // field was absent from `checklist.items[].candidates[]` while
+    // `scan_file.reviewCandidates[]` shipped a populated value; an
+    // agent walking the checklist candidate alone could not
+    // distinguish "priority unavailable" from "priority absent." Per
+    // AI-first doctrine "Per-tool review-candidate shape must agree
+    // across surfaces" the same `findingId` must carry the same
+    // priority across every surface that ships it. Inheritance from
+    // the parent item is the authoritative shape on this surface
+    // (the criterion-level priority IS the per-finding priority by
+    // construction); the integration assertion is that the field is
+    // present, equal to the parent item's priority, and equal to
+    // scan_file's per-candidate priority on identical evidence.
+    expect(checklistCandidate.priority).toBeDefined();
+    expect(checklistCandidate.priority).toBe(checklistItem.priority);
+    expect(checklistCandidate.priority).toBe(scanEntry.priority);
   });
 });
