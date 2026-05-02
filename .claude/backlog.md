@@ -417,8 +417,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Cross-surface drift (counts + warnings + lane)
 
-- [ ] **Q14-PER-FINDING-CBWB-DIVERGES-CROSS-SURFACE-IDENTICAL-ID** Same `findingId` ships divergent `couldBeWrongBecause` arrays between `scan_project` and `scan_file` on identical file:line — `semantics/landmark-main` on a complete `<!DOCTYPE>+<html>+<body>` document carries `["isolated_component_demo_page","fragment_input_no_document_envelope"]` on scan_project but only `["isolated_component_demo_page"]` on scan_file. Same evidence, two stories. Closure: per-finding cbwb derived from a single shared classifier consumed by both surfaces; integration test pinning equality by `findingId`. Per AI-first doctrine "Cross-surface count invariant" extended to "Per-finding evidence channels must agree across surfaces."
-
 ### Reason / severity / priority / confidence channel mismatch
 
 ### Heuristic-mislabeled meta sub-fields
