@@ -1245,6 +1245,77 @@ describe("buildAnalysisCoverage — hints", () => {
     });
   });
 
+  // Parser-level signal: any scanned `.erb` file whose source carries
+  // an ERB island opener (`<% … %>` / `<%= … %>` / `<%# … %>`) trips
+  // the warning, because the HTML parser's `stripTemplateDirectives`
+  // pass blanks the islands and any aria/role attribute they would
+  // have injected at render time is invisible to the static scan.
+  describe("erb-islands detection", () => {
+    it("flags erbIslandsUnrendered when a .erb file's source contains `<%= … %>`", () => {
+      const erbView = htmlFile(
+        "views/show.erb",
+        "<div <%= aria_attrs %>>\n  <p>Welcome</p>\n</div>\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([erbView], [], NO_RULES, false);
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBe(true);
+      expect(analysisCoverage?.["erbIslandsUnrenderedFiles"]).toEqual(["views/show.erb"]);
+    });
+
+    it("lifts every contributing .erb path onto `erbIslandsUnrenderedFiles`, sorted alphabetically", () => {
+      const editErb = htmlFile("views/edit.erb", "<%= form_for @user do |f| %>\n<% end %>");
+      const showErb = htmlFile("views/show.erb", "<% if current_user %>\n<p>hi</p>\n<% end %>");
+      const layoutErb = htmlFile("layouts/app.erb", "<title><%= @title %></title>");
+      // Plain HTML inside an .erb extension — no opener, so the file
+      // does not enter the per-file list.
+      const staticErb = htmlFile("views/static.erb", "<p>hello world</p>");
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [staticErb, showErb, editErb, layoutErb],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBe(true);
+      expect(analysisCoverage?.["erbIslandsUnrenderedFiles"]).toEqual([
+        "layouts/app.erb",
+        "views/edit.erb",
+        "views/show.erb",
+      ]);
+    });
+
+    it("omits `erbIslandsUnrenderedFiles` entirely when no scanned file ran ERB-island stripping (present-when-meaningful)", () => {
+      const staticErb = htmlFile("views/static.erb", "<p>hello world</p>");
+      const { analysisCoverage } = buildAnalysisCoverage([staticErb], [], NO_RULES, false);
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBeUndefined();
+      expect(analysisCoverage?.["erbIslandsUnrenderedFiles"]).toBeUndefined();
+    });
+
+    it("flags erbIslandsUnrendered on a .erb file with `<% … %>` control flow", () => {
+      const conditional = htmlFile(
+        "views/show.erb",
+        "<% if logged_in? %>\n<p>Welcome back</p>\n<% end %>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([conditional], [], NO_RULES, false);
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBe(true);
+    });
+
+    it("flags erbIslandsUnrendered on a .erb file with `<%# … %>` comment-form islands", () => {
+      const commented = htmlFile("views/show.erb", "<%# legacy auth banner %>\n<p>Welcome</p>\n");
+      const { analysisCoverage } = buildAnalysisCoverage([commented], [], NO_RULES, false);
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBe(true);
+    });
+
+    it("does NOT flag erbIslandsUnrendered on a .html file documenting the syntax (extension gate keeps stray `<%` text out of the signal)", () => {
+      // Without the extension gate, an `.html` page showing ERB
+      // syntax in `<code>` blocks would falsely trip the boolean.
+      const docsPage = htmlFile(
+        "docs/erb-syntax.html",
+        "<p>Use <code>&lt;%= Time.now %&gt;</code> to echo a value.</p>\n",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([docsPage], [], NO_RULES, false);
+      expect(analysisCoverage?.["erbIslandsUnrendered"]).toBeUndefined();
+    });
+  });
+
   // Prose in `.md` / `.markdown` files routinely QUOTES template
   // tokens inside fenced code blocks and inline-code spans. A Jekyll
   // docs page that shows `<%= Time.now %>` as an ERB usage example

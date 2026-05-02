@@ -16,6 +16,7 @@ import { describe, expect, it } from "bun:test";
 import {
   computeScanWarningDetails,
   computeScanWarnings,
+  type ScanWarningCode,
   TRUNCATED_FILES_TOP_DROPPED_RULES_CAP,
   tokenBudgetTruncatedDetailsField,
   truncatedFilesDroppedDetailsField,
@@ -371,6 +372,65 @@ describe("computeScanWarnings", () => {
       filesByExtension: { ".php": 3 },
     });
     expect(explicitFalse).not.toContain("php_islands_stripped");
+  });
+
+  // Parser-level signal that `.erb` files routed through the HTML
+  // parser carried ERB islands the parser blanked. Analogous to
+  // `php_islands_stripped` for ERB substrate — the warning fires off
+  // the boolean alone (no per-finding overlap gate) so the agent
+  // sees the routing-level evidence regardless of whether any rule
+  // emitted on the affected files.
+  it("fires `erb_islands_unrendered` when analysisCoverage.erbIslandsUnrendered is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        erbIslandsUnrendered: true,
+        erbIslandsUnrenderedFiles: ["/p/views/show.erb", "/p/views/edit.erb"],
+      },
+      filesByExtension: { ".erb": 3 },
+    });
+    expect(codes).toContain("erb_islands_unrendered");
+  });
+
+  it("does NOT fire `erb_islands_unrendered` when analysisCoverage.erbIslandsUnrendered is false or absent", () => {
+    const noFlag = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".erb": 3 },
+    });
+    expect(noFlag).not.toContain("erb_islands_unrendered");
+    const explicitFalse = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { erbIslandsUnrendered: false },
+      filesByExtension: { ".erb": 3 },
+    });
+    expect(explicitFalse).not.toContain("erb_islands_unrendered");
+  });
+
+  it("emits `warningsDetails.erb_islands_unrendered` payload with fileCount, fileList, and reason when the warning fires", () => {
+    const codes: ScanWarningCode[] = ["erb_islands_unrendered"];
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 2,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        erbIslandsUnrendered: true,
+        erbIslandsUnrenderedFiles: ["/p/views/edit.erb", "/p/views/show.erb"],
+      },
+      filesByExtension: { ".erb": 2 },
+    });
+    expect(details["erb_islands_unrendered"]).toEqual({
+      fileCount: 2,
+      fileList: ["/p/views/edit.erb", "/p/views/show.erb"],
+      reason:
+        "ERB tags not extracted; rendered output may contain aria/role attributes the static scan misses",
+    });
   });
 
   it("fires `text_source_skipped` when the coverage block reports a non-empty skippedByExtension map", () => {

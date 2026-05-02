@@ -107,6 +107,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
+import { recordErbIslandStripped } from "./analysis-coverage-erb.ts";
 import { assembleFragmentFilesBlock } from "./analysis-coverage-fragments.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
@@ -232,6 +233,37 @@ interface CoverageBlock {
    * the file set.
    */
   phpIslandsStrippedFiles?: readonly string[];
+  /**
+   * true when at least one scanned `.erb` file (Rails / Middleman /
+   * Jekyll ERB template) routed through the HTML parser carried at
+   * least one ERB island opener (`<% … %>` / `<%= … %>` /
+   * `<%# … %>`). Tracked alongside `templateInterpolationFound`
+   * because ERB islands are a parser-level template substrate the
+   * HTML parser's `stripTemplateDirectives` pass blanks before
+   * tokenization. The warnings layer fires `erb_islands_unrendered`
+   * off this flag so an agent reading the response sees the parser-
+   * level evidence that ERB islands were stripped (and any
+   * aria/role/label attribute the island would have injected at
+   * render time is invisible to the static scan). Companion to
+   * `phpIslandsStripped` for PHP substrate. Present-when-meaningful:
+   * omitted when no scanned `.erb` file carried an island opener.
+   */
+  erbIslandsUnrendered?: boolean;
+  /**
+   * Paths of every parsed `.erb` file whose original source contained
+   * at least one ERB island opener. Companion to
+   * `erbIslandsUnrendered`: the boolean is the gate the warnings
+   * layer reads, this list is the per-file evidence lifted onto
+   * `warningsDetails.erb_islands_unrendered.{fileCount, fileList, reason}`.
+   * Sorted alphabetically for deterministic wire output.
+   * Present-when-meaningful: omitted when no scanned file met the
+   * predicate. Per the AI-first doctrine "Empty
+   * `warningsDetails.<code>: {}` is dishonest" — the warning code
+   * declares the parser-level transformation ran; the payload names
+   * which files contributed so an agent reading the warning channel
+   * can scope without re-walking the file set.
+   */
+  erbIslandsUnrenderedFiles?: readonly string[];
   /**
    * true when at least one
    * parsed HTML-family file (including markdown routed through the HTML
@@ -499,6 +531,27 @@ interface CoverageAccumulator {
    * stripping pass," not "this file had N islands."
    */
   readonly phpIslandsStrippedFiles: string[];
+  /**
+   * flipped to true the first time any scanned `.erb` file's source
+   * contains an ERB island opener (`<% … %>` / `<%= … %>` /
+   * `<%# … %>`). Stays a boolean for the warnings predicate
+   * ({@link import("./warnings.ts").ScanWarningCode | erb_islands_unrendered});
+   * per-file evidence accrues alongside in
+   * `erbIslandsUnrenderedFiles` so the warning's
+   * `warningsDetails.erb_islands_unrendered` payload can name which
+   * files contributed without re-walking parsed sources.
+   */
+  erbIslandsUnrendered: boolean;
+  /**
+   * Paths of every scanned `.erb` file whose source contained at
+   * least one ERB island opener. Lifted onto the coverage block as
+   * `erbIslandsUnrenderedFiles` so the warnings-module summarizer can
+   * emit `{fileCount, fileList, reason}` without re-walking parsed
+   * sources. Stays a flat path list — no per-island offsets — because
+   * the parser-level signal is "this file ran through the stripping
+   * pass," not "this file had N islands."
+   */
+  readonly erbIslandsUnrenderedFiles: string[];
   // Per-scan layout-composition evidence accumulated over the file
   // walk; consumed by `markdown-classifier.classifyFragmentKind` to
   // promote `.md` / `.markdown` fragments from
@@ -604,6 +657,8 @@ export function buildAnalysisCoverage(
     frontmatterFenceFiles: [],
     phpIslandsStripped: false,
     phpIslandsStrippedFiles: [],
+    erbIslandsUnrendered: false,
+    erbIslandsUnrenderedFiles: [],
     layoutEvidence: new LayoutEvidenceAccumulator(),
   };
   const wrapperSet = new Set(wrappers);
@@ -668,6 +723,10 @@ export function buildAnalysisCoverage(
     // layer predicate while the path list is the per-file evidence.
     coverage.phpIslandsStripped = true;
     coverage.phpIslandsStrippedFiles = [...acc.phpIslandsStrippedFiles].sort();
+  }
+  if (acc.erbIslandsUnrendered) {
+    coverage.erbIslandsUnrendered = true;
+    coverage.erbIslandsUnrenderedFiles = [...acc.erbIslandsUnrenderedFiles].sort();
   }
   if (acc.parseErrorEntries.length > 0) {
     // this assembler never
@@ -1115,6 +1174,7 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
       acc.phpIslandsStrippedFiles.push(file.filePath);
     }
   }
+  recordErbIslandStripped(file, acc);
   const { isFragment, signals } = classifyFragment(
     file.ast.root as HtmlDocument,
     file.source,

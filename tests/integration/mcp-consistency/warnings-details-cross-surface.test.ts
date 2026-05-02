@@ -106,6 +106,11 @@ interface WarningsEnvelope {
     readonly source_language_unsupported?: { readonly language: string };
     readonly vendor_css_dominates_findings?: { readonly vendorFindingsCount: number };
     readonly response_token_budget_truncated?: { readonly requestedLimit: number };
+    readonly erb_islands_unrendered?: {
+      readonly fileCount: number;
+      readonly fileList: readonly string[];
+      readonly reason: string;
+    };
   };
 }
 
@@ -151,6 +156,31 @@ async function makeSourcemapFixture(): Promise<string> {
   );
   await writeFile(join(dir, "app.css.map"), `{"version":3,"sources":[]}`);
   await writeFile(join(dir, "vendor.js.map"), `{"version":3,"sources":[]}`);
+  return dir;
+}
+
+/**
+ * Fixture seeding `erb_islands_unrendered` — drops two `.erb`
+ * Rails-style view templates carrying `<%= … %>` and `<% … %>`
+ * islands. The HTML parser's `stripTemplateDirectives` pass blanks
+ * the islands so any aria/role/label attribute the islands would
+ * have injected at render time is invisible to the static scan;
+ * the per-file evidence accumulator records both files and the
+ * warning channel surfaces the routing-decision telemetry. Mirrors
+ * `makeSourcemapFixture` shape — also seeds one parseable HTML page
+ * so the response carries the "real scan" framing.
+ */
+async function makeErbIslandsFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-erb-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><img src="a.png" alt="alt"><p>hi</p></body></html>`,
+  );
+  await writeFile(join(dir, "show.erb"), `<div <%= aria_attrs %>>\n  <p>Welcome</p>\n</div>\n`);
+  await writeFile(
+    join(dir, "edit.erb"),
+    `<% if logged_in? %>\n  <button <%= "aria-expanded=#{expanded}" %>>Edit</button>\n<% end %>\n`,
+  );
   return dir;
 }
 
@@ -377,6 +407,74 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
         `scan_file must not emit the discovery-only code ${code}`,
       ).not.toContain(code);
     }
+  });
+
+  it("scan_project, coverage, and checklist emit the same erb_islands_unrendered payload on the same scan root", async () => {
+    // Cross-surface invariant for `erb_islands_unrendered`: the
+    // routing-decision warning fires off a deterministic per-file
+    // predicate (extension is `.erb` AND source carries an island
+    // opener), so every project-rooted tool that walks the same cwd
+    // must surface the same `{fileCount, fileList, reason}` payload.
+    // Mirrors the `sourcemap_files_excluded` / `text_source_skipped`
+    // cross-surface assertions above; without it, an agent calling
+    // `checklist` first on an ERB-heavy Rails corpus would see no
+    // signal that 14 view templates carried unscanned ERB-injected
+    // attributes — the silent-miss failure mode the AI-first doctrine
+    // calls out.
+    const dir = await makeErbIslandsFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "scan_file", { path: join(dir, "show.erb") }),
+    ]);
+    const scanProj = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    const coverage = warningsEnvelope(body<Record<string, unknown>>(responses[2]));
+    const checklist = warningsEnvelope(body<Record<string, unknown>>(responses[3]));
+    const scanFile = warningsEnvelope(body<Record<string, unknown>>(responses[4]));
+
+    // Sanity: predicate fires on scan_project, otherwise the cross-
+    // surface invariant below is vacuously true.
+    expect(scanProj.warnings ?? []).toContain("erb_islands_unrendered");
+
+    const scanProjPayload = scanProj.warningsDetails?.erb_islands_unrendered;
+    const coveragePayload = coverage.warningsDetails?.erb_islands_unrendered;
+    const checklistPayload = checklist.warningsDetails?.erb_islands_unrendered;
+
+    expect(scanProjPayload).toBeDefined();
+    expect(coveragePayload).toBeDefined();
+    expect(checklistPayload).toBeDefined();
+
+    // Same fixture → identical payload across all three project-rooted
+    // surfaces. Cross-surface drift would silently mislead an agent
+    // budgeting against the first tool's headline before calling the
+    // second.
+    expect(coveragePayload).toEqual(scanProjPayload);
+    expect(checklistPayload).toEqual(scanProjPayload);
+
+    // Payload shape sanity — count is 2 (show.erb + edit.erb) and
+    // fileList is sorted ascending so the agent can scope follow-ups
+    // deterministically. The `reason` text names the routing-decision
+    // predicate so the agent has the load-bearing pivot in one read.
+    expect(scanProjPayload?.fileCount).toBe(2);
+    expect(scanProjPayload?.fileList.length).toBe(2);
+    expect(scanProjPayload?.fileList[0]).toMatch(/edit\.erb$/);
+    expect(scanProjPayload?.fileList[1]).toMatch(/show\.erb$/);
+    expect(scanProjPayload?.reason).toMatch(/ERB tags not extracted/);
+
+    // scan_file scopes to one .erb file — the predicate is per-file
+    // (the file's own source carries an opener) so the warning still
+    // fires on the single-file surface, with a count of 1 and a
+    // fileList carrying just the scanned path. Cross-surface payload
+    // shape is identical (same `{fileCount, fileList, reason}` keys),
+    // only the per-file evidence is scoped to the requested path.
+    expect(scanFile.warnings ?? []).toContain("erb_islands_unrendered");
+    const scanFilePayload = scanFile.warningsDetails?.erb_islands_unrendered;
+    expect(scanFilePayload).toBeDefined();
+    expect(scanFilePayload?.fileCount).toBe(1);
+    expect(scanFilePayload?.fileList[0]).toMatch(/show\.erb$/);
+    expect(scanFilePayload?.reason).toBe(scanProjPayload?.reason);
   });
 
   it("payload-bearing codes never ship a bare `{}` detail entry — fall-through stamps the truncation sentinel instead", async () => {

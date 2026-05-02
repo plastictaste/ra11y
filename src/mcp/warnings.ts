@@ -706,7 +706,37 @@ export type ScanWarningCode =
   // NOT parse. Both can fire on the same scan when an
   // `additionalPaths` invocation pulls some compiled output into
   // scope while other build directories stay excluded.
-  | "default_excluded_artifact_paths";
+  | "default_excluded_artifact_paths"
+  // at least one scanned `.erb` file (Rails / Middleman / Jekyll
+  // ERB template) was routed through the HTML parser. The parser's
+  // `stripTemplateDirectives` pass blanks `<%= … %>` / `<% … %>` /
+  // `<%# … %>` islands so the rest of the file parses as HTML, but
+  // any aria/role/label attribute the ERB island would have injected
+  // at render time (`<div <%= aria_attrs %>>`,
+  // `<button <%= "aria-expanded=#{expanded}" %>>`,
+  // `<input <%= disabled_attr %>>`) is invisible to the static scan —
+  // every rule that depends on the rendered attribute set silently
+  // misses findings on these files. Adjacent shape to
+  // `js_innerhtml_template_literal_unparsed`: the static scanner ran,
+  // the parser succeeded, but a routing-level transform dropped the
+  // dynamic content the rules need. Surfaced as an additive scan-
+  // confidence label (no behavioral change) per AI-first doctrine
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" — the agent reading the warning channel can decide
+  // whether to spot-check the cited files for ERB-injected aria
+  // attributes before trusting "no findings here." Distinct from
+  // `template_files_parsed_as_literal`: that code names files where
+  // template tokens FLOWED THROUGH the parser as literal text and
+  // intersected an emitted finding's line; this code names the
+  // parser-level evidence that ERB islands were stripped (analogous
+  // to `php_islands_stripped` for PHP substrate). Paired meta:
+  // `meta.analysisCoverage.erbIslandsUnrendered` carries the boolean;
+  // `meta.analysisCoverage.erbIslandsUnrenderedFiles` carries the
+  // sorted-ascending per-file evidence list. Paired payload:
+  // `warningsDetails.erb_islands_unrendered` carries
+  // `{ fileCount, fileList, reason }` so the agent has the load-
+  // bearing pivot in one read.
+  | "erb_islands_unrendered";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -2410,6 +2440,40 @@ export interface ScanWarningDetails {
     readonly topFiles: readonly string[];
     readonly extensions: readonly string[];
   };
+  /**
+   * Payload for `erb_islands_unrendered`. Names every scanned `.erb`
+   * file (Rails / Middleman / Jekyll ERB template) routed through the
+   * HTML parser whose source carried at least one ERB island
+   * (`<% … %>` / `<%= … %>` / `<%# … %>`). The HTML parser's
+   * `stripTemplateDirectives` pass blanks the islands so the rest of
+   * the file parses, but any aria/role/label attribute the island
+   * would have injected at render time is invisible to the static
+   * scan. The agent reads `fileList` to decide whether to spot-check
+   * the cited files for ERB-injected aria attributes before trusting
+   * "no findings here."
+   *
+   *   - `fileCount` — total count of contributing `.erb` files in
+   *     this scan. Always carries the full count (not capped) so the
+   *     scalar reads honestly off the warning channel.
+   *   - `fileList` — sorted-ascending absolute paths of every
+   *     contributing file. No top-N cap — the agent reads the full
+   *     list so it can scope follow-up reads / narrow `additionalPaths`
+   *     against the substrate. Mirrors `phpIslandsStrippedFiles`'s
+   *     surface contract.
+   *   - `reason` — deterministic prose naming the predicate that
+   *     fired so the agent has the load-bearing routing pivot in one
+   *     read.
+   *
+   * Per the AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires; the bare `{}`
+   * shape would deny the agent any way to triage which substrate
+   * subset drove the warning.
+   */
+  readonly erb_islands_unrendered?: {
+    readonly fileCount: number;
+    readonly fileList: readonly string[];
+    readonly reason: string;
+  };
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
@@ -2835,6 +2899,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "coverage_confidence_uniformly_high_with_parse_errors",
   "scan_file_parser_bail_no_findings",
   "default_excluded_artifact_paths",
+  "erb_islands_unrendered",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3106,6 +3171,23 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // analogous to `storybook_preset_active` / `scanned_build_artifacts_present`,
     // not per-finding noise.
     out.push("php_islands_stripped");
+  }
+  if (hasErbIslandsUnrendered(inputs.analysisCoverage)) {
+    // fires whenever the HTML parser's `stripTemplateDirectives` pass
+    // blanked at least one ERB island (`<% … %>` / `<%= … %>` /
+    // `<%# … %>`) in a scanned `.erb` file. Distinct from
+    // `php_islands_stripped` (PHP substrate, where the parsePhp
+    // adapter does the stripping): this code names the ERB substrate
+    // where the HTML parser itself does the stripping. The dynamic
+    // attribute / fragment content the ERB island would have injected
+    // at render time (`<div <%= aria_attrs %>>`) is invisible to the
+    // static scan — every aria/role/label rule on the file silently
+    // misses the rendered shape. Surfaced as additive scan-
+    // confidence telemetry per AI-first doctrine "Routing skips that
+    // drop content are the symmetric twin of suppression" so the
+    // agent can spot-check the cited files before trusting "no
+    // findings here."
+    out.push("erb_islands_unrendered");
   }
   if (inputs.scannedBuildArtifactsPresent === true) {
     // The detector uses deterministic signals (escape-bracket Tailwind
@@ -3745,6 +3827,20 @@ function hasPhpIslandsStripped(coverage: Record<string, unknown> | undefined): b
 }
 
 /**
+ * returns `true` when the coverage block reports at least one
+ * scanned `.erb` file ran through the HTML parser's
+ * `stripTemplateDirectives` pass on a source carrying ERB islands
+ * (`<% … %>` / `<%= … %>` / `<%# … %>`). The signal is parser-level
+ * (analogous to {@link hasPhpIslandsStripped} for PHP substrate) and
+ * fires whenever the boolean is set; no overlap gate — see the
+ * `erb_islands_unrendered` warning code for the rationale.
+ */
+function hasErbIslandsUnrendered(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  return coverage["erbIslandsUnrendered"] === true;
+}
+
+/**
  * Combined predicate for the `template_files_parsed_as_literal` code.
  * Two independent emission paths:
  *
@@ -4133,6 +4229,10 @@ function buildScanWarningDetailsDispatch(
     {
       code: "php_islands_stripped",
       summarize: () => summarizePhpIslandsStripped(inputs.analysisCoverage),
+    },
+    {
+      code: "erb_islands_unrendered",
+      summarize: () => summarizeErbIslandsUnrendered(inputs.analysisCoverage),
     },
     {
       code: "scanned_build_artifacts_present",
@@ -5072,6 +5172,55 @@ function summarizePhpIslandsStripped(coverage: Record<string, unknown> | undefin
     fileCount: files.length,
     topFiles: files.slice(0, PHP_ISLANDS_TOP_FILES_CAP),
     extensions: [...extSet].sort(),
+  };
+}
+
+/**
+ * Stable reason text shipped on
+ * `warningsDetails.erb_islands_unrendered.reason`. Kept as a module-
+ * level constant so callers reading the reason string can branch on
+ * exact identity (and tests pin it with one assertion). The text
+ * names the predicate that fired — ERB tags were stripped by the
+ * HTML parser — and the silent-miss failure mode it implies — render-
+ * time aria/role/label attributes are invisible to the static scan —
+ * so the agent has the load-bearing routing pivot in one read.
+ */
+export const ERB_ISLANDS_UNRENDERED_REASON =
+  "ERB tags not extracted; rendered output may contain aria/role attributes the static scan misses";
+
+/**
+ * Builds the `erb_islands_unrendered` payload from the coverage
+ * block's `erbIslandsUnrenderedFiles` list. Returns `undefined` when
+ * the field is absent, malformed, or empty so the dispatch table
+ * falls through to the disambiguating fall-through marker (the
+ * warning code's predicate guarantees at least one `.erb` file ran
+ * the stripping pass when the code fired, but the helper stays
+ * defensive — same contract as {@link summarizePhpIslandsStripped}).
+ *
+ * `fileCount` carries the full count off the path-list length (no
+ * cap — the agent reads the full set so it can scope follow-up
+ * reads / narrow `additionalPaths` honestly). `fileList` carries the
+ * sorted-ascending path list verbatim — the accumulator already
+ * sorts deterministically. `reason` is the stable
+ * {@link ERB_ISLANDS_UNRENDERED_REASON} text naming the routing-
+ * decision predicate so the agent's load-bearing pivot is one read
+ * away. Pure shape-builder.
+ */
+function summarizeErbIslandsUnrendered(
+  coverage: Record<string, unknown> | undefined,
+): NonNullable<ScanWarningDetails["erb_islands_unrendered"]> | undefined {
+  if (coverage === undefined) return undefined;
+  const raw = coverage["erbIslandsUnrenderedFiles"];
+  if (!Array.isArray(raw)) return undefined;
+  const files: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0) files.push(entry);
+  }
+  if (files.length === 0) return undefined;
+  return {
+    fileCount: files.length,
+    fileList: files,
+    reason: ERB_ISLANDS_UNRENDERED_REASON,
   };
 }
 
