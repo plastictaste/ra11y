@@ -15,3 +15,4 @@
 # DO NOT EDIT existing lines. The meta-reviewer appends only (`>>`).
 # Header lines (this block) survive forever; data lines below.
 2026-05-02T18:42:10Z	203b18a9	verify_flaky_mcp_subprocess	no_effect	pre=0.17	post=0.50	window=10
+2026-05-02T19:22:34Z	7a836abd	verify_flaky_mcp_subprocess	no_effect	pre=0.20	post=0.50	window=10
