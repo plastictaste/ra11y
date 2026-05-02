@@ -50,14 +50,26 @@
  *     site, per the AI-first "Reason text and severity must agree"
  *     doctrine.
  *
- * Cross-file scope:
+ * Evidence-model scope:
  *
- *   - The mirror search is single-file. A `:focus-within` rule in a
- *     different `.css` file imported via `@import` would not satisfy
- *     this predicate. Marked `crossFileCapable: false` so the per-rule
- *     coverage row honestly downgrades to `"medium"` confidence on
- *     single-file substrates per ADR 0026, rather than asserting
- *     `"high"` and silently miscalibrating the agent.
+ *   - The rule's predicate is purely intra-file CSS: it pairs a
+ *     `:hover` selector against sibling `:focus` / `:focus-within`
+ *     selectors in the same stylesheet. The WCAG predicate is "does a
+ *     keyboard-equivalent selector exist," and authoring convention
+ *     places the focus mirror in the same rule block (comma-separated
+ *     selector list) or in an adjacent block within the same file.
+ *     The rule does NOT declare `crossFileCapable: false` — that flag
+ *     would route a `cross_file_evidence_bounded_not_attempted_by_rule`
+ *     token onto every per-finding `couldBeWrongBecause`, mislabeling
+ *     a rule whose evidence model has no cross-file dimension at all.
+ *     Per AI-first doctrine "Reason-token suffixes must name the
+ *     actual predicate" — the cross-file token would lie about a
+ *     rule that intra-file covers its predicate fully. (A focus
+ *     mirror written in a separately-imported stylesheet is an
+ *     unusual authoring pattern; the agent reads the cited file and
+ *     decides per finding rather than relying on a corpus-level
+ *     downgrade that paints every emission with cross-file
+ *     uncertainty the rule does not actually have.)
  */
 
 import { defineRule } from "../../api/plugin.ts";
@@ -100,10 +112,15 @@ export const rule = defineRule({
   appliesTo: {
     fileExtensions: [".css", ".scss", ".less"],
   },
-  // Mirror search is in-file only — `@import`ed siblings are out of
-  // scope and the agent reading the consumer site is the correct
-  // arbiter. Honest downgrade per ADR 0026.
-  crossFileCapable: false,
+  // `crossFileCapable` is intentionally unset: the rule's predicate is
+  // intra-file CSS — pairing a `:hover` selector against sibling
+  // `:focus` / `:focus-within` selectors within the same stylesheet.
+  // No cross-file evidence model applies; declaring
+  // `crossFileCapable: false` here would attach
+  // `cross_file_evidence_bounded_not_attempted_by_rule` to every
+  // per-finding `couldBeWrongBecause`, mislabeling a rule whose
+  // evidence model has no cross-file dimension. See the "Evidence-
+  // model scope" section in the file header.
   docs: {
     description:
       "CSS :hover rules that mutate transform/opacity/visibility/display must have a paired :focus or :focus-within mirror so keyboard users can trigger the same reveal.",
@@ -124,14 +141,11 @@ export const rule = defineRule({
     if (ctx.language !== "css") return;
     const stylesheet = ctx.ast as CssStylesheet;
     const allRules = [...walkCssRules(stylesheet)];
-    // Cross-file-candidate signal: any `:hover` rule in this stylesheet
-    // is a token whose focus mirror might live in a sibling stylesheet
-    // imported via `@import` or layered after this file. Stylesheets
-    // with zero `:hover` rules carry no cross-file question —
-    // confidence stays `"high"`.
-    if (allRules.some((r) => HOVER_PSEUDO_RE.test(r.selector))) {
-      ctx.markCrossFileCandidate?.();
-    }
+    // No `markCrossFileCandidate` call: this rule's evidence model is
+    // intra-file. Calling it would attach the
+    // `cross_file_evidence_bounded_not_attempted_by_rule` token to
+    // every per-finding `couldBeWrongBecause` — see the "Evidence-
+    // model scope" section in the file header for the full rationale.
     for (const cssRule of allRules) {
       if (!HOVER_PSEUDO_RE.test(cssRule.selector)) continue;
       const mutatedProps = listLayoutMutations(cssRule);

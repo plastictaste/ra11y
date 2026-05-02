@@ -1171,6 +1171,84 @@ describe("per-rule coverage end-to-end", () => {
       expect(ruleCoverage.lowConfidenceClean).not.toContain(targetRuleId);
     }
   });
+
+  // Intra-file-predicate rules must NOT carry the cross-file evidence
+  // bound token — doctrine source: docs/kb/architecture/ai-first-consumer.md
+  // "Reason-token suffixes must name the actual predicate."
+  // `keyboard/hover-only-no-focus-mirror` evaluates a `:hover` selector
+  // against sibling `:focus` / `:focus-within` selectors in the same
+  // stylesheet. Its evidence model has no cross-file dimension —
+  // declaring `crossFileCapable: false` would attach the generic
+  // `cross_file_evidence_bounded_not_attempted_by_rule` token to every
+  // per-finding `couldBeWrongBecause`, mislabeling a rule whose
+  // predicate the agent verifies entirely from the cited file. The
+  // regression locks in the closure: the token must not surface on
+  // findings emitted by this rule, and the per-rule coverage row must
+  // stay `"high"` (no spurious downgrade).
+  it("keyboard/hover-only-no-focus-mirror per-finding cbwb omits the cross-file evidence token (intra-file predicate)", () => {
+    const styles = `.movie:hover .overview { transform: translateY(0); }\n`;
+    const files = [cssFile("styles/movie.css", styles)];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+
+    const ruleId = "keyboard/hover-only-no-focus-mirror";
+    // Sanity: the rule fired on the fixture (one `:hover` rule mutating
+    // `transform` with no focus mirror) — the regression invariants
+    // below would be vacuous if the rule didn't emit at all.
+    const finding = response.files.flatMap((f) => f.findings).find((v) => v.ruleId === ruleId);
+    expect(finding).toBeDefined();
+
+    // Closure invariant: the per-finding `couldBeWrongBecause` MUST NOT
+    // include the cross-file evidence token. The rule's predicate is
+    // intra-file CSS; the token would lie about the actual evidence
+    // model.
+    expect(finding!.couldBeWrongBecause ?? []).not.toContain(
+      "cross_file_evidence_bounded_not_attempted_by_rule",
+    );
+
+    // Counter-axis: the per-rule coverage row stays `"high"` (no spurious
+    // cross-file downgrade). A `"medium"` row carrying the cross-file
+    // reason would be the upstream half of the same lie the per-finding
+    // assertion above guards against.
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    const row = adjustedRows.find((r) => r.ruleId === ruleId);
+    expect(row).toBeDefined();
+    expect(row!.coverageConfidence).toBe("high");
+    expect(row!.coverageConfidenceReason).toBeUndefined();
+  });
 });
 
 /**
