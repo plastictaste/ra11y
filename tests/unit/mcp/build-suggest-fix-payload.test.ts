@@ -206,11 +206,18 @@ describe("buildSuggestFixPayload — verifyCommand on kind: 'none'", () => {
     expect(payload).not.toHaveProperty("verifyCommandStructured");
   });
 
-  it("still emits the prose explanation + low-confidence header on kind: 'none' (omission is scoped to verify only)", () => {
+  it("emits the prose explanation but OMITS confidence on kind: 'none' (confidence is structurally undefined on the negative answer)", () => {
+    // Doctrine: `confidence` grades how confident a fix recommendation
+    // is — structurally undefined when there is no fix. "Low confidence
+    // we have no fix" is a category error. Per CLAUDE.md §1 "Ambiguous
+    // field shapes are dishonest" + "Sibling fields naming the same
+    // concept must use one shape": confidence belongs with positive
+    // answers (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`),
+    // never with `kind: "none"`.
     const payload = buildSuggestFixPayload(baseArgs(undefined));
     expect(payload["kind"]).toBe("none");
     expect(typeof payload["explanation"]).toBe("string");
-    expect(payload["confidence"]).toBe("low");
+    expect(payload).not.toHaveProperty("confidence");
   });
 });
 
@@ -344,13 +351,13 @@ describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean br
     expect(dym[2]).toEqual({ ruleId: RULE_ID, line: 12 });
   });
 
-  it("breadcrumb fields are siblings of explanation + confidence (not nested)", () => {
+  it("breadcrumb fields are siblings of explanation (confidence is omitted on kind: 'none')", () => {
     const payload = buildSuggestFixPayload(
       baseArgs(undefined, { sameFileFindings: [findingAt(5)] }),
     );
     expect(payload["kind"]).toBe("none");
     expect(typeof payload["explanation"]).toBe("string");
-    expect(payload["confidence"]).toBe("low");
+    expect(payload).not.toHaveProperty("confidence");
     expect(payload["nearestFinding"]).toEqual({ ruleId: RULE_ID, line: 5 });
   });
 

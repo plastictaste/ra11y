@@ -493,13 +493,21 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(fix as Record<string, unknown>).not.toHaveProperty("verifyCommand");
   });
 
-  it("suggest_fix OMITS verifyCommandStructured on kind: 'none'", async () => {
+  it("suggest_fix OMITS verifyCommandStructured AND confidence on kind: 'none'", async () => {
     // When no violation exists at the cited line, the response is
     // `kind: "none"` and OMITS `verifyCommandStructured`. A populated
     // verify hint next to "no finding here" is indistinguishable from
     // "you already fixed it and verified" — the omission keeps the
     // response honest (CLAUDE.md §1 "Ambiguous field shapes are
     // dishonest").
+    //
+    // The same response also OMITS `confidence`. The field grades how
+    // confident a fix recommendation is — structurally undefined when
+    // there is no fix. "Low confidence we have no fix" is a category
+    // error. Per "Sibling fields naming the same concept must use one
+    // shape": confidence belongs with positive answers (`kind: "edit"`
+    // / `"guidance"` / `"suppress-recommended"`), never with `kind:
+    // "none"`.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {
@@ -513,6 +521,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(fix["kind"]).toBe("none");
     expect(fix).not.toHaveProperty("verifyCommand");
     expect(fix).not.toHaveProperty("verifyCommandStructured");
+    expect(fix).not.toHaveProperty("confidence");
   });
 
   it("suggest_fix returns kind: 'edit' with non-empty oldText/newText for a mechanical rule", async () => {

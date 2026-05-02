@@ -8,12 +8,19 @@
  *     verified," which is indistinguishable from "the finding never
  *     existed at this location." The verify hint is present-when-
  *     meaningful — only the lanes that actually applied a fix carry it.
- *     See CLAUDE.md §1 "Ambiguous field shapes are dishonest." When the
- *     per-file finding list carries one or more same-rule findings
- *     within ±NEAREST_FINDING_WINDOW lines of the requested line, the
- *     response gets a `nearestFinding: { ruleId, line }` (single match)
- *     or `didYouMean[]` (multi match) breadcrumb so paginated scans /
- *     line-drift / rule renames don't produce a dead-end response.
+ *     ALSO OMITS `confidence`: the field grades how confident a fix
+ *     recommendation is, which is structurally undefined on the
+ *     negative answer. "Low confidence we have no fix" is a category
+ *     error — confidence belongs with positive answers (`kind:
+ *     "edit"` / `"guidance"` / `"suppress-recommended"`), not with
+ *     `kind: "none"`. See CLAUDE.md §1 "Ambiguous field shapes are
+ *     dishonest" + "Sibling fields naming the same concept must use
+ *     one shape." When the per-file finding list carries one or more
+ *     same-rule findings within ±NEAREST_FINDING_WINDOW lines of the
+ *     requested line, the response gets a `nearestFinding: { ruleId,
+ *     line }` (single match) or `didYouMean[]` (multi match)
+ *     breadcrumb so paginated scans / line-drift / rule renames don't
+ *     produce a dead-end response.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
  *     `primary.edit`; the agent can apply it via Edit directly. The
  *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
@@ -192,7 +199,19 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     return {
       kind: "none",
       explanation,
-      confidence: "low",
+      // `confidence` is OMITTED on `kind: "none"`. The field is
+      // semantically meaningful only on the positive answers
+      // (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`)
+      // where it grades how confident the fix recommendation is.
+      // "Low confidence we have no fix" is a category error — the
+      // negative answer is "no violation matches at the queried
+      // location," and confidence on that statement is structurally
+      // undefined. Per CLAUDE.md §1 "Ambiguous field shapes are
+      // dishonest" + "Sibling fields naming the same concept must
+      // use one shape": a field that's sometimes meaningful and
+      // sometimes a category error forces the agent to disambiguate
+      // and the silent-miss failure mode is identical to the
+      // `newText: ""` / `snippet: ""` mistakes.
       ...inheritedSpread,
       ...nearestSpread,
       ...warningsField,
