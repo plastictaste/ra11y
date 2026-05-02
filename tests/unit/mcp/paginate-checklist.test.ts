@@ -37,6 +37,11 @@ function makeItem(
     path: `${criterionId}-${i}.tsx`,
     line: i + 1,
     reason: "manual review candidate",
+    // Inherits the parent item's priority per the candidate-priority
+    // contract (see `tool-checklist.ts#buildChecklistItem`); mock
+    // matches the live shape so pagination tests reflect production
+    // payloads.
+    priority: "high" as const,
     confidence,
     suppressWith: `{/* ra11y-disable ${criterionId} */}`,
   }));

@@ -133,6 +133,10 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
           path: `file-${i}.tsx`,
           line: i + 1,
           reason: "manual review candidate",
+          // Inherits the parent item's priority per the candidate-
+          // priority contract (see `tool-checklist.ts#buildChecklistItem`);
+          // mock matches the live shape.
+          priority: "high" as const,
           confidence: "medium" as const,
           suppressWith: "{/* ra11y-disable wcag22:2.4.5 */}",
         })),
