@@ -40,6 +40,12 @@ export { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLi
 // stamping `plan.findingsByFile` next to `withTopRules` on one import.
 // biome-ignore format: kept on one line for the file-line budget
 export { computeFindingsByFile, FINDINGS_BY_FILE_DEFAULT_LIMIT, type FindingsByFileEntry, withFindingsByFile } from "./findings-by-file.ts";
+// Re-export from `./top-directories.ts` — same file-size-budget split
+// rationale as findings-by-file. Keeps callers stamping
+// `plan.topDirectories` next to `withTopRules` and `withFindingsByFile`
+// on one import — the three rank-ordered headline-rollup helpers.
+// biome-ignore format: kept on one line for the file-line budget
+export { computeTopDirectories, TOP_DIRECTORIES_DEFAULT_LIMIT, type TopDirectoryEntry, withTopDirectories } from "./top-directories.ts";
 // Re-export the linked-stylesheet detector + its result shape so call
 // sites that already import from `scan-assembly.ts` (response-assembler,
 // scan-time-warnings, tool-scan-project) keep one canonical entry

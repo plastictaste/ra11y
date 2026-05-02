@@ -50,6 +50,7 @@ import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
   withFindingsByFile,
+  withTopDirectories,
   withTopRules,
   withViolationsByScanKind,
 } from "./scan-assembly.ts";
@@ -361,12 +362,26 @@ export const scanProjectTool: McpTool = {
     const formattedWithScanKind: ScanFormatted = {
       ...formatted,
       plan: withByGroup(
-        withFindingsByFile(
-          withTopRules(
-            withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+        // stamp `plan.topDirectories` —
+        // the per-first-child-dir rank-ordered rollup that lets the
+        // agent triaging a mono-repo of mini-projects (50 demos, an N-
+        // template catalog) pick the dominant sub-tree in one read.
+        // The orthogonal axis to `topRules` (per-rule) and
+        // `findingsByFile` (per-file): same severity filter, same
+        // whole-scan framing, different aggregation key. Identity-
+        // stable when no error/warning findings emerged or when every
+        // finding falls in one bucket — the no-rank-to-expose case the
+        // helper short-circuits to keep the wire shape honest.
+        withTopDirectories(
+          withFindingsByFile(
+            withTopRules(
+              withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+              formatted.files,
+            ),
             formatted.files,
           ),
           formatted.files,
+          root,
         ),
         formatted.files,
         root,

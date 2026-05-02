@@ -789,6 +789,24 @@ const SLIM_TOP_RULES_CAP = 3;
 const SLIM_FINDINGS_BY_FILE_CAP = 3;
 
 /**
+ * Head-slice cap for `plan.topDirectories` on the slim envelope. The
+ * full rollup carries up to {@link import("./scan-assembly.ts").TOP_DIRECTORIES_DEFAULT_LIMIT}
+ * (10) entries at ~80–140 chars each, accounting for ~1.4KB on the
+ * wire. The slim path keeps the top-3 so the agent still sees the
+ * dominant sub-trees ("scope down to this project") without paying the
+ * long-tail cost; the truncated count lands in
+ * `warningsDetails.response_dropped_files_oversize.slimTruncations`. The
+ * `topDirectoriesTruncated: true` companion flag — already stamped by
+ * `withTopDirectories` whenever the full-rollup head-slice clipped a
+ * longer tail — is preserved on the slim plan; the slim path's further
+ * head-slice is reported through `slimTruncations` rather than
+ * overloading the same boolean. Mirrors `SLIM_FINDINGS_BY_FILE_CAP` so
+ * the rank-ordered headline rollups all trim symmetrically under the
+ * slim regime.
+ */
+const SLIM_TOP_DIRECTORIES_CAP = 3;
+
+/**
  * Head-slice cap for `warningsDetails.bulk_catalog_detected.suggestedExcludes`
  * on the slim envelope. The full list mirrors the top vendor basenames
  * the scan saw — typically 5–20 globs on a bulk-template corpus. Keeping
@@ -817,15 +835,18 @@ interface SlimTruncationEntry {
 
 /**
  * Head-slices verbose arrays on the `plan` block that survive the slim
- * envelope's drop of `files[]` and the meta-key trim. Two `plan` fields
- * grow linearly with input fan-out today:
+ * envelope's drop of `files[]` and the meta-key trim. Three `plan`
+ * fields grow linearly with input fan-out today:
  *
  *   - `plan.topRules` — one entry per distinct rule that fired (rule
  *     fan-out axis).
  *   - `plan.findingsByFile` — one entry per file with at least one
  *     error/warning finding (file fan-out axis).
+ *   - `plan.topDirectories` — one entry per first-child-dir bucket
+ *     with at least one error/warning finding (sub-tree fan-out axis;
+ *     the headline that exposes the dominant project on a mono-repo).
  *
- * Each gets its own cap; the truncations array reports both fields
+ * Each gets its own cap; the truncations array reports each field
  * independently so `slimTruncations` carries the per-field shown/total
  * pair the agent can act on. Returns a `{ plan, truncations }` pair so
  * the caller threads the truncation summary into the warnings-channel
@@ -851,6 +872,7 @@ function slimPlanForSlimEnvelope(plan: Record<string, unknown>): {
   };
   slimField("topRules", SLIM_TOP_RULES_CAP);
   slimField("findingsByFile", SLIM_FINDINGS_BY_FILE_CAP);
+  slimField("topDirectories", SLIM_TOP_DIRECTORIES_CAP);
   return { plan: next, truncations };
 }
 
