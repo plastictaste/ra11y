@@ -5473,9 +5473,9 @@ function summarizeSkippedSubset(
   return {
     extensions: extensions.map(([ext]) => ext),
     ...(noExtensionFiles.length > 0 ? { noExtensionFiles } : {}),
-    ...(topExtensionEntry !== undefined
-      ? { topExtension: topExtensionEntry[0], topCount: topExtensionEntry[1] }
-      : {}),
+    ...(topExtensionEntry === undefined
+      ? {}
+      : { topExtension: topExtensionEntry[0], topCount: topExtensionEntry[1] }),
     totalSkipped,
   };
 }
