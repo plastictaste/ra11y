@@ -2062,6 +2062,179 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(partial?.[0]?.parsedThroughLine).toBeUndefined();
       expect(Object.hasOwn(partial?.[0] ?? {}, "parsedThroughLine")).toBe(false);
     });
+
+    // Q14 closure: SSG include / layout partials at recognized
+    // convention paths whose source lacks an `<html>` opener route to
+    // `fragmentFiles[]` with kind `layout_include_partial` (the
+    // stronger upstream classification) and stay OUT of
+    // `parseErrorFiles[]`. Same precedent as the SCSS-partial /
+    // build-artifact carve-outs: a stronger upstream classification
+    // suppresses the less-informative parse-error narrative. The
+    // two-signal AND (path pattern + fragment-shape) keeps the gate
+    // honest per AI-first doctrine "Heuristic-mislabeled meta sub-
+    // fields are dishonest."
+    it("routes _includes/<name>.html with parse errors into fragmentFiles, NOT parseErrorFiles", () => {
+      // Jekyll `_includes/header.html` partial whose own tag balance
+      // legitimately depends on the parent layout: opens `<header>`
+      // and a `<div>` whose closer is supplied by a sibling
+      // `_includes/footer.html`. The HTML parser surfaces an
+      // "Unclosed `<div>` element" reason — that reason is honestly
+      // wrong, the `<div>` IS closed once the partial composes.
+      const partial: ParsedFile = {
+        filePath: "_includes/header.html",
+        source: "<header><div><h1>Site</h1>",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unclosed <div> element",
+              position: { line: 1, column: 12, offset: 11 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [partial],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      // Parse-error counter STAYS present-and-zero (Q9 invariant) but
+      // the path is absent from the bucket — the file was gated out
+      // by the include-partial classification.
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(0);
+      expect(analysisCoverage?.["parseErrorFiles"]).toBeUndefined();
+      // Fragment classification fires alongside (the file is HTML,
+      // has no `<html>` opener, lives at an SSG include path) so the
+      // upstream classification surfaces the file via the honest
+      // narrative.
+      expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "_includes/header.html",
+          kind: "layout_include_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ]);
+    });
+
+    it("does NOT gate out HTML files outside SSG-convention paths even when they parse-error", () => {
+      // `widgets/card.html` matches no recognized SSG include /
+      // partial path convention, so the
+      // `looksLikeHtmlIncludePartialPath` gate stays off and the file
+      // routes through the conventional parse-error path. A
+      // genuinely-broken non-convention HTML file should NOT silently
+      // disappear into the fragment bucket.
+      const broken: ParsedFile = {
+        filePath: "widgets/card.html",
+        source: "<article><h2>Broken",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unclosed <h2> element",
+              position: { line: 1, column: 11, offset: 10 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [broken],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      // Path-pattern gate misses → routes through conventional
+      // parse-error bucket as before.
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
+      const entries = analysisCoverage?.["parseErrorFiles"] as
+        | readonly { path: string }[]
+        | undefined;
+      expect(entries?.map((e) => e.path)).toEqual(["widgets/card.html"]);
+    });
+
+    it("does NOT gate out HTML files at convention paths whose source declares <html>", () => {
+      // A `_includes/full.html` (rare but observed: include partials
+      // that author a complete document for testing or sandboxed
+      // rendering) DOES carry an `<html>` opener — the
+      // fragment-shape signal of the two-signal AND fails, so the
+      // gate stays off and the parse error surfaces honestly. The
+      // file would NOT classify as a fragment either (the `<html>`
+      // opener vetoes per `classifyFragment`), so the agent sees the
+      // genuine parser failure rather than a silent miss.
+      const partialWithHtml: ParsedFile = {
+        filePath: "_includes/full.html",
+        source: "<html><head><title>Broken",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "Unclosed <title> element",
+              position: { line: 1, column: 14, offset: 13 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [partialWithHtml],
+        [],
+        NO_RULES,
+        true,
+        0,
+        undefined,
+        undefined,
+        new Set<string>(),
+      );
+      // Source-level `<html>` opener fails the fragment-shape leg of
+      // the two-signal AND, so the parse error surfaces.
+      expect(analysisCoverage?.["parseErrorFileCount"]).toBe(1);
+      const entries = analysisCoverage?.["parseErrorFiles"] as
+        | readonly { path: string }[]
+        | undefined;
+      expect(entries?.map((e) => e.path)).toEqual(["_includes/full.html"]);
+    });
   });
 
   describe("fragmentFiles telemetry", () => {
@@ -2085,7 +2258,10 @@ describe("buildAnalysisCoverage — hints", () => {
       // `_includes/` is NOT a "layouts dir" under the shared classifier
       // (only `_layouts/` and `layouts/` are), so a partial here still
       // classifies as a fragment when its source has no `<html>` opener
-      // and no layout-shape composition directive.
+      // and no layout-shape composition directive. Kind promotes to
+      // `layout_include_partial` because the path matches an SSG
+      // include convention AND the source lacks `<html>` (two-signal
+      // AND per AI-first doctrine).
       const fragment = parsedHtml(
         "_includes/header.html",
         '<nav><a href="/">Home</a><a href="/about">About</a></nav>',
@@ -2095,7 +2271,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/header.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -2106,21 +2282,99 @@ describe("buildAnalysisCoverage — hints", () => {
     });
 
     // Discriminator: `analysisCoverage.fragmentFiles[]` previously
-    // surfaced a flat path list, but the bucket conflated three
-    // categorically-different shapes — HTML partials, markdown
-    // residue (`.md`/`.markdown` HTML-routed per ADR 0025), and
-    // standalone SVG icons (`.svg` HTML-routed per
-    // `src/input/parsers/svg.ts`). Each warrants different downstream
-    // rule-skipping; per AI-first consumer doctrine
-    // "Heuristic-mislabeled meta sub-fields are dishonest" the
-    // discriminator is extension-only (provable from the evidence the
-    // scanner has).
-    it("tags Jekyll _includes/ HTML partials as kind: html_partial", () => {
+    // surfaced a flat path list, but the bucket conflated four
+    // categorically-different shapes — convention-path HTML include
+    // partials, generic HTML fragments, markdown residue
+    // (`.md`/`.markdown` HTML-routed per ADR 0025), and standalone
+    // SVG icons (`.svg` HTML-routed per `src/input/parsers/svg.ts`).
+    // Each warrants different downstream rule-skipping; per AI-first
+    // consumer doctrine "Heuristic-mislabeled meta sub-fields are
+    // dishonest" the discriminator is provable from extension PLUS
+    // (for the layout_include_partial promotion) deterministic path-
+    // pattern + fragment-shape evidence.
+    it("tags Jekyll _includes/ HTML partials as kind: layout_include_partial", () => {
       const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/footer.html",
+          kind: "layout_include_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ]);
+    });
+
+    it("tags generic HTML fragments outside SSG-convention paths as kind: html_partial", () => {
+      // `widgets/card.html` does not match any of the recognized SSG
+      // include / partial path conventions
+      // (`_includes/`, `_partials/`, `partials/`, `templates/_<...>`),
+      // so it stays in the catch-all `html_partial` bucket. The
+      // `layout_include_partial` promotion requires BOTH path-pattern
+      // AND fragment-shape evidence; path absent → catch-all kind.
+      const fragment = parsedHtml("widgets/card.html", "<article><h2>Card</h2></article>");
+      const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "widgets/card.html",
+          kind: "html_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ]);
+    });
+
+    it("tags Hugo partials/<name>.html as kind: layout_include_partial", () => {
+      // Hugo / Eleventy `partials/<name>.html` convention — same
+      // kind as Jekyll `_includes/`. The convention name varies
+      // across SSGs but the rendered behavior (composed by a parent
+      // layout at render time) does not, so the kind is uniform.
+      const fragment = parsedHtml(
+        "partials/breadcrumb.html",
+        '<nav class="breadcrumb"><a href="/">Home</a></nav>',
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "partials/breadcrumb.html",
+          kind: "layout_include_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ]);
+    });
+
+    it("tags Pelican templates/_<name>.html as kind: layout_include_partial", () => {
+      // Pelican / Django-class projects place include partials at
+      // `templates/_<name>.html` — the underscore prefix on the
+      // basename distinguishes the file from a renderable
+      // `templates/index.html` view. Sibling renderable views with
+      // no underscore stay in the catch-all `html_partial` kind
+      // (no path-pattern match → no promotion).
+      const fragment = parsedHtml("templates/_card.html", "<article>card</article>");
+      const view = parsedHtml("templates/listing.html", "<section>list</section>");
+      const { analysisCoverage } = buildAnalysisCoverage([fragment, view], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "templates/_card.html",
+          kind: "layout_include_partial",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+        {
+          path: "templates/listing.html",
           kind: "html_partial",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
@@ -2200,7 +2454,10 @@ describe("buildAnalysisCoverage — hints", () => {
       // carries no positive layout evidence (no recognized SSG
       // config, no sibling layout directive, no sibling in a layouts
       // dir — the `_includes/` partial is in a content-partials dir
-      // but NOT a layouts dir under the shared classifier).
+      // but NOT a layouts dir under the shared classifier). The
+      // `_includes/nav.html` partial promotes to
+      // `layout_include_partial` (recognized SSG include path AND
+      // fragment shape).
       const partial = parsedHtml("_includes/nav.html", "<nav><a href='/'>Home</a></nav>");
       const readme = parsedHtml("README.md", "# Project\n");
       const icon = parsedHtml(
@@ -2217,7 +2474,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/nav.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -2429,17 +2686,17 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/a-first.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
         },
         {
           path: "_includes/m-middle.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
         },
         {
           path: "_includes/z-last.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
         },
       ]);
@@ -2458,7 +2715,7 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/nav.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -2480,7 +2737,7 @@ describe("buildAnalysisCoverage — hints", () => {
       const expected = [
         {
           path: "_includes/footer.html",
-          kind: "html_partial",
+          kind: "layout_include_partial",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -3310,7 +3567,10 @@ describe("buildAnalysisCoverage — hints", () => {
         readonly kind: string;
       }[];
       expect(fragments.length).toBe(50);
-      expect(fragments[0]?.kind).toBe("html_partial");
+      // `_includes/frag*.html` paths match an SSG include convention
+      // AND have `hasHtmlOpener: false`, so the kind promotes from
+      // the catch-all `html_partial` to `layout_include_partial`.
+      expect(fragments[0]?.kind).toBe("layout_include_partial");
       expect(coverage?.["fragmentFilesTruncated"]).toEqual({ shown: 50, total: 75 });
       expect(result.metaArrayTruncated).toBe(true);
     });

@@ -100,7 +100,11 @@
  */
 
 import { walkJsxElements } from "../engine/ast-helpers.ts";
-import { classifyFragment, type FragmentClassificationSignals } from "../engine/layout-partial.ts";
+import {
+  classifyFragment,
+  type FragmentClassificationSignals,
+  looksLikeHtmlIncludePartialPath,
+} from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { isScssPartialSource } from "../input/parsers/scss-internals.ts";
 import type { HtmlDocument } from "../types/ast.ts";
@@ -1196,6 +1200,24 @@ function isPhpFile(filePath: string): boolean {
 }
 
 /**
+ * True when the raw HTML source contains an `<html` opener token —
+ * the same source-level signal {@link classifyFragment}'s shared
+ * `hasHtmlOpener` predicate consults. Inlined here (rather than
+ * exporting the engine helper) because the parse-error gate runs
+ * BEFORE `accumulateHtmlCoverageForFile` populates the fragment-file
+ * accumulator, so we cannot read back the structural signals via the
+ * accumulator. The check is cheap — a single bounded regex over the
+ * source — and keeps the gate's evidence model identical to the
+ * fragment classifier (no drift between the two surfaces). Word-
+ * boundary after `<html` (whitespace, `>`, or `/`) keeps `<html5shim>`
+ * etc. from matching, mirroring `hasHtmlOpener` in
+ * `src/engine/layout-partial.ts`.
+ */
+function sourceHasHtmlOpener(source: string): boolean {
+  return /<html[\s>/]/i.test(source);
+}
+
+/**
  * Pushes a `{ path, parserAttempted, naturalParser?, reason,
  * triggerToken? }` record onto `acc.parseErrorEntries` when the file
  * emitted parse errors AND is not a classified build artifact.
@@ -1252,6 +1274,38 @@ function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void
   // a stronger upstream classification doesn't double-emit under the
   // less-informative parse-error narrative.
   if (isScssPartialSource(file.filePath, file.source)) return;
+  // SSG include / layout partials (Q14 closure): a `_includes/header.html`
+  // / `partials/footer.html` / `_partials/nav.html` /
+  // `templates/_card.html` file with no `<html>` opener is intentionally
+  // a fragment composed by a parent layout at render time, not a broken
+  // document. The HTML parser routinely surfaces "Unclosed `<html>`
+  // element" / "Unclosed `<div>` element" reasons on such files when
+  // the partial's tag balance assumes the parent layout's surrounding
+  // markup — those reasons are honestly false: the file's own tag
+  // structure is fine, the missing closer lives in a sibling. Routing
+  // the file into `parseErrorFiles[]` would mislead an agent into
+  // treating the file as broken authored source. Per AI-first
+  // consumer doctrine "Routing skips that drop content are the
+  // symmetric twin of suppression," surface the substrate
+  // classification (the file lands in `fragmentFiles[]` with kind
+  // `layout_include_partial` via the accompanying HTML coverage walk)
+  // rather than the less-informative parse-error narrative. The
+  // two-signal AND (path pattern + fragment-shape) keeps the gate
+  // honest — `looksLikeHtmlIncludePartialPath` requires a recognized
+  // SSG convention path AND a `<html>`-less source — so a
+  // genuinely-broken `_includes/<name>.html` whose author DID intend a
+  // full document (rare; the partial's source carries `<html>`) stays
+  // in `parseErrorFiles[]`. Same precedent as the SCSS-partial
+  // carve-out above: a file with a stronger upstream classification
+  // doesn't double-emit under the less-informative parse-error
+  // narrative.
+  if (
+    file.ast.language === "html" &&
+    looksLikeHtmlIncludePartialPath(file.filePath) &&
+    !sourceHasHtmlOpener(file.source)
+  ) {
+    return;
+  }
   const headError = file.ast.errors[0];
   const triggerToken = headError?.triggerToken;
   // 1-based line where the head parse error fired — the natural

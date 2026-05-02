@@ -94,6 +94,89 @@ function looksLikeLayoutsPath(filePath: string): boolean {
 }
 
 /**
+ * Path segments where SSGs conventionally place HTML include / partial
+ * fragments whose rendered output is composed by a parent layout —
+ * Jekyll `_includes/`, Hugo / Eleventy `partials/` and `_partials/`.
+ * Detected as substrings flanked by `/` (or as a leading segment) so
+ * `_includes/header.html` matches but `my_includes_dir/header.html`
+ * does not.
+ *
+ * Distinct from {@link LAYOUTS_DIR_SEGMENTS} (those files render as
+ * the page envelope and ARE the page) and from
+ * {@link PARTIAL_PATH_SEGMENTS} (the broader set of partial-flavored
+ * dirs the heading-hierarchy enrichment branch reads). This narrower
+ * set names the dirs whose presence is strong-enough evidence that an
+ * HTML fragment file is intentionally an include / partial — composed
+ * into a parent layout at render time, not a broken document.
+ */
+const HTML_INCLUDE_PARTIAL_DIR_SEGMENTS: readonly string[] = ["_includes", "_partials", "partials"];
+
+/**
+ * Filename prefix (after the path segment) for the
+ * {@link looksLikeHtmlIncludePartialPath} `templates/` branch.
+ * Pelican / Django-class projects place include partials at
+ * `templates/_<name>.html`; the underscore prefix is the convention's
+ * marker (sibling `templates/index.html` is a renderable view, not a
+ * partial). Matching the literal underscore keeps the predicate honest
+ * against `templates/index.html`.
+ */
+const TEMPLATES_PARTIAL_PREFIX = "_";
+
+/**
+ * True when `filePath` is an HTML file whose path matches an SSG
+ * include / partial convention — Jekyll `_includes/<name>.html`,
+ * Hugo / Eleventy `partials/<name>.html` / `_partials/<name>.html`,
+ * Pelican / Django-class `templates/_<name>.html`. Pure path
+ * inspection — no AST or source read.
+ *
+ * Used by {@link import("../mcp/markdown-classifier.ts").classifyFragmentKind}
+ * as ONE of two required signals (the second is the structural
+ * `hasHtmlOpener: false` evidence from {@link classifyFragment}) to
+ * promote an HTML fragment from the catch-all `html_partial` kind to
+ * the more specific `layout_include_partial` kind, AND by
+ * {@link import("../mcp/analysis-coverage.ts").recordParseErrorEntry}
+ * to gate the file out of `parseErrorFiles[]` when the fragment
+ * predicate also holds — surfacing both classifications on the same
+ * file would be the same dishonest-shape failure mode the SCSS-partial
+ * carve-out closed for `_*.scss` files (a stronger upstream
+ * classification narrative wins; the less-informative parse-error
+ * narrative is suppressed).
+ *
+ * The two-signal AND keeps the reclassification honest per
+ * `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest": path-pattern
+ * alone could false-positive on a renderable page that happens to live
+ * under one of the listed dirs (e.g. a Hugo `partials/` directory at
+ * the project root that the author actually renders directly), and
+ * fragment-shape alone could false-positive on a top-level snippet
+ * fixture or README-quoted HTML island. Requiring both narrows the
+ * promotion to the canonical SSG-include-partial shape.
+ */
+export function looksLikeHtmlIncludePartialPath(filePath: string): boolean {
+  if (filePath.length === 0) return false;
+  const lower = filePath.toLowerCase();
+  if (!(lower.endsWith(".html") || lower.endsWith(".htm"))) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  for (const segment of HTML_INCLUDE_PARTIAL_DIR_SEGMENTS) {
+    if (normalized.startsWith(`${segment}/`)) return true;
+    if (normalized.includes(`/${segment}/`)) return true;
+  }
+  // `templates/_<name>.html` — Pelican / Django-class include
+  // convention. The literal underscore prefix on the basename is the
+  // convention's marker; sibling `templates/index.html` is a
+  // renderable view, not an include partial, so the prefix check
+  // distinguishes the two without sweeping every file under
+  // `templates/` into the partial bucket.
+  const slash = normalized.lastIndexOf("/");
+  if (slash === -1) return false;
+  const dir = normalized.slice(0, slash);
+  const base = normalized.slice(slash + 1);
+  if (!base.startsWith(TEMPLATES_PARTIAL_PREFIX)) return false;
+  if (dir === "templates" || dir.endsWith("/templates")) return true;
+  return false;
+}
+
+/**
  * True when the raw source contains a layout-composition directive —
  * either:
  *   - a *parent-role* composition slot (this file IS a layout that

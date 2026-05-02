@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { classifyFragment, isFragmentFile } from "../../../src/engine/layout-partial.ts";
+import {
+  classifyFragment,
+  isFragmentFile,
+  looksLikeHtmlIncludePartialPath,
+} from "../../../src/engine/layout-partial.ts";
 import { parseHtml } from "../../../src/input/parsers/index.ts";
 import type { HtmlDocument } from "../../../src/types/ast.ts";
 
@@ -279,6 +283,79 @@ describe("classifyFragment / isFragmentFile", () => {
       const source = "<html><body><p>Body</p></body></html>";
       const result = classifyFragment(parse(source), source, "");
       expect(result.isFragment).toBe(false);
+    });
+  });
+});
+
+describe("looksLikeHtmlIncludePartialPath", () => {
+  // Path-pattern predicate consumed by both
+  // `markdown-classifier.classifyFragmentKind` (to promote the
+  // `layout_include_partial` kind) and
+  // `analysis-coverage.recordParseErrorEntry` (to gate
+  // include-partial files out of `parseErrorFiles[]` when their
+  // source also lacks an `<html>` opener). Pure path inspection;
+  // restricted to `.html` / `.htm` so non-HTML extensions can't
+  // accidentally promote.
+
+  describe("recognized SSG include / partial path conventions", () => {
+    it("matches Jekyll `_includes/<name>.html`", () => {
+      expect(looksLikeHtmlIncludePartialPath("_includes/header.html")).toBe(true);
+    });
+
+    it("matches Jekyll `_includes/<name>.html` under a nested project root", () => {
+      expect(looksLikeHtmlIncludePartialPath("site/_includes/header.html")).toBe(true);
+    });
+
+    it("matches Hugo / Eleventy `partials/<name>.html`", () => {
+      expect(looksLikeHtmlIncludePartialPath("partials/breadcrumb.html")).toBe(true);
+    });
+
+    it("matches `_partials/<name>.html`", () => {
+      expect(looksLikeHtmlIncludePartialPath("_partials/footer.html")).toBe(true);
+    });
+
+    it("matches Pelican `templates/_<name>.html`", () => {
+      expect(looksLikeHtmlIncludePartialPath("templates/_card.html")).toBe(true);
+    });
+
+    it("matches `templates/_<name>.html` under a nested root", () => {
+      expect(looksLikeHtmlIncludePartialPath("blog/templates/_card.html")).toBe(true);
+    });
+
+    it("accepts `.htm` (legacy extension)", () => {
+      expect(looksLikeHtmlIncludePartialPath("_includes/header.htm")).toBe(true);
+    });
+  });
+
+  describe("non-matching paths (catch-all `html_partial` stays catch-all)", () => {
+    it("rejects renderable `templates/<name>.html` without underscore prefix", () => {
+      // `templates/index.html` is a renderable view, not an include.
+      expect(looksLikeHtmlIncludePartialPath("templates/index.html")).toBe(false);
+    });
+
+    it("rejects non-HTML extensions even at convention paths", () => {
+      // The path predicate is HTML-only; markdown / svg fragments at
+      // `_includes/` paths route through their extension-specific kind
+      // (`markdown_*` / `svg_standalone`).
+      expect(looksLikeHtmlIncludePartialPath("_includes/header.md")).toBe(false);
+      expect(looksLikeHtmlIncludePartialPath("_includes/icon.svg")).toBe(false);
+    });
+
+    it("rejects fuzzy-similar dirs (segment-flanked match required)", () => {
+      // `my_includes_dir/header.html` is NOT a Jekyll include — the
+      // dir name happens to contain `includes` as a substring but
+      // isn't the canonical convention. Same shape as the
+      // `LAYOUTS_DIR_SEGMENTS` segment-flanked predicate.
+      expect(looksLikeHtmlIncludePartialPath("my_includes_dir/header.html")).toBe(false);
+      expect(looksLikeHtmlIncludePartialPath("partials_extras/header.html")).toBe(false);
+    });
+
+    it("rejects empty path", () => {
+      expect(looksLikeHtmlIncludePartialPath("")).toBe(false);
+    });
+
+    it("rejects HTML at the root (no convention dir)", () => {
+      expect(looksLikeHtmlIncludePartialPath("index.html")).toBe(false);
     });
   });
 });

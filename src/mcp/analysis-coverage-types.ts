@@ -78,12 +78,28 @@ export interface ParseErrorEntry {
  * path, but observed members fall into categorically-different shapes
  * that warrant different downstream rule-skipping decisions:
  *
- *   - `html_partial` — Jekyll `_includes/`, Hugo `partials/`, Astro /
- *     Handlebars layouts: HTML markup intended to be composed into a
- *     parent layout at render time. Document-shaped rules
- *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
- *     `lang-attribute`) are out of scope because the parent layout
- *     supplies the envelope.
+ *   - `html_partial` — generic HTML fragment that lacks the document
+ *     envelope but does NOT match a recognized SSG include / partial
+ *     path convention. The catch-all bucket: a snippet fixture, a
+ *     README-embedded HTML island, or a partial under a non-
+ *     conventional dir. Document-shaped rules (`landmark-main`,
+ *     `heading-hierarchy`, `page-titled`, `lang-attribute`) are out
+ *     of scope on the assumption a parent layout supplies the
+ *     envelope.
+ *   - `layout_include_partial` — HTML fragment whose path matches an
+ *     SSG include / partial convention (`_includes/<name>.html`,
+ *     `partials/<name>.html`, `_partials/<name>.html`,
+ *     `templates/_<name>.html`) AND whose source lacks an `<html>`
+ *     opener. Stricter-evidence sibling of `html_partial`: both path
+ *     pattern and fragment shape agree the file is a Jekyll / Hugo /
+ *     Eleventy / Pelican include intentionally composed by a parent
+ *     layout, so the kind names that classification deterministically
+ *     rather than leaving the agent to guess from the path. Per
+ *     AI-first consumer doctrine "Routing skips that drop content are
+ *     the symmetric twin of suppression": the scanner stops routing
+ *     these files into the `parseErrorFiles[]` bucket (where parser
+ *     "Unclosed `<html>` element" reasons would mislead the agent)
+ *     and surfaces the honest fragment classification instead.
  *   - `markdown_residue` — `.md` / `.markdown` files routed through
  *     the HTML parser per ADR 0025 AND for which positive
  *     layout-composition evidence exists in the scan (a sibling file
@@ -109,9 +125,11 @@ export interface ParseErrorEntry {
  *
  * Per the AI-first consumer model "Heuristic-mislabeled meta sub-
  * fields are dishonest" rule: the kind is provable from the file
- * extension plus deterministic in-scope evidence (no path-pattern
- * guessing on the file alone), so the discriminator clears the "100%
- * correct from the evidence" bar.
+ * extension plus deterministic in-scope evidence (no fuzzy path-
+ * pattern guessing on the file alone — the
+ * `layout_include_partial` promotion requires BOTH a recognized
+ * convention path AND fragment-shape evidence), so the discriminator
+ * clears the "100% correct from the evidence" bar.
  *
  * Document-shaped rules will read the discriminator before deciding
  * eligibility — that wiring is a follow-up; this type ships the field
@@ -119,7 +137,12 @@ export interface ParseErrorEntry {
  */
 export interface FragmentFileEntry {
   readonly path: string;
-  readonly kind: "html_partial" | "markdown_residue" | "markdown_unclassified" | "svg_standalone";
+  readonly kind:
+    | "html_partial"
+    | "layout_include_partial"
+    | "markdown_residue"
+    | "markdown_unclassified"
+    | "svg_standalone";
   /**
    * Structural signals captured by the shared
    * {@link import("../engine/layout-partial.ts").classifyFragment}

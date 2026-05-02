@@ -232,12 +232,13 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
 
     // Both surfaces surface the same structural-signal evidence —
     // every signal is `false` (the AND-conjunction stamped fragment)
-    // and the kind is `html_partial`.
+    // and the kind is `layout_include_partial` (the recognized SSG
+    // include path AND fragment-shape gate fires).
     const scanProjectEntry = analysisCoverageOf(scanProject)?.fragmentFiles?.find((e) =>
       e.path.endsWith("_includes/header.html"),
     );
-    expect(scanProjectEntry?.kind).toBe("html_partial");
-    expect(scanFileEntry?.kind).toBe("html_partial");
+    expect(scanProjectEntry?.kind).toBe("layout_include_partial");
+    expect(scanFileEntry?.kind).toBe("layout_include_partial");
     expect(scanProjectEntry?.fragmentClassificationSignals).toEqual({
       hasHtmlOpener: false,
       hasLayoutDirective: false,

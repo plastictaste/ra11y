@@ -17,7 +17,10 @@
  * `analysis-coverage.ts` with byte-identical logic.
  */
 
-import type { FragmentClassificationSignals } from "../engine/layout-partial.ts";
+import {
+  type FragmentClassificationSignals,
+  looksLikeHtmlIncludePartialPath,
+} from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { FragmentFileEntry } from "./analysis-coverage-types.ts";
 
@@ -218,10 +221,26 @@ export function isMarkdownFile(filePath: string): boolean {
  *     → `"markdown_unclassified"`. The honest discriminator when the
  *     scanner can't tell whether the file is README-style standalone
  *     prose or a content page composed by an unseen SSG layout.
+ *   - HTML file at a recognized SSG include / partial path
+ *     (`_includes/<name>.html`, `partials/<name>.html`,
+ *     `_partials/<name>.html`, `templates/_<name>.html`) AND with
+ *     fragment-shape evidence (the caller already established the
+ *     file IS a fragment via {@link import("../engine/layout-partial.ts").classifyFragment},
+ *     i.e. `signals.hasHtmlOpener: false`) → `"layout_include_partial"`.
+ *     Two-signal AND keeps the promotion honest: path-pattern alone
+ *     could false-positive on a renderable page that happens to live
+ *     under one of the listed dirs, and fragment-shape alone could
+ *     false-positive on a top-level snippet fixture. Per AI-first
+ *     consumer doctrine "Routing skips that drop content are the
+ *     symmetric twin of suppression," files that earn this kind also
+ *     bypass the `parseErrorFiles[]` bucket — surfacing both
+ *     classifications on the same file would mislead the agent.
  *   - everything else (`.html`, `.htm`, `.xhtml`, `.astro`, etc.) →
  *     `"html_partial"`. The catch-all bucket: the file parses as HTML
  *     but lacks the document envelope, indicating a partial / include
- *     intended for composition into a parent layout.
+ *     intended for composition into a parent layout (under a non-
+ *     conventional dir, a snippet fixture, or a README-embedded
+ *     island).
  *
  * Returns the discriminating kind plus the deterministic evidence
  * tokens that supported a `markdown_residue` promotion (`ssgEvidence`
@@ -232,6 +251,7 @@ export function isMarkdownFile(filePath: string): boolean {
 export function classifyFragmentKind(
   filePath: string,
   evidence?: LayoutCompositionEvidence,
+  signals?: FragmentClassificationSignals,
 ): { kind: FragmentFileEntry["kind"]; ssgEvidence?: readonly string[] } {
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return { kind: "svg_standalone" };
@@ -239,6 +259,20 @@ export function classifyFragmentKind(
     const ssgEvidence = collectSsgEvidenceTokens(evidence);
     if (ssgEvidence.length > 0) return { kind: "markdown_residue", ssgEvidence };
     return { kind: "markdown_unclassified" };
+  }
+  // Two-signal AND for the layout_include_partial promotion: the file
+  // path matches an SSG include / partial convention AND the caller
+  // (`buildFragmentFileEntry`) is already inside the fragment branch,
+  // which means `classifyFragment` stamped `hasHtmlOpener: false`. The
+  // explicit `signals.hasHtmlOpener === false` check guards callers
+  // that pass `signals: undefined` (defensive — the only in-tree
+  // caller threads the real signals).
+  if (
+    signals !== undefined &&
+    !signals.hasHtmlOpener &&
+    looksLikeHtmlIncludePartialPath(filePath)
+  ) {
+    return { kind: "layout_include_partial" };
   }
   return { kind: "html_partial" };
 }
@@ -257,7 +291,7 @@ export function buildFragmentFileEntry(
   fragmentClassificationSignals: FragmentClassificationSignals,
   evidence: LayoutCompositionEvidence,
 ): FragmentFileEntry {
-  const classification = classifyFragmentKind(path, evidence);
+  const classification = classifyFragmentKind(path, evidence, fragmentClassificationSignals);
   return {
     path,
     kind: classification.kind,
