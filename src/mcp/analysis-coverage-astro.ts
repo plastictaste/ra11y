@@ -102,8 +102,9 @@ function isAstroFile(filePath: string): boolean {
  * content the static scan cannot see at render time:
  *
  *   - Frontmatter fence: blanked by {@link parseAstro} so any
- *     server-side data (`const heading = await fetch(...)`) is
- *     invisible to the template region's static analysis.
+ *     server-side data (top-of-file `const heading = await load()`
+ *     style imports) is invisible to the template region's static
+ *     analysis.
  *   - Expression brace: passed through as literal text so any
  *     visible content / aria attribute the expression renders is
  *     missed.
