@@ -1147,9 +1147,7 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source: cssSource,
       ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
     };
-    expect(
-      detectLinkedStylesheetsNotResolvedForContrast([html, css]).unresolvedHrefCount,
-    ).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([html, css]).unresolvedHrefCount).toBe(0);
   });
 
   it("does NOT widen the resolver beyond same-directory siblings — `css/style.css` stays unresolved", () => {
@@ -1227,9 +1225,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source: scssSource,
       ast: { language: "css", root: scssParsed.root, errors: [...scssParsed.errors] },
     };
-    expect(
-      detectLinkedStylesheetsNotResolvedForContrast([htmlA, scss]).unresolvedHrefCount,
-    ).toBe(0);
+    expect(detectLinkedStylesheetsNotResolvedForContrast([htmlA, scss]).unresolvedHrefCount).toBe(
+      0,
+    );
   });
 });
 
