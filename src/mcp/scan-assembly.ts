@@ -23,12 +23,18 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
+// biome-ignore format: kept on one line for the file-line budget
+import { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLimitation } from "./external-handler-limitation.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { suppressionsMetaBlock } from "./suppression-audit.ts";
 import type { ResolvedWrapperSources } from "./wrappers-meta.ts";
 import { wrappersMetaBlock } from "./wrappers-meta.ts";
 
+// Re-export the helper's surface so callers already importing from
+// `scan-assembly.ts` keep one entry point.
+// biome-ignore format: kept on one line for the file-line budget
+export { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLimitation } from "./external-handler-limitation.ts";
 // Re-export from `./findings-by-file.ts` — same file-size-budget split
 // rationale as the linked-stylesheet detector above. Keeps callers
 // stamping `plan.findingsByFile` next to `withTopRules` on one import.
@@ -83,15 +89,21 @@ export function buildScanPlan(args: {
    * answers both questions honestly without the composite.
    */
   readonly fixesByClass: FixesByClass;
+  /**
+   * Per-rule coverage rows from this scan. When any row carries the
+   * cross-file listener-resolution reason (see
+   * {@link shouldSurfaceExternalHandlerLimitation}), the structured
+   * code {@link EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE} is appended
+   * to `plan.limitations[]` so the agent reads the response-level
+   * pointer alongside the prose disclaimers without having to walk
+   * `meta.perRuleCoverage[]` to learn the same fact. Optional — when
+   * undefined, no structured code is appended (legacy callers,
+   * fixtures).
+   */
+  readonly perRuleCoverage?: readonly PerRuleCoverage[];
 }): Record<string, unknown> {
-  const {
-    violations,
-    notes,
-    violationsWithoutAnyFix,
-    actionableManual,
-    untargetedCriteria,
-    fixesByClass,
-  } = args;
+  // biome-ignore format: kept on one line for the file-line budget
+  const { violations, notes, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage } = args;
   // `fixesByClass` is meaningful only when the scan actually produced
   // violations to bucket — emitting an all-zeros tally on a clean scan
   // is noise that forces the agent to read a field whose only signal
@@ -167,6 +179,21 @@ export function buildScanPlan(args: {
     limitations: [
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
       "Runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope here.",
+      // Structured code — appended only when this scan's per-rule
+      // coverage observed a cross-file listener-resolution candidate
+      // (i.e. a `crossFileCapable: false` rule downgraded its row with
+      // `cross_file_listener_resolution_not_attempted_by_rule`). The
+      // code rides as a third entry alongside the prose disclaimers
+      // because the field's semantic is uniform: "things the agent
+      // should know about scan limitations." The kebab-case shape
+      // distinguishes structured codes from prose; the gotcha doc at
+      // docs/kb/gotchas/cross-file-handler-resolution.md names this
+      // contract. Present-when-meaningful per
+      // docs/kb/architecture/ai-first-consumer.md "Ambiguous field
+      // shapes are dishonest" — when no row carries the predicate the
+      // entry is omitted entirely (never an empty placeholder).
+      // biome-ignore format: kept on one line for the file-line budget
+      ...(shouldSurfaceExternalHandlerLimitation(perRuleCoverage) ? [EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE] : []),
     ],
   };
 }

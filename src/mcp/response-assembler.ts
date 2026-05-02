@@ -562,6 +562,15 @@ export function assembleScanFamilyResponse(
     actionableManual,
     untargetedCriteria,
     fixesByClass,
+    // Threaded so the plan can append the structured
+    // `external_handler_resolution_unavailable` code when any row
+    // carries the cross-file listener-resolution reason. The
+    // pre-adjustment input is sufficient: the
+    // `crossFileCapable: false` downgrade is wired at
+    // scanner-construction time in `per-rule-coverage.ts`, gated on
+    // `crossFileCandidates > 0` — exactly the predicate the response-
+    // level code names.
+    perRuleCoverage,
   });
 
   // (4) Meta. Two distinct path sets — the doctrine difference is

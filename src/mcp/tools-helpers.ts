@@ -853,15 +853,15 @@ export async function runScanAndFormat(
   // surfaced it. Deletion is the durable answer (same precedent as
   // `plan.totalFindings` / `plan.safeEditsAvailable` /
   // `plan.violations` / `plan.summary`).
+  // `perRuleCoverage` threaded into `buildScanPlan` so the plan can
+  // append the structured `external_handler_resolution_unavailable`
+  // code when any row carries the cross-file listener-resolution
+  // reason. Adjusted rows fine: parse-error / scss / fragment
+  // adjustments do not strip the cross-file reason code.
+  // biome-ignore format: arg list kept on one line for the file budget
+  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
   const formatted: ScanFormatted = {
-    plan: buildScanPlan({
-      violations: violations.length,
-      notes: notes.length,
-      violationsWithoutAnyFix,
-      actionableManual,
-      untargetedCriteria,
-      fixesByClass,
-    }),
+    plan: buildScanPlan(planArgs),
     files: enrichedFileEntries,
     meta: scanMeta,
     ...(referenceGuide === undefined ? {} : { referenceGuide }),
