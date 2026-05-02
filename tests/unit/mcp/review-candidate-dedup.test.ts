@@ -493,7 +493,9 @@ describe("filterCandidatesCoveredByFindings — per-element dedup against rule f
     // wcag22:4.1.2 (e.g. cross-file-click-handler review). Filter
     // elides the candidate so the agent reads the rule emission once.
     const out = filterCandidatesCoveredByFindings({
-      candidates: [candidate("wcag22:4.1.2", "<button class='navbar-toggle'> verify aria-expanded", 12, 2)],
+      candidates: [
+        candidate("wcag22:4.1.2", "<button class='navbar-toggle'> verify aria-expanded", 12, 2),
+      ],
       findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2", "wcag21:4.1.2"] }],
     });
     expect(out).toHaveLength(0);
@@ -564,8 +566,12 @@ describe("filterCandidatesCoveredByFindings — per-element dedup against rule f
   it("indexes by (file, line) so a candidate's filePath is honored", () => {
     const out = filterCandidatesCoveredByFindings({
       candidates: [
-        candidate("wcag22:4.1.2", "x", 12, 2, { location: { filePath: "/a.html", line: 12, column: 2 } }),
-        candidate("wcag22:4.1.2", "x", 12, 2, { location: { filePath: "/b.html", line: 12, column: 2 } }),
+        candidate("wcag22:4.1.2", "x", 12, 2, {
+          location: { filePath: "/a.html", line: 12, column: 2 },
+        }),
+        candidate("wcag22:4.1.2", "x", 12, 2, {
+          location: { filePath: "/b.html", line: 12, column: 2 },
+        }),
       ],
       findings: [{ file: "/a.html", line: 12, criteria: ["wcag22:4.1.2"] }],
     });
