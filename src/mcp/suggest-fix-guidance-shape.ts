@@ -123,6 +123,82 @@ function findFirstSentenceBreakEnd(text: string, maxLen: number): number {
 }
 
 /**
+ * Walk backward from `cap` to the index just past the last whitespace
+ * inside `text`. Used to align a char-cap to a word boundary so the
+ * `approach` label never ends mid-word ("matches the id o…"). Returns
+ * `cap` itself when no whitespace precedes it (single-word prose) so
+ * the caller can treat the no-walk case explicitly.
+ */
+function walkBackToWordBoundary(text: string, cap: number): number {
+  for (let i = cap - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (ch === " " || ch === "\t" || ch === "\n") return i;
+  }
+  return cap;
+}
+
+/**
+ * Walk backward from `cap` to before any unclosed opening backtick.
+ * Backticks are paired tokens (`` `<button>` ``); splitting the pair
+ * leaves a stray opener in the `approach` label that reads as a typo.
+ * Returns the index just before the opening backtick, or `cap` when
+ * the parity at `cap` is even (no walk needed).
+ */
+function walkBackBeforeUnclosedBacktick(text: string, cap: number): number {
+  let openIdx = -1;
+  let inside = false;
+  for (let i = 0; i < cap; i++) {
+    if (text[i] !== "`") continue;
+    if (!inside) {
+      openIdx = i;
+      inside = true;
+    } else {
+      inside = false;
+    }
+  }
+  return inside ? openIdx : cap;
+}
+
+/**
+ * Cap the `approach` label below `MAX` chars, preferring a word
+ * boundary and never splitting a backtick literal. Falls back to the
+ * raw cap (no ellipsis) when both walk-backs leave too little
+ * meaningful prefix — a long single-word token or a backtick literal
+ * starting near position 0 — because a one-char `approach` reads as
+ * "tool returned nothing" (the canonical "Ambiguous field shapes are
+ * dishonest" failure mode).
+ *
+ * Special cases:
+ * - If the word-boundary walk leaves < {@link MIN_MEANINGFUL_PREFIX}
+ *   chars, take the raw cap and trim trailing whitespace; no ellipsis.
+ *   The agent prefers a slightly-longer-than-cap prefix it can read to
+ *   a word-boundary stub it cannot.
+ * - If the backtick walk leaves < {@link MIN_MEANINGFUL_PREFIX} chars,
+ *   take the raw cap (the agent can mentally close the backtick from
+ *   context faster than it can act on a 1-char approach).
+ */
+const MIN_MEANINGFUL_PREFIX = 30;
+
+function capAtWordBoundary(text: string, cap: number): string {
+  // Word-boundary walk first.
+  const wsIdx = walkBackToWordBoundary(text, cap);
+  let cut = wsIdx === cap ? cap : wsIdx;
+  if (cut < MIN_MEANINGFUL_PREFIX) cut = cap;
+  // Backtick-pair walk on the chosen cut. If we land mid-pair, walk
+  // before the opener; honor the same min-meaningful guard.
+  const btIdx = walkBackBeforeUnclosedBacktick(text, cut);
+  if (btIdx < cut) {
+    cut = btIdx >= MIN_MEANINGFUL_PREFIX ? btIdx : cap;
+  }
+  const prefix = text.slice(0, cut).trimEnd();
+  // Append ellipsis only when we actually shortened past the raw cap
+  // (the prefix sits strictly inside the original prose). When `cut`
+  // equals `cap`, the trailing trim may have removed a space — still
+  // worth the ellipsis because content continues past the cap.
+  return cut < text.length ? `${prefix}…` : prefix;
+}
+
+/**
  * Derive a terse `approach` label from prose when the rule did not
  * supply a structured `FixPath.label` — used by the no-fixPaths
  * guidance branch where all we have is `match.suggestion` or
@@ -134,14 +210,37 @@ function findFirstSentenceBreakEnd(text: string, maxLen: number): number {
  * (`e.g.`, `i.e.`, `vs.`, `etc.`, `cf.`, `viz.`) — without that, fix
  * prose like `"Try a sibling — e.g. add aria-label."` truncated to
  * `"Try a sibling — e"`.
+ *
+ * The char-cap fallback walks backward to a whitespace word boundary
+ * and never splits a backtick literal — without those guards, the
+ * label ended mid-word ("matches the id o…") or as a single stray
+ * backtick when prose like `` `?expr` ... `` had the splitter return
+ * a 2-char candidate that the trailing-terminator strip reduced to one
+ * char. Both shapes fail "Reason / priority / fix-description must
+ * agree across all three channels" — `approach` is a fix-description
+ * channel and must be readable as written.
  */
 export function deriveApproachFromProse(prose: string): string {
   const trimmed = prose.trim();
   const SEARCH_HORIZON = 120;
+  const APPROACH_CAP = 80;
   const breakEnd = findFirstSentenceBreakEnd(trimmed, SEARCH_HORIZON);
   const candidate = breakEnd >= 0 ? trimmed.slice(0, breakEnd) : trimmed;
-  if (candidate.length <= 80) return candidate.replace(/[.!?]$/, "");
-  return `${candidate.slice(0, 77).trimEnd()}…`;
+  // Sentence-break path produced something usable: short-enough AND
+  // meaningful (or the whole prose IS short). The MIN_MEANINGFUL_PREFIX
+  // gate guards against the single-backtick / single-punct shape that
+  // the trailing-terminator strip used to return when the splitter
+  // landed at a `?`/`!`/`.` near position 0 (e.g. `` `?expr` ... `` →
+  // candidate `` `?`` → strip → `` ` ``). When the candidate is too
+  // short to be meaningful AND there's substantially more prose to
+  // draw from, fall through to the char-cap-with-word-boundary path.
+  if (candidate.length <= APPROACH_CAP) {
+    const stripped = candidate.replace(/[.!?]$/, "");
+    if (stripped.length >= MIN_MEANINGFUL_PREFIX || trimmed.length <= APPROACH_CAP) {
+      return stripped;
+    }
+  }
+  return capAtWordBoundary(trimmed, APPROACH_CAP - 3);
 }
 
 /**
