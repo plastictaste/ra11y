@@ -290,7 +290,14 @@ describe("rule layout/horizontal-scroll-no-keyboard", () => {
       // The selector `.table-wrapper` is on line 4; the `overflow-x` body
       // is on line 5. The cited line must be 4 (the selector position),
       // matching the rule's `'<selector> { … }'` reason text.
-      const source = ["/* line 1 */", "/* line 2 */", "/* line 3 */", ".table-wrapper {", "  overflow-x: auto;", "}"].join("\n");
+      const source = [
+        "/* line 1 */",
+        "/* line 2 */",
+        "/* line 3 */",
+        ".table-wrapper {",
+        "  overflow-x: auto;",
+        "}",
+      ].join("\n");
       const violations = runRule(rule, source, { filePath: "style.css" });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.location.line).toBe(4);
