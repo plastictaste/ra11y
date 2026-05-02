@@ -435,23 +435,32 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.error).toContain("Unknown standard");
   });
 
-  it("suggest_fix returns an oldText/newText shape for a known violation line", async () => {
-    // First scan to discover a real line, then ask for a fix for it.
+  it("suggest_fix returns a populated guidance/edit shape for a known violation line", async () => {
+    // Line 5 of the fixture is `<img src="...">` with no alt — the
+    // real violation. Earlier this test queried line 1 (`<!DOCTYPE
+    // html>`) and "passed" by reading `confidence: "low"` off the
+    // `kind: "none"` response — a category-error shape now omitted.
+    // The asserted shape is the positive answer the test name
+    // promises: a non-`none` kind with a populated `primary` block
+    // carrying `explanation` + `confidence`. (Both `kind: "edit"` and
+    // `kind: "guidance"` nest these under `primary`; `alt-text-missing`
+    // is a `verify-in-source` rule so the lane here is `guidance`.)
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
       toolCall(3, "suggest_fix", {
         ruleId: "media/alt-text-missing",
         file: BAD_ALT_FILE,
-        line: 1,
+        line: 5,
       }),
     ]);
     const fix = bodyOf(responses[2]) as {
-      explanation: string;
-      confidence: string;
+      kind: string;
+      primary: { explanation: string; confidence: string };
     };
-    expect(typeof fix.explanation).toBe("string");
-    expect(["high", "medium", "low"]).toContain(fix.confidence);
+    expect(fix.kind).not.toBe("none");
+    expect(typeof fix.primary.explanation).toBe("string");
+    expect(["high", "medium", "low"]).toContain(fix.primary.confidence);
   });
 
   it("suggest_fix carries verifyCommandStructured pointing at scan_file on a fix-bearing line", async () => {
