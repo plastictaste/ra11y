@@ -673,8 +673,6 @@ No item here proposes new rule detection logic — Track V is about honesty surf
 
 ### v1.0.0 — four-repo field test findings — catalog-scale perf / scoping
 
-- [ ] **V1-GROUPKEY-COLLAPSED-RESPONSE-MODE** `groupKey` is emitted on every finding and is cross-file for location-agnostic groupings. No response-shape option compresses `(ruleId, groupKey)` into one entry with the file list. On a template catalog 40k findings likely collapse to <500 unique groups. Fix: add `collapseByGroupKey?: boolean` to `scan_project` (default false, preserves current shape). When true: response emits one entry per unique `(ruleId, groupKey)` with `occurrences: [{path, line, column}]` — same paging/truncation semantics. Additive — callers opt in. Doctrine: one tool call should answer "what next?" on scale. Pairs with Q6-PATTERN-FINGERPRINT-CROSS-TEMPLATE (open, cross-template pattern ID).
-
 ### Additional items
 
 Response shape / honesty:
