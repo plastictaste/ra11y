@@ -1331,6 +1331,28 @@ const BINARY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
   ".sketch",
   ".fig",
   ".xd",
+  // Embedded database / binary store formats. SQLite-family files
+  // (`.db`, `.sqlite`, `.sqlite3`, plus the `.db-shm` / `.db-wal`
+  // sidecars SQLite emits during open-write transactions) are binary
+  // by spec — fixed-size headers, variable-length records, never
+  // line-oriented text — so an agent reading them as "text source"
+  // is wrong by construction. Lumping under text_source_skipped
+  // would mislabel a `.db` as parser-routable substrate the agent
+  // could re-route via additionalPaths; the file is binary, the
+  // routing question is meaningless. Microsoft Access (`.mdb`,
+  // `.accdb`) and Realm (`.realm`) round out the embedded-store
+  // family commonly committed alongside seed-data fixtures. Per
+  // AI-first "Heuristic-mislabeled meta sub-fields are dishonest"
+  // — the binary classification is provable from the format spec,
+  // not a heuristic on contents.
+  ".db",
+  ".sqlite",
+  ".sqlite3",
+  ".db-shm",
+  ".db-wal",
+  ".mdb",
+  ".accdb",
+  ".realm",
 ]);
 
 /**
@@ -1342,6 +1364,98 @@ const BINARY_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
  */
 function isBinaryAssetExtension(ext: string): boolean {
   return BINARY_ASSET_EXTENSIONS.has(ext.toLowerCase());
+}
+
+/**
+ * Text-island substrate extensions ra11y does not yet route through a
+ * parser but whose file format is documented as carrying HTML / JSX
+ * markup the agent could plausibly extract findings from. Surfaced as
+ * an additive `parserRoutableExtensions` slice on
+ * `warningsDetails.text_source_skipped` so the agent can budget against
+ * the actionable subset without the data-only tail (`.json`, `.xml`,
+ * `.yml`, `.toml`, `.csv`) burying it. The dispatch shape mirrors the
+ * AI-first "Heuristic-mislabeled meta sub-fields are dishonest" closure
+ * path: each entry is a known component / template substrate (the
+ * format spec defines an HTML or JSX surface), not a heuristic on
+ * "might contain HTML." A `.vue` file IS a Vue Single File Component
+ * by spec; a `.json` file is data by spec — the partition is provable
+ * from the extension alone, no content inspection.
+ *
+ * Each entry's rationale:
+ *   - `.vue` — Vue Single File Component; `<template>` block is HTML.
+ *   - `.svelte` — Svelte component; root template is HTML.
+ *   - `.coffee` — CoffeeScript; transpiles to JS that may carry JSX-shape
+ *     templating in component files (Backbone / Marionette legacy).
+ *   - `.rmd` — R Markdown; markdown body with embedded HTML allowed.
+ *   - `.qmd` — Quarto markdown; same shape as R Markdown.
+ *   - `.hbs` / `.handlebars` — Handlebars templates; HTML with `{{…}}`
+ *     interpolation directives.
+ *   - `.mustache` — Mustache templates; same shape as Handlebars.
+ *   - `.njk` / `.nunjucks` — Nunjucks templates (Jinja-like for JS);
+ *     HTML with `{% … %}` / `{{ … }}` directives.
+ *   - `.twig` — Twig templates (Symfony / Drupal); HTML with
+ *     `{{ … }}` / `{% … %}` directives.
+ *   - `.haml` — HAML templates (Rails view layer); whitespace-significant
+ *     HTML shorthand.
+ *   - `.slim` — Slim templates (Rails); HAML-family whitespace-significant
+ *     HTML shorthand.
+ *   - `.pug` / `.jade` — Pug templates (Express / Vue scaffolding);
+ *     whitespace-significant HTML shorthand.
+ *   - `.eex` / `.heex` / `.leex` — Phoenix templates (Elixir);
+ *     HTML with `<%= … %>` interpolation.
+ *   - `.tmpl` / `.gohtml` — Go html/template; HTML with `{{ … }}`
+ *     directives.
+ *   - `.jinja` / `.jinja2` / `.j2` — Jinja templates (Flask / Ansible);
+ *     HTML with `{% … %}` / `{{ … }}` directives.
+ *   - `.liquid` — Liquid templates (Jekyll / Shopify); HTML with
+ *     `{% … %}` / `{{ … }}` directives.
+ *
+ * Listed alphabetically for review. Whenever a parser-routing addition
+ * moves an entry into {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS},
+ * remove it here too — keeping the entry would double-surface the agent's
+ * "could plausibly carry findings" signal on a file that's now being
+ * parsed (mirror of the `.erb` / `.php` migration out of
+ * {@link UNSUPPORTED_LANGUAGE_EXTENSIONS}).
+ */
+const PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".coffee",
+  ".eex",
+  ".gohtml",
+  ".haml",
+  ".handlebars",
+  ".hbs",
+  ".heex",
+  ".j2",
+  ".jade",
+  ".jinja",
+  ".jinja2",
+  ".leex",
+  ".liquid",
+  ".mustache",
+  ".njk",
+  ".nunjucks",
+  ".pug",
+  ".qmd",
+  ".rmd",
+  ".slim",
+  ".svelte",
+  ".tmpl",
+  ".twig",
+  ".vue",
+]);
+
+/**
+ * Predicate for {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}
+ * membership. Centralized so the partition logic doesn't drift between
+ * the summarizer's surface gate and any future cross-surface consumer.
+ * Lower-cases the input so a `.VUE` from a Windows-authored repo
+ * classifies the same as `.vue`. Returns `false` for any token that is
+ * not a known text-island substrate — the residual text-source tail
+ * (`.json`, `.xml`, `.yml`, `.toml`, `.csv`, `.md`, etc.) drops here
+ * because none of them carry HTML / JSX surface by format spec.
+ */
+function isParserRoutableTextIslandExtension(ext: string): boolean {
+  return PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS.has(ext.toLowerCase());
 }
 
 /**
@@ -1601,10 +1715,29 @@ export interface ScanWarningDetails {
    * the union of `extensions` + `noExtensionFiles`; on a corpus where
    * only well-known filenames fired the warning, `topExtension`
    * names the dominant filename (e.g. `LICENSE`).
+   *
+   * `parserRoutableExtensions` is a deterministic subset of
+   * `extensions` naming the entries whose format spec defines an
+   * HTML / JSX surface (component / template substrates ra11y does
+   * not yet route through a parser — `.vue`, `.svelte`, `.coffee`,
+   * `.rmd`, `.hbs`, `.haml`, etc. — see
+   * {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}). Surfaced so an
+   * agent reading the warning can budget against the actionable subset
+   * without the data-only tail (`.json`, `.xml`, `.yml`, `.toml`,
+   * `.csv`) burying it. Sort order matches the parent `extensions`
+   * slice (descending count, alphabetical tie-break) so the head
+   * agent's eye lands on remains the highest-impact substrate. Per
+   * AI-first "Heuristic-mislabeled meta sub-fields are dishonest" the
+   * partition is provable from the extension alone — each entry has
+   * a documented HTML / JSX surface — not a heuristic on contents.
+   * Present-when-meaningful: omitted when no surviving extension
+   * matches the substrate set so consumers walk by absence rather than
+   * an empty array sentinel.
    */
   readonly text_source_skipped?: {
     readonly extensions: readonly string[];
     readonly noExtensionFiles?: readonly string[];
+    readonly parserRoutableExtensions?: readonly string[];
     readonly topExtension: string;
     readonly topCount: number;
     readonly totalSkipped: number;
@@ -4668,17 +4801,32 @@ function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined
  * degenerate entry. The residual `(no-ext)` bucket (binary blobs
  * without an extension) is excluded — those entries aren't text-
  * source-shaped despite passing the binary-extension filter.
+ *
+ * Augments the shared base summary with `parserRoutableExtensions`
+ * — a deterministic subset of `extensions` naming the entries whose
+ * format spec defines an HTML / JSX surface (component / template
+ * substrates ra11y does not yet route). Per AI-first
+ * "Heuristic-mislabeled meta sub-fields are dishonest," the partition
+ * is provable from the extension alone via
+ * {@link isParserRoutableTextIslandExtension} — no content inspection.
+ * Surfaced so an agent reading the warning can budget against the
+ * actionable subset (`.vue`, `.svelte`, `.coffee`, `.rmd`, `.hbs`,
+ * `.haml`, etc.) without the data-only tail (`.json`, `.xml`, `.yml`,
+ * `.toml`, `.csv`, `.md`) burying it. Present-when-meaningful: omitted
+ * when no surviving extension is in the substrate set so consumers
+ * walk by absence rather than an empty array sentinel.
  */
 function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
       readonly noExtensionFiles?: readonly string[];
+      readonly parserRoutableExtensions?: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
       readonly totalSkipped: number;
     }
   | undefined {
-  return summarizeSkippedSubset(
+  const base = summarizeSkippedSubset(
     coverage,
     (token) =>
       // Text-source dotted extensions OR well-known textual no-ext
@@ -4687,6 +4835,18 @@ function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefine
       (token.startsWith(".") && !isBinaryAssetExtension(token)) ||
       isWellKnownTextualNoExtFilename(token),
   );
+  if (base === undefined) return undefined;
+  // Project the parser-routable subset off the base extensions slice
+  // so the substrate ordering tracks the dominant-count ordering of
+  // the parent — the agent's eye lands on the highest-impact
+  // actionable entry first.
+  const parserRoutableExtensions = base.extensions.filter((ext) =>
+    isParserRoutableTextIslandExtension(ext),
+  );
+  return {
+    ...base,
+    ...(parserRoutableExtensions.length > 0 ? { parserRoutableExtensions } : {}),
+  };
 }
 
 /**

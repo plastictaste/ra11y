@@ -50,6 +50,7 @@ interface CoverageEnvelope {
   readonly warningsDetails?: {
     readonly text_source_skipped?: {
       readonly extensions: readonly string[];
+      readonly parserRoutableExtensions?: readonly string[];
       readonly topExtension: string;
       readonly topCount: number;
       readonly totalSkipped: number;
@@ -139,6 +140,53 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(summary?.totalSkipped).toBe(3);
     // Three-way count tie breaks alphabetically — .py then .svelte then .vue.
     expect(summary?.extensions).toEqual([".py", ".svelte", ".vue"]);
+  });
+
+  it("routes `.db` to `binary_assets_skipped` and surfaces the parser-routable substrate subset on `text_source_skipped`", async () => {
+    // End-to-end pin for the discovery → warnings split: a corpus
+    // mixing a SQLite database file (`.db` — binary by spec), a data
+    // format the scanner never extracts HTML from (`.json`), and a
+    // text-island substrate ra11y could route (`.vue`) must surface
+    // each in its honest channel:
+    //   - `.db` lands under `binary_assets_skipped` (per AI-first
+    //     "Heuristic-mislabeled meta sub-fields are dishonest" — the
+    //     binary classification is provable from the format spec).
+    //   - `.vue` AND `.json` both surface under `text_source_skipped`
+    //     (both are text), but only `.vue` lands in
+    //     `parserRoutableExtensions` (its format spec defines an HTML
+    //     surface; `.json` is data-only).
+    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(join(dir, "Component.vue"), "<template><div /></template>\n");
+    write(join(dir, "config.json"), '{"a":1}\n');
+    // Any file content suffices; the discovery walker partitions
+    // by extension, not by byte content.
+    write(join(dir, "fixtures.db"), "binary-fixture-content");
+
+    const tool = findTool("coverage");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = parseEnvelope(result.content[0].text);
+
+    // Both warning channels fire — text + binary partition by predicate.
+    expect(data.warnings).toContain("text_source_skipped");
+    expect(data.warnings).toContain("binary_assets_skipped");
+
+    // `.db` MUST appear under binary, not text.
+    const binSummary = data.warningsDetails?.binary_assets_skipped;
+    expect(binSummary?.extensions).toContain(".db");
+    const textSummary = data.warningsDetails?.text_source_skipped;
+    expect(textSummary?.extensions).not.toContain(".db");
+
+    // Both `.vue` and `.json` are text-source — both surface in
+    // `extensions[]` so the agent reads the full skipped distribution.
+    expect(textSummary?.extensions).toContain(".vue");
+    expect(textSummary?.extensions).toContain(".json");
+
+    // The actionable substrate subset names only `.vue` — `.json` has
+    // no HTML / JSX surface by spec.
+    expect(textSummary?.parserRoutableExtensions).toEqual([".vue"]);
   });
 
   it("on a clean all-parseable scan with no scan-confidence triggers, omits `warnings` entirely (no empty `[]`)", async () => {

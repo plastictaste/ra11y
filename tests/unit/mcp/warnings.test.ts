@@ -1768,6 +1768,138 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.text_source_skipped?.totalSkipped).toBe(20);
   });
 
+  it("classifies `.db` (and SQLite-family sidecars) as binary assets, not text-source — the file format is binary by spec", () => {
+    // Per AI-first "Heuristic-mislabeled meta sub-fields are dishonest":
+    // `.db` is a SQLite database file, binary by format spec — never
+    // line-oriented text. Lumping it under `text_source_skipped` would
+    // mislabel it as parser-routable substrate the agent could re-route
+    // via additionalPaths; the file is binary, the routing question is
+    // meaningless. Same logic applies to `.sqlite` / `.sqlite3` and the
+    // `.db-shm` / `.db-wal` sidecars SQLite emits during write
+    // transactions.
+    const textCodes = ["text_source_skipped"] as const;
+    const textDetails = computeScanWarningDetails(textCodes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".db": 8,
+          ".sqlite": 3,
+          ".sqlite3": 2,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // `.db` / `.sqlite` / `.sqlite3` must NOT appear in text-source.
+    expect(textDetails.text_source_skipped?.extensions).toEqual([".vue"]);
+    expect(textDetails.text_source_skipped?.totalSkipped).toBe(12);
+
+    // Mirror surface — the same input on the binary channel must
+    // surface the database extensions so the corpus signal isn't
+    // silently filtered away. (Splitting the channels lets the agent
+    // see both halves; routing `.db` to neither would be silent
+    // suppression.)
+    const binCodes = ["binary_assets_skipped"] as const;
+    const binDetails = computeScanWarningDetails(binCodes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".db": 8,
+          ".sqlite": 3,
+          ".sqlite3": 2,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Sorted descending by count, alphabetical tie-break.
+    expect(binDetails.binary_assets_skipped?.extensions).toEqual([".db", ".sqlite", ".sqlite3"]);
+    expect(binDetails.binary_assets_skipped?.topExtension).toBe(".db");
+    expect(binDetails.binary_assets_skipped?.totalSkipped).toBe(13);
+  });
+
+  it("emits `parserRoutableExtensions` as the actionable text-island substrate subset (`.vue`, `.svelte`, `.coffee`) — provable from the format spec", () => {
+    // Per the AI-first "Heuristic-mislabeled meta sub-fields are
+    // dishonest" rule + the dispatch closure: the data-only tail
+    // (`.json`, `.xml`, `.yml`) often dominates topExtension on a
+    // mixed-corpus scan, burying the actionable subset of substrates
+    // ra11y could plausibly route. Surfacing the actionable subset as
+    // a deterministic projection of `extensions[]` lets the agent
+    // budget against the action it can take. The set is hard-coded
+    // (PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS) so each entry's
+    // membership is provable from the extension alone — no content
+    // inspection.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".json": 200, // dominant by count but data-only — NOT actionable
+          ".xml": 50,
+          ".yml": 30,
+          ".vue": 12,
+          ".svelte": 5,
+          ".coffee": 3,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Parent extensions slice — every text-source entry surfaces
+    // (data-only formats included so the agent can read the full
+    // distribution); sorted descending by count.
+    expect(details.text_source_skipped?.extensions).toEqual([
+      ".json",
+      ".xml",
+      ".yml",
+      ".vue",
+      ".svelte",
+      ".coffee",
+    ]);
+    // Actionable subset — ordering tracks the parent so the agent's
+    // eye lands on the highest-impact entry first. Data-only
+    // (`.json`, `.xml`, `.yml`) MUST be excluded — none of those
+    // formats define an HTML / JSX surface by spec.
+    expect(details.text_source_skipped?.parserRoutableExtensions).toEqual([
+      ".vue",
+      ".svelte",
+      ".coffee",
+    ]);
+  });
+
+  it("omits `parserRoutableExtensions` when no surviving extension is in the substrate set (present-when-meaningful)", () => {
+    // Per AI-first "Ambiguous field shapes are dishonest" the field
+    // is present-when-meaningful — when no actionable text-island
+    // substrate appears in the skipped map (only data-only formats
+    // and well-known textual filenames), the slot drops entirely so
+    // an agent cannot mistake an empty array for "we have no
+    // actionable subset to suggest" vs. "this field wasn't computed."
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".json": 100,
+          ".yml": 40,
+          ".toml": 10,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Parent payload still surfaces the data-only tail so the agent
+    // sees the full distribution.
+    expect(details.text_source_skipped?.extensions).toEqual([".json", ".yml", ".toml"]);
+    // No actionable substrate in the skipped map → field is absent.
+    expect(details.text_source_skipped?.parserRoutableExtensions).toBeUndefined();
+  });
+
   it("emits a `binary_assets_skipped` payload describing the binary subset (mirror shape of text_source_skipped)", () => {
     const codes = ["binary_assets_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
