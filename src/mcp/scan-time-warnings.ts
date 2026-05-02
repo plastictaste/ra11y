@@ -452,15 +452,9 @@ export function combineTemplateLiteralFiles(
 ): readonly string[] {
   const fragmentPaths = collectFragmentFilePaths(analysisCoverage);
   const out = new Set<string>();
-  if (analysisCoverage !== undefined) {
-    const fence = analysisCoverage["frontmatterFenceFiles"];
-    if (Array.isArray(fence)) {
-      for (const path of fence) {
-        if (typeof path !== "string") continue;
-        if (fragmentPaths.has(path)) continue;
-        out.add(path);
-      }
-    }
+  for (const path of readFrontmatterFenceFiles(analysisCoverage)) {
+    if (fragmentPaths.has(path)) continue;
+    out.add(path);
   }
   for (const path of overlapFiles) {
     if (fragmentPaths.has(path)) continue;
@@ -468,6 +462,28 @@ export function combineTemplateLiteralFiles(
   }
   if (out.size === 0) return [];
   return [...out].sort();
+}
+
+/**
+ * Reads the `frontmatterFenceFiles[]` string list off the coverage
+ * block when present, defensively skipping non-string entries. Returns
+ * an empty array when the block is absent or the slot is not an array
+ * — the caller treats absent input as "no per-file frontmatter
+ * evidence" and falls through to the overlap subset alone. Extracted
+ * from {@link combineTemplateLiteralFiles} to keep that function under
+ * the cognitive-complexity cap as the dedup branches accreted.
+ */
+function readFrontmatterFenceFiles(
+  analysisCoverage: Record<string, unknown> | undefined,
+): readonly string[] {
+  if (analysisCoverage === undefined) return EMPTY_PATH_LIST;
+  const fence = analysisCoverage["frontmatterFenceFiles"];
+  if (!Array.isArray(fence)) return EMPTY_PATH_LIST;
+  const out: string[] = [];
+  for (const path of fence) {
+    if (typeof path === "string") out.push(path);
+  }
+  return out;
 }
 
 /**
@@ -495,6 +511,7 @@ function collectFragmentFilePaths(
 }
 
 const EMPTY_FRAGMENT_PATHS: ReadonlySet<string> = new Set<string>();
+const EMPTY_PATH_LIST: readonly string[] = [];
 
 /**
  * Collects `.js` files (case-insensitive extension match) where the
