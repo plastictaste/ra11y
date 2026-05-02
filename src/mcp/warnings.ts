@@ -750,7 +750,32 @@ export type ScanWarningCode =
   // `warningsDetails.erb_islands_unrendered` carries
   // `{ fileCount, fileList, reason }` so the agent has the load-
   // bearing pivot in one read.
-  | "erb_islands_unrendered";
+  | "erb_islands_unrendered"
+  // Routing-decision telemetry: at least one scanned `.astro` file
+  // routed through `parseAstro` (the in-house Astro adapter) carried
+  // Astro-specific evidence — a frontmatter fence (`---\n…\n---\n`),
+  // a capitalized component-tag opener (`<Layout>` / `<Header>` /
+  // `<Icon>`), or a JSX-style `{expr}` brace — all of which the
+  // adapter / HTML parser cannot resolve at static-analysis time.
+  // Distinct from `erb_islands_unrendered` (where the HTML parser's
+  // `stripTemplateDirectives` blanks ERB tokens) and from
+  // `php_islands_stripped` (where the `parsePhp` adapter strips PHP
+  // islands): this code names the Astro routing-decision where the
+  // adapter blanks the frontmatter and the HTML parser leaves
+  // imported components / expressions unrendered. Any visible text /
+  // aria attribute those would have produced at render time is
+  // invisible to the static scan. Surfaced so the agent can spot-
+  // check the cited files for component-injected aria attributes
+  // before trusting "no findings here" — per AI-first doctrine
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression." Paired meta:
+  // `meta.analysisCoverage.astroIslandsUnrendered` carries the
+  // boolean; `meta.analysisCoverage.astroIslandsUnrenderedFiles`
+  // carries the sorted-ascending per-file evidence list. Paired
+  // payload: `warningsDetails.astro_islands_unrendered` carries
+  // `{ fileCount, fileList, reason }` so the agent has the load-
+  // bearing pivot in one read.
+  | "astro_islands_unrendered";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -2534,6 +2559,42 @@ export interface ScanWarningDetails {
     readonly fileList: readonly string[];
     readonly reason: string;
   };
+  /**
+   * Payload for `astro_islands_unrendered`. Names every scanned
+   * `.astro` file routed through {@link import("../input/parsers/astro.ts").parseAstro}
+   * whose source carried Astro-specific evidence the static scan can't
+   * see at render time — a frontmatter fence, a capitalized
+   * component-tag opener (`<Layout>` / `<Header>` / `<Icon>`), or a
+   * JSX-style `{expr}` brace. The Astro adapter blanks the
+   * frontmatter and the HTML parser leaves imported components and
+   * expressions unrendered, so any aria/role/label attribute or
+   * visible text those would have produced at render time is
+   * invisible to the static scan. The agent reads `fileList` to
+   * decide whether to spot-check the cited files for component-
+   * injected aria attributes before trusting "no findings here."
+   *
+   *   - `fileCount` — total count of contributing `.astro` files in
+   *     this scan. Always carries the full count (not capped) so the
+   *     scalar reads honestly off the warning channel.
+   *   - `fileList` — sorted-ascending absolute paths of every
+   *     contributing file. No top-N cap — the agent reads the full
+   *     list so it can scope follow-up reads / narrow `additionalPaths`
+   *     against the substrate. Mirrors `erbIslandsUnrenderedFiles`'s
+   *     surface contract.
+   *   - `reason` — deterministic prose naming the predicate that
+   *     fired so the agent has the load-bearing routing pivot in one
+   *     read.
+   *
+   * Per the AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires; the bare `{}`
+   * shape would deny the agent any way to triage which substrate
+   * subset drove the warning.
+   */
+  readonly astro_islands_unrendered?: {
+    readonly fileCount: number;
+    readonly fileList: readonly string[];
+    readonly reason: string;
+  };
   readonly no_hunks_in_comparison?: BinaryPresenceMarker;
   readonly storybook_preset_active?: BinaryPresenceMarker;
   readonly session_wrappers_configured_for_different_cwd?: BinaryPresenceMarker;
@@ -2984,6 +3045,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "scan_file_parser_bail_no_findings",
   "default_excluded_artifact_paths",
   "erb_islands_unrendered",
+  "astro_islands_unrendered",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3200,6 +3262,38 @@ function scanShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
+ * Substrate-island code family — `php_islands_stripped`,
+ * `erb_islands_unrendered`, `astro_islands_unrendered`. Each fires
+ * off a deterministic boolean predicate naming the routing-level
+ * transformation that left dynamic-rendered content invisible to
+ * the static scan. Extracted from {@link computeScanWarnings} so the
+ * orchestrator stays under the cognitive-complexity cap as new
+ * substrate detectors accrete (same pattern as
+ * {@link contentDistributionCodes} / {@link pathShapeCodes} /
+ * {@link discoverySkipCodes}). Per AI-first doctrine "Routing skips
+ * that drop content are the symmetric twin of suppression," each
+ * predicate's emission rationale lives next to its
+ * `warningsDetails[code]` payload type definition.
+ *
+ * Emit order matches declaration order on {@link ScanWarningCode}
+ * for stable `warnings[]` sequencing across runs: php first, erb
+ * second, astro third.
+ */
+function substrateIslandCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (hasPhpIslandsStripped(inputs.analysisCoverage)) {
+    out.push("php_islands_stripped");
+  }
+  if (hasErbIslandsUnrendered(inputs.analysisCoverage)) {
+    out.push("erb_islands_unrendered");
+  }
+  if (hasAstroIslandsUnrendered(inputs.analysisCoverage)) {
+    out.push("astro_islands_unrendered");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -3243,36 +3337,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // only.
     out.push("template_files_parsed_as_literal");
   }
-  if (hasPhpIslandsStripped(inputs.analysisCoverage)) {
-    // fires whenever the {@link parsePhp} adapter blanked at least
-    // one PHP island in a scanned file. Distinct from
-    // `template_files_parsed_as_literal`: that code names
-    // Liquid/Jinja/ERB tokens flowing through the HTML parser as
-    // literal text plus a per-finding overlap gate; this code names
-    // the parser-level evidence that PHP residue was successfully
-    // stripped before the HTML parser saw it. No overlap gate — the
-    // parser-level transformation is a scan-confidence label
-    // analogous to `storybook_preset_active` / `scanned_build_artifacts_present`,
-    // not per-finding noise.
-    out.push("php_islands_stripped");
-  }
-  if (hasErbIslandsUnrendered(inputs.analysisCoverage)) {
-    // fires whenever the HTML parser's `stripTemplateDirectives` pass
-    // blanked at least one ERB island (`<% … %>` / `<%= … %>` /
-    // `<%# … %>`) in a scanned `.erb` file. Distinct from
-    // `php_islands_stripped` (PHP substrate, where the parsePhp
-    // adapter does the stripping): this code names the ERB substrate
-    // where the HTML parser itself does the stripping. The dynamic
-    // attribute / fragment content the ERB island would have injected
-    // at render time (`<div <%= aria_attrs %>>`) is invisible to the
-    // static scan — every aria/role/label rule on the file silently
-    // misses the rendered shape. Surfaced as additive scan-
-    // confidence telemetry per AI-first doctrine "Routing skips that
-    // drop content are the symmetric twin of suppression" so the
-    // agent can spot-check the cited files before trusting "no
-    // findings here."
-    out.push("erb_islands_unrendered");
-  }
+  // Substrate-island code family — see `substrateIslandCodes`. Three
+  // branches extracted into the helper so this function's cognitive
+  // complexity stays under the lint cap as new substrate detectors
+  // accrete (same pattern as `contentDistributionCodes` /
+  // `pathShapeCodes` / `discoverySkipCodes`). Emitted order
+  // unchanged: php first (parsePhp adapter strips islands), erb
+  // second (HTML parser's stripTemplateDirectives blanks islands),
+  // astro third (parseAstro blanks frontmatter + HTML parser leaves
+  // components/expressions unrendered). Per AI-first doctrine
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" — each predicate names a routing-level
+  // transformation that left dynamic-rendered content invisible to
+  // the static scan, surfaced so the agent can spot-check the
+  // cited files before trusting "no findings here."
+  out.push(...substrateIslandCodes(inputs));
   if (inputs.scannedBuildArtifactsPresent === true) {
     // The detector uses deterministic signals (escape-bracket Tailwind
     // selectors, `.min.` infix, bundler-output path markers, sibling
@@ -3959,6 +4038,22 @@ function hasErbIslandsUnrendered(coverage: Record<string, unknown> | undefined):
 }
 
 /**
+ * returns `true` when the coverage block reports at least one
+ * scanned `.astro` file ran through {@link import("../input/parsers/astro.ts").parseAstro}
+ * on a source carrying Astro-specific evidence (frontmatter fence,
+ * capitalized component-tag opener, or JSX-style `{expr}` brace).
+ * The signal is routing-level (analogous to
+ * {@link hasErbIslandsUnrendered} for ERB substrate and
+ * {@link hasPhpIslandsStripped} for PHP substrate) and fires whenever
+ * the boolean is set; no overlap gate — see the
+ * `astro_islands_unrendered` warning code for the rationale.
+ */
+function hasAstroIslandsUnrendered(coverage: Record<string, unknown> | undefined): boolean {
+  if (coverage === undefined) return false;
+  return coverage["astroIslandsUnrendered"] === true;
+}
+
+/**
  * Combined predicate for the `template_files_parsed_as_literal` code.
  * Two independent emission paths:
  *
@@ -4351,6 +4446,10 @@ function buildScanWarningDetailsDispatch(
     {
       code: "erb_islands_unrendered",
       summarize: () => summarizeErbIslandsUnrendered(inputs.analysisCoverage),
+    },
+    {
+      code: "astro_islands_unrendered",
+      summarize: () => summarizeAstroIslandsUnrendered(inputs.analysisCoverage),
     },
     {
       code: "scanned_build_artifacts_present",
@@ -5402,6 +5501,58 @@ function summarizeErbIslandsUnrendered(
     fileCount: files.length,
     fileList: files,
     reason: ERB_ISLANDS_UNRENDERED_REASON,
+  };
+}
+
+/**
+ * Stable reason text shipped on
+ * `warningsDetails.astro_islands_unrendered.reason`. Kept as a
+ * module-level constant so callers reading the reason string can
+ * branch on exact identity (and tests pin it with one assertion).
+ * The text names the predicate that fired — Astro frontmatter and
+ * components are not extracted by the in-house adapter — and the
+ * silent-miss failure mode it implies — render-time aria/role/label
+ * attributes and component-rendered text are invisible to the
+ * static scan — so the agent has the load-bearing routing pivot in
+ * one read.
+ */
+export const ASTRO_ISLANDS_UNRENDERED_REASON =
+  "Astro frontmatter and components not extracted; rendered output may contain aria/role attributes and visible text the static scan misses";
+
+/**
+ * Builds the `astro_islands_unrendered` payload from the coverage
+ * block's `astroIslandsUnrenderedFiles` list. Returns `undefined`
+ * when the field is absent, malformed, or empty so the dispatch
+ * table falls through to the disambiguating fall-through marker
+ * (the warning code's predicate guarantees at least one `.astro`
+ * file met the evidence test when the code fired, but the helper
+ * stays defensive — same contract as
+ * {@link summarizeErbIslandsUnrendered}).
+ *
+ * `fileCount` carries the full count off the path-list length (no
+ * cap — the agent reads the full set so it can scope follow-up
+ * reads / narrow `additionalPaths` honestly). `fileList` carries
+ * the sorted-ascending path list verbatim — the accumulator already
+ * sorts deterministically. `reason` is the stable
+ * {@link ASTRO_ISLANDS_UNRENDERED_REASON} text naming the routing-
+ * decision predicate so the agent's load-bearing pivot is one read
+ * away. Pure shape-builder.
+ */
+function summarizeAstroIslandsUnrendered(
+  coverage: Record<string, unknown> | undefined,
+): NonNullable<ScanWarningDetails["astro_islands_unrendered"]> | undefined {
+  if (coverage === undefined) return undefined;
+  const raw = coverage["astroIslandsUnrenderedFiles"];
+  if (!Array.isArray(raw)) return undefined;
+  const files: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string" && entry.length > 0) files.push(entry);
+  }
+  if (files.length === 0) return undefined;
+  return {
+    fileCount: files.length,
+    fileList: files,
+    reason: ASTRO_ISLANDS_UNRENDERED_REASON,
   };
 }
 

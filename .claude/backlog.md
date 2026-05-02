@@ -428,8 +428,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Parser routing skips
 
-- [ ] **Q14-ASTRO-ROUTED-AS-HTML-NO-NATURAL-PARSER** Every `.astro` file in a corpus appears in `template_files_parsed_as_literal.files` with `parseModeByExtension['.astro']: "html"` — the html parser bails on Astro frontmatter fence (`---`) and component blocks like `<example>`, leaving entries in `partialParseFiles` with reasons like "Mismatched </p> close inside <example>". The natural parser is undefined; agent has no opt-in flag to enable Astro handling. Closure: emit a structured `astro_islands_unrendered` warning code with file list; ideally extract the static HTML slabs between Astro component boundaries and route those through the html parser. Per AI-first doctrine "Routing skips that drop content are the symmetric twin of suppression."
-
 ### NextStep / nextStepStructured routing
 
 ### suggest_fix shape contradictions

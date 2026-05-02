@@ -116,6 +116,11 @@ interface WarningsEnvelope {
       readonly fileList: readonly string[];
       readonly reason: string;
     };
+    readonly astro_islands_unrendered?: {
+      readonly fileCount: number;
+      readonly fileList: readonly string[];
+      readonly reason: string;
+    };
   };
 }
 
@@ -207,6 +212,35 @@ async function makeErbIslandsFixture(): Promise<string> {
   await writeFile(
     join(dir, "edit.erb"),
     `<% if logged_in? %>\n  <button <%= "aria-expanded=#{expanded}" %>>Edit</button>\n<% end %>\n`,
+  );
+  return dir;
+}
+
+/**
+ * Fixture seeding `astro_islands_unrendered` — drops two `.astro`
+ * Astro page files carrying frontmatter fences AND capitalized
+ * component-tag openers (`<Layout>`). The Astro adapter blanks the
+ * frontmatter and the HTML parser leaves imported components
+ * unrendered, so any aria/role/label attribute or visible text the
+ * components would have produced at render time is invisible to the
+ * static scan; the per-file evidence accumulator records both files
+ * and the warning channel surfaces the routing-decision telemetry.
+ * Mirrors `makeErbIslandsFixture` shape — also seeds one parseable
+ * HTML page so the response carries the "real scan" framing.
+ */
+async function makeAstroIslandsFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-astro-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><img src="a.png" alt="alt"><p>hi</p></body></html>`,
+  );
+  await writeFile(
+    join(dir, "index.astro"),
+    `---\nconst title = "Welcome";\n---\n<Layout title={title}>\n  <h1>{title}</h1>\n</Layout>\n`,
+  );
+  await writeFile(
+    join(dir, "about.astro"),
+    `---\nimport Header from "../components/Header.astro";\n---\n<Header />\n<main>\n  <h1>About</h1>\n</main>\n`,
   );
   return dir;
 }
@@ -549,6 +583,73 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
     expect(scanFilePayload?.fileCount).toBe(1);
     expect(scanFilePayload?.fileList[0]).toMatch(/show\.erb$/);
     expect(scanFilePayload?.reason).toBe(scanProjPayload?.reason);
+  });
+
+  it("scan_project, coverage, and checklist emit the same astro_islands_unrendered payload on the same scan root", async () => {
+    // Cross-surface invariant for `astro_islands_unrendered`: the
+    // routing-decision warning fires off a deterministic per-file
+    // predicate (extension is `.astro` AND source carries
+    // frontmatter / capitalized component tag / `{expr}` brace), so
+    // every project-rooted tool that walks the same cwd must surface
+    // the same `{fileCount, fileList, reason}` payload. Mirrors the
+    // `erb_islands_unrendered` cross-surface assertion above; without
+    // it, an agent calling `checklist` first on an Astro-heavy site
+    // would see no signal that N pages carried unrendered components.
+    const dir = await makeAstroIslandsFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "scan_file", { path: join(dir, "index.astro") }),
+    ]);
+    const scanProj = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    const coverage = warningsEnvelope(body<Record<string, unknown>>(responses[2]));
+    const checklist = warningsEnvelope(body<Record<string, unknown>>(responses[3]));
+    const scanFile = warningsEnvelope(body<Record<string, unknown>>(responses[4]));
+
+    // Sanity: predicate fires on scan_project, otherwise the cross-
+    // surface invariant below is vacuously true.
+    expect(scanProj.warnings ?? []).toContain("astro_islands_unrendered");
+
+    const scanProjPayload = scanProj.warningsDetails?.astro_islands_unrendered;
+    const coveragePayload = coverage.warningsDetails?.astro_islands_unrendered;
+    const checklistPayload = checklist.warningsDetails?.astro_islands_unrendered;
+
+    expect(scanProjPayload).toBeDefined();
+    expect(coveragePayload).toBeDefined();
+    expect(checklistPayload).toBeDefined();
+
+    // Same fixture → identical payload across all three project-rooted
+    // surfaces. Cross-surface drift would silently mislead an agent
+    // budgeting against the first tool's headline before calling the
+    // second.
+    expect(coveragePayload).toEqual(scanProjPayload);
+    expect(checklistPayload).toEqual(scanProjPayload);
+
+    // Payload shape sanity — count is 2 (about.astro + index.astro)
+    // and fileList is sorted ascending so the agent can scope follow-
+    // ups deterministically. The `reason` text names the routing-
+    // decision predicate so the agent has the load-bearing pivot in
+    // one read.
+    expect(scanProjPayload?.fileCount).toBe(2);
+    expect(scanProjPayload?.fileList.length).toBe(2);
+    expect(scanProjPayload?.fileList[0]).toMatch(/about\.astro$/);
+    expect(scanProjPayload?.fileList[1]).toMatch(/index\.astro$/);
+    expect(scanProjPayload?.reason).toMatch(/Astro frontmatter and components not extracted/);
+
+    // scan_file scopes to one .astro file — the predicate is per-file
+    // so the warning still fires on the single-file surface, with a
+    // count of 1 and a fileList carrying just the scanned path.
+    // Cross-surface payload shape is identical (same `{fileCount,
+    // fileList, reason}` keys), only the per-file evidence is scoped
+    // to the requested path.
+    expect(scanFile.warnings ?? []).toContain("astro_islands_unrendered");
+    const scanFileAstroPayload = scanFile.warningsDetails?.astro_islands_unrendered;
+    expect(scanFileAstroPayload).toBeDefined();
+    expect(scanFileAstroPayload?.fileCount).toBe(1);
+    expect(scanFileAstroPayload?.fileList[0]).toMatch(/index\.astro$/);
+    expect(scanFileAstroPayload?.reason).toBe(scanProjPayload?.reason);
   });
 
   it("payload-bearing codes never ship a bare `{}` detail entry — fall-through stamps the truncation sentinel instead", async () => {

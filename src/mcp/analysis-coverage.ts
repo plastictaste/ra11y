@@ -111,6 +111,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
+import { recordAstroIslandStripped } from "./analysis-coverage-astro.ts";
 import { recordErbIslandStripped } from "./analysis-coverage-erb.ts";
 import { assembleFragmentFilesBlock } from "./analysis-coverage-fragments.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
@@ -269,6 +270,40 @@ interface CoverageBlock {
    * can scope without re-walking the file set.
    */
   erbIslandsUnrenderedFiles?: readonly string[];
+  /**
+   * true when at least one scanned `.astro` file (Astro component or
+   * page) routed through {@link import("../input/parsers/astro.ts").parseAstro}
+   * carried Astro-specific evidence the static scan can't see at
+   * render time — a frontmatter fence (`---\n…\n---\n`), a
+   * capitalized component-tag opener (`<Layout>` / `<Header>`), or a
+   * JSX-style `{expr}` brace. Tracked alongside `erbIslandsUnrendered`
+   * because Astro is another routing-skip surface where the parser
+   * level evidence is "components / expressions / frontmatter were
+   * left unrendered." The warnings layer fires
+   * `astro_islands_unrendered` off this flag so an agent reading the
+   * response sees the routing-level evidence regardless of whether
+   * any rule emitted on the affected files. Companion to
+   * `phpIslandsStripped` / `erbIslandsUnrendered` for the Astro
+   * substrate. Present-when-meaningful: omitted when no scanned
+   * `.astro` file carried Astro-specific evidence.
+   */
+  astroIslandsUnrendered?: boolean;
+  /**
+   * Paths of every parsed `.astro` file whose original source carried
+   * Astro-specific evidence (frontmatter / capitalized component tag /
+   * `{expr}` brace). Companion to `astroIslandsUnrendered`: the
+   * boolean is the gate the warnings layer reads, this list is the
+   * per-file evidence lifted onto
+   * `warningsDetails.astro_islands_unrendered.{fileCount, fileList, reason}`.
+   * Sorted alphabetically for deterministic wire output.
+   * Present-when-meaningful: omitted when no scanned file met the
+   * predicate. Per the AI-first doctrine "Empty
+   * `warningsDetails.<code>: {}` is dishonest" — the warning code
+   * declares the routing-level transformation ran; the payload names
+   * which files contributed so an agent reading the warning channel
+   * can scope without re-walking the file set.
+   */
+  astroIslandsUnrenderedFiles?: readonly string[];
   /**
    * true when at least one
    * parsed HTML-family file (including markdown routed through the HTML
@@ -557,6 +592,28 @@ interface CoverageAccumulator {
    * pass," not "this file had N islands."
    */
   readonly erbIslandsUnrenderedFiles: string[];
+  /**
+   * flipped to true the first time any scanned `.astro` file's source
+   * carries Astro-specific evidence (frontmatter fence, capitalized
+   * component-tag opener, or `{expr}` brace). Stays a boolean for the
+   * warnings predicate
+   * ({@link import("./warnings.ts").ScanWarningCode | astro_islands_unrendered});
+   * per-file evidence accrues alongside in
+   * `astroIslandsUnrenderedFiles` so the warning's
+   * `warningsDetails.astro_islands_unrendered` payload can name which
+   * files contributed without re-walking parsed sources.
+   */
+  astroIslandsUnrendered: boolean;
+  /**
+   * Paths of every scanned `.astro` file whose source carried Astro-
+   * specific evidence. Lifted onto the coverage block as
+   * `astroIslandsUnrenderedFiles` so the warnings-module summarizer
+   * can emit `{fileCount, fileList, reason}` without re-walking
+   * parsed sources. Stays a flat path list — no per-evidence offsets
+   * — because the routing-level signal is "this file ran through the
+   * Astro adapter," not "this file had N components."
+   */
+  readonly astroIslandsUnrenderedFiles: string[];
   // Per-scan layout-composition evidence accumulated over the file
   // walk; consumed by `markdown-classifier.classifyFragmentKind` to
   // promote `.md` / `.markdown` fragments from
@@ -664,6 +721,8 @@ export function buildAnalysisCoverage(
     phpIslandsStrippedFiles: [],
     erbIslandsUnrendered: false,
     erbIslandsUnrenderedFiles: [],
+    astroIslandsUnrendered: false,
+    astroIslandsUnrenderedFiles: [],
     layoutEvidence: new LayoutEvidenceAccumulator(),
   };
   const wrapperSet = new Set(wrappers);
@@ -732,6 +791,10 @@ export function buildAnalysisCoverage(
   if (acc.erbIslandsUnrendered) {
     coverage.erbIslandsUnrendered = true;
     coverage.erbIslandsUnrenderedFiles = [...acc.erbIslandsUnrenderedFiles].sort();
+  }
+  if (acc.astroIslandsUnrendered) {
+    coverage.astroIslandsUnrendered = true;
+    coverage.astroIslandsUnrenderedFiles = [...acc.astroIslandsUnrenderedFiles].sort();
   }
   if (acc.parseErrorEntries.length > 0) {
     // this assembler never
@@ -1180,6 +1243,7 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
     }
   }
   recordErbIslandStripped(file, acc);
+  recordAstroIslandStripped(file, acc);
   const { isFragment, signals } = classifyFragment(
     file.ast.root as HtmlDocument,
     file.source,

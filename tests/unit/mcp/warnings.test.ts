@@ -433,6 +433,64 @@ describe("computeScanWarnings", () => {
     });
   });
 
+  // Routing-decision signal that `.astro` files routed through the
+  // Astro adapter carried Astro-specific evidence (frontmatter,
+  // capitalized component tags, `{expr}` braces) the static scan
+  // can't resolve at render time. Mirrors the `erb_islands_unrendered`
+  // shape — boolean predicate, no overlap gate.
+  it("fires `astro_islands_unrendered` when analysisCoverage.astroIslandsUnrendered is true", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        astroIslandsUnrendered: true,
+        astroIslandsUnrenderedFiles: ["/p/src/pages/index.astro", "/p/src/pages/about.astro"],
+      },
+      filesByExtension: { ".astro": 3 },
+    });
+    expect(codes).toContain("astro_islands_unrendered");
+  });
+
+  it("does NOT fire `astro_islands_unrendered` when analysisCoverage.astroIslandsUnrendered is false or absent", () => {
+    const noFlag = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".astro": 3 },
+    });
+    expect(noFlag).not.toContain("astro_islands_unrendered");
+    const explicitFalse = computeScanWarnings({
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { astroIslandsUnrendered: false },
+      filesByExtension: { ".astro": 3 },
+    });
+    expect(explicitFalse).not.toContain("astro_islands_unrendered");
+  });
+
+  it("emits `warningsDetails.astro_islands_unrendered` payload with fileCount, fileList, and reason when the warning fires", () => {
+    const codes: ScanWarningCode[] = ["astro_islands_unrendered"];
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 2,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        astroIslandsUnrendered: true,
+        astroIslandsUnrenderedFiles: ["/p/src/pages/about.astro", "/p/src/pages/index.astro"],
+      },
+      filesByExtension: { ".astro": 2 },
+    });
+    expect(details["astro_islands_unrendered"]).toEqual({
+      fileCount: 2,
+      fileList: ["/p/src/pages/about.astro", "/p/src/pages/index.astro"],
+      reason:
+        "Astro frontmatter and components not extracted; rendered output may contain aria/role attributes and visible text the static scan misses",
+    });
+  });
+
   it("fires `text_source_skipped` when the coverage block reports a non-empty skippedByExtension map", () => {
     const codes = computeScanWarnings({
       filesScanned: 125,
