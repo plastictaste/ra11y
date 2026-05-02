@@ -18,7 +18,7 @@ import {
   buildTightLineSnippet,
   findEnclosingBlock,
   sourceIndex,
-} from "../../../src/mcp/source-snippet.ts";
+} from "../../../src/utils/source-snippet.ts";
 
 const CAP = 300;
 

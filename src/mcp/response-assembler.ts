@@ -63,6 +63,7 @@ import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
@@ -345,7 +346,7 @@ function runPerRuleCoverageCascade(args: {
  */
 export function groupByFile(
   violations: readonly Violation[],
-  sourcesByPath?: ReadonlyMap<string, string>,
+  entriesByPath?: ReadonlyMap<string, SourceEntry>,
 ): AssembledFile[] {
   const byPath = new Map<string, Violation[]>();
   for (const v of violations) {
@@ -356,11 +357,11 @@ export function groupByFile(
   const paths = [...byPath.keys()].sort();
   return paths.map((path) => {
     const bucketViolations = byPath.get(path) ?? [];
-    const source = sourcesByPath?.get(path);
+    const entry = entriesByPath?.get(path);
     const findings = bucketViolations.map((v) =>
       buildAgentFinding(v, {
         suppressPlacement: "omit",
-        ...(source === undefined ? {} : { source }),
+        ...(entry === undefined ? {} : { source: entry.source, language: entry.language }),
       }),
     );
     return { path, findings };
@@ -585,9 +586,16 @@ export function assembleScanFamilyResponse(
   // `widenToUniqueAnchor` ladder that `suggest_fix.primary.edit` uses
   // — `fix.oldText` on a scan-family response and `primary.edit.oldText`
   // on a `suggest_fix` response now ship identical multi-line unique
-  // anchors.
-  const sourcesByPath = new Map<string, string>(parsedFiles.map((f) => [f.filePath, f.source]));
-  let fileEntries: readonly AssembledFile[] = groupByFile(violations, sourcesByPath);
+  // anchors. The `language` sibling on each entry powers the per-finding
+  // `snippet` auto-population — see V1-FINDINGS-SNIPPET-FIELD-OMITTED-
+  // ON-SCAN-SURFACES — so scan_project / scan_file findings ship a
+  // ±3-line context window the agent can triage in-place, matching the
+  // shape `checklist` candidates already carry (per AI-first doctrine
+  // "Per-tool review-candidate shape must agree across surfaces").
+  const entriesByPath = new Map<string, SourceEntry>(
+    parsedFiles.map((f) => [f.filePath, { source: f.source, language: f.ast.language }]),
+  );
+  let fileEntries: readonly AssembledFile[] = groupByFile(violations, entriesByPath);
 
   // (2) Split notes from non-notes; tally fixes.
   const nonNote = violations.filter((v) => v.severity !== "info");

@@ -22,6 +22,12 @@ import type {
   ReviewConfidence,
 } from "../types/review.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
+import {
+  buildSnippetForReason,
+  buildTightLineSnippet,
+  type SourceEntry,
+  sourceIndex,
+} from "../utils/source-snippet.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
@@ -45,12 +51,6 @@ import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema } from "./skip-criterion.ts";
-import {
-  buildSnippetForReason,
-  buildTightLineSnippet,
-  type SourceEntry,
-  sourceIndex,
-} from "./source-snippet.ts";
 import { deriveTestableCriteria } from "./testable-criteria.ts";
 import {
   errorResult,

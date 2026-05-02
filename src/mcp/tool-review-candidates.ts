@@ -25,13 +25,13 @@
 import { runScan } from "../engine/scanner.ts";
 import type { CandidateFinder } from "../types/review.ts";
 import type { Standard } from "../types/standard.ts";
+import { buildSnippetForReason, type SourceEntry, sourceIndex } from "../utils/source-snippet.ts";
 import {
   dedupeReviewCandidatesByReason,
   type ReasonDedupedCandidate,
 } from "./review-candidate-dedup.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
-import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
   errorResult,
   firstUnknownStandard,

@@ -42,12 +42,11 @@ import { writeFile } from "node:fs/promises";
 import { relative } from "node:path";
 import { parseInlineDisables } from "../config/index.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
-import { buildAgentFinding } from "../output/agent-response/index.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import {
   buildNextStep,
   computeDelta,
-  formatCandidate,
+  formatDelta,
   formatSlice,
   parseErrorEnvelope,
   preflightValidate,
@@ -170,30 +169,19 @@ export const applyFixTool: McpTool = {
 
     const delta = computeDelta(before, after);
 
-    // thread per-slice source
+    // thread per-slice source + language
     // into `buildAgentFinding` so `fix.oldText` widens identically to
-    // `suggest_fix.primary.edit`. `resolvedViolations` are findings from
-    // the pre-edit source (now resolved by the applied edit);
-    // `newViolations` are findings introduced by the edit on the
-    // post-edit source.
-    const beforeSource = original.source;
-    const afterSource = newSource;
+    // `suggest_fix.primary.edit` AND per-finding `snippet` auto-populates
+    // (V1-FINDINGS-SNIPPET-FIELD-OMITTED-ON-SCAN-SURFACES).
+    const beforeSrc = { source: original.source, language: original.ast.language };
+    const afterSrc = { source: newSource, language: newAst.language };
     return textResult({
       applied,
       dryRun,
       file: resolved,
-      before: formatSlice(before, beforeSource),
-      after: formatSlice(after, afterSource),
-      delta: {
-        resolvedViolations: delta.resolvedViolations.map((v) =>
-          buildAgentFinding(v, { suppressPlacement: "omit", source: beforeSource }),
-        ),
-        newViolations: delta.newViolations.map((v) =>
-          buildAgentFinding(v, { suppressPlacement: "omit", source: afterSource }),
-        ),
-        resolvedCandidates: delta.resolvedCandidates.map(formatCandidate),
-        newCandidates: delta.newCandidates.map(formatCandidate),
-      },
+      before: formatSlice(before, beforeSrc.source, beforeSrc.language),
+      after: formatSlice(after, afterSrc.source, afterSrc.language),
+      delta: formatDelta(delta, { before: beforeSrc, after: afterSrc }),
       meta: {
         cwd,
         relativeFilePath: relative(cwd, resolved),

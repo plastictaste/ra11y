@@ -36,6 +36,7 @@ import type { Ast, ParseError } from "../types/ast.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
+import type { SnippetLanguage } from "../utils/source-snippet.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
 import { errorResult, type McpToolResult, strParam } from "./tools-helpers.ts";
@@ -248,17 +249,24 @@ function fingerprintCandidate(c: ReviewCandidate): string {
   return `${c.criterionId}::${c.location.filePath}::${c.reason}`;
 }
 
-export function formatSlice(scan: SingleFileScan, source?: string): Record<string, unknown> {
+export function formatSlice(
+  scan: SingleFileScan,
+  source?: string,
+  language?: SnippetLanguage,
+): Record<string, unknown> {
   // forward the slice's source
   // so per-finding `fix.oldText` widens via `widenToUniqueAnchor` —
   // matching the cross-tool shape `suggest_fix` ships on
   // `primary.edit`. Optional so legacy callers without source in scope
-  // keep the bare rule-emitted edit.
+  // keep the bare rule-emitted edit. Sibling `language` enables per-
+  // finding `snippet` auto-population when the rule didn't emit one
+  // (V1-FINDINGS-SNIPPET-FIELD-OMITTED-ON-SCAN-SURFACES).
   return {
     violations: scan.violations.map((v) =>
       buildAgentFinding(v, {
         suppressPlacement: "omit",
         ...(source === undefined ? {} : { source }),
+        ...(language === undefined ? {} : { language }),
       }),
     ),
     candidates: scan.candidates.map(formatCandidate),
@@ -272,6 +280,40 @@ export function formatCandidate(c: ReviewCandidate): Record<string, unknown> {
     column: c.location.column,
     reason: c.reason,
     ...(c.snippet ? { snippet: c.snippet } : {}),
+  };
+}
+
+/**
+ * Folds a {@link FixDelta} into the agent-facing shape — same
+ * before/after split, with each violation lane built through
+ * {@link buildAgentFinding} threading the matching slice's source +
+ * language for per-finding `snippet` auto-population
+ * (V1-FINDINGS-SNIPPET-FIELD-OMITTED-ON-SCAN-SURFACES).
+ */
+export function formatDelta(
+  delta: FixDelta,
+  ctx: {
+    readonly before: { readonly source: string; readonly language: SnippetLanguage };
+    readonly after: { readonly source: string; readonly language: SnippetLanguage };
+  },
+): Record<string, unknown> {
+  return {
+    resolvedViolations: delta.resolvedViolations.map((v) =>
+      buildAgentFinding(v, {
+        suppressPlacement: "omit",
+        source: ctx.before.source,
+        language: ctx.before.language,
+      }),
+    ),
+    newViolations: delta.newViolations.map((v) =>
+      buildAgentFinding(v, {
+        suppressPlacement: "omit",
+        source: ctx.after.source,
+        language: ctx.after.language,
+      }),
+    ),
+    resolvedCandidates: delta.resolvedCandidates.map(formatCandidate),
+    newCandidates: delta.newCandidates.map(formatCandidate),
   };
 }
 

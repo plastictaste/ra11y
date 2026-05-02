@@ -31,6 +31,7 @@
  */
 
 import type { Violation } from "../../types/violation.ts";
+import { buildSnippetForReason, type SnippetLanguage } from "../../utils/source-snippet.ts";
 import { widenToUniqueAnchor } from "../../utils/unique-anchor.ts";
 import type { AgentFinding, AgentFix, Category, Confidence } from "./types.ts";
 
@@ -98,6 +99,38 @@ function buildFix(v: Violation, source: string | undefined): AgentFix | undefine
   }
 
   return undefined;
+}
+
+/**
+ * Resolves the per-finding `snippet` field with this precedence:
+ *
+ * 1. The rule emitted a non-empty `Violation.snippet` — surface it
+ *    verbatim. The rule has the most context (e.g. `<a href="javascript:…">`
+ *    capturing the offending opener), so its choice wins.
+ * 2. The caller threaded `source` + `language` AND the rule did not
+ *    emit one — auto-build a ±3-line window via
+ *    {@link buildSnippetForReason} (wide-fallback when the message
+ *    cites cross-line evidence). This is the same recipe checklist
+ *    candidates use, so an agent reading the same conceptual location
+ *    across `scan_project` / `scan_file` / `checklist` sees the same
+ *    snippet.
+ * 3. Otherwise, omit the field per CLAUDE.md §1 "Ambiguous field shapes
+ *    are dishonest." Empty-string sentinels are silent-miss hazards.
+ *
+ * Findings without a usable file:line (synthetic rule-crash records,
+ * project-rooted aggregate findings) reach this helper with `line < 1`
+ * — the snippet builder returns `undefined` on those inputs, the call
+ * site conditional-spreads it away.
+ */
+function resolveSnippet(v: Violation, opts?: BuildAgentFindingOptions): string | undefined {
+  if (typeof v.snippet === "string" && v.snippet.length > 0) return v.snippet;
+  if (opts?.source === undefined || opts?.language === undefined) return undefined;
+  return buildSnippetForReason({
+    source: opts.source,
+    line: v.location.line,
+    reason: v.message,
+    language: opts.language,
+  });
 }
 
 function buildSuppressPragma(filePath: string, ruleId: string): string {
@@ -198,12 +231,37 @@ export interface BuildAgentFindingOptions {
    * `apply_fix` can't silently clobber the first of N matching
    * occurrences in the file.
    *
+   * Same source is also consumed to populate the per-finding `snippet`
+   * field when the rule did not emit one inline — see
+   * V1-FINDINGS-SNIPPET-FIELD-OMITTED-ON-SCAN-SURFACES. When `source`
+   * is provided alongside {@link language}, the builder reads ±3 lines
+   * around `v.location.line` (or wider if the message cites cross-line
+   * evidence — see {@link buildSnippetForReason}) so the agent can
+   * triage in-place without an extra Read round-trip per finding. The
+   * recipe is the same one `checklist` runs on its review candidates,
+   * keeping `snippet` shape parity across scan/checklist/coverage
+   * surfaces (per docs/kb/architecture/ai-first-consumer.md "Per-tool
+   * review-candidate shape must agree across surfaces"). Omitted when
+   * no honest snippet can be built (line out of bounds, empty source).
+   *
    * Omit when the caller does not have the source on hand (e.g. the CLI
    * agent formatter consumes `ScanResult` only, which carries violations
    * but not parsed-file sources). In that case the bare rule-emitted
-   * edit ships unwidened — the same as before this option existed.
+   * edit ships unwidened, and `snippet` is omitted unless the rule
+   * itself stamped one — same as before this option existed.
    */
   readonly source?: string;
+  /**
+   * Language tag of the file's source — sibling to {@link source}. Required
+   * for the snippet auto-population path so {@link buildSnippetForReason}
+   * can pick the correct enclosing-block walker (TSX/JSX/TS/JS use a
+   * brace-balanced wide-fallback; HTML/CSS use the fixed-line window).
+   * Omit at call sites that do not have parsed-file ASTs in scope; the
+   * snippet falls back to whatever the rule emitted on `Violation.snippet`,
+   * preserving prior behavior on the CLI formatter and other ScanResult-only
+   * surfaces.
+   */
+  readonly language?: SnippetLanguage;
 }
 
 /**
@@ -250,6 +308,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     (opts?.suppressPlacement ?? "inline") === "inline"
       ? buildSuppressPlacement(v.location.filePath)
       : undefined;
+  const snippet = resolveSnippet(v, opts);
 
   return {
     findingId: v.findingId,
@@ -276,7 +335,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     confidence: resolveConfidence(v),
     ...mapPositionToAgent(v),
     message: v.message,
-    ...(typeof v.snippet === "string" && v.snippet.length > 0 ? { snippet: v.snippet } : {}),
+    ...(snippet === undefined ? {} : { snippet }),
     ...(fix === undefined ? {} : { fix }),
     effort: "trivial",
     category,

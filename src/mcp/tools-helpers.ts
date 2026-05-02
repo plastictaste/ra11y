@@ -28,6 +28,7 @@ import {
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
@@ -605,18 +606,24 @@ export async function runScanAndFormat(
   // is a short literal that repeats across the file (e.g. the bare
   // 4-char `<label>` produced by `forms/label-adjacent-unassociated`
   // for each of N orphan-label findings) ships an `apply_fix`-clobber
-  // hazard the agent can't see from the response shape alone.
-  const sourcesByPath = new Map<string, string>(files.map((f) => [f.filePath, f.source]));
+  // hazard the agent can't see from the response shape alone. Sibling
+  // language tag drives per-finding `snippet` auto-population (V1-
+  // FINDINGS-SNIPPET-FIELD-OMITTED-ON-SCAN-SURFACES) so scan-family
+  // findings ship the same ±3-line context window checklist candidates
+  // already carry.
+  const entriesByPath = new Map<string, SourceEntry>(
+    files.map((f) => [f.filePath, { source: f.source, language: f.ast.language }]),
+  );
   const fileEntries = [...grouped.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([path, violations]) => {
-      const source = sourcesByPath.get(path);
+      const entry = entriesByPath.get(path);
       return {
         path,
         findings: violations.map((v) =>
           buildAgentFinding(v, {
             suppressPlacement: "omit",
-            ...(source === undefined ? {} : { source }),
+            ...(entry === undefined ? {} : { source: entry.source, language: entry.language }),
           }),
         ),
       };

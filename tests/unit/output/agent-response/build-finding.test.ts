@@ -817,3 +817,104 @@ describe("category never contradicts fixClass", () => {
     expect(finding.category).toBe("review");
   });
 });
+
+/**
+ * Snippet-population behavior — closes V1-FINDINGS-SNIPPET-FIELD-OMITTED-
+ * ON-SCAN-SURFACES.
+ *
+ * The `snippet` field used to ship only when the rule itself stamped one
+ * onto `Violation.snippet` (just one rule does today). Every other
+ * scan-side finding shipped without a snippet, forcing the agent into
+ * an extra Read round-trip to triage the surrounding evidence — a
+ * cross-surface mismatch with `checklist.items[].candidates[]` which
+ * already populates the field via the same `buildSnippetForReason`
+ * helper, per AI-first doctrine "Per-tool review-candidate shape must
+ * agree across surfaces."
+ *
+ * The fix: when callers thread `source` + `language` into
+ * `buildAgentFinding`, the builder auto-populates `snippet` from the
+ * source by reading 1-3 lines around the finding's line. The rule's
+ * own `Violation.snippet` still wins when present (it carries
+ * rule-curated context like the `<a href="javascript:…">` opener that
+ * the auto-builder couldn't synthesize).
+ *
+ * Empty-source / out-of-range / missing language all return undefined
+ * via the conditional spread — no `snippet: ""` sentinels per CLAUDE.md
+ * §1 "Ambiguous field shapes are dishonest."
+ */
+describe("snippet-population precedence", () => {
+  it("returns the rule-emitted snippet when v.snippet is non-empty", () => {
+    const v = violation({
+      location: { filePath: "a.tsx", line: 2, column: 1 },
+      snippet: '<a href="javascript:void(0)">click</a>',
+    });
+    const source = ['"use strict";', '<a href="javascript:void(0)">click</a>', "// trailer"].join(
+      "\n",
+    );
+    const finding = buildAgentFinding(v, { source, language: "tsx" });
+    expect(finding.snippet).toBe('<a href="javascript:void(0)">click</a>');
+  });
+
+  it("auto-populates snippet from source + language when the rule did not stamp one", () => {
+    const v = violation({
+      location: { filePath: "a.tsx", line: 3, column: 1 },
+    });
+    const source = ["const a = 1;", "const b = 2;", "const c = 3;", "const d = 4;"].join("\n");
+    const finding = buildAgentFinding(v, { source, language: "tsx" });
+    expect(typeof finding.snippet).toBe("string");
+    expect(finding.snippet).toContain("const c = 3;");
+  });
+
+  it("omits snippet when source is provided but language is not", () => {
+    // Both `source` and `language` are required for the auto-builder —
+    // language drives the brace-balanced-language path inside
+    // buildSnippetForReason. Without it, we omit rather than guess.
+    const v = violation({
+      location: { filePath: "a.tsx", line: 2, column: 1 },
+    });
+    const source = ["line 1", "line 2", "line 3"].join("\n");
+    const finding = buildAgentFinding(v, { source });
+    expect(finding.snippet).toBeUndefined();
+  });
+
+  it("omits snippet when language is provided but source is not", () => {
+    const v = violation({
+      location: { filePath: "a.tsx", line: 2, column: 1 },
+    });
+    const finding = buildAgentFinding(v, { language: "tsx" });
+    expect(finding.snippet).toBeUndefined();
+  });
+
+  it("omits snippet when neither source nor language are provided (CLI ScanResult-only path)", () => {
+    const v = violation({
+      location: { filePath: "a.tsx", line: 2, column: 1 },
+    });
+    const finding = buildAgentFinding(v);
+    expect(finding.snippet).toBeUndefined();
+  });
+
+  it("omits snippet when the finding's line is out of range (synthetic / aggregate findings)", () => {
+    // Per the backlog scope: limitations[]-style findings and project-
+    // rooted aggregate findings have no usable file:line; the snippet
+    // must omit rather than ship a sentinel.
+    const v = violation({
+      location: { filePath: "a.tsx", line: 9999, column: 1 },
+    });
+    const source = "single line\n";
+    const finding = buildAgentFinding(v, { source, language: "tsx" });
+    expect(finding.snippet).toBeUndefined();
+  });
+
+  it("rule-emitted snippet wins even when source + language are also provided", () => {
+    // Precedence: rule's curated snippet > auto-built snippet. The rule
+    // sees the AST and may carry context the line-window can't capture
+    // (the offending opener tag, a multi-line attribute cluster).
+    const v = violation({
+      location: { filePath: "a.tsx", line: 2, column: 1 },
+      snippet: "<rule-curated-snippet />",
+    });
+    const source = ["line 1", "line 2 around the finding", "line 3"].join("\n");
+    const finding = buildAgentFinding(v, { source, language: "tsx" });
+    expect(finding.snippet).toBe("<rule-curated-snippet />");
+  });
+});
