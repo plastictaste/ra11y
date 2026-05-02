@@ -44,6 +44,7 @@ import {
   shouldRerouteToBulkVendorScopeDown,
 } from "./next-step.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
+import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
@@ -762,7 +763,12 @@ function inlineReviewCandidatesFieldFor(args: {
   readonly session: import("./session.ts").McpSession;
   readonly files: readonly ParsedFile[];
   readonly limit: number;
-}): { readonly reviewCandidates?: readonly ScanProjectReviewCandidate[] } {
+}): {
+  readonly reviewCandidates?: readonly ScanProjectReviewCandidate[];
+  readonly reviewCandidatePrompts?: Readonly<
+    Record<string, import("./review-candidate-prompts.ts").ReviewCandidatePromptEntry>
+  >;
+} {
   const { formattedFilesCount, candidates, enabledStandards, session, files, limit } = args;
   // Gate 1: when automated findings exist, the agent already has
   // `file:line` pointers — it can choose to call `checklist` itself
@@ -773,7 +779,19 @@ function inlineReviewCandidatesFieldFor(args: {
   const manualIds = collectManualCriteria(enabledStandards, session, session.config.level, files);
   const surfaced = buildScanProjectReviewCandidates({ candidates, manualIds, limit });
   if (surfaced.length === 0) return {};
-  return { reviewCandidates: surfaced };
+  // Cross-surface candidate-shape contract: emit
+  // `reviewCandidatePrompts` alongside the surfaced rows so an agent
+  // reading scan_project sees the same per-criterion shared-reason
+  // dedup signal it would see on `scan_file.reviewCandidates` /
+  // `checklist` / `review_candidates`. Per `docs/kb/architecture/ai-
+  // first-consumer.md` "Per-tool review-candidate shape must agree
+  // across surfaces" — and the per-criterion prompts axis is the
+  // same shape on every surface that ships review candidates.
+  // Present-when-meaningful per CLAUDE.md §1: an empty map is
+  // omitted via the conditional spread below.
+  const prompts = buildReviewCandidatePrompts({ candidates, manualIds });
+  const promptsField = Object.keys(prompts).length === 0 ? {} : { reviewCandidatePrompts: prompts };
+  return { reviewCandidates: surfaced, ...promptsField };
 }
 
 /**

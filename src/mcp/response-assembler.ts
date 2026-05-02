@@ -82,6 +82,10 @@ import {
   dedupeReviewCandidatesForSingleFile,
 } from "./review-candidate-dedup.ts";
 import {
+  buildReviewCandidatePrompts,
+  type ReviewCandidatePromptEntry,
+} from "./review-candidate-prompts.ts";
+import {
   buildRuleCoverageDerivative,
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
@@ -235,6 +239,23 @@ export interface ScanFamilyResponse {
   readonly warningsDetails?: ScanWarningDetails;
   readonly referenceGuide?: ReferenceGuide;
   readonly reviewCandidates?: readonly DedupedReviewCandidate[];
+  /**
+   * Cross-surface candidate-shape contract: per-criterion shared-
+   * reason hoist. When every candidate of a criterion shares the
+   * same `reason` text, the verbatim form is hoisted here once so
+   * an agent reading the response sees the dedup signal off one
+   * top-level lookup. Mirrors `scan_project.reviewCandidatePrompts`
+   * / `checklist.reviewCandidatePrompts` /
+   * `review_candidates.prompts[criterionId].genericReason` —
+   * shape parity per `docs/kb/architecture/ai-first-consumer.md`
+   * "Per-tool review-candidate shape must agree across surfaces."
+   * Per-candidate `reason` stays populated unchanged on every row;
+   * this field is purely additive.
+   *
+   * Present-when-meaningful per CLAUDE.md §1: an empty map is
+   * omitted entirely.
+   */
+  readonly reviewCandidatePrompts?: Readonly<Record<string, ReviewCandidatePromptEntry>>;
   readonly ruleCoverage?: RuleCoverageDerivative;
   readonly truncated?: boolean;
   readonly nextOffset?: number;
@@ -383,6 +404,33 @@ function maybeDedupeReviewCandidates(args: {
     criterionLevels ?? new Map(),
     buildArtifactPaths,
   );
+}
+
+/**
+ * Cross-surface candidate-shape contract: per-criterion shared-
+ * reason hoist. Computed off the RAW (pre-dedup) candidate list so
+ * each finder's per-criterion reason is the predicate's input —
+ * when the cross-finder Pass 2 fold concatenates reasons
+ * (`"r1 | r2"`), reading the predicate off the deduped output would
+ * erase the per-finder framing. Per `docs/kb/architecture/ai-first-
+ * consumer.md` "Per-tool review-candidate shape must agree across
+ * surfaces" — every review-candidate-bearing surface computes the
+ * prompts axis off the raw candidate stream so `genericReason`
+ * names what each finder actually emitted.
+ *
+ * Returns the conditional-spread fragment so the assembler call site
+ * stays a single spread; an empty map omits the field entirely per
+ * CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+ */
+function buildReviewCandidatePromptsField(args: {
+  readonly dedupedCandidates: readonly DedupedReviewCandidate[] | undefined;
+  readonly reviewCandidates: readonly ReviewCandidate[];
+}): { readonly reviewCandidatePrompts?: Readonly<Record<string, ReviewCandidatePromptEntry>> } {
+  const { dedupedCandidates, reviewCandidates } = args;
+  if (dedupedCandidates === undefined || dedupedCandidates.length === 0) return {};
+  const prompts = buildReviewCandidatePrompts({ candidates: reviewCandidates });
+  if (Object.keys(prompts).length === 0) return {};
+  return { reviewCandidatePrompts: prompts };
 }
 
 function buildAssemblerWarningsField(args: {
@@ -781,6 +829,22 @@ export function assembleScanFamilyResponse(
   // `plan.totalFindings` / `plan.safeEditsAvailable` /
   // `plan.violations` / `plan.summary`).
 
+  // Cross-surface candidate-shape contract: emit
+  // `reviewCandidatePrompts` whenever review-candidates reach the
+  // wire. The hoist is computed off the RAW (pre-dedup) candidate
+  // list so each finder's per-criterion reason is the predicate's
+  // input — when the cross-finder Pass 2 fold concatenates reasons
+  // (`"r1 | r2"`), reading the predicate off the deduped output
+  // would erase the per-finder framing. Per `docs/kb/architecture/
+  // ai-first-consumer.md` "Per-tool review-candidate shape must
+  // agree across surfaces" — every review-candidate-bearing surface
+  // computes the prompts axis off the raw candidate stream so the
+  // genericReason names what each finder actually emitted.
+  const reviewCandidatePromptsField = buildReviewCandidatePromptsField({
+    dedupedCandidates,
+    reviewCandidates,
+  });
+
   // Base response — every optional field conditional-spread per
   // CLAUDE.md §1 "Ambiguous field shapes are dishonest."
   const baseResponse: ScanFamilyResponse = {
@@ -792,6 +856,7 @@ export function assembleScanFamilyResponse(
     ...(dedupedCandidates !== undefined && dedupedCandidates.length > 0
       ? { reviewCandidates: dedupedCandidates }
       : {}),
+    ...reviewCandidatePromptsField,
     ...(ruleCoverage === null ? {} : { ruleCoverage }),
   };
 

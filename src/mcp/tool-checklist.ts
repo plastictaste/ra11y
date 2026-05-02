@@ -40,6 +40,7 @@ import {
   candidateHedges,
   couldBeWrongBecauseForVendorBuildArtifact,
 } from "./review-candidate-priority.ts";
+import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
@@ -668,6 +669,35 @@ function buildChecklistSummaryActionable(
 }
 
 /**
+ * Builds the conditional-spread `reviewCandidatePrompts` fragment for
+ * the checklist response. Computed off `reportCandidates` (the raw
+ * `ReviewCandidate[]` the same loop builds checklist items from)
+ * restricted to the manual criteria the checklist actually surfaces,
+ * mirroring the same filter `tallyManualCriteriaFromCoverage` applies
+ * upstream. Per-candidate `reason` stays populated unchanged on every
+ * `items[].candidates[]` row; the prompts hoist is purely additive
+ * so the cross-surface candidate-shape contract is preserved (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+ * candidate shape must agree across surfaces").
+ *
+ * Extracted from the handler so the parent function stays under
+ * the lint's cognitive-complexity cap.
+ */
+function buildChecklistReviewCandidatePrompts(args: {
+  readonly reportCandidates: readonly ReviewCandidate[];
+  readonly needsReview: readonly ChecklistItemOut[];
+}): Record<string, unknown> {
+  const manualIds = new Set<string>();
+  for (const it of args.needsReview) manualIds.add(it.criterionId);
+  const prompts = buildReviewCandidatePrompts({
+    candidates: args.reportCandidates,
+    manualIds,
+  });
+  if (Object.keys(prompts).length === 0) return {};
+  return { reviewCandidatePrompts: prompts };
+}
+
+/**
  * Cross-surface count invariant: `summary.actionable.criteria` and
  * `summary.untargetedCriteria` are derived from the shared
  * `tallyManualCriteriaFromCoverage` helper — the same algorithm
@@ -1211,6 +1241,20 @@ export const checklistTool: McpTool = {
       jsInnerHtmlPatternSamples,
       ...(perCriterionClamp ? { perCriterionClamp } : {}),
     });
+    // Cross-surface candidate-shape contract: emit
+    // `reviewCandidatePrompts` so an agent reading `checklist` reads
+    // the same per-criterion shared-reason dedup signal it would
+    // read on `scan_file.reviewCandidates` /
+    // `scan_project.reviewCandidates` /
+    // `review_candidates.prompts[criterionId].genericReason`. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces". Helper computes
+    // the conditional-spread fragment so the parent handler stays
+    // under the lint's cognitive-complexity cap.
+    const reviewCandidatePromptsField = buildChecklistReviewCandidatePrompts({
+      reportCandidates,
+      needsReview,
+    });
     const fullResponse: Record<string, unknown> = {
       summary,
       items: page.items,
@@ -1218,6 +1262,7 @@ export const checklistTool: McpTool = {
       ...page.paginationFields,
       ...untargetedField,
       likelyIrrelevant: filteredIrrelevant,
+      ...reviewCandidatePromptsField,
       ...checklistNextStep,
       ...metaField,
       // Surface analysisCoverage at the top level (mirror of `coverage`)

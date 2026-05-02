@@ -29,6 +29,7 @@ import {
   dedupeReviewCandidatesByReason,
   type ReasonDedupedCandidate,
 } from "./review-candidate-dedup.ts";
+import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
@@ -143,7 +144,20 @@ export const reviewCandidatesTool: McpTool = {
     const standardsById = new Map(session.registry.standards.map((s) => [s.id, s]));
     const sources = sourceIndex(files);
 
-    const prompts = buildPromptsMap(candidates, findersByCriterion);
+    // Cross-surface candidate-shape contract: per-criterion shared-
+    // reason hoist. Computed off the RAW (un-deduped) candidate set so
+    // siblings the by-reason pass kept distinct (different `(file,
+    // line, column, reason)` keys) still contribute to the predicate
+    // — the prompts map is "for this criterion, did every emission
+    // share the same reason?" not "for this criterion, did every
+    // deduped row share the same reason?" Per `docs/kb/architecture/
+    // ai-first-consumer.md` "Per-tool review-candidate shape must
+    // agree across surfaces" the genericReason axis is the same
+    // signal on every review-candidate-bearing surface — checklist /
+    // scan_file / scan_project all compute against pre-dedup
+    // candidates too.
+    const reviewPromptsByCriterion = buildReviewCandidatePrompts({ candidates: rawCandidates });
+    const prompts = buildPromptsMap(candidates, findersByCriterion, reviewPromptsByCriterion);
     const hasPrompts = Object.keys(prompts).length > 0;
 
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
@@ -205,15 +219,48 @@ export const reviewCandidatesTool: McpTool = {
 function buildPromptsMap(
   candidates: readonly ReasonDedupedCandidate[],
   findersByCriterion: ReadonlyMap<string, CandidateFinder>,
-): Record<string, { readonly text: string; readonly finderId: string }> {
-  const out: Record<string, { readonly text: string; readonly finderId: string }> = {};
-  for (const c of candidates) {
-    for (const cid of c.criteria) {
-      if (out[cid] !== undefined) continue;
-      const finder = findersByCriterion.get(cid);
-      if (finder === undefined) continue;
-      out[cid] = { text: finder.docs.reviewPrompt, finderId: finder.id };
+  reviewPromptsByCriterion: Readonly<
+    Record<string, import("./review-candidate-prompts.ts").ReviewCandidatePromptEntry>
+  >,
+): Record<
+  string,
+  {
+    readonly text: string;
+    readonly finderId: string;
+    readonly genericReason?: string;
+  }
+> {
+  const out: Record<
+    string,
+    {
+      readonly text: string;
+      readonly finderId: string;
+      readonly genericReason?: string;
     }
+  > = {};
+  // Track every criterion that has either a finder-backed
+  // reviewPrompt OR a deterministic genericReason so the agent's
+  // single lookup `prompts[id]` resolves on either signal axis.
+  const candidateCriteria = new Set<string>();
+  for (const c of candidates) {
+    for (const cid of c.criteria) candidateCriteria.add(cid);
+  }
+  for (const cid of candidateCriteria) {
+    const finder = findersByCriterion.get(cid);
+    const generic = reviewPromptsByCriterion[cid]?.genericReason;
+    if (finder === undefined) continue;
+    out[cid] = {
+      text: finder.docs.reviewPrompt,
+      finderId: finder.id,
+      // Present-when-meaningful per CLAUDE.md §1: the helper omits
+      // criteria whose emissions varied in reason text, so the
+      // optional spread keeps the wire shape honest. When every
+      // emission shared a reason, the verbatim string surfaces here
+      // so an agent reading prompts[criterionId] gets BOTH the WCAG
+      // review prompt (`text`) AND the finder's static reason
+      // (`genericReason`) from one lookup.
+      ...(generic === undefined ? {} : { genericReason: generic }),
+    };
   }
   return out;
 }

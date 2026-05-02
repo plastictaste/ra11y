@@ -26,6 +26,7 @@ import {
   type ReferenceGuide,
   repairResponseDangling,
 } from "./reference-guide.ts";
+import { buildScanProjectReviewFields } from "./review-candidate-prompts.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import {
@@ -166,6 +167,25 @@ interface AssembleArgs {
    * are dishonest").
    */
   readonly reviewCandidates?: readonly ScanProjectReviewCandidate[];
+  /**
+   * Cross-surface candidate-shape contract: the per-criterion
+   * shared-reason hoist. When every candidate of a criterion shares
+   * the same `reason` text, the verbatim form is hoisted here once
+   * so the wire shape doesn't repeat the same prose under every
+   * sibling row. Mirrors `scan_file.reviewCandidatePrompts` /
+   * `checklist.reviewCandidatePrompts` /
+   * `review_candidates.prompts[criterionId].genericReason` so an
+   * agent reading any review-candidate-bearing surface reads the
+   * dedup signal off the same field name. Per `docs/kb/architecture/
+   * ai-first-consumer.md` "Per-tool review-candidate shape must
+   * agree across surfaces."
+   *
+   * Caller conditional-spreads; an empty map is omitted entirely —
+   * present-when-meaningful per CLAUDE.md §1.
+   */
+  readonly reviewCandidatePrompts?: Readonly<
+    Record<string, import("./review-candidate-prompts.ts").ReviewCandidatePromptEntry>
+  >;
 }
 
 /**
@@ -186,25 +206,25 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
     baseWarnings,
     baseWarningsDetails,
     reviewCandidates,
+    reviewCandidatePrompts,
     nextStep,
     nextStepStructured,
   } = args;
   const hasBaseCodes = baseWarnings !== undefined && baseWarnings.length > 0;
   const hasBaseDetails =
     baseWarningsDetails !== undefined && Object.keys(baseWarningsDetails).length > 0;
-  // Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: conditional-spread
-  // the field — caller only passes it when `formatted.files.length ===
-  // 0 && candidates survive`, so reaching this point means the array
-  // is meaningful. Defensive `.length > 0` here keeps the shape honest
-  // if a future caller forgets the gate.
-  const hasInlineReview = reviewCandidates !== undefined && reviewCandidates.length > 0;
+  // Q-SHARED-SCAN-PROJECT-INLINE-REVIEW-CANDIDATES: caller only passes
+  // these when `formatted.files.length === 0 && candidates survive`,
+  // so reaching this point means the inputs are meaningful. Helper
+  // packs both review fields into one spreadable record.
+  const reviewFields = buildScanProjectReviewFields(reviewCandidates, reviewCandidatePrompts);
   const tentative = {
     plan: formatted.plan,
     files: hoisted.files,
     ...page.paginationFields,
     ...(hoisted.referenceGuide === undefined ? {} : { referenceGuide: hoisted.referenceGuide }),
     ...ruleCatalogField(params, session.registry.rules, formatted.files),
-    ...(hasInlineReview ? { reviewCandidates } : {}),
+    ...reviewFields,
     ...(hasBaseCodes ? { warnings: baseWarnings } : {}),
     ...(hasBaseDetails ? { warningsDetails: baseWarningsDetails } : {}),
     // one pointer, one place —

@@ -678,6 +678,19 @@ function buildScanFileResponse(args: {
     ...(assembled.reviewCandidates === undefined
       ? {}
       : { reviewCandidates: assembled.reviewCandidates }),
+    // Cross-surface candidate-shape contract: per-criterion shared-
+    // reason hoist. Same name + same shape as
+    // `scan_project.reviewCandidatePrompts` /
+    // `checklist.reviewCandidatePrompts` /
+    // `review_candidates.prompts[criterionId].genericReason`. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces" — the prompts axis
+    // surfaces on every review-candidate-bearing tool. Conditional-
+    // spread per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+    // — assembler omits the field when the map is empty.
+    ...(assembled.reviewCandidatePrompts === undefined
+      ? {}
+      : { reviewCandidatePrompts: assembled.reviewCandidatePrompts }),
     plan: assembled.plan,
     ...(limitation === null ? {} : { limitations: [limitation] }),
     ...(assembled.referenceGuide === undefined ? {} : { referenceGuide: assembled.referenceGuide }),
