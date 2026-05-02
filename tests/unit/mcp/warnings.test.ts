@@ -2362,9 +2362,9 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(
       Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "topExtension"),
     ).toBe(false);
-    expect(
-      Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "topCount"),
-    ).toBe(false);
+    expect(Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "topCount")).toBe(
+      false,
+    );
   });
 
   it("derives `topExtension` from the dotted-extension slice when the union mixes both shapes (filename never wins even if its count exceeds every dotted ext)", () => {
