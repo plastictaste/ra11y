@@ -147,39 +147,57 @@ function firstChildDirFor(path: string, root: string): string {
 }
 
 /**
+ * Look-up-or-create the bucket for `key`. Mirrors the same
+ * `ensureBucket`/`absorbFinding` split scan-group-by uses to keep
+ * `tallyByDirectory` inside the cognitive-complexity cap.
+ */
+function ensureBucket(tally: Map<string, DirectoryBucket>, key: string): DirectoryBucket {
+  const existing = tally.get(key);
+  if (existing !== undefined) return existing;
+  const fresh: DirectoryBucket = {
+    violationCount: 0,
+    fileCount: 0,
+    ruleCounts: new Map(),
+  };
+  tally.set(key, fresh);
+  return fresh;
+}
+
+/**
+ * Counts the file's error+warning findings into the appropriate
+ * bucket. Returns the per-file violation count so the caller can
+ * decide whether to bump `fileCount` (a file emits findings or it
+ * doesn't — info-only files don't count).
+ *
+ * Extracted from {@link tallyByDirectory} so each function stays
+ * inside the cognitive-complexity cap. Severity filter — info-severity
+ * findings are skipped so both the count axis and the densest-rule
+ * selection stay aligned with the error+warning surface
+ * `plan.fixesByClass` tallies.
+ */
+function absorbFileFindings(file: FileShape, bucket: DirectoryBucket): number {
+  let fileViolationCount = 0;
+  for (const finding of file.findings) {
+    if (finding.severity === "info") continue;
+    bucket.violationCount += 1;
+    bucket.ruleCounts.set(finding.ruleId, (bucket.ruleCounts.get(finding.ruleId) ?? 0) + 1);
+    fileViolationCount += 1;
+  }
+  return fileViolationCount;
+}
+
+/**
  * Single-pass tally builder for {@link computeTopDirectories}. Walks
  * every file once, accumulates per-bucket violation counts and rule
  * frequency, and returns the per-bucket map. Pure over its inputs.
- *
- * Severity filter — info-severity findings are skipped so both the
- * count axis and the densest-rule selection stay aligned with the
- * error+warning surface `plan.fixesByClass` tallies.
  */
-function tallyByDirectory(
-  files: readonly FileShape[],
-  root: string,
-): Map<string, DirectoryBucket> {
+function tallyByDirectory(files: readonly FileShape[], root: string): Map<string, DirectoryBucket> {
   const tally = new Map<string, DirectoryBucket>();
   for (const file of files) {
-    let fileViolationCount = 0;
-    let bucket: DirectoryBucket | undefined;
-    for (const finding of file.findings) {
-      if (finding.severity === "info") continue;
-      if (bucket === undefined) {
-        const key = firstChildDirFor(file.path, root);
-        bucket = tally.get(key);
-        if (bucket === undefined) {
-          bucket = { violationCount: 0, fileCount: 0, ruleCounts: new Map() };
-          tally.set(key, bucket);
-        }
-      }
-      bucket.violationCount += 1;
-      bucket.ruleCounts.set(finding.ruleId, (bucket.ruleCounts.get(finding.ruleId) ?? 0) + 1);
-      fileViolationCount += 1;
-    }
-    if (bucket !== undefined && fileViolationCount > 0) {
-      bucket.fileCount += 1;
-    }
+    if (file.findings.length === 0) continue;
+    const bucket = ensureBucket(tally, firstChildDirFor(file.path, root));
+    const fileViolationCount = absorbFileFindings(file, bucket);
+    if (fileViolationCount > 0) bucket.fileCount += 1;
   }
   return tally;
 }

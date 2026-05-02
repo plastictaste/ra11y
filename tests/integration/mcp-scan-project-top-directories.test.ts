@@ -177,14 +177,8 @@ describe("scan_project: plan.topDirectories rollup", () => {
       // surfaces don't already say. The helper short-circuits to omit
       // the field; that's the single-bucket-redundancy invariant.
       mkdirSync(join(root, "only"));
-      writeFileSync(
-        join(root, "only", "a.html"),
-        '<html><body><img src="x.png"></body></html>\n',
-      );
-      writeFileSync(
-        join(root, "only", "b.html"),
-        '<html><body><img src="y.png"></body></html>\n',
-      );
+      writeFileSync(join(root, "only", "a.html"), '<html><body><img src="x.png"></body></html>\n');
+      writeFileSync(join(root, "only", "b.html"), '<html><body><img src="y.png"></body></html>\n');
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
