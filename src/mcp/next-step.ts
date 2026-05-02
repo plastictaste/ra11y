@@ -146,13 +146,17 @@ interface NextStepInputs {
    * True when the first callable finding sits on a vendor path AND no
    * non-vendor finding exists across the paged response. Triggers the
    * scope-down branch in {@link buildNextStep}: the structured hint
-   * points at `scan_project` itself with prose recommending
-   * `additionalPaths` / `cwd` narrowing rather than naming a vendor
-   * target the agent can't edit. Per the AI-first doctrine "NextStep
+   * points at `propose_config` (the deterministic exclude-emission
+   * tool) with prose naming `additionalPaths` / `cwd` as manual
+   * narrowing alternatives, rather than naming a vendor target the
+   * agent can't edit. Per the AI-first doctrine "NextStep
    * prioritization on truncated/bulk responses must avoid
-   * first-by-filename routing," routing the agent to a vendor
-   * stylesheet wastes the suggest_fix round-trip. Falsy when not
-   * applicable.
+   * first-by-filename routing" + "NextStep handoffs must terminate at
+   * a narrowing tool, never form a cycle between transport-failing
+   * siblings," routing the agent to a vendor stylesheet wastes the
+   * suggest_fix round-trip and routing back to `scan_project` itself
+   * with empty args echoes the parameters that produced the all-vendor
+   * shape. Falsy when not applicable.
    */
   readonly allFindingsVendor?: boolean;
   /**
@@ -273,10 +277,17 @@ export function buildNextStep(
   // the paged response, naming the vendor target wastes a `suggest_fix`
   // round-trip — the agent can't edit a file in `scannedBuildArtifacts`.
   // Per the AI-first doctrine "NextStep prioritization on truncated/bulk
-  // responses must avoid first-by-filename routing," route to a
-  // scope-down structured suggestion (`scan_project` with prose naming
-  // `additionalPaths` / `cwd`) so the agent narrows scope and finds
-  // authored work on the next call.
+  // responses must avoid first-by-filename routing" + "NextStep
+  // handoffs must terminate at a narrowing tool, never form a cycle
+  // between transport-failing siblings," route to a scope-down
+  // structured suggestion at the deterministic exclude-emission tool
+  // (`propose_config`) — same recovery surface the bulk-vendor
+  // override uses. Routing back to `scan_project` itself with empty
+  // args would echo the parameters that just produced the all-vendor
+  // shape; `propose_config` materially narrows scope by emitting an
+  // `exclude` block from the same `scannedBuildArtifacts` evidence.
+  // Prose still names `additionalPaths` and `cwd` as manual narrowing
+  // alternatives for callers who want to skip the round-trip.
   if (inputs.violations > 0 && inputs.allFindingsVendor === true) {
     return scopeDownNextStep(inputs, inputs.first);
   }
@@ -411,26 +422,44 @@ function buildReroutePrefix(inputs: NextStepInputs, first: FirstFinding): string
  * callable finding sits in vendor code (`scannedBuildArtifacts`), so
  * naming any specific finding as `suggest_fix` target wastes the
  * round-trip — the agent can't edit a vendor stylesheet or compiled
- * bundle. The structured hint points at `scan_project` itself with an
- * empty `args` object; the prose names `additionalPaths` and `cwd` as
- * the narrowing knobs (mirrors the slim-envelope nextStep shape so the
- * agent encounters one consistent recovery vocabulary across the bulk-
- * corpus failure modes).
+ * bundle. The structured hint points at `propose_config` (the
+ * deterministic exclude-emission tool) so the agent's first action
+ * lands on a different surface that materially narrows scope; the
+ * prose still names `additionalPaths` and `cwd` as the manual
+ * narrowing knobs for callers who want to skip the round-trip.
  *
- * `first` is the vendor pick the picker would have surfaced; we name
- * its path in the prose so the agent sees what was rerouted away from
- * (the all-vendor signal is the load-bearing fact — the specific path
- * just makes the corpus shape concrete). The structured hint's `args`
- * is empty because the scanner can't guess which subdirectory the
- * agent's authored code lives in; that's a human decision the agent
- * makes from its read of the codebase.
+ * Why `propose_config` rather than `scan_project, args: {}`: per the
+ * AI-first doctrine "NextStep handoffs must terminate at a narrowing
+ * tool, never form a cycle between transport-failing siblings,"
+ * routing back to `scan_project` with empty args echoes the parameters
+ * that just produced the all-vendor finding set — the next call would
+ * traverse the same corpus and reproduce the same vendor-only output.
+ * `propose_config` consumes the same `scannedBuildArtifacts` evidence
+ * to emit an `exclude` block the agent can paste into
+ * `ra11y.config.ts`; the subsequent `scan_project` call then runs over
+ * an authored-source-only file set. The bulk-vendor scope-down
+ * override (`bulkVendorScopeDownNextStep` below) already routes to
+ * `propose_config` for the high-volume regime; this aligns the
+ * smaller-scale all-vendor branch with the same recovery surface so
+ * agents encounter one consistent narrowing vocabulary across both
+ * vendor-saturation failure modes.
+ *
+ * Reason text is explicit per the AI-first doctrine "Reason / priority
+ * / fix-description must agree across all three channels": "no
+ * authored-source candidates available" names the predicate the
+ * routing decision rests on, so the agent reads why the structured
+ * hint points at config emission rather than a per-finding fix
+ * surface. The vendor path the picker would have surfaced is named in
+ * the prose so the agent sees what was rerouted away from (the
+ * all-vendor signal is the load-bearing fact — the specific path just
+ * makes the corpus shape concrete).
  */
 function scopeDownNextStep(inputs: NextStepInputs, first: FirstFinding | null): NextStepResult {
   const vPlural = inputs.violations === 1 ? "" : "s";
   const vendorPathHint = first === null ? "" : ` (e.g. \`${first.path}\`)`;
   return {
-    prose: `${inputs.violations} violation${vPlural}; every finding sits in vendor code${vendorPathHint} the agent can't edit. Re-call \`scan_project\` with a narrower scope: pass \`additionalPaths\` to target a specific authored subtree, or a tighter \`cwd\` so the response carries authored findings.${manualTail(inputs)}${inputs.iterativeTip}`,
-    structured: { tool: "scan_project", args: {} },
+    prose: `${inputs.violations} violation${vPlural}; every finding sits in vendor code${vendorPathHint} the agent can't edit — no authored-source candidates available on this scan. Call \`propose_config\` to emit an \`exclude\` block from the build-artifact classifier, then re-run \`scan_project\` over the narrowed file set. Alternatively re-call \`scan_project\` directly with a narrower scope: pass \`additionalPaths\` to target a specific authored subtree, or a tighter \`cwd\` so the response carries authored findings.${manualTail(inputs)}${inputs.iterativeTip}`,
+    structured: { tool: "propose_config", args: {} },
   };
 }
 

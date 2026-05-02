@@ -468,9 +468,17 @@ describe("buildNextStep", () => {
       // routing": when every callable finding sits on a vendor path,
       // naming any specific finding wastes the suggest_fix
       // round-trip — the agent can't edit a vendor stylesheet. The
-      // structured hint reroutes to `scan_project` itself with
-      // `additionalPaths` / `cwd` narrowing as the recovery, mirroring
-      // the slim-envelope nextStep shape.
+      // structured hint reroutes to `propose_config` (the
+      // deterministic exclude-emission tool) so the agent's first
+      // action lands on a different surface that materially narrows
+      // scope on the next call. Routing back to `scan_project` with
+      // empty args here would echo the parameters that just produced
+      // the all-vendor finding set — exactly the cycle the doctrine
+      // "NextStep handoffs must terminate at a narrowing tool, never
+      // form a cycle between transport-failing siblings" warns
+      // against. `propose_config` is the same surface the bulk-vendor
+      // override routes to, so both vendor-saturation regimes share
+      // one recovery vocabulary.
       const result = buildNextStep(
         formatted({
           plan: {
@@ -486,15 +494,51 @@ describe("buildNextStep", () => {
         },
       );
       expect(result.structured).toEqual({
-        tool: "scan_project",
+        tool: "propose_config",
         args: {},
       });
       expect(result.prose).toContain("vendor code");
+      // Reason text explicitly names "no authored-source candidates"
+      // per the AI-first doctrine "Reason / priority / fix-description
+      // must agree across all three channels" — the prose framing
+      // matches the routing decision so the agent reads why
+      // `propose_config` is the next call rather than a per-finding
+      // fix surface.
+      expect(result.prose).toContain("no authored-source candidates");
+      expect(result.prose).toContain("propose_config");
       expect(result.prose).toContain("additionalPaths");
       // Naming the specific vendor path the picker would have surfaced
       // is load-bearing context — the agent reads it as evidence of
       // the corpus shape (compiled-CSS-only paged in this slice).
       expect(result.prose).toContain("vendor/bootstrap.css");
+    });
+
+    it("the all-vendor scope-down branch never routes back to scan_project (cycle-avoidance invariant)", () => {
+      // Per the AI-first doctrine "NextStep handoffs must terminate at
+      // a narrowing tool, never form a cycle between transport-failing
+      // siblings": the all-vendor scope-down structured target must
+      // point at a DIFFERENT surface than `scan_project` itself.
+      // Routing back to `scan_project` with `args: {}` (or any other
+      // arg shape that doesn't materially narrow scope) re-runs the
+      // same scan over the same corpus, producing the same vendor-only
+      // output — the agent's budget burns alternating round trips.
+      // This invariant pins the routing target so a future refactor
+      // can't silently re-introduce the cycle.
+      const result = buildNextStep(
+        formatted({
+          plan: { fixesByClass: lanes({ guidance: 1 }) },
+          files: [{ path: "vendor/bootstrap.css", findings: [contrastFinding(365)] }],
+        }),
+        { vendorPaths: new Set(["vendor/bootstrap.css"]) },
+      );
+      expect(result.structured?.tool).not.toBe("scan_project");
+      // Concrete narrowing target the doctrine recommends: the
+      // deterministic exclude-emission tool, the same surface the
+      // bulk-vendor override (`bulkVendorScopeDownNextStep`) routes
+      // to. Both vendor-saturation regimes share one recovery
+      // vocabulary so the agent encounters one consistent narrowing
+      // surface across both failure modes.
+      expect(result.structured?.tool).toBe("propose_config");
     });
 
     it("falls back to the highest-firing non-vendor rule when no same-ruleId non-vendor sibling exists", () => {
@@ -679,8 +723,9 @@ describe("buildNextStep", () => {
       // Structural parity: the all-vendor → scope-down branch fires
       // regardless of whether the violations carry fix suggestions.
       // Mixing a runtime-only lane (no `suggest_fix`-actionable fix)
-      // with vendor-only paths must still route to scope-down rather
-      // than into the explain_rule branch on a vendor target.
+      // with vendor-only paths must still route to scope-down (the
+      // `propose_config` recovery target) rather than into the
+      // explain_rule branch on a vendor target.
       const result = buildNextStep(
         formatted({
           plan: {
@@ -691,10 +736,11 @@ describe("buildNextStep", () => {
         { vendorPaths: new Set(["vendor/bootstrap.css"]) },
       );
       expect(result.structured).toEqual({
-        tool: "scan_project",
+        tool: "propose_config",
         args: {},
       });
       expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("no authored-source candidates");
       expect(result.prose).toContain("additionalPaths");
     });
   });
@@ -873,11 +919,16 @@ describe("buildNextStep", () => {
 
     it("routes to scope-down when only vendor paths exist on a truncated response", () => {
       // Per backlog test (c): when only vendor + scaffold paths are
-      // available, nextStep routes to "scope down via additionalPaths"
-      // structured suggestion. The all-vendor lane fires regardless of
-      // the truncation flag — every callable finding sits in
-      // scannedBuildArtifacts, so naming any specific finding wastes
-      // the suggest_fix round-trip.
+      // available, nextStep routes to the deterministic
+      // exclude-emission tool (`propose_config`) so the agent's first
+      // action lands on a different surface that materially narrows
+      // scope. The all-vendor lane fires regardless of the truncation
+      // flag — every callable finding sits in scannedBuildArtifacts,
+      // so naming any specific finding wastes the suggest_fix
+      // round-trip, and routing back to `scan_project` with empty args
+      // would echo the same parameters that produced the all-vendor
+      // shape (per "NextStep handoffs must terminate at a narrowing
+      // tool, never form a cycle between transport-failing siblings").
       const result = buildNextStep(
         formatted({
           plan: {
@@ -894,10 +945,11 @@ describe("buildNextStep", () => {
         },
       );
       expect(result.structured).toEqual({
-        tool: "scan_project",
+        tool: "propose_config",
         args: {},
       });
       expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("no authored-source candidates");
       expect(result.prose).toContain("additionalPaths");
     });
 
@@ -907,7 +959,9 @@ describe("buildNextStep", () => {
       // a partial-vendor classification — but here we test the lane
       // exit when EVERY finding is vendor (vendorPaths covers every
       // file), to confirm the all-vendor signal flows through both
-      // entry lanes (vendor-first and truncation-first).
+      // entry lanes (vendor-first and truncation-first). Both must
+      // route to `propose_config` (the cycle-breaking narrowing tool)
+      // rather than back to `scan_project, args: {}`.
       const result = buildNextStep(
         formatted({
           plan: {
@@ -924,10 +978,11 @@ describe("buildNextStep", () => {
         },
       );
       expect(result.structured).toEqual({
-        tool: "scan_project",
+        tool: "propose_config",
         args: {},
       });
       expect(result.prose).toContain("vendor code");
+      expect(result.prose).toContain("no authored-source candidates");
       expect(result.prose).toContain("additionalPaths");
     });
   });
