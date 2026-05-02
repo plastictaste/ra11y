@@ -88,12 +88,16 @@ describe("scan_project:", () => {
       // This is the zero-parseable-files branch — canonically the
       // state of a Jekyll source tree before `bundle exec jekyll
       // build` runs, and exactly when the agent most needs the hint.
-      // `_layouts/` corroborates the Jekyll classification so the
-      // detector resolves to a confident `jekyll` (a bare `_config.yml`
-      // would resolve to null per the corroboration contract — see
-      // tests/unit/mcp/ssg-detect.test.ts).
+      // `_layouts/` AND a Gemfile mentioning the `jekyll` gem put
+      // corroboration count at 2, so the detector resolves to
+      // `confidence: "high"` (sentinel + ≥2 corroborators per the
+      // graded confidence contract — see tests/unit/mcp/ssg-detect.test.ts).
       writeFileSync(join(root, "_config.yml"), "title: My site\nmarkdown: kramdown\n");
       mkdirSync(join(root, "_layouts"));
+      writeFileSync(
+        join(root, "Gemfile"),
+        'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
+      );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       expect(scan).toBeDefined();
@@ -105,6 +109,7 @@ describe("scan_project:", () => {
         name: "jekyll",
         buildOutput: "_site/",
         buildCommand: "bundle exec jekyll build",
+        confidence: "high",
       });
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
       expect(coverage).toBeDefined();
@@ -142,7 +147,12 @@ describe("scan_project:", () => {
       const body = bodyOf(scan as JsonRpcResponse);
       const meta = body.meta as Record<string, unknown>;
       const detected = meta.detectedFramework as Record<string, unknown> | undefined;
-      expect(detected).toEqual({ name: "hugo", buildOutput: "public/", buildCommand: "hugo" });
+      expect(detected).toEqual({
+        name: "hugo",
+        buildOutput: "public/",
+        buildCommand: "hugo",
+        confidence: "high",
+      });
       const coverage = meta.analysisCoverage as Record<string, unknown> | undefined;
       const hints = coverage?.hints as
         | readonly { code: string; text: string; detail?: Record<string, unknown> }[]
@@ -168,6 +178,44 @@ describe("scan_project:", () => {
       expect(meta.detectedFramework).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits detectedFramework on a sub-scope scan whose own tree carries no sentinel", async () => {
+    // Sub-scope inheritance invariant: when the agent points
+    // `scan_project` at a sub-template directory inside a multi-template
+    // dump, the parent's `_config.yml` MUST NOT propagate down. The
+    // detector probes at exactly the scan root with no walk-up. An
+    // agent calling `scan_project({ cwd: "<dump>/<sub-site>" })` on a
+    // sub-tree without its own SSG sentinel sees `detectedFramework`
+    // omitted (per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+    // — present-when-meaningful, never inherited).
+    const parent = mkdtempSync(join(tmpdir(), "ra11y-ssg-subscope-"));
+    try {
+      // Parent looks fully Jekyll-shaped (sentinel + 2 corroborators).
+      writeFileSync(join(parent, "_config.yml"), "title: Parent corpus\n");
+      mkdirSync(join(parent, "_layouts"));
+      mkdirSync(join(parent, "_includes"));
+      // Sub-template has its own content but no SSG sentinel.
+      const subTree = join(parent, "templates", "site-42");
+      mkdirSync(subTree, { recursive: true });
+      writeFileSync(
+        join(subTree, "index.html"),
+        '<html><body><img src="/hero.png"></body></html>\n',
+      );
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: subTree }),
+      ]);
+      const scan = responses.find((r) => r.id === 2);
+      const body = bodyOf(scan as JsonRpcResponse);
+      const meta = body.meta as Record<string, unknown>;
+      // The sub-tree scan must NOT inherit the parent's framework
+      // label even though an ancestor directory bears one. The field
+      // is absent (omitted), not present-as-null.
+      expect(meta.detectedFramework).toBeUndefined();
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

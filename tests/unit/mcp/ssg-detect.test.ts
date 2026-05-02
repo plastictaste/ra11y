@@ -6,22 +6,31 @@
  * workflow.
  *
  * Invariants under test:
- *   1. Each canonical config marker in isolation resolves to the
- *      expected framework tag + build output + build command. Jekyll's
- *      `_config.yml` additionally requires a corroborating signal
- *      (`_layouts/`, `_includes/`, `_posts/`, `_drafts/`, or a
- *      jekyll-mentioning Gemfile) — the filename alone is too ambiguous
- *      to confidently classify (bare `_config.yml` files ship in
- *      unrelated templates and ecosystem dumps).
- *   2. Hugo's legacy `config.toml` only resolves when it carries a
- *      `[markup]` section header — a bare `config.toml` (ambiguous
- *      with Rust workspaces) returns `null`.
- *   3. A clean repo with no markers returns `null` so the caller can
+ *   1. Each canonical (unambiguous-filename) config marker in isolation
+ *      resolves to the expected framework tag + build output + build
+ *      command at `confidence: "high"`. The filenames (`hugo.toml`,
+ *      `astro.config.mjs`, `gatsby-config.js`, etc.) are not shared
+ *      with non-SSG tooling, so a bare match is strong evidence.
+ *   2. Jekyll's `_config.yml` is the documented ambiguous sentinel
+ *      (third-party site templates, ecosystem dumps, and unrelated
+ *      YAML-config tools ship one). The detector grades confidence by
+ *      corroborator count instead of suppressing weak matches:
+ *      0 corroborators → `low`, 1 → `medium`, ≥2 → `high`. Corroborators
+ *      are `_layouts/`, `_includes/`, `_posts/`, `_drafts/` directories
+ *      and a Gemfile mentioning the `jekyll` gem.
+ *   3. Hugo's legacy `config.toml` only resolves when it carries a
+ *      `[markup]` section header (the disambiguator vs. Rust workspaces)
+ *      — a positive content-probe match ships at `confidence: "high"`.
+ *   4. A clean repo with no markers returns `null` so the caller can
  *      conditional-spread the field away.
- *   4. `ssgHint` embeds the framework tag inline and names the
+ *   5. Sub-scope inheritance: the detector probes EXACTLY the path
+ *      passed as `root`, never an ancestor. A sub-tree without its own
+ *      sentinel returns `null` even if a parent directory has one —
+ *      no walk-up.
+ *   6. `ssgHint` embeds the framework tag inline and names the
  *      `additionalPaths` argument the agent copies into a follow-up
  *      scan call.
- *   5. Declaration order breaks ties deterministically (first marker
+ *   7. Declaration order breaks ties deterministically (first marker
  *      in SSG_DESCRIPTORS wins).
  */
 
@@ -97,10 +106,20 @@ describe("detectSsgFramework: canonical single-marker repos", () => {
   ];
 
   for (const { marker, name, buildOutput, buildCommand, body } of cases) {
-    it(`resolves ${marker} → ${name} with build output "${buildOutput}" and command "${buildCommand}"`, async () => {
+    it(`resolves ${marker} → ${name} with build output "${buildOutput}" and command "${buildCommand}" at confidence "high"`, async () => {
       await withScratch(async (dir) => {
         await writeFile(join(dir, marker), body);
-        expect(detectSsgFramework(dir)).toEqual({ name, buildOutput, buildCommand });
+        // Unambiguous-filename markers ship `confidence: "high"`
+        // — the filenames (`hugo.toml`, `astro.config.mjs`, etc.)
+        // are not shared with non-SSG tooling, so a bare match is
+        // strong evidence. Jekyll is the exception; its confidence
+        // is graded by corroborator count (covered below).
+        expect(detectSsgFramework(dir)).toEqual({
+          name,
+          buildOutput,
+          buildCommand,
+          confidence: "high",
+        });
       });
     });
   }
@@ -151,33 +170,38 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
   });
 });
 
-describe("detectSsgFramework: jekyll requires corroborating signal", () => {
-  // `_config.yml` alone is too weak: third-party site templates,
-  // ecosystem dumps, and unrelated YAML-config tools ship a stray
-  // top-level `_config.yml`. A confident `detectedFramework: "jekyll"`
-  // on filename alone is overconfident-from-weak-evidence (same class
-  // as the closed Q3 template-directive misdetect). The detector
-  // requires `_config.yml` AND at least one of:
-  //   (a) a `_layouts/` directory
-  //   (b) an `_includes/` directory
-  //   (c) a top-level `_posts/` directory
-  //   (d) a top-level `_drafts/` directory
-  //   (e) a Gemfile mentioning `jekyll`
-  // When only `_config.yml` is present, the detector returns null so
-  // the caller can omit `detectedFramework` and let the agent inspect.
-  // (Per the AI-first doctrine, surfacing a confident wrong answer is
-  // worse than surfacing nothing — `null` here is honest, not
-  // suppression: the evidence is genuinely insufficient for the
-  // classification, and the corroborated path always resolves.)
+describe("detectSsgFramework: jekyll confidence is graded by corroborator count", () => {
+  // `_config.yml` alone is too weak to ship a `confident` Jekyll
+  // classification: third-party site templates, ecosystem dumps, and
+  // unrelated YAML-config tools ship a stray top-level `_config.yml`.
+  // The doctrine-correct response is NOT to silently drop the signal
+  // (which made an unaccompanied stray `_config.yml` indistinguishable
+  // from "no SSG here") — it is to surface the framework with the
+  // calibrated confidence the evidence actually supports. The
+  // detector therefore now grades:
+  //   - 0 corroborators → confidence: "low"
+  //   - 1 corroborator  → confidence: "medium"
+  //   - ≥2 corroborators → confidence: "high"
+  // Corroborators: `_layouts/`, `_includes/`, `_posts/`, `_drafts/`
+  // directories at root, plus a Gemfile mentioning the `jekyll` gem.
+  // Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Heuristic-mislabeled meta sub-fields are dishonest": surfacing
+  // `confidence: "low"` is honest evidence-calibration; returning
+  // `null` for sentinel-only matches was silent suppression.
 
-  it("returns null for a bare _config.yml with no jekyll-shaped neighbours", async () => {
+  it('surfaces confidence: "low" for bare _config.yml with no jekyll-shaped neighbours', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      expect(detectSsgFramework(dir)).toBeNull();
+      expect(detectSsgFramework(dir)).toEqual({
+        name: "jekyll",
+        buildOutput: "_site/",
+        buildCommand: "bundle exec jekyll build",
+        confidence: "low",
+      });
     });
   });
 
-  it("resolves _config.yml + _layouts/ to jekyll", async () => {
+  it('resolves _config.yml + _layouts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await mkdir(join(dir, "_layouts"));
@@ -185,38 +209,42 @@ describe("detectSsgFramework: jekyll requires corroborating signal", () => {
         name: "jekyll",
         buildOutput: "_site/",
         buildCommand: "bundle exec jekyll build",
+        confidence: "medium",
       });
     });
   });
 
-  it("resolves _config.yml + _includes/ to jekyll", async () => {
+  it('resolves _config.yml + _includes/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await mkdir(join(dir, "_includes"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
     });
   });
 
-  it("resolves _config.yml + _posts/ to jekyll", async () => {
+  it('resolves _config.yml + _posts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await mkdir(join(dir, "_posts"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
     });
   });
 
-  it("resolves _config.yml + _drafts/ to jekyll", async () => {
+  it('resolves _config.yml + _drafts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await mkdir(join(dir, "_drafts"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
     });
   });
 
-  it("resolves _config.yml + Gemfile mentioning jekyll to jekyll", async () => {
+  it('resolves _config.yml + Gemfile mentioning jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await writeFile(
@@ -225,32 +253,113 @@ describe("detectSsgFramework: jekyll requires corroborating signal", () => {
       );
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
     });
   });
 
-  it("returns null for _config.yml + Gemfile that does NOT mention jekyll", async () => {
+  it('surfaces confidence: "low" for _config.yml + Gemfile that does NOT mention jekyll', async () => {
     // A Ruby project with a stray YAML config file but a non-jekyll
     // Gemfile (rails, sinatra, plain bundler) is not a Jekyll site.
-    // Filename + presence-of-Gemfile alone is not enough; the Gemfile
-    // must reference the gem.
+    // The Gemfile's mere existence is not corroboration; the gem
+    // declaration is. With sentinel-only evidence the framework still
+    // ships, but at honest `low` confidence.
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await writeFile(
         join(dir, "Gemfile"),
         'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n',
       );
-      expect(detectSsgFramework(dir)).toBeNull();
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("low");
     });
   });
 
-  it("returns null when a corroborating path exists but is a regular file (not directory)", async () => {
+  it("does NOT count a regular-file `_layouts` (non-directory) as a corroborator", async () => {
     // `_layouts` as a stray text file (some unrelated template might
     // ship one) does not corroborate Jekyll — the directory shape
-    // matters, since Jekyll resolves layouts by reading children.
+    // matters, since Jekyll resolves layouts by reading children. The
+    // sentinel is still present, so the framework ships at `low`.
     await withScratch(async (dir) => {
       await writeFile(join(dir, "_config.yml"), "title: My site\n");
       await writeFile(join(dir, "_layouts"), "not a directory\n");
-      expect(detectSsgFramework(dir)).toBeNull();
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("low");
+    });
+  });
+
+  it('resolves _config.yml + _layouts/ + _includes/ to jekyll at confidence: "high" (≥2 corroborators)', async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      expect(detectSsgFramework(dir)).toEqual({
+        name: "jekyll",
+        buildOutput: "_site/",
+        buildCommand: "bundle exec jekyll build",
+        confidence: "high",
+      });
+    });
+  });
+
+  it('resolves _config.yml + _layouts/ + Gemfile mentioning jekyll at confidence: "high"', async () => {
+    // Two corroborators of different kinds (directory + Gemfile gem
+    // declaration) cross the high-confidence threshold even when no
+    // second Jekyll-shaped directory is present.
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_layouts"));
+      await writeFile(
+        join(dir, "Gemfile"),
+        'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
+      );
+      const result = detectSsgFramework(dir);
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("high");
+    });
+  });
+});
+
+describe("detectSsgFramework: sub-scope inheritance", () => {
+  // The detector probes EXACTLY the path the caller passes as `root`,
+  // never an ancestor. When an agent runs `scan_project` against a
+  // sub-template directory whose own tree has no `_config.yml`, the
+  // parent's framework label does NOT propagate down — `detectedFramework`
+  // is omitted from the response (returned as `null` here, conditional-
+  // spread away by the caller). This pins the "no walk-up inheritance"
+  // invariant: an agent calling `scan_project({ cwd: "<sub-dir>" })`
+  // inside a 174-template dump gets framework data only when the sub-
+  // tree itself corroborates, not because the dump root one level up
+  // happens to look Jekyll-shaped. Per `docs/kb/architecture/
+  // ai-first-consumer.md` "Heuristic-mislabeled meta sub-fields are
+  // dishonest" — inheriting an ancestor's classification onto a
+  // sub-scope without its own evidence is a dishonest shape.
+  it("returns null when the scanned sub-tree has no sentinel even though an ancestor does", async () => {
+    await withScratch(async (dir) => {
+      // Simulate a parent corpus with full Jekyll evidence at `dir`,
+      // and a sub-template directory `dir/templates/site-42/` that
+      // has none of its own.
+      await writeFile(join(dir, "_config.yml"), "title: Parent corpus\n");
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const subDir = join(dir, "templates", "site-42");
+      await mkdir(subDir, { recursive: true });
+      // The parent resolves cleanly; the sub-tree does not.
+      expect(detectSsgFramework(dir)?.name).toBe("jekyll");
+      expect(detectSsgFramework(subDir)).toBeNull();
+    });
+  });
+
+  it("returns null for an arbitrary directory with no SSG sentinel anywhere up the path", async () => {
+    // Defensive case: a scan against a deep sub-directory of a non-SSG
+    // project must not invent a framework. Combined with the test
+    // above, this pins the "probe at root only, never walk up"
+    // invariant from both directions.
+    await withScratch(async (dir) => {
+      const deep = join(dir, "src", "components", "card");
+      await mkdir(deep, { recursive: true });
+      expect(detectSsgFramework(deep)).toBeNull();
     });
   });
 });
@@ -269,7 +378,9 @@ describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
   // `config.toml` with `[markup]` is Hugo's legacy pre-0.110 shape —
   // the section header is the stable disambiguator (Hugo configs
   // reliably carry it; Cargo workspaces / other TOML configs never do).
-  it("resolves config.toml with a [markup] section header to hugo", async () => {
+  // Confidence is `high` because the section-header content probe is
+  // strong corroboration equivalent to an unambiguous filename.
+  it('resolves config.toml with a [markup] section header to hugo at confidence: "high"', async () => {
     await withScratch(async (dir) => {
       await writeFile(
         join(dir, "config.toml"),
@@ -279,6 +390,7 @@ describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
       expect(result?.name).toBe("hugo");
       expect(result?.buildOutput).toBe("public/");
       expect(result?.buildCommand).toBe("hugo");
+      expect(result?.confidence).toBe("high");
     });
   });
 
@@ -341,6 +453,7 @@ describe("ssgHint", () => {
       name: "jekyll",
       buildOutput: "_site/",
       buildCommand: "bundle exec jekyll build",
+      confidence: "high",
     };
     const hint = ssgHint(framework);
     expect(hint.code).toBe("ssg_build_output_hint");
@@ -365,11 +478,16 @@ describe("ssgHint", () => {
     // Compact smoke test — guards against a future reshuffle that
     // accidentally names one framework's output in another's hint.
     const frameworks: readonly DetectedFramework[] = [
-      { name: "hugo", buildOutput: "public/", buildCommand: "hugo" },
-      { name: "astro", buildOutput: "dist/", buildCommand: "astro build" },
-      { name: "eleventy", buildOutput: "_site/", buildCommand: "npx @11ty/eleventy" },
-      { name: "gatsby", buildOutput: "public/", buildCommand: "gatsby build" },
-      { name: "mkdocs", buildOutput: "site/", buildCommand: "mkdocs build" },
+      { name: "hugo", buildOutput: "public/", buildCommand: "hugo", confidence: "high" },
+      { name: "astro", buildOutput: "dist/", buildCommand: "astro build", confidence: "high" },
+      {
+        name: "eleventy",
+        buildOutput: "_site/",
+        buildCommand: "npx @11ty/eleventy",
+        confidence: "high",
+      },
+      { name: "gatsby", buildOutput: "public/", buildCommand: "gatsby build", confidence: "high" },
+      { name: "mkdocs", buildOutput: "site/", buildCommand: "mkdocs build", confidence: "high" },
     ];
     for (const fw of frameworks) {
       const hint = ssgHint(fw);

@@ -73,17 +73,53 @@ import type { Hint } from "./hint-codes.ts";
 export type SsgFramework = "jekyll" | "hugo" | "astro" | "eleventy" | "gatsby" | "mkdocs";
 
 /**
+ * Confidence in the framework classification. Derived from the
+ * corroborating-evidence count at the scan root:
+ *
+ *   - `high`   — sentinel filename is unambiguous (e.g. `astro.config.mjs`)
+ *                OR ambiguous-sentinel + ≥2 corroborating signals
+ *                (e.g. `_config.yml` + `_layouts/` + `Gemfile` mentioning
+ *                jekyll).
+ *   - `medium` — ambiguous sentinel + exactly 1 corroborating signal.
+ *   - `low`    — ambiguous sentinel only, no corroboration.
+ *
+ * Surfacing the axis is doctrine-correct (`docs/kb/architecture/
+ * ai-first-consumer.md` "Heuristic-mislabeled meta sub-fields are
+ * dishonest"): the agent reading `confidence: "low"` knows the
+ * classification rests on filename-alone evidence and can re-verify
+ * cheaply, rather than inferring confidence from the absence of the
+ * field. Hiding sentinel-only matches as `null` was the prior shape
+ * — silent omission read as "no SSG here" when the truth was "weak
+ * signal we declined to ship," and the silent miss is non-reversible.
+ */
+export type DetectedFrameworkConfidence = "high" | "medium" | "low";
+
+/**
  * Structured hint payload surfaced under `meta.detectedFramework`.
  * `buildOutput` is the conventional emit-directory path (relative to
  * the project root) — the agent copies it into `additionalPaths` on a
  * follow-up `scan_project` call to include rendered markup in the next
  * scan. `buildCommand` is the canonical invocation the SSG documents;
- * the tool never runs it, only names it.
+ * the tool never runs it, only names it. `confidence` lets the agent
+ * tell sentinel-on-strong-evidence (an unambiguous filename) apart from
+ * sentinel-alone (a shared filename without corroborators) — see
+ * {@link DetectedFrameworkConfidence}.
+ *
+ * Sub-scope inheritance: the detector probes EXACTLY the path the
+ * caller passes as `root`, never an ancestor. When an agent scans a
+ * sub-template directory whose own tree has no `_config.yml` (or other
+ * SSG marker), the detector returns `null` and the `detectedFramework`
+ * field is omitted from the response — the parent's framework label
+ * does NOT propagate down. The `meta.detectedFramework` slot is
+ * present-when-the-scanned-tree-itself-corroborates, never inherited
+ * from an ancestor. That invariant is pinned by the
+ * "sub-scope without its own sentinel" test.
  */
 export interface DetectedFramework {
   readonly name: SsgFramework;
   readonly buildOutput: string;
   readonly buildCommand: string;
+  readonly confidence: DetectedFrameworkConfidence;
 }
 
 /**
@@ -136,6 +172,28 @@ const SSG_DESCRIPTORS: readonly SsgDescriptor[] = [
 ];
 
 /**
+ * Maps a Jekyll corroboration count to the surfaced confidence tag.
+ * Two or more corroborators (e.g. `_config.yml` + `_layouts/` +
+ * `Gemfile` mentioning jekyll) is `high`; exactly one is `medium`;
+ * sentinel-alone (filename without any corroborator) is `low`.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest": the
+ * confidence axis lets the detector ship sentinel-only Jekyll matches
+ * (where the prior closure returned `null` and silently dropped the
+ * signal) at the honest tag `low`, so the agent gets the framework
+ * pointer plus the calibrated weakness of the evidence that produced
+ * it. The agent re-verifies in one read; the silent-miss failure mode
+ * the prior `null` shape produced (an unaccompanied stray
+ * `_config.yml` looked indistinguishable from "no SSG here") is closed.
+ */
+function jekyllConfidenceFromCorroborators(count: number): DetectedFrameworkConfidence {
+  if (count >= 2) return "high";
+  if (count === 1) return "medium";
+  return "low";
+}
+
+/**
  * Jekyll's only canonical config filename. Checked separately from
  * {@link SSG_DESCRIPTORS} because the filename alone is not enough to
  * confidently classify — bare `_config.yml` files ship in third-party
@@ -146,15 +204,23 @@ const SSG_DESCRIPTORS: readonly SsgDescriptor[] = [
 const JEKYLL_CONFIG = "_config.yml";
 
 /**
- * Static descriptor for Jekyll (build output + command). Kept separate
- * from {@link SSG_DESCRIPTORS} because Jekyll's resolution path is
- * gated on a corroborating signal rather than a bare filename probe.
+ * Build-output and build-command for Jekyll. Kept separate from
+ * {@link SSG_DESCRIPTORS} because Jekyll's resolution path layers a
+ * corroboration count on top of the filename probe; the surfaced
+ * `DetectedFramework` is constructed at call time so `confidence`
+ * can ride the actual evidence count.
  */
-const JEKYLL_DESCRIPTOR: DetectedFramework = {
-  name: "jekyll",
-  buildOutput: "_site/",
-  buildCommand: "bundle exec jekyll build",
-};
+const JEKYLL_BUILD_OUTPUT = "_site/";
+const JEKYLL_BUILD_COMMAND = "bundle exec jekyll build";
+
+function jekyllDescriptor(confidence: DetectedFrameworkConfidence): DetectedFramework {
+  return {
+    name: "jekyll",
+    buildOutput: JEKYLL_BUILD_OUTPUT,
+    buildCommand: JEKYLL_BUILD_COMMAND,
+    confidence,
+  };
+}
 
 /**
  * Directory-shaped corroborators for Jekyll detection. A real Jekyll
@@ -223,27 +289,47 @@ const HUGO_LEGACY_CONFIG_MAX_BYTES = 16 * 1024;
 const HUGO_MARKUP_SECTION_RE = /^\[markup\]/m;
 
 /**
- * Returns the detected SSG's descriptor, or `null` when no recognized
- * marker resolves. Resolution order, with the first match winning:
+ * Returns the detected SSG's descriptor (with `confidence`), or `null`
+ * when no recognized marker resolves at the given root. Resolution
+ * order, with the first match winning:
  *
- *   1. Jekyll: `_config.yml` AND a corroborating signal (a Jekyll-
- *      shaped directory or a Gemfile mentioning the `jekyll` gem).
- *      See {@link detectJekyllWithCorroboration}.
+ *   1. Jekyll: `_config.yml` AT ROOT, with `confidence` graded by
+ *      corroborator count (sentinel-only=`low`, +1=`medium`,
+ *      +≥2=`high`). See {@link detectJekyllWithGradedConfidence}.
  *   2. The unambiguous filename markers in declaration order of
  *      {@link SSG_DESCRIPTORS}: hugo (modern) → astro → eleventy →
- *      gatsby → mkdocs.
+ *      gatsby → mkdocs. These filenames are not shared with
+ *      non-SSG tooling, so a bare match is `confidence: "high"`.
  *   3. Hugo's legacy `config.toml`, disambiguated by a bounded
- *      content probe for the `[markup]` section header.
+ *      content probe for the `[markup]` section header. The header
+ *      is the corroborator that distinguishes Hugo from generic
+ *      TOML configs (Cargo workspaces, etc.); a positive match is
+ *      `confidence: "high"`.
  *
  * Jekyll runs first to preserve the documented declaration-order
  * tie-break (a hypothetical migration repo with both Jekyll and Astro
  * markers still resolves to Jekyll).
  *
+ * Sub-scope inheritance: this function probes EXACTLY `root`. There
+ * is no walk-up to ancestor directories, so a sub-tree without its
+ * own `_config.yml` (or other SSG sentinel) returns `null`. The
+ * caller then conditional-spreads `detectedFramework` away — the
+ * parent scope's framework label does NOT propagate down into a
+ * narrower scan. This matters when the agent runs `scan_project` with
+ * an explicit `cwd` pointing at a sub-template directory inside a
+ * 174-template dump: the per-sub-tree response carries
+ * `detectedFramework` only when the sub-tree itself corroborates,
+ * not because some ancestor at the dump root happens to look Jekyll-
+ * shaped. Per the AI-first doctrine "Heuristic-mislabeled meta
+ * sub-fields are dishonest", inheriting an ancestor's classification
+ * onto a sub-scope that doesn't itself bear the evidence is a
+ * dishonest shape — the closure is "probe at root only, never walk."
+ *
  * @param root Absolute path to the project root. Caller is responsible
  *             for path resolution; this module never re-resolves.
  */
 export function detectSsgFramework(root: string): DetectedFramework | null {
-  const jekyll = detectJekyllWithCorroboration(root);
+  const jekyll = detectJekyllWithGradedConfidence(root);
   if (jekyll !== null) return jekyll;
   for (const descriptor of SSG_DESCRIPTORS) {
     for (const marker of descriptor.markers) {
@@ -252,6 +338,7 @@ export function detectSsgFramework(root: string): DetectedFramework | null {
           name: descriptor.name,
           buildOutput: descriptor.buildOutput,
           buildCommand: descriptor.buildCommand,
+          confidence: "high",
         };
       }
     }
@@ -260,55 +347,60 @@ export function detectSsgFramework(root: string): DetectedFramework | null {
 }
 
 /**
- * Jekyll detection requires `_config.yml` AND at least one
- * corroborating signal:
+ * Jekyll detection: requires `_config.yml` at the scan root, then
+ * grades confidence by counting corroborating signals:
  *
- *   - a `_layouts/`, `_includes/`, `_posts/`, or `_drafts/` directory
- *     at the project root (Jekyll's loader walks them by name; the
- *     leading-underscore convention is specific to Jekyll, not
- *     generic configuration), OR
- *   - a Gemfile whose contents reference the `jekyll` gem (matched
- *     against `\bgem\b\s*[("]\s*["']jekyll`, which covers
- *     `gem "jekyll"`, `gem 'jekyll'`, `gem("jekyll")`, and the
- *     `jekyll-*` plugin-gem family — those plugins live only inside
- *     Jekyll sites so a match on any `jekyll`-prefixed gem is
- *     sufficient).
+ *   - Each present `_layouts/`, `_includes/`, `_posts/`, or `_drafts/`
+ *     directory at the project root counts as one corroborator
+ *     (Jekyll's loader walks them by name; the leading-underscore
+ *     convention is specific to Jekyll, not generic configuration).
+ *   - A Gemfile whose contents reference the `jekyll` gem counts as
+ *     one corroborator (matched against
+ *     `\bgem\b\s*[("]\s*["']jekyll`, which covers `gem "jekyll"`,
+ *     `gem 'jekyll'`, `gem("jekyll")`, and the `jekyll-*` plugin-gem
+ *     family — those plugins live only inside Jekyll sites so a match
+ *     on any `jekyll`-prefixed gem is sufficient).
  *
- * Returns `null` when `_config.yml` is missing OR present without
- * corroboration. The latter case is the Q6 false-positive: a stray
- * top-level `_config.yml` from a third-party site template, ecosystem
- * dump, or unrelated YAML-config tool resolves to `null` rather than
- * to a confident Jekyll classification — letting the agent inspect
- * rather than acting on a wrong build command.
+ * Confidence mapping (see {@link jekyllConfidenceFromCorroborators}):
+ * 0 corroborators ⇒ `low`, 1 ⇒ `medium`, ≥2 ⇒ `high`.
  *
- * Per the AI-first doctrine, this is not heuristic suppression: the
- * detector is moving from "confident classification on weak evidence"
- * to "confident classification on stronger evidence OR no
- * classification at all" — `null` is honest absence (the corroborated
- * positive path always resolves), and the agent retains full source
- * access to investigate. See `docs/kb/architecture/ai-first-consumer.md`
- * "Surface, don't suppress" — surfacing a wrong answer is worse than
- * surfacing nothing when the evidence is genuinely insufficient for
- * the classification we'd otherwise emit.
+ * Returns `null` ONLY when `_config.yml` is absent at the scan root.
+ * The prior closure returned `null` for sentinel-only matches too,
+ * silently dropping the signal — but the agent reading a clean
+ * `scan_project` response on a stray-`_config.yml` corpus then
+ * couldn't tell "no SSG here" from "we declined to ship a weak
+ * signal." Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest" and
+ * "Ambiguous field shapes are dishonest", the honest move is to
+ * surface the framework with `confidence: "low"` and let the agent
+ * verify in one read. The `confidence` axis carries the calibrated
+ * weakness of the evidence; `null` returns are reserved for honest
+ * absence ("no `_config.yml` at this root").
+ *
+ * Sub-scope inheritance: probes ONLY at `root`. A sub-tree call where
+ * `_config.yml` lives in an ancestor directory returns `null` — the
+ * detector never walks up. That keeps the framework label scoped to
+ * the actually-scanned tree, never inherited from a parent corpus.
  *
  * Any I/O failure (missing file, permission error, decode error)
  * returns `null` — the probe never throws so {@link detectSsgFramework}
  * stays total.
  */
-function detectJekyllWithCorroboration(root: string): DetectedFramework | null {
+function detectJekyllWithGradedConfidence(root: string): DetectedFramework | null {
   if (!existsSync(join(root, JEKYLL_CONFIG))) return null;
+  let count = 0;
   for (const dir of JEKYLL_DIR_CORROBORATORS) {
     const path = join(root, dir);
     if (!existsSync(path)) continue;
     try {
-      if (statSync(path).isDirectory()) return JEKYLL_DESCRIPTOR;
+      if (statSync(path).isDirectory()) count += 1;
     } catch {
       // statSync failed (permission, race) — treat as missing and
       // continue scanning the remaining corroborators.
     }
   }
-  if (gemfileMentionsJekyll(root)) return JEKYLL_DESCRIPTOR;
-  return null;
+  if (gemfileMentionsJekyll(root)) count += 1;
+  return jekyllDescriptor(jekyllConfidenceFromCorroborators(count));
 }
 
 /**
@@ -370,6 +462,12 @@ function detectHugoLegacyConfigToml(root: string): DetectedFramework | null {
     name: hugo.name,
     buildOutput: hugo.buildOutput,
     buildCommand: hugo.buildCommand,
+    // The `[markup]` section header IS the corroborator that
+    // disambiguates Hugo's `config.toml` from generic TOML configs
+    // (Cargo workspaces, etc.); a positive content-probe match is
+    // strong evidence equivalent to an unambiguous filename, so the
+    // surfaced confidence is `high`.
+    confidence: "high",
   };
 }
 
