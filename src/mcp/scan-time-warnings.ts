@@ -567,11 +567,7 @@ function buildWarningsFieldInputs(
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
-    ...(derived.linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
-      ? {}
-      : {
-          linkedStylesheetsUnresolvedForContrast: derived.linkedStylesheetsUnresolvedForContrast,
-        }),
+    ...linkedStylesheetsInput(derived.linkedStylesheetsUnresolvedForContrast),
     ...(derived.parserBailedJsTsxRouteFiles.length === 0
       ? {}
       : { parserBailedJsTsxRouteFiles: derived.parserBailedJsTsxRouteFiles }),
@@ -593,6 +589,29 @@ function scanFileParserBailInput(
   payload: WarningInputs["scanFileParserBailNoFindings"],
 ): Partial<WarningInputs> {
   return payload === undefined ? {} : { scanFileParserBailNoFindings: payload };
+}
+
+/**
+ * Builds the spreadable linked-stylesheet partition subset of
+ * {@link WarningInputs}. Conditional-spread per the present-when-
+ * meaningful contract: the input is omitted when EVERY partition slice
+ * (local-unresolved / external-CDN / template-expression) is empty —
+ * downstream codes drop conservatively. Extracted from
+ * {@link buildWarningsFieldInputs} so the orchestrator stays under the
+ * cognitive-complexity cap as the partition set grew from two slices
+ * (template + unresolved) to three (template + external + local).
+ */
+function linkedStylesheetsInput(
+  detection: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast,
+): Partial<WarningInputs> {
+  if (
+    detection.localUnresolvedHrefCount === 0 &&
+    detection.externalCdnHrefCount === 0 &&
+    detection.templateExpressionHrefCount === 0
+  ) {
+    return {};
+  }
+  return { linkedStylesheetsUnresolvedForContrast: detection };
 }
 
 /**

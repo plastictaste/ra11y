@@ -3747,18 +3747,19 @@ describe("computeScanWarnings — js_innerhtml_template_literal_unparsed", () =>
 });
 
 // ---------------------------------------------------------------------------
-// linked_stylesheet_not_resolved_for_contrast — emission predicate + payload
+// linked_stylesheet_local_unresolved — emission predicate + payload
 // ---------------------------------------------------------------------------
-// Scanning HTML files that link to external stylesheets does not pull
-// the linked sheets into contrast-rule resolution. Without this code,
-// a multi-page site whose `<link rel="stylesheet" href="bootstrap.min.css">`
-// pages return `findings: []` reads as a clean scan when the reality is
-// that the entire color substrate was outside the rule's evidence
-// horizon. Surface-don't-suppress: deferring full resolution is
-// acceptable; silent omission is not.
+// Scanning HTML files that link to a relative-path stylesheet not in
+// the parsed-file set does not pull the linked sheet into contrast-rule
+// resolution. Without this code, a multi-page site whose
+// `<link rel="stylesheet" href="bootstrap.min.css">` pages return
+// `findings: []` reads as a clean scan when the reality is that the
+// entire color substrate was outside the rule's evidence horizon.
+// Surface-don't-suppress: deferring full resolution is acceptable;
+// silent omission is not.
 
-describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", () => {
-  it("fires when at least one HTML file declared an unresolved link-stylesheet href", () => {
+describe("computeScanWarnings — linked_stylesheet_local_unresolved", () => {
+  it("fires when at least one HTML file declared an unresolved relative-path link-stylesheet href", () => {
     const codes = computeScanWarnings({
       filesScanned: 14,
       rootSource: "explicit",
@@ -3766,15 +3767,19 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 14,
-        htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
-        topUnresolvedHrefs: ["css/bootstrap.min.css"],
+        localUnresolvedHrefCount: 14,
+        localUnresolvedFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topLocalUnresolvedHrefs: ["css/bootstrap.min.css"],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 0,
         templateExpressionFiles: [],
         templateExpressionHrefs: [],
       },
     });
-    expect(codes).toContain("linked_stylesheet_not_resolved_for_contrast");
+    expect(codes).toContain("linked_stylesheet_local_unresolved");
+    expect(codes ?? []).not.toContain("linked_stylesheet_external_cdn_skipped");
   });
 
   it("does NOT fire when the detection is absent (caller did not run the detector)", () => {
@@ -3785,10 +3790,10 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
     });
-    expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
+    expect(codes ?? []).not.toContain("linked_stylesheet_local_unresolved");
   });
 
-  it("does NOT fire when the detection is empty (zero count, no html files)", () => {
+  it("does NOT fire when every slice is empty (zero counts on local / external / template)", () => {
     const codes = computeScanWarnings({
       filesScanned: 14,
       rootSource: "explicit",
@@ -3796,18 +3801,22 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 0,
-        htmlFiles: [],
-        topUnresolvedHrefs: [],
+        localUnresolvedHrefCount: 0,
+        localUnresolvedFiles: [],
+        topLocalUnresolvedHrefs: [],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 0,
         templateExpressionFiles: [],
         templateExpressionHrefs: [],
       },
     });
-    expect(codes ?? []).not.toContain("linked_stylesheet_not_resolved_for_contrast");
+    expect(codes ?? []).not.toContain("linked_stylesheet_local_unresolved");
+    expect(codes ?? []).not.toContain("linked_stylesheet_external_cdn_skipped");
   });
 
-  it("payload carries unresolvedHrefCount, htmlFiles, and topUnresolvedHrefs on the warningsDetails channel", () => {
+  it("payload carries localUnresolvedHrefCount, files, and topLocalUnresolvedHrefs on the warningsDetails channel", () => {
     const out = warningsField({
       filesScanned: 14,
       rootSource: "explicit",
@@ -3815,20 +3824,147 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
       analysisCoverage: undefined,
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 28,
-        htmlFiles: ["/proj/page-1.html", "/proj/page-2.html"],
-        topUnresolvedHrefs: ["css/bootstrap.min.css", "css/theme.css"],
+        localUnresolvedHrefCount: 28,
+        localUnresolvedFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topLocalUnresolvedHrefs: ["css/bootstrap.min.css", "css/theme.css"],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 0,
         templateExpressionFiles: [],
         templateExpressionHrefs: [],
       },
     });
-    expect(out.warnings).toContain("linked_stylesheet_not_resolved_for_contrast");
-    const detail = out.warningsDetails?.linked_stylesheet_not_resolved_for_contrast;
+    expect(out.warnings).toContain("linked_stylesheet_local_unresolved");
+    const detail = out.warningsDetails?.linked_stylesheet_local_unresolved;
     expect(detail).toBeDefined();
-    expect(detail?.unresolvedHrefCount).toBe(28);
-    expect(detail?.htmlFiles?.length).toBe(2);
-    expect(detail?.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+    expect(detail?.localUnresolvedHrefCount).toBe(28);
+    expect(detail?.files?.length).toBe(2);
+    expect(detail?.topLocalUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// linked_stylesheet_external_cdn_skipped — emission predicate + payload
+// ---------------------------------------------------------------------------
+// `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/...">` is
+// definitionally not resolvable from the offline static scanner. The
+// previous `linked_stylesheet_not_resolved_for_contrast` code lumped
+// these external-CDN hrefs with relative-path siblings, burying the
+// actionable bucket beneath high-volume CDN noise (canonical case: a
+// page linking `font-awesome` from cdnjs alongside a sibling
+// `style.css`). Per AI-first doctrine "Skipped-extension warnings are
+// split by predicate so the actionable text-source subset doesn't get
+// buried."
+
+describe("computeScanWarnings — linked_stylesheet_external_cdn_skipped", () => {
+  it("fires when at least one HTML file declared an external-scheme link-stylesheet href", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        localUnresolvedHrefCount: 0,
+        localUnresolvedFiles: [],
+        topLocalUnresolvedHrefs: [],
+        externalCdnHrefCount: 14,
+        externalCdnFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topExternalCdnHrefs: [
+          "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+        ],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
+      },
+    });
+    expect(codes).toContain("linked_stylesheet_external_cdn_skipped");
+    expect(codes ?? []).not.toContain("linked_stylesheet_local_unresolved");
+  });
+
+  it("fires BOTH local and external codes when both slices are non-empty (split, not double-count)", () => {
+    // Canonical mixed case: a page declaring a sibling `style.css`
+    // (relative, actionable) alongside a CDN URL (external,
+    // out-of-scope). Both codes must fire — the agent reads each
+    // payload independently and triages each bucket on its own merits.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 1 },
+      linkedStylesheetsUnresolvedForContrast: {
+        localUnresolvedHrefCount: 1,
+        localUnresolvedFiles: ["/proj/page.html"],
+        topLocalUnresolvedHrefs: ["style.css"],
+        externalCdnHrefCount: 1,
+        externalCdnFiles: ["/proj/page.html"],
+        topExternalCdnHrefs: [
+          "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+        ],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
+      },
+    });
+    expect(codes).toContain("linked_stylesheet_local_unresolved");
+    expect(codes).toContain("linked_stylesheet_external_cdn_skipped");
+  });
+
+  it("does NOT fire when the external-CDN count is zero", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        localUnresolvedHrefCount: 1,
+        localUnresolvedFiles: ["/proj/page.html"],
+        topLocalUnresolvedHrefs: ["css/bootstrap.min.css"],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
+      },
+    });
+    expect(codes ?? []).not.toContain("linked_stylesheet_external_cdn_skipped");
+  });
+
+  it("payload carries externalCdnHrefCount, files, and topExternalCdnHrefs on the warningsDetails channel", () => {
+    const out = warningsField({
+      filesScanned: 14,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".html": 14 },
+      linkedStylesheetsUnresolvedForContrast: {
+        localUnresolvedHrefCount: 0,
+        localUnresolvedFiles: [],
+        topLocalUnresolvedHrefs: [],
+        externalCdnHrefCount: 28,
+        externalCdnFiles: ["/proj/page-1.html", "/proj/page-2.html"],
+        topExternalCdnHrefs: [
+          "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+          "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
+        ],
+        templateExpressionHrefCount: 0,
+        templateExpressionFiles: [],
+        templateExpressionHrefs: [],
+      },
+    });
+    expect(out.warnings).toContain("linked_stylesheet_external_cdn_skipped");
+    const detail = out.warningsDetails?.linked_stylesheet_external_cdn_skipped;
+    expect(detail).toBeDefined();
+    expect(detail?.externalCdnHrefCount).toBe(28);
+    expect(detail?.files?.length).toBe(2);
+    expect(detail?.topExternalCdnHrefs).toEqual([
+      "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+      "https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css",
+    ]);
   });
 });
 
@@ -3837,11 +3973,11 @@ describe("computeScanWarnings — linked_stylesheet_not_resolved_for_contrast", 
 // ---------------------------------------------------------------------------
 // `<link rel="stylesheet" href="{extraCss}">` and similar templating
 // directives the parser saw as text are NOT actually-fetched-but-failed
-// hrefs — surfacing them under `topUnresolvedHrefs` would frame a
-// templating directive as "a real stylesheet failed to load." Per AI-
-// first doctrine "Heuristic-mislabeled meta sub-fields are dishonest,"
-// the partition lives on a separate code so the resolution warning's
-// predicate stays honest and the agent can act on each kind
+// hrefs — surfacing them under either of the resolution buckets would
+// frame a templating directive as "a real stylesheet failed to load."
+// Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+// dishonest," the partition lives on a separate code so the resolution
+// warnings' predicates stay honest and the agent can act on each kind
 // independently.
 
 describe("computeScanWarnings — template_expression_in_href", () => {
@@ -3853,9 +3989,12 @@ describe("computeScanWarnings — template_expression_in_href", () => {
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 0,
-        htmlFiles: [],
-        topUnresolvedHrefs: [],
+        localUnresolvedHrefCount: 0,
+        localUnresolvedFiles: [],
+        topLocalUnresolvedHrefs: [],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 2,
         templateExpressionFiles: ["/proj/layout.html"],
         templateExpressionHrefs: ["{extraCss}", "{{theme}}"],
@@ -3872,9 +4011,12 @@ describe("computeScanWarnings — template_expression_in_href", () => {
       analysisCoverage: {},
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 1,
-        htmlFiles: ["/proj/page.html"],
-        topUnresolvedHrefs: ["css/bootstrap.min.css"],
+        localUnresolvedHrefCount: 1,
+        localUnresolvedFiles: ["/proj/page.html"],
+        topLocalUnresolvedHrefs: ["css/bootstrap.min.css"],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 0,
         templateExpressionFiles: [],
         templateExpressionHrefs: [],
@@ -3891,9 +4033,12 @@ describe("computeScanWarnings — template_expression_in_href", () => {
       analysisCoverage: undefined,
       filesByExtension: { ".html": 14 },
       linkedStylesheetsUnresolvedForContrast: {
-        unresolvedHrefCount: 0,
-        htmlFiles: [],
-        topUnresolvedHrefs: [],
+        localUnresolvedHrefCount: 0,
+        localUnresolvedFiles: [],
+        topLocalUnresolvedHrefs: [],
+        externalCdnHrefCount: 0,
+        externalCdnFiles: [],
+        topExternalCdnHrefs: [],
         templateExpressionHrefCount: 3,
         templateExpressionFiles: ["/proj/layout.html", "/proj/page.html"],
         templateExpressionHrefs: ["{extraCss}", "{{theme}}", "<%= css %>"],

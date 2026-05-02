@@ -547,43 +547,57 @@ export type ScanWarningCode =
   // runtime-injection gap the static scan could not close.
   | "js_innerhtml_template_literal_unparsed"
   // at least one scanned HTML file
-  // declared a `<link rel="stylesheet" href="…">` reference whose target
-  // the contrast-rule resolution did not consult — the static rule
-  // operates on the parsed CSS / SCSS files in isolation and does not
-  // follow link references from HTML into linked stylesheets, so any
-  // tokens / color usages the linked sheet would have provided stay
-  // outside the rule's evidence horizon. Without this code, an HTML
-  // scan against a multi-page site that links a single bundled
-  // stylesheet (e.g. `bootstrap.min.css`) reads as `findings: []` with
-  // `coverageConfidence: "high"` despite the contrast scan having no
-  // visibility into the linked color tokens — the canonical
-  // "Routing skips that drop content are the symmetric twin of
-  // suppression" failure mode one layer deeper than the parse-time
-  // skip warnings. Per the framing "deferring full resolution is
-  // acceptable, silent omission is not": the detector does not attempt
-  // to resolve the linked sheet inline (full resolution is out of scope
-  // for this surface) — it just names the unresolved hrefs so the agent
-  // can scope a follow-up via `additionalPaths` (point the linked path
-  // at the scan), `propose_config` (add the on-disk equivalent), or a
-  // separate `scan` against the linked CSS file. Paired payload:
-  // `warningsDetails.linked_stylesheet_not_resolved_for_contrast`
-  // carries `{ unresolvedHrefCount, htmlFiles, topUnresolvedHrefs }` so
-  // the agent branches on identity (which pages, which hrefs?) without
-  // re-walking the per-file AST.
-  | "linked_stylesheet_not_resolved_for_contrast"
+  // declared a `<link rel="stylesheet" href="…">` whose href is a
+  // RELATIVE path that the resolver could not match against the
+  // parsed-file set. The actionable subset of the contrast-rule
+  // routing-skip family: the linked CSS is plausibly on disk and
+  // reachable via `additionalPaths`, OR the agent can audit the page's
+  // color tokens directly. Distinct from the external-CDN slice
+  // ({@link "linked_stylesheet_external_cdn_skipped"}) which names hrefs
+  // the offline scanner cannot consult regardless of scope. Paired
+  // payload `warningsDetails.linked_stylesheet_local_unresolved` carries
+  // `{ localUnresolvedHrefCount, files, topLocalUnresolvedHrefs }`. The
+  // canonical "Routing skips that drop content are the symmetric twin
+  // of suppression" failure mode one layer deeper than the parse-time
+  // skip warnings; per AI-first doctrine "Skipped-extension warnings
+  // are split by predicate so the actionable text-source subset doesn't
+  // get buried" the warning surface partitions external/local so the
+  // agent triages the actionable bucket without re-reading every CDN
+  // URL.
+  | "linked_stylesheet_local_unresolved"
+  // at least one scanned HTML file declared a
+  // `<link rel="stylesheet" href="…">` whose href starts with `http://`,
+  // `https://`, `//` (protocol-relative), or `data:`. Per the network-
+  // isolation invariant (`src/` never references `fetch` — see CLAUDE.md
+  // §3 #9), the static scanner cannot consult external URLs regardless
+  // of scope, so this slice is named distinctly from the local-
+  // unresolved subset to keep the agent's triage budget on the
+  // actionable bucket. Canonical case: `https://cdnjs.cloudflare.com/
+  // .../font-awesome.min.css` — an offline scanner has no path to
+  // resolve it, and lumping it under the local-unresolved code would
+  // bury the actionable sibling-path findings beneath high-volume CDN
+  // noise. Paired payload
+  // `warningsDetails.linked_stylesheet_external_cdn_skipped` carries
+  // `{ externalCdnHrefCount, files, topExternalCdnHrefs }` so the agent
+  // reads the cited URLs and decides whether to audit the remote sheet
+  // out-of-band. Per AI-first doctrine "Skipped-extension warnings are
+  // split by predicate so the actionable text-source subset doesn't get
+  // buried."
+  | "linked_stylesheet_external_cdn_skipped"
   // at least one HTML file in the scan declared a `<link
   // rel="stylesheet" href="…">` whose href value carried a templating-
   // directive shape (`{extraCss}`, `{{styles}}`, `<%= css %>`,
   // `${theme}`, `{% raw %}`) the parser saw as text rather than a
-  // resolved URL. Distinct from `linked_stylesheet_not_resolved_for_contrast`
-  // which names "actually fetched but failed to resolve" — template
-  // expressions never ran the resolution path because the href was a
-  // directive, not a URL. Splitting the codes keeps the resolution
-  // warning's predicate honest per AI-first doctrine "Heuristic-
-  // mislabeled meta sub-fields are dishonest": surfacing `{extraCss}`
-  // under `topUnresolvedHrefs` would frame a templating directive the
-  // parser saw as text as a real stylesheet that failed to load. The
-  // detector at the assembly seam
+  // resolved URL. Distinct from `linked_stylesheet_local_unresolved`
+  // (relative paths the resolver could not match) and from
+  // `linked_stylesheet_external_cdn_skipped` (external schemes the
+  // offline scanner cannot consult) — template expressions never ran
+  // the resolution path because the href was a directive, not a URL.
+  // Splitting the codes keeps each predicate honest per AI-first
+  // doctrine "Heuristic-mislabeled meta sub-fields are dishonest":
+  // surfacing `{extraCss}` under a "stylesheet failed to load" code
+  // would frame a templating directive the parser saw as text as a real
+  // stylesheet that failed to load. The detector at the assembly seam
   // (`detectLinkedStylesheetsNotResolvedForContrast` in
   // `./linked-stylesheets.ts`) partitions hrefs by string-shape; this
   // module stays pure over its inputs. Paired payload:
@@ -1159,21 +1173,21 @@ export interface WarningInputs {
    * caller-supplied detection from
    * {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}.
    * Names the HTML files that declared a `<link rel="stylesheet"
-   * href="…">` reference whose target the contrast rule did not consult
-   * during resolution. Drives the
-   * `linked_stylesheet_not_resolved_for_contrast` code + its paired
-   * `warningsDetails` payload. The detector lives at the assembly seam
-   * so this module stays pure over its inputs — the predicate walks
-   * parsed HTML ASTs and returns the deterministic
-   * `{ unresolvedHrefCount, htmlFiles, topUnresolvedHrefs }` shape
-   * directly.
+   * href="…">` reference, partitioned into three slices (local-
+   * unresolved / external-CDN / template-expression). Drives THREE
+   * warning codes — `linked_stylesheet_local_unresolved`,
+   * `linked_stylesheet_external_cdn_skipped`, and
+   * `template_expression_in_href` — plus their paired `warningsDetails`
+   * payloads. The detector lives at the assembly seam so this module
+   * stays pure over its inputs — the predicate walks parsed HTML ASTs
+   * and returns the deterministic three-slice shape directly.
    *
    * Pass `undefined` when the caller did not run the detector (e.g.
    * `scan` against arbitrary paths where the parsed-file list is not
-   * threaded through the scan-time-warnings aggregator). The code
-   * drops conservatively when this field is absent or its
-   * `unresolvedHrefCount` is zero. Empty `htmlFiles` (with
-   * `unresolvedHrefCount: 0`) is treated identically to `undefined`.
+   * threaded through the scan-time-warnings aggregator). Each code
+   * drops conservatively when this field is absent or its slice's
+   * `<slice>HrefCount` is zero. Empty per-slice file list (with
+   * `<slice>HrefCount: 0`) is treated identically to `undefined`.
    */
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
@@ -2603,46 +2617,68 @@ export interface ScanWarningDetails {
     }[];
   };
   /**
-   * Payload for `linked_stylesheet_not_resolved_for_contrast`. Carries
-   * the unresolved-link tally so an agent reading the warning channel
-   * can scope a follow-up without re-walking the per-file AST.
+   * Payload for `linked_stylesheet_local_unresolved`. Carries the
+   * relative-path-href subset of the unresolved-link tally — the
+   * actionable bucket the agent can pull into scope via
+   * `additionalPaths`.
    *
-   * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs
-   *   the detector saw across the scan (pre-cap on the href list).
-   *   Renamed from the generic `count` per AI-first doctrine "Sibling
-   *   fields naming the same concept must use one shape" so the three
-   *   sibling counts in this payload (`unresolvedHrefCount`,
-   *   `htmlFiles.length`, `topUnresolvedHrefs.length`) cannot collide on
-   *   the same name when they measure different slices. Distinct from
-   *   `topUnresolvedHrefs.length` because one href can repeat across
-   *   pages, and from `htmlFiles.length` because one page can carry
+   * - `localUnresolvedHrefCount` — total number of `(htmlFile, href)`
+   *   pairs whose href is a relative path that did not match any
+   *   in-scope same-directory sibling. Distinct from
+   *   `topLocalUnresolvedHrefs.length` because one href can repeat
+   *   across pages, and from `files.length` because one page can carry
    *   multiple links.
-   * - `htmlFiles` — sorted-ascending list of HTML files that declared
-   *   at least one unresolved `<link rel="stylesheet" href="…">`. The
-   *   file-count is derivable from `htmlFiles.length`; no parallel
-   *   scalar twin is shipped (same doctrine).
-   * - `topUnresolvedHrefs` — sorted-ascending, de-duplicated href
-   *   slice capped at the implementation's top-paths limit (see
-   *   {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}).
-   *   Same pattern as `sourcemap_files_excluded.topPaths`: the cap
-   *   keeps the wire payload bounded on bulk-vendor corpora while
-   *   preserving the dominant-href shape an agent reads to decide
-   *   whether the unresolved set is one shared bundle or a
-   *   heterogeneous fan-out. The capped distinct-href count is
-   *   `topUnresolvedHrefs.length`.
+   * - `files` — sorted-ascending list of HTML files that declared at
+   *   least one local-unresolved href. The file-count is derivable
+   *   from `files.length`.
+   * - `topLocalUnresolvedHrefs` — sorted-ascending, de-duplicated href
+   *   slice capped at the implementation's top-paths limit. Same
+   *   pattern as `sourcemap_files_excluded.topPaths`: the cap keeps
+   *   the wire payload bounded on bulk-vendor corpora while preserving
+   *   the dominant-href shape an agent reads to decide whether the
+   *   unresolved set is one shared bundle or a heterogeneous fan-out.
    *
-   * Per "deferring full resolution is acceptable, silent omission is
-   * not" — the payload is additive routing telemetry. The contrast
-   * rule's findings stay unchanged; the warning tells the agent which
-   * pages and which hrefs to either scope into the scan via
-   * `additionalPaths` (when the linked sheet is in the corpus) or
-   * audit separately (when the link resolves to a remote CDN URL the
-   * scanner cannot consult).
+   * Per AI-first doctrine "Skipped-extension warnings are split by
+   * predicate so the actionable text-source subset doesn't get
+   * buried" — this payload covers ONLY the relative-path subset.
+   * External-scheme hrefs (`http://`, `https://`, `//`, `data:`) are
+   * shipped under the sister
+   * `warningsDetails.linked_stylesheet_external_cdn_skipped` payload
+   * so the agent's triage budget stays on the actionable bucket.
    */
-  readonly linked_stylesheet_not_resolved_for_contrast?: {
-    readonly unresolvedHrefCount: number;
-    readonly htmlFiles: readonly string[];
-    readonly topUnresolvedHrefs: readonly string[];
+  readonly linked_stylesheet_local_unresolved?: {
+    readonly localUnresolvedHrefCount: number;
+    readonly files: readonly string[];
+    readonly topLocalUnresolvedHrefs: readonly string[];
+  };
+  /**
+   * Payload for `linked_stylesheet_external_cdn_skipped`. Carries the
+   * external-scheme-href subset of the unresolved-link tally — hrefs
+   * the offline scanner cannot resolve regardless of scope.
+   *
+   * - `externalCdnHrefCount` — total number of `(htmlFile, href)` pairs
+   *   whose href starts with `http://`, `https://`, `//`, or `data:`.
+   *   Same naming discipline as the local-unresolved payload's
+   *   `localUnresolvedHrefCount`.
+   * - `files` — sorted-ascending list of HTML files that declared at
+   *   least one external-scheme href.
+   * - `topExternalCdnHrefs` — sorted-ascending, de-duplicated href
+   *   slice capped at the implementation's top-paths limit. The agent
+   *   reads the cited URLs to decide whether to audit the remote
+   *   sheet out-of-band; the static scanner is not the right tool
+   *   regardless of scope (per the network-isolation invariant).
+   *
+   * Per AI-first doctrine "Skipped-extension warnings are split by
+   * predicate so the actionable text-source subset doesn't get buried"
+   * — partitioning external-scheme out of the local-unresolved bucket
+   * keeps the actionable subset visible on bulk corpora where CDN
+   * volumes (font-awesome, bootstrap, jQuery) would otherwise drown
+   * the relative-path findings in noise.
+   */
+  readonly linked_stylesheet_external_cdn_skipped?: {
+    readonly externalCdnHrefCount: number;
+    readonly files: readonly string[];
+    readonly topExternalCdnHrefs: readonly string[];
   };
   /**
    * Payload for `template_expression_in_href`. Carries the per-file
@@ -2653,10 +2689,11 @@ export interface ScanWarningDetails {
    *
    * - `templateExpressionHrefCount` — total number of `(htmlFile,
    *   href)` pairs across the scan, pre-cap. Same naming discipline as
-   *   the resolution warning's `unresolvedHrefCount`: distinct from
-   *   `files.length` (one page can carry multiple template-expression
-   *   links) and from `topTemplateExpressionHrefs.length` (one
-   *   directive token can repeat across pages).
+   *   the sister `linked_stylesheet_local_unresolved` payload's
+   *   `localUnresolvedHrefCount`: distinct from `files.length` (one
+   *   page can carry multiple template-expression links) and from
+   *   `topTemplateExpressionHrefs.length` (one directive token can
+   *   repeat across pages).
    * - `files` — sorted-ascending list of HTML files where at least one
    *   such href appeared.
    * - `topTemplateExpressionHrefs` — sorted-ascending, de-duplicated
@@ -2669,9 +2706,9 @@ export interface ScanWarningDetails {
    *   a config to surface the resolved CSS.
    *
    * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
-   * dishonest" — `topUnresolvedHrefs` on the sister warning is reserved
-   * for actually-fetched-but-failed values; template directives belong
-   * here on a separate code so the agent can act on each kind
+   * dishonest" — `topLocalUnresolvedHrefs` on the sister warning is
+   * reserved for relative-path-but-failed values; template directives
+   * belong here on a separate code so the agent can act on each kind
    * independently. Paired predicate:
    * {@link hasTemplateExpressionInHref}.
    */
@@ -2893,7 +2930,8 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "dist_only_scan_detected",
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
-  "linked_stylesheet_not_resolved_for_contrast",
+  "linked_stylesheet_local_unresolved",
+  "linked_stylesheet_external_cdn_skipped",
   "template_expression_in_href",
   "parser_bailed_on_non_jsx_in_tsx_route",
   "coverage_confidence_uniformly_high_with_parse_errors",
@@ -3325,18 +3363,24 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
 /**
  * Routing-telemetry code family extracted from {@link computeScanWarnings}
  * so the main function's cognitive complexity stays under the lint cap.
- * Both codes name parser-routing decisions whose silent-miss failure
+ * Each code names a parser-routing decision whose silent-miss failure
  * mode is the AI-first doctrine's "Routing skips that drop content are
  * the symmetric twin of suppression":
  *
- *   - `linked_stylesheet_not_resolved_for_contrast` — at least one
- *     scanned HTML file declared a `<link rel="stylesheet" href="…">`
- *     whose target the contrast rule did not consult during resolution.
- *     Detector lives at the assembly seam (`scan-assembly.ts`) so this
- *     module stays pure over its inputs; the warning is additive
- *     routing telemetry the agent reads to decide whether to scope a
- *     follow-up via `additionalPaths`, `propose_config`, or a separate
- *     `scan` against the linked CSS. Findings unchanged.
+ *   - `linked_stylesheet_local_unresolved` — at least one scanned HTML
+ *     file declared a `<link rel="stylesheet" href="…">` whose href is
+ *     a relative path the resolver could not match in the parsed-file
+ *     set. The actionable subset of the routing-skip family.
+ *   - `linked_stylesheet_external_cdn_skipped` — at least one scanned
+ *     HTML file declared a `<link rel="stylesheet" href="…">` whose
+ *     href starts with `http://`, `https://`, `//`, or `data:`. The
+ *     definitionally-unresolvable subset (the offline scanner cannot
+ *     consult external URLs regardless of scope, per the network-
+ *     isolation invariant). Surfaced under its own code so the
+ *     actionable bucket stays visible on bulk corpora where CDN volume
+ *     would drown sibling-path findings — per AI-first doctrine
+ *     "Skipped-extension warnings are split by predicate so the
+ *     actionable text-source subset doesn't get buried."
  *   - `parser_bailed_on_non_jsx_in_tsx_route` — at least one `.js` file
  *     in the scan was successfully routed through the in-house TSX
  *     parser (the dispatcher in `src/mcp/session.ts::parseForExtension`
@@ -3354,8 +3398,11 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  */
 function routingTelemetryCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
-  if (hasLinkedStylesheetsUnresolvedForContrast(inputs.linkedStylesheetsUnresolvedForContrast)) {
-    out.push("linked_stylesheet_not_resolved_for_contrast");
+  if (hasLinkedStylesheetLocalUnresolved(inputs.linkedStylesheetsUnresolvedForContrast)) {
+    out.push("linked_stylesheet_local_unresolved");
+  }
+  if (hasLinkedStylesheetExternalCdnSkipped(inputs.linkedStylesheetsUnresolvedForContrast)) {
+    out.push("linked_stylesheet_external_cdn_skipped");
   }
   if (hasTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast)) {
     out.push("template_expression_in_href");
@@ -3390,20 +3437,45 @@ function inlineHtmlCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
 }
 
 /**
- * Predicate for `linked_stylesheet_not_resolved_for_contrast`. Returns
- * `true` when the caller-supplied detection carries a non-zero pair
- * count AND a non-empty file list. Pure over its input; the cross-
- * reference between HTML AST and `<link rel="stylesheet">` references
- * lives at the call site (`detectLinkedStylesheetsNotResolvedForContrast`
- * in `./scan-assembly.ts`) so this module stays decoupled from the
- * parser-AST traversal.
+ * Predicate for `linked_stylesheet_local_unresolved`. Returns `true`
+ * when the caller-supplied detection's local-unresolved slice carries a
+ * non-zero pair count AND a non-empty file list. Pure over its input;
+ * the cross-reference between HTML AST and `<link rel="stylesheet">`
+ * references lives at the call site
+ * (`detectLinkedStylesheetsNotResolvedForContrast` in
+ * `./linked-stylesheets.ts`) so this module stays decoupled from the
+ * parser-AST traversal AND from the partition predicate that splits
+ * external/local hrefs.
  */
-function hasLinkedStylesheetsUnresolvedForContrast(
+function hasLinkedStylesheetLocalUnresolved(
   detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
 ): boolean {
   if (detection === undefined) return false;
-  if (detection.unresolvedHrefCount <= 0) return false;
-  return detection.htmlFiles.length > 0;
+  if (detection.localUnresolvedHrefCount <= 0) return false;
+  return detection.localUnresolvedFiles.length > 0;
+}
+
+/**
+ * Predicate for `linked_stylesheet_external_cdn_skipped`. Returns `true`
+ * when the caller-supplied detection's external-CDN slice carries a
+ * non-zero pair count AND a non-empty file list. Pure over its input;
+ * the partition between local-unresolved and external-CDN values lives
+ * at the call site (`detectLinkedStylesheetsNotResolvedForContrast` in
+ * `./linked-stylesheets.ts`).
+ *
+ * Per AI-first doctrine "Skipped-extension warnings are split by
+ * predicate so the actionable text-source subset doesn't get buried"
+ * — surfacing this slice on a separate code keeps the actionable
+ * bucket (relative-path hrefs the agent can pull into scope) visible
+ * on bulk corpora where high-volume CDN URLs (font-awesome, bootstrap)
+ * would otherwise drown the sibling-path findings.
+ */
+function hasLinkedStylesheetExternalCdnSkipped(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): boolean {
+  if (detection === undefined) return false;
+  if (detection.externalCdnHrefCount <= 0) return false;
+  return detection.externalCdnFiles.length > 0;
 }
 
 /**
@@ -4282,18 +4354,7 @@ function buildScanWarningDetailsDispatch(
           inputs.jsInnerHtmlFileSamples,
         ),
     },
-    {
-      code: "linked_stylesheet_not_resolved_for_contrast",
-      summarize: () =>
-        summarizeLinkedStylesheetsUnresolvedForContrast(
-          inputs.linkedStylesheetsUnresolvedForContrast,
-        ),
-    },
-    {
-      code: "template_expression_in_href",
-      summarize: () =>
-        summarizeTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast),
-    },
+    ...linkedStylesheetDispatchRows(inputs),
     {
       code: "scan_file_parser_bail_no_findings",
       summarize: () => summarizeScanFileParserBailNoFindings(inputs.scanFileParserBailNoFindings),
@@ -4301,6 +4362,37 @@ function buildScanWarningDetailsDispatch(
     {
       code: "parser_bailed_on_non_jsx_in_tsx_route",
       summarize: () => summarizeParserBailedOnNonJsxInTsxRoute(inputs.parserBailedJsTsxRouteFiles),
+    },
+  ];
+}
+
+/**
+ * Linked-stylesheet partition dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the file-budget effective-line cap. Each row pairs a partition-
+ * slice code with the helper that builds its `warningsDetails` entry;
+ * routing all three off the same `linkedStylesheetsUnresolvedForContrast`
+ * input keeps the call shape symmetric across slices and the
+ * orchestrator's spread under one branch.
+ */
+function linkedStylesheetDispatchRows(
+  inputs: WarningInputs,
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "linked_stylesheet_local_unresolved",
+      summarize: () =>
+        summarizeLinkedStylesheetLocalUnresolved(inputs.linkedStylesheetsUnresolvedForContrast),
+    },
+    {
+      code: "linked_stylesheet_external_cdn_skipped",
+      summarize: () =>
+        summarizeLinkedStylesheetExternalCdnSkipped(inputs.linkedStylesheetsUnresolvedForContrast),
+    },
+    {
+      code: "template_expression_in_href",
+      summarize: () =>
+        summarizeTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast),
     },
   ];
 }
@@ -4888,26 +4980,56 @@ function summarizeParserBailedOnNonJsxInTsxRoute(
 }
 
 /**
- * Builds the `linked_stylesheet_not_resolved_for_contrast` payload from
- * the caller-supplied detection. Returns `undefined` when the detection
- * is absent, when the count is zero, or when the file list is empty —
- * any of those indicate the predicate did not honestly fire and
- * surfacing a degenerate payload would lie about the evidence. Pure
- * shape-builder; the detector at the call site
- * (`detectLinkedStylesheetsNotResolvedForContrast` in `./scan-assembly.ts`)
- * already sorts the lists deterministically, so this helper passes
- * them through verbatim.
+ * Builds the `linked_stylesheet_local_unresolved` payload from the
+ * caller-supplied detection's local-unresolved slice. Returns
+ * `undefined` when the detection is absent, the local count is zero,
+ * or the local file list is empty — any of those indicate the
+ * predicate did not honestly fire and surfacing a degenerate payload
+ * would lie about the evidence (per AI-first doctrine "Empty
+ * `warningsDetails.<code>: {}` is dishonest"). Pure shape-builder; the
+ * detector at the call site
+ * (`detectLinkedStylesheetsNotResolvedForContrast` in
+ * `./linked-stylesheets.ts`) already sorts the lists deterministically,
+ * so this helper passes them through verbatim.
  */
-function summarizeLinkedStylesheetsUnresolvedForContrast(
+function summarizeLinkedStylesheetLocalUnresolved(
   detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
-): NonNullable<ScanWarningDetails["linked_stylesheet_not_resolved_for_contrast"]> | undefined {
+): NonNullable<ScanWarningDetails["linked_stylesheet_local_unresolved"]> | undefined {
   if (detection === undefined) return undefined;
-  if (detection.unresolvedHrefCount <= 0) return undefined;
-  if (detection.htmlFiles.length === 0) return undefined;
+  if (detection.localUnresolvedHrefCount <= 0) return undefined;
+  if (detection.localUnresolvedFiles.length === 0) return undefined;
   return {
-    unresolvedHrefCount: detection.unresolvedHrefCount,
-    htmlFiles: detection.htmlFiles,
-    topUnresolvedHrefs: detection.topUnresolvedHrefs,
+    localUnresolvedHrefCount: detection.localUnresolvedHrefCount,
+    files: detection.localUnresolvedFiles,
+    topLocalUnresolvedHrefs: detection.topLocalUnresolvedHrefs,
+  };
+}
+
+/**
+ * Builds the `linked_stylesheet_external_cdn_skipped` payload from the
+ * caller-supplied detection's external-CDN slice. Returns `undefined`
+ * when the detection is absent, the external count is zero, or the
+ * external file list is empty — same fall-through discipline as the
+ * sister `linked_stylesheet_local_unresolved` summarizer (per AI-first
+ * doctrine "Empty `warningsDetails.<code>: {}` is dishonest").
+ *
+ * Per "Skipped-extension warnings are split by predicate so the
+ * actionable text-source subset doesn't get buried" — this payload
+ * carries the definitionally-unresolvable subset (external schemes the
+ * offline scanner cannot consult) so the agent's triage budget on the
+ * sister local-unresolved code stays focused on the actionable
+ * relative-path findings.
+ */
+function summarizeLinkedStylesheetExternalCdnSkipped(
+  detection: WarningInputs["linkedStylesheetsUnresolvedForContrast"],
+): NonNullable<ScanWarningDetails["linked_stylesheet_external_cdn_skipped"]> | undefined {
+  if (detection === undefined) return undefined;
+  if (detection.externalCdnHrefCount <= 0) return undefined;
+  if (detection.externalCdnFiles.length === 0) return undefined;
+  return {
+    externalCdnHrefCount: detection.externalCdnHrefCount,
+    files: detection.externalCdnFiles,
+    topExternalCdnHrefs: detection.topExternalCdnHrefs,
   };
 }
 

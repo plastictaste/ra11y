@@ -981,34 +981,40 @@ describe("detectScssUnresolvedVariableFiles", () => {
 });
 
 describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
-  it('returns the unresolved-link tally when an HTML page declares `<link rel="stylesheet">`', () => {
+  it('returns the local-unresolved tally when an HTML page declares a relative `<link rel="stylesheet">`', () => {
     const html = htmlFile(
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"></head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.unresolvedHrefCount).toBe(1);
-    expect(result.htmlFiles).toEqual(["/proj/page.html"]);
-    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/page.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+    // External / template slices stay empty.
+    expect(result.externalCdnHrefCount).toBe(0);
+    expect(result.templateExpressionHrefCount).toBe(0);
   });
 
-  it("returns empty tally when no HTML file declared a stylesheet link", () => {
+  it("returns empty tally on every slice when no HTML file declared a stylesheet link", () => {
     const html = htmlFile(
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.unresolvedHrefCount).toBe(0);
-    expect(result.htmlFiles).toEqual([]);
-    expect(result.topUnresolvedHrefs).toEqual([]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.localUnresolvedFiles).toEqual([]);
+    expect(result.topLocalUnresolvedHrefs).toEqual([]);
+    expect(result.externalCdnHrefCount).toBe(0);
+    expect(result.externalCdnFiles).toEqual([]);
+    expect(result.topExternalCdnHrefs).toEqual([]);
     expect(result.templateExpressionHrefCount).toBe(0);
     expect(result.templateExpressionFiles).toEqual([]);
     expect(result.templateExpressionHrefs).toEqual([]);
   });
 
-  it("partitions template-expression hrefs ({extraCss}, {{theme}}, <%= css %>, ${theme}, {% raw %}) out of the unresolved-href tally", () => {
+  it("partitions template-expression hrefs ({extraCss}, {{theme}}, <%= css %>, ${theme}, {% raw %}) out of the local-unresolved tally", () => {
     // `{extraCss}` is a templating directive the parser saw as text;
-    // surfacing it under `topUnresolvedHrefs` would mis-frame a
+    // surfacing it under `topLocalUnresolvedHrefs` would mis-frame a
     // templating directive as a real stylesheet that failed to load.
     // Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
     // dishonest," the partition lives on a separate field so the
@@ -1025,10 +1031,10 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
         `</head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    // The literal href stays under unresolvedHrefCount / topUnresolvedHrefs.
-    expect(result.unresolvedHrefCount).toBe(1);
-    expect(result.htmlFiles).toEqual(["/proj/layout.html"]);
-    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+    // The literal href stays under localUnresolvedHrefCount / topLocalUnresolvedHrefs.
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/layout.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
     // Template-expression hrefs are partitioned to their own slice.
     expect(result.templateExpressionHrefCount).toBe(5);
     expect(result.templateExpressionFiles).toEqual(["/proj/layout.html"]);
@@ -1040,11 +1046,11 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
     // The literal `bootstrap.min.css` does NOT appear in the template
     // slice — partition is exclusive on string-shape evidence.
     expect(result.templateExpressionHrefs).not.toContain("css/bootstrap.min.css");
-    // And the template tokens do NOT appear in topUnresolvedHrefs.
-    expect(result.topUnresolvedHrefs).not.toContain("{extraCss}");
+    // And the template tokens do NOT appear in topLocalUnresolvedHrefs.
+    expect(result.topLocalUnresolvedHrefs).not.toContain("{extraCss}");
   });
 
-  it("a page whose only stylesheet link is a template expression ships under the template slice (not unresolved)", () => {
+  it("a page whose only stylesheet link is a template expression ships under the template slice (not local-unresolved)", () => {
     const html = htmlFile(
       "/proj/template-only.html",
       `<!DOCTYPE html><html lang="en"><head>` +
@@ -1052,12 +1058,88 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
         `</head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.unresolvedHrefCount).toBe(0);
-    expect(result.htmlFiles).toEqual([]);
-    expect(result.topUnresolvedHrefs).toEqual([]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.localUnresolvedFiles).toEqual([]);
+    expect(result.topLocalUnresolvedHrefs).toEqual([]);
     expect(result.templateExpressionHrefCount).toBe(1);
     expect(result.templateExpressionFiles).toEqual(["/proj/template-only.html"]);
     expect(result.templateExpressionHrefs).toEqual(["{extraCss}"]);
+  });
+
+  it("partitions external-scheme hrefs (https://, http://, //, data:) out of the local-unresolved tally", () => {
+    // Per the network-isolation invariant (`src/` never references
+    // `fetch`), external-scheme hrefs are definitionally unresolvable
+    // by the static scanner. Lumping them under the local-unresolved
+    // bucket buries the actionable sibling-path findings beneath
+    // high-volume CDN noise (canonical case: `font-awesome.min.css`
+    // from cdnjs alongside a relative `style.css`). Per AI-first
+    // doctrine "Skipped-extension warnings are split by predicate so
+    // the actionable text-source subset doesn't get buried."
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><head>` +
+        `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">` +
+        `<link rel="stylesheet" href="http://example.com/legacy.css">` +
+        `<link rel="stylesheet" href="//cdn.example.com/proto-relative.css">` +
+        `<link rel="stylesheet" href="data:text/css;base64,Ym9keXtjb2xvcjpyZWR9">` +
+        `<link rel="stylesheet" href="css/bootstrap.min.css">` +
+        `</head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    // The relative-path href stays under the local slice.
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/page.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["css/bootstrap.min.css"]);
+    // The four external hrefs land on the external slice.
+    expect(result.externalCdnHrefCount).toBe(4);
+    expect(result.externalCdnFiles).toEqual(["/proj/page.html"]);
+    expect(result.topExternalCdnHrefs).toContain(
+      "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+    );
+    expect(result.topExternalCdnHrefs).toContain("http://example.com/legacy.css");
+    expect(result.topExternalCdnHrefs).toContain("//cdn.example.com/proto-relative.css");
+    expect(result.topExternalCdnHrefs).toContain("data:text/css;base64,Ym9keXtjb2xvcjpyZWR9");
+    // External tokens MUST NOT appear in the local-unresolved bucket.
+    expect(result.topLocalUnresolvedHrefs).not.toContain(
+      "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+    );
+    expect(result.topLocalUnresolvedHrefs).not.toContain("http://example.com/legacy.css");
+  });
+
+  it("a page whose only stylesheet link is an external CDN URL ships under the external slice (not local-unresolved)", () => {
+    const html = htmlFile(
+      "/proj/cdn-only.html",
+      `<!DOCTYPE html><html lang="en"><head>` +
+        `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">` +
+        `</head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.localUnresolvedFiles).toEqual([]);
+    expect(result.topLocalUnresolvedHrefs).toEqual([]);
+    expect(result.externalCdnHrefCount).toBe(1);
+    expect(result.externalCdnFiles).toEqual(["/proj/cdn-only.html"]);
+    expect(result.topExternalCdnHrefs).toEqual([
+      "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+    ]);
+  });
+
+  it("scheme matching is case-insensitive (HTTPS://, HTTP://, DATA:)", () => {
+    // The scheme token is part of the URL grammar, not user content;
+    // case-insensitivity matches RFC 3986 (schemes are
+    // case-insensitive). Detection must not miss `HTTPS://` because
+    // an author chose to upper-case the scheme.
+    const html = htmlFile(
+      "/proj/page.html",
+      `<!DOCTYPE html><html lang="en"><head>` +
+        `<link rel="stylesheet" href="HTTPS://cdn.example.com/a.css">` +
+        `<link rel="stylesheet" href="HTTP://example.com/b.css">` +
+        `<link rel="stylesheet" href="DATA:text/css,body{}">` +
+        `</head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.externalCdnHrefCount).toBe(3);
+    expect(result.localUnresolvedHrefCount).toBe(0);
   });
 
   it('ignores `rel="alternate stylesheet"` and preload-shaped variants (different resolution paths)', () => {
@@ -1065,7 +1147,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="alternate stylesheet" href="alt.css"><link rel="preload" as="style" href="hot.css"></head><body><p>hi</p></body></html>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.externalCdnHrefCount).toBe(0);
   });
 
   it("ignores fragment HTML (no `<html>`/`<body>`) — partials don't establish a link-resolution context", () => {
@@ -1073,7 +1157,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/_partials/header.html",
       `<link rel="stylesheet" href="bootstrap.min.css"><nav>hi</nav>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.externalCdnHrefCount).toBe(0);
   });
 
   it("ignores `<link>` elements without a non-empty href", () => {
@@ -1081,7 +1167,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       "/proj/page.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet"><link rel="stylesheet" href=""></head><body><p>hi</p></body></html>`,
     );
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html]).unresolvedHrefCount).toBe(0);
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.externalCdnHrefCount).toBe(0);
   });
 
   it("de-duplicates hrefs across pages and returns sorted-ascending lists deterministically", () => {
@@ -1094,9 +1182,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"><link rel="stylesheet" href="css/theme.css"></head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([a, b]);
-    expect(result.unresolvedHrefCount).toBe(3);
-    expect(result.htmlFiles).toEqual(["/proj/page-a.html", "/proj/page-z.html"]);
-    expect(result.topUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
+    expect(result.localUnresolvedHrefCount).toBe(3);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/page-a.html", "/proj/page-z.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["css/bootstrap.min.css", "css/theme.css"]);
   });
 
   it("ignores non-HTML files (SCSS / TSX) regardless of source content", () => {
@@ -1107,17 +1195,19 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source,
       ast: { language: "css", root: parsed.root, errors: [...parsed.errors] },
     };
-    expect(detectLinkedStylesheetsNotResolvedForContrast([scss]).unresolvedHrefCount).toBe(0);
+    const result = detectLinkedStylesheetsNotResolvedForContrast([scss]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.externalCdnHrefCount).toBe(0);
   });
 
   it("treats a same-directory sibling stylesheet as resolved (warning does NOT fire)", () => {
     // The canonical bare-relative pattern: an HTML page links a
     // co-located `style.css` that the scanner already parsed. The
-    // contrast rule WILL read both files together, so the unresolved-
-    // href warning must not fire on this pair — surfacing it would
-    // sweep a genuine sibling-pair success into the warning bucket
-    // (the failure mode named by AI-first doctrine "Routing skips that
-    // drop content are the symmetric twin of suppression").
+    // contrast rule WILL read both files together, so the local-
+    // unresolved warning must not fire on this pair — surfacing it
+    // would sweep a genuine sibling-pair success into the warning
+    // bucket (the failure mode named by AI-first doctrine "Routing
+    // skips that drop content are the symmetric twin of suppression").
     const html = htmlFile(
       "/proj/index.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.css"></head><body><p>hi</p></body></html>`,
@@ -1130,9 +1220,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
     };
     const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
-    expect(result.unresolvedHrefCount).toBe(0);
-    expect(result.htmlFiles).toEqual([]);
-    expect(result.topUnresolvedHrefs).toEqual([]);
+    expect(result.localUnresolvedHrefCount).toBe(0);
+    expect(result.localUnresolvedFiles).toEqual([]);
+    expect(result.topLocalUnresolvedHrefs).toEqual([]);
   });
 
   it("treats `./style.css` (explicit same-directory prefix) as resolved when the sibling is in scope", () => {
@@ -1147,17 +1237,19 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source: cssSource,
       ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
     };
-    expect(detectLinkedStylesheetsNotResolvedForContrast([html, css]).unresolvedHrefCount).toBe(0);
+    expect(
+      detectLinkedStylesheetsNotResolvedForContrast([html, css]).localUnresolvedHrefCount,
+    ).toBe(0);
   });
 
-  it("does NOT widen the resolver beyond same-directory siblings — `css/style.css` stays unresolved", () => {
+  it("does NOT widen the resolver beyond same-directory siblings — `css/style.css` stays local-unresolved", () => {
     // Cross-directory hrefs require knowing the build root / document
     // root, conventions the scanner does not track. Don't widen
     // beyond same-directory siblings. Even if a parsed sibling at
     // `/proj/css/style.css` exists, the resolver only attempts the
     // literal `<htmlDir>/<href>` join with a same-directory basename;
-    // cross-directory paths stay under the unresolved bucket so the
-    // agent can scope a follow-up.
+    // cross-directory paths stay under the local-unresolved bucket
+    // so the agent can scope a follow-up.
     const html = htmlFile(
       "/proj/index.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/style.css"></head><body><p>hi</p></body></html>`,
@@ -1170,24 +1262,25 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
     };
     const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
-    expect(result.unresolvedHrefCount).toBe(1);
-    expect(result.htmlFiles).toEqual(["/proj/index.html"]);
-    expect(result.topUnresolvedHrefs).toEqual(["css/style.css"]);
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/index.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["css/style.css"]);
   });
 
   it("does NOT resolve when the sibling is NOT in the parsed-file set (warning fires)", () => {
     // The resolver consults the in-scope file set — a `<link href="style.css">`
-    // pointing at a nonexistent or out-of-scope sibling stays unresolved
-    // because the contrast rule will not read it. Pins that the resolver
-    // depends on the in-scope index, not on the href shape alone.
+    // pointing at a nonexistent or out-of-scope sibling stays
+    // local-unresolved because the contrast rule will not read it.
+    // Pins that the resolver depends on the in-scope index, not on
+    // the href shape alone.
     const html = htmlFile(
       "/proj/index.html",
       `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.css"></head><body><p>hi</p></body></html>`,
     );
     const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
-    expect(result.unresolvedHrefCount).toBe(1);
-    expect(result.htmlFiles).toEqual(["/proj/index.html"]);
-    expect(result.topUnresolvedHrefs).toEqual(["style.css"]);
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.localUnresolvedFiles).toEqual(["/proj/index.html"]);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["style.css"]);
   });
 
   it("rejects same-directory resolution when the href carries a query/fragment suffix", () => {
@@ -1206,8 +1299,8 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
     };
     const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
-    expect(result.unresolvedHrefCount).toBe(1);
-    expect(result.topUnresolvedHrefs).toEqual(["style.css?v=2"]);
+    expect(result.localUnresolvedHrefCount).toBe(1);
+    expect(result.topLocalUnresolvedHrefs).toEqual(["style.css?v=2"]);
   });
 
   it("resolves SCSS / LESS siblings with the same-directory rule", () => {
@@ -1225,9 +1318,9 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
       source: scssSource,
       ast: { language: "css", root: scssParsed.root, errors: [...scssParsed.errors] },
     };
-    expect(detectLinkedStylesheetsNotResolvedForContrast([htmlA, scss]).unresolvedHrefCount).toBe(
-      0,
-    );
+    expect(
+      detectLinkedStylesheetsNotResolvedForContrast([htmlA, scss]).localUnresolvedHrefCount,
+    ).toBe(0);
   });
 });
 

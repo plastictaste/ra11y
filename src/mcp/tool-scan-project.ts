@@ -1125,7 +1125,9 @@ function buildBaseWarningsForScanProject(args: {
     // detector ran upstream on the
     // parsed-file list; conditional-spread keeps the input absent when
     // no HTML file declared an unresolved `<link rel="stylesheet">`.
-    ...(linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
+    ...(linkedStylesheetsUnresolvedForContrast.localUnresolvedHrefCount === 0 &&
+    linkedStylesheetsUnresolvedForContrast.externalCdnHrefCount === 0 &&
+    linkedStylesheetsUnresolvedForContrast.templateExpressionHrefCount === 0
       ? {}
       : { linkedStylesheetsUnresolvedForContrast }),
     // thread the total finding count

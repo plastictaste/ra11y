@@ -16,13 +16,24 @@
  *
  * Per the "deferring full resolution is acceptable, silent omission is
  * not" framing, this detector does not attempt to resolve the linked
- * sheet inline (full resolution is out of scope here) — it just names
- * the unresolved hrefs so the agent can scope a follow-up via
- * `additionalPaths`, `propose_config`, or a separate `scan` against
- * the linked CSS. Drives the
- * `linked_stylesheet_not_resolved_for_contrast` warning code + its
- * paired `warningsDetails.linked_stylesheet_not_resolved_for_contrast`
- * payload.
+ * sheet inline (full resolution is out of scope here) — it partitions
+ * unresolved hrefs into per-predicate slices so the agent can scope a
+ * follow-up via `additionalPaths`, `propose_config`, or a separate
+ * `scan` against the linked CSS. Drives THREE warning codes (one per
+ * partition predicate, per AI-first doctrine "Skipped-extension
+ * warnings are split by predicate so the actionable text-source subset
+ * doesn't get buried"):
+ *
+ *   - `linked_stylesheet_local_unresolved` — relative-path hrefs the
+ *     resolver could not match in the parsed-file set. Actionable.
+ *   - `linked_stylesheet_external_cdn_skipped` — `http:` / `https:` /
+ *     `//` / `data:` hrefs the offline scanner cannot consult.
+ *   - `template_expression_in_href` — `{ident}` / `{{ident}}` /
+ *     `<%= ident %>` directives the parser saw as text.
+ *
+ * Each slice carries its own `warningsDetails.<code>` payload so the
+ * agent reads one definite payload per fired code (per AI-first
+ * doctrine "Empty `warningsDetails.<code>: {}` is dishonest").
  *
  * Extracted from `scan-assembly.ts` so the broader assembler stays
  * under the file-budget limit and the predicate's evidence model lives
@@ -37,76 +48,63 @@ import type { HtmlDocument } from "../types/ast.ts";
 /**
  * Result shape from {@link detectLinkedStylesheetsNotResolvedForContrast}.
  *
- * - `htmlFiles` — sorted list of HTML files that declared at least one
- *   `<link rel="stylesheet" href="…">` whose target the contrast rule
- *   did not resolve. Per AI-first doctrine "Sibling fields naming the
- *   same concept must use one shape," the file-count is derivable from
- *   `htmlFiles.length` rather than shipped as a parallel scalar twin.
- *   Houses ONLY pages with literal-href references (e.g.
- *   `bootstrap.min.css`); pages whose only `<link>` references resolved
- *   to template expressions (`{extraCss}`, `{{styles}}`, `<%= css %>`)
- *   are accounted for under {@link templateExpressionFiles} instead so
- *   the contrast-resolution warning's predicate stays "actually failed
- *   to load" (per AI-first doctrine "Heuristic-mislabeled meta sub-
- *   fields are dishonest").
- * - `topUnresolvedHrefs` — sorted, de-duplicated list of distinct href
- *   values across those files (capped at
- *   {@link LINKED_STYLESHEET_TOP_HREFS_CAP} entries) so an agent reading
- *   the warning has concrete identifiers to scope a follow-up against
- *   without descending into the per-file AST. The capped distinct-href
- *   count is `topUnresolvedHrefs.length` (post-cap) — distinct from
- *   `unresolvedHrefCount` below. Excludes template-expression hrefs
- *   (see {@link templateExpressionHrefs}) — those are not actually-
- *   fetched-but-failed values, they're directives the parser saw as
- *   text, and surfacing them under "unresolved href" reads as "a real
- *   stylesheet failed to load."
- * - `unresolvedHrefCount` — total number of `(htmlFile, href)` pairs
- *   with literal href values the detector saw, pre-cap. Names the slice
- *   precisely so the three sibling counts in the payload
- *   (`unresolvedHrefCount`, `htmlFiles.length`,
- *   `topUnresolvedHrefs.length`) cannot collide on the generic name
- *   `count`. One href can repeat across multiple pages and one page can
- *   carry multiple links, so this number is generally different from
- *   both the file count and the capped distinct-href count.
- * - `templateExpressionFiles` — sorted list of HTML files whose `<link
- *   rel="stylesheet" href="…">` carried a template-token shape (single-
- *   brace `{ident}`, mustache/Handlebars `{{ident}}`, ERB/EJS
- *   `<%= ident %>`, template-literal `${ident}`, Jinja `{% raw %}`,
- *   etc.). Drives the separate `template_expression_in_href` warning
- *   code; reserved out of `htmlFiles` so the contrast-resolution
- *   warning stays honest.
- * - `templateExpressionHrefs` — sorted, de-duplicated list of the
- *   template-expression href values across those files (capped at
- *   {@link LINKED_STYLESHEET_TOP_HREFS_CAP}). Same shape as
- *   `topUnresolvedHrefs` but for the template-expression slice — the
- *   agent reads the literal token (`{extraCss}`, `{{theme}}`) to recognize
- *   the templating system in use rather than mistaking it for a missing
- *   bundle path.
- * - `templateExpressionHrefCount` — total number of `(htmlFile, href)`
- *   pairs with template-expression values, pre-cap. Same naming
- *   discipline as `unresolvedHrefCount`.
+ * Hrefs are partitioned into THREE non-overlapping slices so the warning
+ * channel can ship one code per actionable predicate (per AI-first
+ * doctrine "Skipped-extension warnings are split by predicate so the
+ * actionable text-source subset doesn't get buried"):
  *
- * Empty arrays + zero `unresolvedHrefCount` / `templateExpressionHrefCount`
- * when no link-stylesheet references of the given kind were present —
- * callers conditional-spread on the kind-specific count being positive.
+ *   - **local-unresolved** — relative-path hrefs that the resolver could
+ *     not match to a same-directory sibling in the parsed-file set. The
+ *     actionable subset: the agent can scope a follow-up via
+ *     `additionalPaths` to bring the linked CSS into the scan, OR audit
+ *     the page's color tokens directly. Drives the
+ *     `linked_stylesheet_local_unresolved` warning code + payload.
+ *   - **external-CDN** — hrefs whose scheme is `http:`, `https:`, `//`
+ *     (protocol-relative), or `data:`. Definitionally not resolvable
+ *     from a static scan (the scanner is offline-only by architectural
+ *     invariant). The agent reads the cited CDN URL and decides whether
+ *     to audit the remote sheet out-of-band. Drives the
+ *     `linked_stylesheet_external_cdn_skipped` warning code + payload.
+ *   - **template-expression** — hrefs whose value carries a templating
+ *     directive shape (`{extraCss}`, `{{styles}}`, `<%= css %>`,
+ *     `${theme}`, `{% raw %}`) the parser saw as text rather than a
+ *     resolved URL. Drives the `template_expression_in_href` warning
+ *     code + payload.
+ *
+ * Each slice carries (count, files, top-hrefs) following the same naming
+ * discipline (per AI-first doctrine "Sibling fields naming the same
+ * concept must use one shape"): the file-count is derivable from
+ * `<slice>Files.length`, the distinct-href count from
+ * `top<Slice>Hrefs.length`, and the pre-cap pair count is
+ * `<slice>HrefCount` — distinct because one href can repeat across
+ * pages and one page can carry multiple links.
+ *
+ * Empty arrays + zero `<slice>HrefCount` when no link-stylesheet
+ * references of the given kind were present — callers conditional-
+ * spread on a meaningful slice being positive.
  */
 export interface LinkedStylesheetsUnresolvedForContrast {
-  readonly unresolvedHrefCount: number;
-  readonly htmlFiles: readonly string[];
-  readonly topUnresolvedHrefs: readonly string[];
+  readonly localUnresolvedHrefCount: number;
+  readonly localUnresolvedFiles: readonly string[];
+  readonly topLocalUnresolvedHrefs: readonly string[];
+  readonly externalCdnHrefCount: number;
+  readonly externalCdnFiles: readonly string[];
+  readonly topExternalCdnHrefs: readonly string[];
   readonly templateExpressionHrefCount: number;
   readonly templateExpressionFiles: readonly string[];
   readonly templateExpressionHrefs: readonly string[];
 }
 
 /**
- * Hard cap on `topUnresolvedHrefs` entries surfaced under
- * `warningsDetails.linked_stylesheet_not_resolved_for_contrast`. Ten
- * mirrors the `SOURCEMAP_TOP_PATHS_CAP` pattern: enough for the agent
- * to recognize whether links cluster by single bundle path vs.
- * heterogeneous CDN URLs, but tight enough to stay sub-1KB on a
- * realistic corpus. The full per-file evidence remains accessible via
- * the agent's own Read on the cited HTML files.
+ * Hard cap on the per-slice top-href lists
+ * (`topLocalUnresolvedHrefs`, `topExternalCdnHrefs`,
+ * `templateExpressionHrefs`) surfaced under each slice's paired
+ * `warningsDetails.<code>` payload. Ten mirrors the
+ * `SOURCEMAP_TOP_PATHS_CAP` pattern: enough for the agent to recognize
+ * whether links cluster by a single bundle path vs. heterogeneous CDN
+ * URLs, but tight enough to stay sub-1KB on a realistic corpus. The
+ * full per-file evidence remains accessible via the agent's own Read on
+ * the cited HTML files.
  */
 const LINKED_STYLESHEET_TOP_HREFS_CAP = 10;
 
@@ -124,70 +122,140 @@ const LINKED_STYLESHEET_TOP_HREFS_CAP = 10;
  * intentionally excluded — they don't activate the same parse-and-
  * resolve path the warning is about.
  *
- * **Same-directory sibling resolution.** Before counting an href as
- * unresolved, the detector checks whether the href resolves to a
- * stylesheet sitting in the SAME directory as the linking HTML file
- * AND already in the parsed-file set (`<htmlDir>/<href>` joined as
- * POSIX). When the candidate matches an in-scope CSS-shaped sibling
- * (`.css`, `.scss`, `.less`), the href is treated as resolved — the
- * warning does NOT fire on `(html, css)` pairs the contrast rule will
- * actually read together. Per AI-first doctrine "Routing skips that
- * drop content are the symmetric twin of suppression," the previous
- * behavior of counting every literal href as unresolved swept genuine
- * sibling-pair successes into the warning, blocking `contrast/minimum`
- * from establishing inheritance from a co-located `style.css`. The
- * resolution scope is intentionally narrow — only same-directory
- * siblings are matched. Cross-directory hrefs (`css/style.css`,
- * `../shared/theme.css`, absolute `/assets/...`) stay under the
- * unresolved bucket because resolving them requires walking conventions
- * (build root, document root, alias maps) the scanner doesn't track.
+ * **Three-way href partition.** Hrefs are sorted into one of three
+ * non-overlapping buckets so the warning channel can ship one code per
+ * actionable predicate (per AI-first doctrine "Skipped-extension
+ * warnings are split by predicate so the actionable text-source subset
+ * doesn't get buried"):
  *
- * Pure over its inputs. Output is deterministic across runs:
- * `htmlFiles` is sorted ascending and `topUnresolvedHrefs` is the
- * de-duplicated, sorted-ascending href slice capped at
+ *   1. **template-expression** ({@link isTemplateExpressionHref}) — href
+ *      value carries a `{ident}` / `{{ident}}` / `<%= ident %>` /
+ *      `${ident}` / `{% raw %}` shape; the parser saw it as text, not a
+ *      URL. Drives the `template_expression_in_href` warning.
+ *   2. **external-CDN** ({@link isExternalSchemeHref}) — href starts with
+ *      `http://`, `https://`, `//`, or `data:`. Definitionally not
+ *      resolvable by an offline scanner. Drives the
+ *      `linked_stylesheet_external_cdn_skipped` warning.
+ *   3. **local-unresolved** — relative-path href that fell through both
+ *      checks above. The actionable subset: bring the linked CSS into
+ *      the scan via `additionalPaths`, OR audit color tokens directly.
+ *      Drives the `linked_stylesheet_local_unresolved` warning.
+ *
+ * The partition is checked in declaration order — template first (so a
+ * `{{theme}}.css` doesn't accidentally land under external-CDN), then
+ * external (so `https://cdnjs...` doesn't fall to local-unresolved),
+ * then the same-directory sibling check (resolved → silent), then the
+ * local-unresolved bucket as the residual.
+ *
+ * **Same-directory sibling resolution.** Before counting a relative-path
+ * href as local-unresolved, the detector checks whether the href
+ * resolves to a stylesheet sitting in the SAME directory as the linking
+ * HTML file AND already in the parsed-file set (`<htmlDir>/<href>`
+ * joined as POSIX). When the candidate matches an in-scope CSS-shaped
+ * sibling (`.css`, `.scss`, `.less`), the href is treated as resolved
+ * — the warning does NOT fire on `(html, css)` pairs the contrast rule
+ * will actually read together. The resolution scope is intentionally
+ * narrow — only same-directory siblings are matched. Cross-directory
+ * hrefs (`css/style.css`, `../shared/theme.css`, absolute
+ * `/assets/...`) stay under the local-unresolved bucket because
+ * resolving them requires walking conventions (build root, document
+ * root, alias maps) the scanner doesn't track.
+ *
+ * Pure over its inputs. Output is deterministic across runs: each slice's
+ * file list is sorted ascending and the top-href list is the
+ * de-duplicated, sorted-ascending slice capped at
  * {@link LINKED_STYLESHEET_TOP_HREFS_CAP}.
  */
 export function detectLinkedStylesheetsNotResolvedForContrast(
   files: readonly ParsedFile[],
 ): LinkedStylesheetsUnresolvedForContrast {
   const inScopeStylesheetPaths = collectInScopeStylesheetPaths(files);
-  const htmlFiles = new Set<string>();
-  const allHrefs = new Set<string>();
-  let pairCount = 0;
-  const templateFiles = new Set<string>();
-  const templateHrefs = new Set<string>();
-  let templatePairCount = 0;
+  const acc: PartitionAccumulator = {
+    local: { files: new Set<string>(), hrefs: new Set<string>(), pairCount: 0 },
+    external: { files: new Set<string>(), hrefs: new Set<string>(), pairCount: 0 },
+    template: { files: new Set<string>(), hrefs: new Set<string>(), pairCount: 0 },
+  };
   for (const file of files) {
     if (!isPageHtmlFile(file)) continue;
     const fileHrefs = collectStylesheetHrefs(file.ast.root as HtmlDocument);
     if (fileHrefs.length === 0) continue;
     for (const href of fileHrefs) {
-      if (isTemplateExpressionHref(href)) {
-        templateFiles.add(file.filePath);
-        templateHrefs.add(href);
-        templatePairCount++;
-        continue;
-      }
-      if (resolvesToSameDirectorySibling(file.filePath, href, inScopeStylesheetPaths)) {
-        continue;
-      }
-      htmlFiles.add(file.filePath);
-      pairCount++;
-      allHrefs.add(href);
+      partitionHrefIntoSlice(file.filePath, href, inScopeStylesheetPaths, acc);
     }
   }
-  const sortedFiles = [...htmlFiles].sort();
-  const sortedHrefs = [...allHrefs].sort();
-  const sortedTemplateFiles = [...templateFiles].sort();
-  const sortedTemplateHrefs = [...templateHrefs].sort();
   return {
-    unresolvedHrefCount: pairCount,
-    htmlFiles: sortedFiles,
-    topUnresolvedHrefs: sortedHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
-    templateExpressionHrefCount: templatePairCount,
-    templateExpressionFiles: sortedTemplateFiles,
-    templateExpressionHrefs: sortedTemplateHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
+    localUnresolvedHrefCount: acc.local.pairCount,
+    localUnresolvedFiles: [...acc.local.files].sort(),
+    topLocalUnresolvedHrefs: [...acc.local.hrefs].sort().slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
+    externalCdnHrefCount: acc.external.pairCount,
+    externalCdnFiles: [...acc.external.files].sort(),
+    topExternalCdnHrefs: [...acc.external.hrefs].sort().slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
+    templateExpressionHrefCount: acc.template.pairCount,
+    templateExpressionFiles: [...acc.template.files].sort(),
+    templateExpressionHrefs: [...acc.template.hrefs]
+      .sort()
+      .slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
   };
+}
+
+/**
+ * Per-slice accumulator the partition walk threads through. One field
+ * per output bucket; each field tracks the de-duplicated file set, the
+ * de-duplicated href set, and the running pair count (`(file, href)`
+ * pairs the slice received). Held mutably for the duration of the
+ * detector's walk, then frozen-by-spread into the result shape.
+ */
+interface PartitionAccumulator {
+  readonly local: PartitionSlice;
+  readonly external: PartitionSlice;
+  readonly template: PartitionSlice;
+}
+
+interface PartitionSlice {
+  readonly files: Set<string>;
+  readonly hrefs: Set<string>;
+  pairCount: number;
+}
+
+/**
+ * Per-href dispatch: routes an `(htmlFilePath, href)` pair into one of
+ * the three partition slices based on the href's string shape and the
+ * resolver's same-directory-sibling check. Extracted from
+ * {@link detectLinkedStylesheetsNotResolvedForContrast} to keep the
+ * orchestrator under the cognitive-complexity cap as the partition set
+ * grew from two slices (template + unresolved) to three (template +
+ * external + local).
+ *
+ * Routing order — template first (so a `{{theme}}.css` doesn't
+ * accidentally land under external-CDN), then external (so
+ * `https://cdnjs...` doesn't fall to local-unresolved), then the
+ * same-directory sibling check (resolved → silent), then local-
+ * unresolved as the residual.
+ */
+function partitionHrefIntoSlice(
+  htmlFilePath: string,
+  href: string,
+  inScopeStylesheetPaths: ReadonlySet<string>,
+  acc: PartitionAccumulator,
+): void {
+  if (isTemplateExpressionHref(href)) {
+    acc.template.files.add(htmlFilePath);
+    acc.template.hrefs.add(href);
+    acc.template.pairCount++;
+    return;
+  }
+  if (isExternalSchemeHref(href)) {
+    acc.external.files.add(htmlFilePath);
+    acc.external.hrefs.add(href);
+    acc.external.pairCount++;
+    return;
+  }
+  if (resolvesToSameDirectorySibling(htmlFilePath, href, inScopeStylesheetPaths)) {
+    return;
+  }
+  acc.local.files.add(htmlFilePath);
+  acc.local.hrefs.add(href);
+  acc.local.pairCount++;
 }
 
 /**
@@ -254,6 +322,41 @@ function isStylesheetExtension(filePath: string): boolean {
 }
 
 /**
+ * Predicate: returns `true` when an href STRING value carries an
+ * external scheme the static scanner cannot resolve. Recognized:
+ *
+ *   - `http://…` and `https://…` — absolute remote URLs (the canonical
+ *     CDN shape, e.g. `https://cdnjs.cloudflare.com/.../font-awesome.min.css`).
+ *   - `//cdn.example.com/…` — protocol-relative URLs that resolve to the
+ *     same scheme as the loading page; not fetchable by an offline
+ *     scanner.
+ *   - `data:text/css;base64,…` — inline data URIs; the bytes are present
+ *     in the href but the scanner does not decode them as a parsed
+ *     stylesheet for contrast resolution. Surfacing them under the
+ *     external bucket is honest because the resolution path is the same:
+ *     the contrast rule does not consult them.
+ *
+ * Per the network-isolation invariant (`src/` never references `fetch`),
+ * external-scheme hrefs are *definitionally* unresolvable by the static
+ * scanner — partitioning them out of the local-unresolved bucket lets
+ * the agent triage the actionable subset (relative paths the scanner
+ * could have read with a wider scope) separately from the
+ * out-of-scope subset (CDN URLs the scanner cannot read regardless of
+ * scope). Per AI-first doctrine "Skipped-extension warnings are split
+ * by predicate so the actionable text-source subset doesn't get buried."
+ *
+ * Detection is string-shape only and case-insensitive on the scheme
+ * token. Identifier content past the scheme is not validated — the
+ * partition's only contract is "this is not a relative path the
+ * resolver could ever match."
+ */
+function isExternalSchemeHref(href: string): boolean {
+  if (href.startsWith("//")) return true;
+  const lower = href.toLowerCase();
+  return lower.startsWith("http://") || lower.startsWith("https://") || lower.startsWith("data:");
+}
+
+/**
  * Predicate: returns `true` when an href STRING value carries a
  * templating-directive shape the parser saw as text rather than a
  * resolved URL. Detection is intentionally string-shape only — the
@@ -273,12 +376,12 @@ function isStylesheetExtension(filePath: string): boolean {
  *     `{%- endraw -%}`.
  *
  * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
- * dishonest" — `topUnresolvedHrefs` reads as "real stylesheet failed to
- * load," and a template token is provably-different evidence (a
- * directive token co-occurrence on the href value) so the partition is
- * deterministic, not heuristic. Out-of-scope shapes that look like
+ * dishonest" — `topLocalUnresolvedHrefs` reads as "real stylesheet
+ * failed to load," and a template token is provably-different evidence
+ * (a directive token co-occurrence on the href value) so the partition
+ * is deterministic, not heuristic. Out-of-scope shapes that look like
  * literal hrefs (`/path/with-dashes.css`, `?v=hash` query strings)
- * stay under the unresolved-href bucket where they belong.
+ * stay under the local-unresolved bucket where they belong.
  */
 function isTemplateExpressionHref(href: string): boolean {
   for (const pattern of TEMPLATE_EXPRESSION_PATTERNS) {

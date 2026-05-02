@@ -144,18 +144,27 @@ async function makeBuildArtifactFixture(): Promise<string> {
 }
 
 /**
- * Fixture seeding `linked_stylesheet_not_resolved_for_contrast` —
- * an HTML page that declares `<link rel="stylesheet" href="…">`
- * referencing a stylesheet the contrast rule does not consult during
- * resolution. Cross-surface invariant: the warning must fire identically
- * on every project-rooted tool reading the same cwd, not just on
- * scan_project.
+ * Fixture seeding the per-predicate split codes
+ * `linked_stylesheet_local_unresolved` AND
+ * `linked_stylesheet_external_cdn_skipped` — an HTML page declaring
+ * BOTH a relative-path `<link rel="stylesheet" href="…">` (the
+ * actionable, sibling-resolvable bucket) AND an external CDN URL (the
+ * definitionally-unresolvable bucket). Cross-surface invariant: each
+ * code's predicate must fire identically on every project-rooted tool
+ * reading the same cwd, not just on scan_project — pinning both lanes
+ * in one fixture rehearses the canonical mixed-corpus shape that
+ * motivated the predicate split (per AI-first doctrine "Skipped-
+ * extension warnings are split by predicate so the actionable
+ * text-source subset doesn't get buried").
  */
 async function makeLinkedStylesheetFixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-warns-linkstyle-"));
   await writeFile(
     join(dir, "page.html"),
-    `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/bootstrap.min.css"></head><body><main><p>hi</p></main></body></html>`,
+    `<!DOCTYPE html><html lang="en"><head>` +
+      `<link rel="stylesheet" href="css/bootstrap.min.css">` +
+      `<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">` +
+      `</head><body><main><p>hi</p></main></body></html>`,
   );
   return dir;
 }
@@ -208,7 +217,7 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     expect([...cl].sort()).toEqual([...sp].sort());
   });
 
-  it("emits `linked_stylesheet_not_resolved_for_contrast` identically across scan_project / coverage / checklist", async () => {
+  it("emits `linked_stylesheet_local_unresolved` AND `linked_stylesheet_external_cdn_skipped` identically across scan_project / coverage / checklist", async () => {
     const dir = await makeLinkedStylesheetFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -220,12 +229,17 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     const cv = scanTimeCodeSet(body<WarningEnvelope>(responses[2]));
     const cl = scanTimeCodeSet(body<WarningEnvelope>(responses[3]));
 
-    // Sanity: scan_project fires the linked-stylesheet code on the
-    // fixture (one HTML page declaring an unresolved
-    // `<link rel="stylesheet">`).
-    expect(sp.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
-    expect(cv.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
-    expect(cl.has("linked_stylesheet_not_resolved_for_contrast")).toBe(true);
+    // Sanity: scan_project fires BOTH split codes on the fixture
+    // (one HTML page declaring a relative-path `<link>` AND an external
+    // CDN URL). The split is the load-bearing assertion — lumping the
+    // CDN under the local bucket was the regression this test pins
+    // against.
+    expect(sp.has("linked_stylesheet_local_unresolved")).toBe(true);
+    expect(sp.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
+    expect(cv.has("linked_stylesheet_local_unresolved")).toBe(true);
+    expect(cv.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
+    expect(cl.has("linked_stylesheet_local_unresolved")).toBe(true);
+    expect(cl.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
     expect([...cv].sort()).toEqual([...sp].sort());
     expect([...cl].sort()).toEqual([...sp].sort());
   });

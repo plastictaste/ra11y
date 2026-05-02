@@ -493,7 +493,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 ### Empty / dishonest warning payloads
 
 - [ ] **Q15-CHECKLIST-TEXT-SOURCE-SKIPPED-EMPTY-EXTENSIONS-WITH-FILENAME-TOPEXTENSION** `warningsDetails.text_source_skipped: { extensions: [], noExtensionFiles: ["LICENSE"], topExtension: "LICENSE", topCount: 1 }` — `extensions: []` AND `topExtension: "LICENSE"` (a filename, not an extension). Two sibling fields disagree about whether any extensions were skipped. Closure: `topExtension` is null when `extensions` is empty; surface filename-only skips through `noExtensionFiles` channel only. Per AI-first doctrine "Sibling fields naming the same concept must use one shape."
-- [ ] **Q15-LINKED-STYLESHEET-WARNING-LUMPS-CDN-AND-SIBLING** `warningsDetails.linked_stylesheet_not_resolved_for_contrast.unresolvedHrefCount: 68` lumps `https://cdnjs...font-awesome` (external, definitionally not resolvable) with sibling `style.css` (resolvable, real coverage gap). The agent cannot triage which subset is actionable. Closure: split into `linked_stylesheet_external_cdn_skipped` (external scheme) vs `linked_stylesheet_local_unresolved` (relative path that did not resolve in scan-set); per-predicate split is the established closure pattern for skipped-extension warnings. Per AI-first doctrine "Skipped-extension warnings are split by predicate so the actionable text-source subset doesn't get buried."
 
 ### Ambiguous / empty-when-meaningful field shapes
 

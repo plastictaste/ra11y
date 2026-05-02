@@ -521,7 +521,9 @@ function buildAssemblerWarningsField(args: {
       ? {}
       : { scssUnresolvedVariableFiles: args.scssUnresolvedVariableFiles }),
     ...(args.linkedStylesheetsUnresolvedForContrast === undefined ||
-    args.linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
+    (args.linkedStylesheetsUnresolvedForContrast.localUnresolvedHrefCount === 0 &&
+      args.linkedStylesheetsUnresolvedForContrast.externalCdnHrefCount === 0 &&
+      args.linkedStylesheetsUnresolvedForContrast.templateExpressionHrefCount === 0)
       ? {}
       : {
           linkedStylesheetsUnresolvedForContrast: args.linkedStylesheetsUnresolvedForContrast,
@@ -811,7 +813,9 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
-    ...(linkedStylesheetsUnresolvedForContrast.unresolvedHrefCount === 0
+    ...(linkedStylesheetsUnresolvedForContrast.localUnresolvedHrefCount === 0 &&
+    linkedStylesheetsUnresolvedForContrast.externalCdnHrefCount === 0 &&
+    linkedStylesheetsUnresolvedForContrast.templateExpressionHrefCount === 0
       ? {}
       : { linkedStylesheetsUnresolvedForContrast }),
     // Cross-check for the
