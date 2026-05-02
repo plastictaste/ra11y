@@ -59,6 +59,8 @@ After your final commit in the worktree, run:
 bun run verify:precommit
 ```
 
+**"After your final commit" means the last `git commit` you make before returning — run verify AFTER that commit, not before it.** A common gap: verify passes on state N, then a new file is committed in state N+1, and verify is never re-run on state N+1. The integrator will run full `bun run verify` post-cherry-pick regardless and will catch the regression there, costing an extra round-trip.
+
 If it fails, fix the issue, make another commit, re-run. If you cannot get it green within your scope, return `blocked` with a one-line reason quoting the first failing line of output. **Do not return a `sha` for a worktree where `verify:precommit` is red** — the orchestrator's integrator would cherry-pick red commits onto `main` and discover the regression only after it's landed.
 
 **Timing-flake exemption.** If the only failures are integration tests that time out under concurrent full-verify load but pass when re-run in isolation, treat as a subprocess startup-ordering flake — not a real failure. Re-run `bun run verify:precommit` once alone (no parallel verify in other worktrees) before treating as red. If the isolation retry passes, treat as green and proceed. Signal this in your return as `signals[].code: verify_flaky_mcp_subprocess` with the test names in `evidence`, but do NOT return `blocked`. The integrator has the same exemption at final-verify time; this ensures consistent handling at the specialist pre-commit verify stage too.
