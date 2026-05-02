@@ -364,8 +364,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Heuristic-mislabeled meta sub-fields
 
-- [ ] **Q13-FRAGMENT-FILES-MARKDOWN-RESIDUE-UNIFORM-CLASSIFIER** `fragmentFiles[].kind: "markdown_residue"` applied uniformly to a large templated-markdown set with identical signal flags (`{hasHtmlOpener: false, hasLayoutDirective: false, inLayoutsDir: false}`) — the kind reads as deterministic but a static-site generator may inject a layout via defaults the scanner cannot see. Fix: classification gates on positive evidence (`inLayoutsDir: true` OR sibling layout file present) rather than uniform negative-flag default; emit a `markdown_unclassified` kind when the signals are all false; surface the SSG-default-layout evidence (presence of `_config.yml`, `gatsby-config.js`, etc.) as additive context. Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
-
 ### Heuristic emission (rule false-positive on speculative composition)
 
 - [ ] **Q13-RULE-NAVIGATION-IN-PAGE-LINK-FRAGMENT-MISSING-ON-FRAGMENT-INPUT** `navigation/in-page-link-fragment-missing` emits at `severity: "info"` on fragment-input files where the rule's own reason concedes "the missing id may be supplied by the composing parent layout" — predicate is unverifiable on fragments. Fix: when input is fragment-classified, the rule must downgrade to a review candidate or omit the emission entirely; alternatively perform the cross-fragment id resolution if the scanner has the AST (composing-layout file present in the same scan). Per AI-first doctrine "Heuristic emission is the symmetric twin of heuristic suppression."

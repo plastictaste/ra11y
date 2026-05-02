@@ -75,8 +75,8 @@ export interface ParseErrorEntry {
 /**
  * Categorical shape of a fragment file. The flat
  * `analysisCoverage.fragmentFiles[]` list previously surfaced only the
- * path, but observed members fall into three categorically-different
- * shapes that warrant different downstream rule-skipping decisions:
+ * path, but observed members fall into categorically-different shapes
+ * that warrant different downstream rule-skipping decisions:
  *
  *   - `html_partial` — Jekyll `_includes/`, Hugo `partials/`, Astro /
  *     Handlebars layouts: HTML markup intended to be composed into a
@@ -85,10 +85,23 @@ export interface ParseErrorEntry {
  *     `lang-attribute`) are out of scope because the parent layout
  *     supplies the envelope.
  *   - `markdown_residue` — `.md` / `.markdown` files routed through
- *     the HTML parser per ADR 0025. The parsed AST is the literal-
- *     text residue after the markdown body, so a missing `<html>`
- *     root reflects the source format rather than a partial. Rules
- *     deciding whether to skip should consult the kind, not the path.
+ *     the HTML parser per ADR 0025 AND for which positive
+ *     layout-composition evidence exists in the scan (a sibling file
+ *     declares a layout directive, lives in a layouts dir, or the
+ *     scanned tree contains a recognized static-site-generator
+ *     config). The parsed AST is the literal-text residue after the
+ *     markdown body, so a missing `<html>` root reflects the source
+ *     format AND the markdown body is composed by an SSG-supplied
+ *     parent layout the static scanner can't see in one pass.
+ *   - `markdown_unclassified` — `.md` / `.markdown` files routed
+ *     through the HTML parser whose surrounding scan carries NO
+ *     positive layout evidence. The honest discriminator when the
+ *     scanner can't tell whether the file is README-style standalone
+ *     prose or a content page composed by an unseen SSG layout — per
+ *     AI-first consumer doctrine "Heuristic-mislabeled meta sub-
+ *     fields are dishonest," uniform `markdown_residue` on negative-
+ *     default signals would imply a deterministic SSG read the
+ *     scanner did not perform.
  *   - `svg_standalone` — `.svg` files routed through `parseHtml` per
  *     `src/input/parsers/svg.ts`. A standalone icon / brand-mark SVG
  *     has no `<html>` or `<body>` because it isn't a document.
@@ -96,8 +109,9 @@ export interface ParseErrorEntry {
  *
  * Per the AI-first consumer model "Heuristic-mislabeled meta sub-
  * fields are dishonest" rule: the kind is provable from the file
- * extension (no path-pattern guessing), so the discriminator clears
- * the "100% correct from the evidence" bar.
+ * extension plus deterministic in-scope evidence (no path-pattern
+ * guessing on the file alone), so the discriminator clears the "100%
+ * correct from the evidence" bar.
  *
  * Document-shaped rules will read the discriminator before deciding
  * eligibility — that wiring is a follow-up; this type ships the field
@@ -105,7 +119,11 @@ export interface ParseErrorEntry {
  */
 export interface FragmentFileEntry {
   readonly path: string;
-  readonly kind: "html_partial" | "markdown_residue" | "svg_standalone";
+  readonly kind:
+    | "html_partial"
+    | "markdown_residue"
+    | "markdown_unclassified"
+    | "svg_standalone";
   /**
    * Structural signals captured by the shared
    * {@link import("../engine/layout-partial.ts").classifyFragment}
@@ -121,4 +139,21 @@ export interface FragmentFileEntry {
    * sub-field labels clear the "100% correct from the evidence" bar.
    */
   readonly fragmentClassificationSignals: FragmentClassificationSignals;
+  /**
+   * Additive evidence — present-when-meaningful — naming the layout-
+   * composition signal(s) that promoted a `.md` / `.markdown` entry
+   * from `markdown_unclassified` to `markdown_residue`. Each token
+   * names a deterministic in-scope predicate the scanner observed
+   * elsewhere in the same scan: a recognized SSG config filename
+   * (`ssg_config:gatsby-config.js`, `ssg_config:astro.config.ts`), a
+   * sibling file with a layout directive
+   * (`sibling_layout_directive`), or a sibling file in a layouts dir
+   * (`sibling_in_layouts_dir`). Per AI-first consumer doctrine
+   * "Heuristic-mislabeled meta sub-fields are dishonest," each token
+   * is provable from the scanned file set alone so the field clears
+   * the "100% correct from the evidence" bar. Omitted when the kind
+   * is not `markdown_residue` or when no qualifying evidence was
+   * observed.
+   */
+  readonly ssgEvidence?: readonly string[];
 }

@@ -2060,21 +2060,24 @@ describe("buildAnalysisCoverage — hints", () => {
       ]);
     });
 
-    it("tags markdown sources HTML-routed per ADR 0025 as kind: markdown_residue", () => {
-      // README.md / docs/*.md routed through parseHtml — the parsed
-      // root carries no <html> because the source is markdown prose,
-      // not a partial layout. The discriminator distinguishes this
-      // from a real partial so document-shaped rules can route
-      // differently if they choose.
+    it("tags markdown sources without in-scope layout evidence as markdown_unclassified", () => {
+      // README.md / docs/*.md routed through parseHtml with no other
+      // signals in the scan — neither a recognized SSG config nor a
+      // sibling layout directive nor a sibling layouts-dir entry. Per
+      // AI-first consumer doctrine "Heuristic-mislabeled meta sub-
+      // fields are dishonest," uniform `markdown_residue` on the
+      // negative-default would imply a deterministic SSG read the
+      // scanner did not perform; the honest discriminator when no
+      // positive evidence exists is `markdown_unclassified`. Wire-side
+      // ordering stays alphabetical-by-path (deterministic across
+      // runs).
       const readme = parsedHtml("README.md", "# Hello\n\nWorld\n");
       const docPage = parsedHtml("docs/getting-started.markdown", "## Setup\n\nRun bun install\n");
       const { analysisCoverage } = buildAnalysisCoverage([readme, docPage], [], NO_RULES, false);
-      // Wire-side ordering is alphabetical-by-path (deterministic
-      // across runs); both entries share kind: "markdown_residue".
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "docs/getting-started.markdown",
-          kind: "markdown_residue",
+          kind: "markdown_unclassified",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -2083,7 +2086,7 @@ describe("buildAnalysisCoverage — hints", () => {
         },
         {
           path: "README.md",
-          kind: "markdown_residue",
+          kind: "markdown_unclassified",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
@@ -2116,12 +2119,17 @@ describe("buildAnalysisCoverage — hints", () => {
       ]);
     });
 
-    it("classifies a mixed bucket with all three kinds in one scan", () => {
+    it("classifies a mixed bucket with all four kinds in one scan", () => {
       // The canonical shape an agent triages on a static-site corpus:
       // partials, markdown docs, and brand-mark SVGs all reach the
       // bucket together. Wire output is sorted alphabetically
       // (deterministic across runs) — the kind discriminator rides
-      // alongside.
+      // alongside. Note: the markdown entry classifies as
+      // `markdown_unclassified` here because the surrounding scan
+      // carries no positive layout evidence (no recognized SSG
+      // config, no sibling layout directive, no sibling in a layouts
+      // dir — the `_includes/` partial is in a content-partials dir
+      // but NOT a layouts dir under the shared classifier).
       const partial = parsedHtml("_includes/nav.html", "<nav><a href='/'>Home</a></nav>");
       const readme = parsedHtml("README.md", "# Project\n");
       const icon = parsedHtml(
@@ -2156,7 +2164,146 @@ describe("buildAnalysisCoverage — hints", () => {
         },
         {
           path: "README.md",
+          kind: "markdown_unclassified",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+        },
+      ]);
+    });
+
+    // Q13 closure: `markdown_residue` on the negative-default of all
+    // three structural signals being absent is the canonical
+    // "Heuristic-mislabeled meta sub-fields are dishonest" failure
+    // mode — the kind reads as deterministic but the predicate is the
+    // negative default. Three positive-evidence gates promote the
+    // fragment to `markdown_residue`, each provable from the scanned
+    // file set alone (per AI-first consumer doctrine): a recognized
+    // SSG config filename, a sibling layout directive, a sibling in
+    // a layouts dir.
+    it("promotes markdown to markdown_residue when an SSG config is in scope", () => {
+      // Gatsby project: `gatsby-config.js` at root signals an SSG
+      // layout system the static scanner can't traverse. The .md
+      // fragment is composed by an unseen Gatsby layout, so
+      // `markdown_residue` is honest — and the SSG config filename
+      // ships as additive evidence on the entry.
+      const readme = parsedHtml("README.md", "# Hello\n\nWorld\n");
+      const config: ParsedFile = {
+        filePath: "gatsby-config.js",
+        source: "module.exports = {};",
+        ast: { language: "tsx", root: { type: "Program", body: [], position: { start: 0, end: 0 } }, errors: [] },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage([readme, config], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "README.md",
           kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+          ssgEvidence: ["ssg_config:gatsby-config.js"],
+        },
+      ]);
+    });
+
+    it("promotes markdown to markdown_residue when a sibling layout directive is present", () => {
+      // The Hugo-style `partials/footer.html` declares a Mustache
+      // `{{ partial "site/copyright" . }}` composition slot. The
+      // shared classifier reads this and stamps `hasLayoutDirective:
+      // true` on the partial file (which therefore does NOT enter
+      // `fragmentFiles`). The README's surrounding scan now carries
+      // positive layout evidence, so the markdown entry promotes to
+      // `markdown_residue` with `sibling_layout_directive` as the
+      // supporting token. The partial is intentionally NOT under a
+      // layouts dir so only the directive evidence fires.
+      const readme = parsedHtml("README.md", "# Hello\n\nWorld\n");
+      const layout = parsedHtml(
+        "partials/footer.html",
+        "<footer>{{ content }}</footer>",
+      );
+      const { analysisCoverage } = buildAnalysisCoverage([readme, layout], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "README.md",
+          kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+          ssgEvidence: ["sibling_layout_directive"],
+        },
+      ]);
+    });
+
+    it("aggregates multiple evidence tokens deterministically when several positive signals fire", () => {
+      // Astro project with all three positive-evidence axes firing:
+      // an `astro.config.ts` (recognized SSG config), an
+      // `_layouts/base.html` (sibling in layouts dir), and a
+      // `partials/footer.html` carrying a layout directive (sibling
+      // layout directive). All three evidence tokens accrue on every
+      // promoted markdown entry; the wire shape is sorted ascending
+      // so consumers can dispatch on equality without reorder
+      // ambiguity.
+      const readme = parsedHtml("docs/intro.md", "# Intro\n");
+      const layoutInDir = parsedHtml(
+        "_layouts/base.html",
+        "<header>only</header>",
+      );
+      const partialWithDirective = parsedHtml(
+        "partials/footer.html",
+        "<footer>{{ content }}</footer>",
+      );
+      const config: ParsedFile = {
+        filePath: "astro.config.ts",
+        source: "export default {};",
+        ast: { language: "tsx", root: { type: "Program", body: [], position: { start: 0, end: 0 } }, errors: [] },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage(
+        [readme, layoutInDir, partialWithDirective, config],
+        [],
+        NO_RULES,
+        false,
+      );
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "docs/intro.md",
+          kind: "markdown_residue",
+          fragmentClassificationSignals: {
+            hasHtmlOpener: false,
+            hasLayoutDirective: false,
+            inLayoutsDir: false,
+          },
+          ssgEvidence: [
+            "sibling_in_layouts_dir",
+            "sibling_layout_directive",
+            "ssg_config:astro.config.ts",
+          ],
+        },
+      ]);
+    });
+
+    it("does NOT promote markdown when its own signals are the only evidence", () => {
+      // A markdown file with `hasLayoutDirective: true` would never
+      // appear in `fragmentFiles` (the classifier vetoes fragment on
+      // any positive signal), so the in-scope evidence walk excludes
+      // markdown files from contributing to their own promotion. This
+      // test exercises a single markdown file in isolation: the
+      // surrounding scan carries no other positive evidence, so the
+      // entry stays `markdown_unclassified` even though the file has
+      // a layouts-style frontmatter that the shared classifier
+      // already vetoes — sanity check that markdown self-evidence
+      // doesn't loop back.
+      const readme = parsedHtml("README.md", "# Standalone\n\nProse only.\n");
+      const { analysisCoverage } = buildAnalysisCoverage([readme], [], NO_RULES, false);
+      expect(analysisCoverage?.["fragmentFiles"]).toEqual([
+        {
+          path: "README.md",
+          kind: "markdown_unclassified",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,

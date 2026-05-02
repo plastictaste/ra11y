@@ -21,6 +21,95 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { FragmentFileEntry } from "./analysis-coverage-types.ts";
 
 /**
+ * Static-site-generator config filenames the scanner recognizes as
+ * positive evidence of an SSG-managed layout system in the scanned
+ * tree. When ANY scanned file's basename matches an entry here, every
+ * `.md` / `.markdown` fragment in the same scan is promoted from
+ * `markdown_unclassified` to `markdown_residue` because the SSG is
+ * the parent layout the scanner can't see in one pass.
+ *
+ * Restricted to filenames whose extension is in
+ * {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS} so they
+ * actually appear in the scanner's `files` collection — Jekyll's
+ * `_config.yml` is intentionally absent because `.yml` is not parsed
+ * (the scanner cannot deterministically observe it; surfacing such a
+ * file as evidence would be heuristic-mislabel risk per AI-first
+ * doctrine "Heuristic-mislabeled meta sub-fields are dishonest"). The
+ * list grows additively when a new SSG ships a config in a parseable
+ * extension; entries are sorted lexically so the wire-side evidence
+ * tokens stay deterministic across runs.
+ */
+const SSG_CONFIG_FILENAMES: ReadonlySet<string> = new Set([
+  ".eleventy.js",
+  ".eleventy.ts",
+  "astro.config.js",
+  "astro.config.ts",
+  "docusaurus.config.js",
+  "docusaurus.config.ts",
+  "eleventy.config.js",
+  "eleventy.config.ts",
+  "gatsby-config.js",
+  "gatsby-config.ts",
+  "gridsome.config.js",
+  "next.config.js",
+  "next.config.ts",
+  "nuxt.config.js",
+  "nuxt.config.ts",
+  "remix.config.js",
+  "svelte.config.js",
+  "vuepress.config.js",
+  "vuepress.config.ts",
+]);
+
+/**
+ * Aggregated layout-composition evidence observed across the entire
+ * scanned `files` collection. Threaded into
+ * {@link classifyFragmentKind} so a `.md` / `.markdown` fragment can
+ * be promoted to `markdown_residue` (with `ssgEvidence` populated)
+ * only when at least one positive signal exists somewhere in the
+ * scan — never on the negative-default of all three structural
+ * signals being absent (per AI-first consumer doctrine
+ * "Heuristic-mislabeled meta sub-fields are dishonest").
+ */
+export interface LayoutCompositionEvidence {
+  /**
+   * Base filenames of recognized SSG configs observed in the scanned
+   * `files` collection (`gatsby-config.js`, `astro.config.ts`, etc.).
+   * Sorted ascending for deterministic wire output. Empty when no
+   * SSG config was observed.
+   */
+  readonly ssgConfigFilenames: readonly string[];
+  /**
+   * True when at least one non-markdown file in the scan was
+   * observed with `hasLayoutDirective: true` — a sibling layout
+   * directive ({@link import("../engine/layout-partial.ts").classifyFragment}'s
+   * `hasLayoutDirective` predicate) is in-scope evidence that an SSG
+   * layout system is being exercised even when no recognized config
+   * filename was detected.
+   */
+  readonly hasSiblingLayoutDirective: boolean;
+  /**
+   * True when at least one non-markdown file in the scan lives in a
+   * layouts directory ({@link import("../engine/layout-partial.ts").classifyFragment}'s
+   * `inLayoutsDir` predicate). Same role as
+   * `hasSiblingLayoutDirective`: in-scope evidence of a layout
+   * system the scanner can't traverse to.
+   */
+  readonly hasSiblingInLayoutsDir: boolean;
+}
+
+/**
+ * True when `filePath`'s basename is in
+ * {@link SSG_CONFIG_FILENAMES}. Pure path inspection — no source
+ * read — so cheap to call during the file walk.
+ */
+export function isSsgConfigFile(filePath: string): boolean {
+  const slash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  const basename = slash === -1 ? filePath : filePath.slice(slash + 1);
+  return SSG_CONFIG_FILENAMES.has(basename);
+}
+
+/**
  * Extensions whose AST-language tag differs from the extension name
  * in the cases where the extension is still considered "native" for
  * `parseModeByExtension` purposes. `.htm` source IS HTML; `.jsx`
@@ -54,28 +143,75 @@ export function isMarkdownFile(filePath: string): boolean {
 }
 
 /**
- * Categorizes a fragment file by extension. The detection is
- * extension-only on purpose — per AI-first consumer doctrine
- * "Heuristic-mislabeled meta sub-fields are dishonest," the
- * discriminator must be provable from the evidence the scanner has
- * (the file path), not a guess on path patterns or contents.
+ * Categorizes a fragment file. The discriminator is provable from the
+ * file extension AND deterministic in-scope layout-composition
+ * evidence — per AI-first consumer doctrine "Heuristic-mislabeled
+ * meta sub-fields are dishonest," the kind cannot be a guess on path
+ * patterns or contents.
  *
  *   - `.svg` / `.svgz` → `"svg_standalone"`. Routed through
  *     `parseHtml` by `src/input/parsers/svg.ts` and naturally lacks
  *     `<html>` / `<body>`.
- *   - `.md` / `.markdown` → `"markdown_residue"`. Routed through
- *     the HTML parser per ADR 0025; the resulting AST is the literal-
- *     text residue, which never carries a `<html>` envelope.
+ *   - `.md` / `.markdown` with positive layout evidence in scope
+ *     (`evidence.ssgConfigFilenames` non-empty,
+ *     `hasSiblingLayoutDirective`, or `hasSiblingInLayoutsDir`) →
+ *     `"markdown_residue"`. The markdown body is composed by an SSG-
+ *     supplied parent layout the static scanner can't see in one
+ *     pass — the missing `<html>` envelope reflects that composition
+ *     model, not an authored partial.
+ *   - `.md` / `.markdown` with NO positive layout evidence in scope
+ *     → `"markdown_unclassified"`. The honest discriminator when the
+ *     scanner can't tell whether the file is README-style standalone
+ *     prose or a content page composed by an unseen SSG layout.
  *   - everything else (`.html`, `.htm`, `.xhtml`, `.astro`, etc.) →
  *     `"html_partial"`. The catch-all bucket: the file parses as HTML
  *     but lacks the document envelope, indicating a partial / include
  *     intended for composition into a parent layout.
+ *
+ * Returns the discriminating kind plus the deterministic evidence
+ * tokens that supported a `markdown_residue` promotion (`ssgEvidence`
+ * is empty for every other kind, and absent on
+ * `markdown_unclassified` because the kind itself signals "no
+ * evidence").
  */
-export function classifyFragmentKind(filePath: string): FragmentFileEntry["kind"] {
+export function classifyFragmentKind(
+  filePath: string,
+  evidence?: LayoutCompositionEvidence,
+): { kind: FragmentFileEntry["kind"]; ssgEvidence?: readonly string[] } {
   const lower = filePath.toLowerCase();
-  if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return "svg_standalone";
-  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return "markdown_residue";
-  return "html_partial";
+  if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return { kind: "svg_standalone" };
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    const ssgEvidence = collectSsgEvidenceTokens(evidence);
+    if (ssgEvidence.length > 0) return { kind: "markdown_residue", ssgEvidence };
+    return { kind: "markdown_unclassified" };
+  }
+  return { kind: "html_partial" };
+}
+
+/**
+ * Builds the `ssgEvidence` token list from aggregated
+ * {@link LayoutCompositionEvidence}. Tokens are deterministic and
+ * sorted so the wire output is stable across runs:
+ *
+ *   - `ssg_config:<basename>` for each recognized SSG config observed
+ *     in the scanned `files` collection (one entry per filename, e.g.
+ *     `ssg_config:gatsby-config.js`).
+ *   - `sibling_layout_directive` when at least one non-markdown file
+ *     in the scan carried `hasLayoutDirective: true` per the shared
+ *     `classifyFragment` predicate.
+ *   - `sibling_in_layouts_dir` when at least one non-markdown file
+ *     lives under a recognized layouts directory segment.
+ *
+ * Returns the empty array when no evidence is supplied or when every
+ * field on the evidence is empty / false.
+ */
+function collectSsgEvidenceTokens(evidence?: LayoutCompositionEvidence): string[] {
+  if (evidence === undefined) return [];
+  const tokens: string[] = [];
+  for (const filename of evidence.ssgConfigFilenames) tokens.push(`ssg_config:${filename}`);
+  if (evidence.hasSiblingLayoutDirective) tokens.push("sibling_layout_directive");
+  if (evidence.hasSiblingInLayoutsDir) tokens.push("sibling_in_layouts_dir");
+  return tokens.sort();
 }
 
 /**
