@@ -167,9 +167,33 @@ export const proposeConfigTool: McpTool = {
         likelyArtifactPaths.push(entry.path);
       }
     }
-    const buildArtifacts = normalizeExcludes(definiteArtifactPaths, root);
+    // Single scan: derive top-fired rules AND the set of finding-
+    // bearing paths in one pass so the exclude-emission gate below
+    // can consult both. The shared scan replaces an earlier
+    // `deriveTopRules` call that scanned the same parsed-file set
+    // twice.
+    const scanReport = scanForProposalSignals(files, session);
+    const topRules = scanReport.topRules;
+    // Bootstrap-output-paste-safe doctrine, second-axis gate
+    // (`docs/kb/architecture/ai-first-consumer.md`): even a
+    // `definite-*` path is not paste-safe to exclude when the
+    // surrounding directory tree contains files with grounded
+    // findings. Pasting `exclude: ["docs/**"]` on a corpus where
+    // `docs/` is the only directory with content silences ~99% of
+    // real signal — the canonical regression the gate prevents.
+    // Predicate: a topdir collapse to `<dir>/**` is dropped if any
+    // finding-bearing path falls under that topdir; an itemized
+    // file entry is dropped if a finding fires on the same file.
+    // Surface what was filtered via `excludesGatedByFindings` so
+    // the agent has the additive context the doctrine bullet
+    // calls for.
+    const excludeGate = buildExcludeGate(scanReport.findingPaths, root);
+    const { paths: buildArtifacts, gated: gatedExcludePaths } = normalizeExcludes(
+      definiteArtifactPaths,
+      root,
+      excludeGate,
+    );
     const likelyBuildPaths = normalizeLikelyHints(likelyArtifactPaths, root);
-    const topRules = deriveTopRules(files, session);
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a
     // Node toolchain alongside their Ruby / Python / Go / Rust
@@ -245,6 +269,14 @@ export const proposeConfigTool: McpTool = {
         buildArtifactsIncluded: buildArtifacts.length,
         likelyBuildPathsIncluded: likelyBuildPaths.length,
         topRulesIncluded: topRules.length,
+        // `excludesGatedByFindings` surfaces the candidate exclude
+        // entries the gate dropped because their directory tree
+        // contained files with grounded findings — see the
+        // `buildExcludeGate` rationale at the handler call site.
+        // Conditional-spread: omitted when the gate dropped nothing,
+        // per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+        // (never emit `excludesGatedByFindings: []`).
+        ...(gatedExcludePaths.length > 0 ? { excludesGatedByFindings: gatedExcludePaths } : {}),
       },
       nextStep: buildNextStep({
         wrappers: confirmedWrappers,
@@ -324,10 +356,98 @@ export const proposeConfigTool: McpTool = {
  * Stable across runs even if the underlying scanner reorders its file
  * discovery.
  */
-function normalizeExcludes(paths: readonly string[], root: string): readonly string[] {
+/**
+ * Result of {@link normalizeExcludes}. `paths` is the gated, glob-
+ * collapsed exclude list ready for the live `exclude: [...]` array;
+ * `gated` is the relativized, sorted list of candidate paths the
+ * finding-bearing-directory gate dropped (empty when nothing fired).
+ * The gated list surfaces in `meta.excludesGatedByFindings` so the
+ * agent has the additive context the doctrine bullet
+ * "Bootstrap output must be paste-safe" calls for — paste decisions
+ * default to do-nothing when evidence is ambiguous, but the dropped
+ * candidates are not silenced.
+ */
+interface NormalizedExcludes {
+  readonly paths: readonly string[];
+  readonly gated: readonly string[];
+}
+
+function normalizeExcludes(
+  paths: readonly string[],
+  root: string,
+  gate: ExcludeGate,
+): NormalizedExcludes {
   const relativized = relativizeToRoot(paths, root);
   const { groups, rootLevelFiles } = partitionByTopDir(relativized);
-  return collapseGroups(groups, rootLevelFiles);
+  return collapseGroupsWithGate(groups, rootLevelFiles, gate);
+}
+
+/**
+ * Predicate set the exclude generator consults before promoting a
+ * candidate path into the live `exclude: [...]` array. Per the
+ * "Bootstrap output must be paste-safe" doctrine bullet
+ * (`docs/kb/architecture/ai-first-consumer.md`): a `definite-*`
+ * build-artifact classification is path-anchored evidence the file
+ * itself is generated, but a `<topdir>/**` glob built from a few
+ * such files would silence every authored sibling under the same
+ * topdir. The gate refuses to collapse to a glob whose tree contains
+ * any finding-bearing path, and refuses to itemize a single file
+ * that is itself a finding-bearing path. Both cases are silent
+ * misses if surfaced as live excludes — pasting the suggested
+ * config would cancel the very signal the agent just observed.
+ *
+ * Two-axis predicate:
+ *
+ *   - `topdirHasFinding(topdir)`: true if any finding fires on a
+ *     file whose POSIX-relative path starts with `<topdir>/`. Used
+ *     to refuse the `<topdir>/**` collapse — the canonical
+ *     regression: `exclude: ["docs/**"]` swept the only directory
+ *     with content because three `.min.` files lived under
+ *     `docs/vendor/`.
+ *   - `fileHasFinding(rel)`: true if a finding fires on this exact
+ *     POSIX-relative path. Used to drop itemized exclude entries
+ *     that name a finding-bearing file.
+ *
+ * Both predicates are pure boolean queries over the finding-paths
+ * set built once at handler-call time (see
+ * {@link buildExcludeGate}).
+ */
+interface ExcludeGate {
+  topdirHasFinding(topdir: string): boolean;
+  fileHasFinding(rel: string): boolean;
+}
+
+/**
+ * Builds the {@link ExcludeGate} predicate from the set of finding-
+ * bearing absolute paths the scanner observed on this run.
+ * Relativizes against `root` and indexes both the per-file paths
+ * and the per-topdir prefixes so the gate's predicates are O(1).
+ *
+ * The empty-scan case (no findings observed) returns a gate whose
+ * predicates always return false — i.e. the gate is a no-op and the
+ * `definite-*` paths flow through to the live `exclude` array
+ * unchanged. This preserves backward-compatible behaviour for the
+ * canonical onboarding case (a vendor-bundle-only repo with no
+ * authored findings yet).
+ */
+function buildExcludeGate(findingPaths: ReadonlySet<string>, root: string): ExcludeGate {
+  const fileSet = new Set<string>();
+  const topdirSet = new Set<string>();
+  for (const p of findingPaths) {
+    const rel = relative(root, p).replace(/\\/g, "/");
+    if (rel === "" || rel.startsWith("..")) continue;
+    fileSet.add(rel);
+    const slash = rel.indexOf("/");
+    if (slash !== -1) topdirSet.add(rel.slice(0, slash));
+  }
+  return {
+    topdirHasFinding(topdir: string): boolean {
+      return topdirSet.has(topdir);
+    },
+    fileHasFinding(rel: string): boolean {
+      return fileSet.has(rel);
+    },
+  };
 }
 
 /**
@@ -382,20 +502,86 @@ function partitionByTopDir(paths: readonly string[]): {
   return { groups, rootLevelFiles };
 }
 
-function collapseGroups(
+/**
+ * Per-topdir collapse + finding-bearing-directory gate. Two cases
+ * per group:
+ *
+ *   1. Topdir has finding-bearing files → never collapse to
+ *      `<topdir>/**`. The collapse would silence every authored
+ *      sibling under the topdir (the `exclude: ["docs/**"]`
+ *      regression). Members are also filtered: an itemized entry
+ *      that names a finding-bearing file is dropped (a generated
+ *      file the scanner found a real violation on is, by
+ *      definition, not a "you can ignore this whole file" case).
+ *      Surviving members ride into the live exclude list itemized.
+ *   2. Topdir has no finding-bearing files → standard
+ *      threshold-driven collapse to `<topdir>/**` when the count
+ *      crosses {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD}.
+ *
+ * Root-level files (no topdir) are filtered the same way: a single
+ * file at the repo root that fires a finding is dropped from the
+ * exclude list. The entry would silence the file the agent should
+ * be reading.
+ *
+ * `gated` accumulates the dropped paths in deterministic order
+ * (alphabetical within group, group-discovery order across groups,
+ * then root-level files) so the meta surface
+ * `excludesGatedByFindings` reads stably across runs.
+ */
+function collapseGroupsWithGate(
   groups: ReadonlyMap<string, readonly string[]>,
   rootLevelFiles: readonly string[],
-): readonly string[] {
+  gate: ExcludeGate,
+): NormalizedExcludes {
   const out: string[] = [];
+  const gated: string[] = [];
   for (const [topDir, members] of groups) {
+    appendGroupExcludes(topDir, members, gate, out, gated);
+  }
+  for (const f of rootLevelFiles) {
+    if (gate.fileHasFinding(f)) gated.push(f);
+    else out.push(f);
+  }
+  return { paths: out, gated };
+}
+
+/**
+ * Per-group helper for {@link collapseGroupsWithGate}. Splits the
+ * gated-vs-ungated branch out so the parent stays under Biome's
+ * cyclomatic-complexity ceiling. Mutates `out` and `gated` in place
+ * — accumulator pattern matches the parent's two-array layout and
+ * avoids per-group allocation churn.
+ */
+function appendGroupExcludes(
+  topDir: string,
+  members: readonly string[],
+  gate: ExcludeGate,
+  out: string[],
+  gated: string[],
+): void {
+  if (!gate.topdirHasFinding(topDir)) {
     if (members.length >= EXCLUDE_GLOB_COLLAPSE_THRESHOLD) {
       out.push(`${topDir}/**`);
     } else {
       for (const m of members) out.push(m);
     }
+    return;
   }
-  for (const f of rootLevelFiles) out.push(f);
-  return out;
+  // Topdir contains finding-bearing files. Refuse the
+  // `<topdir>/**` collapse outright; itemize survivors and drop
+  // members that themselves carry a finding. If the collapse
+  // threshold WOULD have fired and the gate dropped it, record
+  // the would-be glob in `gated` too — the agent reading
+  // `meta.excludesGatedByFindings` should see both shapes the
+  // gate refused (the `<topdir>/**` collapse and the per-file
+  // entries that landed on findings).
+  for (const m of members) {
+    if (gate.fileHasFinding(m)) gated.push(m);
+    else out.push(m);
+  }
+  if (members.length >= EXCLUDE_GLOB_COLLAPSE_THRESHOLD) {
+    gated.push(`${topDir}/**`);
+  }
 }
 
 function deriveConfirmedWrappers(files: readonly ParsedFile[]): readonly string[] {
@@ -412,24 +598,42 @@ interface TopRuleEntry {
 }
 
 /**
- * Tallies findings per rule ID and returns the top-`TOP_RULES_COUNT`
- * rules by total count, with ties broken by rule ID ascending (the
- * stable tiebreak the spec asks for). Each entry carries the rule's
+ * Single scan over the parsed file set returning the two derived
+ * signals the proposal needs: the top-`TOP_RULES_COUNT` rules by
+ * total count (with ties broken by rule ID ascending — the stable
+ * tiebreak the spec asks for) AND the set of absolute file paths
+ * any finding fires on. Each top-rule entry carries the rule's
  * DEFAULT severity — the author's paste-ready place to override it
  * via the commented stub — not the effective severity after session
  * or project-config overrides.
  *
+ * The finding-paths set feeds {@link buildExcludeGate}, which
+ * refuses to promote a `definite-*` build-artifact path into the
+ * live `exclude: [...]` array when its directory tree contains
+ * any finding-bearing file. Per the "Bootstrap output must be
+ * paste-safe" doctrine bullet
+ * (`docs/kb/architecture/ai-first-consumer.md`), the gate prevents
+ * the canonical regression where `exclude: ["docs/**"]` swept the
+ * only directory with content because three minified files lived
+ * under it.
+ *
  * Runs the scanner directly rather than relying on an outer scan
  * result so this tool is self-contained — callers don't need to pipe
  * in findings they'd otherwise throw away. The scanner is pure over
- * the parsed files, so the duplicate pass adds scan-time latency but
- * no semantic drift.
+ * the parsed files; folding both derivations into a single pass
+ * replaces an earlier shape that scanned twice (once for top-rule
+ * frequencies, once implicitly for the unused finding paths).
  */
-function deriveTopRules(
+interface ProposalScanReport {
+  readonly topRules: readonly TopRuleEntry[];
+  readonly findingPaths: ReadonlySet<string>;
+}
+
+function scanForProposalSignals(
   files: readonly ParsedFile[],
   session: import("./session.ts").McpSession,
-): readonly TopRuleEntry[] {
-  if (files.length === 0) return [];
+): ProposalScanReport {
+  if (files.length === 0) return { topRules: [], findingPaths: new Set() };
   const { result } = runScan({
     standards: session.registry.standards,
     rules: session.registry.rules,
@@ -438,20 +642,22 @@ function deriveTopRules(
     level: session.config.level,
   });
   const counts = new Map<string, number>();
+  const findingPaths = new Set<string>();
   for (const v of result.violations) {
     counts.set(v.ruleId, (counts.get(v.ruleId) ?? 0) + 1);
+    findingPaths.add(v.location.filePath);
   }
   const ranked = [...counts.entries()].sort(([aId, aCount], [bId, bCount]) => {
     if (bCount !== aCount) return bCount - aCount;
     return aId.localeCompare(bId);
   });
-  const out: TopRuleEntry[] = [];
+  const topRules: TopRuleEntry[] = [];
   for (const [ruleId, count] of ranked.slice(0, TOP_RULES_COUNT)) {
     const rule = session.registry.findRule(ruleId);
     if (!rule) continue;
-    out.push({ ruleId, severity: rule.severity, count });
+    topRules.push({ ruleId, severity: rule.severity, count });
   }
-  return out;
+  return { topRules, findingPaths };
 }
 
 /**

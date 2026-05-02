@@ -35,6 +35,7 @@ interface ProposeConfigResponse {
     readonly buildArtifactsIncluded: number;
     readonly likelyBuildPathsIncluded: number;
     readonly topRulesIncluded: number;
+    readonly excludesGatedByFindings?: readonly string[];
   };
   readonly nextStep: string;
   readonly warnings?: readonly string[];
@@ -574,5 +575,150 @@ describe("propose_config: meta telemetry", () => {
     expect(result.isError).toBe(true);
     const payload = JSON.parse(result.content[0]?.text ?? "{}") as { code?: string };
     expect(payload.code).toBe("cwd-not-found");
+  });
+});
+
+describe("propose_config: finding-bearing-directory exclude gate", () => {
+  // Guards the doctrine bullet "Bootstrap output must be paste-safe"
+  // (`docs/kb/architecture/ai-first-consumer.md`) one axis past the
+  // heuristic-vs-definite split: even a `definite-*` build-artifact
+  // path must NOT promote to a `<topdir>/**` glob in the live
+  // `exclude: [...]` array when the topdir contains files with
+  // grounded findings. The canonical regression: a corpus where
+  // `docs/` is the only directory with content emits
+  // `exclude: ["docs/**"]` because three minified files happen to
+  // live under `docs/vendor/`; pasting that config silences ~99% of
+  // the real signal. Closure: gate the collapse on
+  // "topdir contains a finding-bearing path? if yes, refuse the
+  // glob and itemize survivors only."
+
+  it("does NOT collapse to docs/** when docs/ contains files with grounded findings", async () => {
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "docs"), { recursive: true });
+      // Three `.min.`-infix files under docs/ — all
+      // `definite-min-infix`. Without the gate these would collapse
+      // to `docs/**` and silence everything authored under docs/.
+      // (Note: the discovery walker silently skips `vendor/` per
+      // the long-form comment in `src/input/discover.ts`, so the
+      // minified files live directly under `docs/` to ensure the
+      // labeller sees them and exercises the gate.)
+      await writeFile(join(dir, "docs", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "docs", "b.min.js"), "// min\n");
+      await writeFile(join(dir, "docs", "c.min.js"), "// min\n");
+      // Several authored HTML pages under docs/ that fire grounded
+      // findings (no <title>, no lang on <html>, missing alt). The
+      // gate must observe finding-bearing files in docs/ and
+      // refuse the collapse.
+      for (const name of ["intro.html", "guide.html", "faq.html"]) {
+        await writeFile(
+          join(dir, "docs", name),
+          "<!DOCTYPE html><html><head></head><body>" + '<img src="/x.png">' + "</body></html>\n",
+        );
+      }
+      const body = await callTool(dir);
+      // The live exclude block must not contain `docs/**` — the
+      // collapse the gate refused.
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      if (excludeBlockMatch !== null) {
+        expect(excludeBlockMatch[1]).not.toContain('"docs/**"');
+      }
+      // Meta surface carries the would-be glob in the gated list so
+      // the agent has additive context per the doctrine bullet —
+      // refusal is surfaced, not silently dropped.
+      expect(body.meta.excludesGatedByFindings).toBeDefined();
+      expect(body.meta.excludesGatedByFindings).toContain("docs/**");
+    });
+  });
+
+  it("does NOT itemize a finding-bearing file in the live exclude block", async () => {
+    await withScratch(async (dir) => {
+      // A single root-level `.min.`-infix file that ALSO produces a
+      // finding (HTML rendered minified). The gate must drop the
+      // entry from the live exclude — pasting an exclude on the
+      // very file the scanner found a real violation on would
+      // cancel that signal.
+      //
+      // We engineer this by using an HTML file with a `.min.`
+      // infix in the basename. The HTML parser reads it normally
+      // (no script-content gating), so html-has-lang and friends
+      // fire on the contents. The classifier still sees `.min.` in
+      // the basename and labels it `definite-min-infix`.
+      await writeFile(
+        join(dir, "page.min.html"),
+        "<!DOCTYPE html><html><head></head><body>" + '<img src="/x.png">' + "</body></html>\n",
+      );
+      const body = await callTool(dir);
+      // The file fires findings AND classifies as definite-min-infix.
+      // The gate must drop it from the live exclude.
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      if (excludeBlockMatch !== null) {
+        expect(excludeBlockMatch[1]).not.toContain("page.min.html");
+      }
+      expect(body.meta.excludesGatedByFindings).toBeDefined();
+      expect(body.meta.excludesGatedByFindings).toContain("page.min.html");
+    });
+  });
+
+  it("DOES emit vendor/** when vendor/ has 0 findings AND multiple definite-classified files", async () => {
+    // Conversely: a directory with no findings AND multiple
+    // `definite-*` build-artifact signals MAY be collapsed and
+    // excluded. This is the gate's negative case — it must not
+    // over-fire and refuse exclusions whose evidence is honest.
+    // Per the doctrine, "classification predicates default to
+    // do-nothing when evidence is ambiguous" — but here the
+    // evidence is unambiguous: three `.min.` files, no findings,
+    // no authored content under vendor/.
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      // Use a directory name that is NOT in DEFAULT_EXCLUDED_PATTERNS
+      // (vendor IS in that set, so the discovery walk would skip it
+      // before the labeller saw the files). `assets/` reaches the
+      // labeller.
+      await mkdir(join(dir, "assets"), { recursive: true });
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      const body = await callTool(dir);
+      // Glob collapse fires — three `definite-min-infix` paths,
+      // no findings, gate is a no-op for this topdir.
+      expect(body.suggestedConfig).toContain('"assets/**"');
+      expect(body.meta.buildArtifactsIncluded).toBeGreaterThan(0);
+      // Nothing was gated — the field is omitted entirely
+      // (conditional-spread, per CLAUDE.md §1 "Ambiguous field
+      // shapes are dishonest" — never `excludesGatedByFindings: []`).
+      expect(body.meta.excludesGatedByFindings).toBeUndefined();
+    });
+  });
+
+  it("itemizes survivors when topdir has findings: keeps minified entries that don't fire findings", async () => {
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "docs"), { recursive: true });
+      // Two minified files under docs/ — below the collapse
+      // threshold so they would itemize anyway. The gate keeps
+      // both (neither fires a finding) and refuses any topdir
+      // glob.
+      await writeFile(join(dir, "docs", "lib.min.js"), "// min\n");
+      await writeFile(join(dir, "docs", "ui.min.js"), "// min\n");
+      // An authored page that fires findings.
+      await writeFile(
+        join(dir, "docs", "intro.html"),
+        "<!DOCTYPE html><html><head></head><body><img></body></html>\n",
+      );
+      const body = await callTool(dir);
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      // Survivors land itemized (under the threshold, no glob
+      // even before the gate would refuse). Both minified files
+      // appear; no `docs/**` glob.
+      expect(excludeBlockMatch).not.toBeNull();
+      expect(excludeBlockMatch?.[1]).toContain("docs/lib.min.js");
+      expect(excludeBlockMatch?.[1]).toContain("docs/ui.min.js");
+      expect(excludeBlockMatch?.[1]).not.toContain('"docs/**"');
+      // No glob was gated (count was below the collapse threshold)
+      // and no individual file was gated (neither fires a finding).
+      // Field is omitted.
+      expect(body.meta.excludesGatedByFindings).toBeUndefined();
+    });
   });
 });
