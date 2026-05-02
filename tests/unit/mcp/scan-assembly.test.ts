@@ -1109,6 +1109,128 @@ describe("detectLinkedStylesheetsNotResolvedForContrast", () => {
     };
     expect(detectLinkedStylesheetsNotResolvedForContrast([scss]).unresolvedHrefCount).toBe(0);
   });
+
+  it("treats a same-directory sibling stylesheet as resolved (warning does NOT fire)", () => {
+    // The canonical bare-relative pattern: an HTML page links a
+    // co-located `style.css` that the scanner already parsed. The
+    // contrast rule WILL read both files together, so the unresolved-
+    // href warning must not fire on this pair — surfacing it would
+    // sweep a genuine sibling-pair success into the warning bucket
+    // (the failure mode named by AI-first doctrine "Routing skips that
+    // drop content are the symmetric twin of suppression").
+    const html = htmlFile(
+      "/proj/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.css"></head><body><p>hi</p></body></html>`,
+    );
+    const cssSource = `body { color: #333; background: #fff; }\n`;
+    const cssParsed = parseScss(cssSource);
+    const css: ParsedFile = {
+      filePath: "/proj/style.css",
+      source: cssSource,
+      ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
+    };
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
+    expect(result.unresolvedHrefCount).toBe(0);
+    expect(result.htmlFiles).toEqual([]);
+    expect(result.topUnresolvedHrefs).toEqual([]);
+  });
+
+  it("treats `./style.css` (explicit same-directory prefix) as resolved when the sibling is in scope", () => {
+    const html = htmlFile(
+      "/proj/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="./style.css"></head><body><p>hi</p></body></html>`,
+    );
+    const cssSource = `body { color: #333; }\n`;
+    const cssParsed = parseScss(cssSource);
+    const css: ParsedFile = {
+      filePath: "/proj/style.css",
+      source: cssSource,
+      ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
+    };
+    expect(
+      detectLinkedStylesheetsNotResolvedForContrast([html, css]).unresolvedHrefCount,
+    ).toBe(0);
+  });
+
+  it("does NOT widen the resolver beyond same-directory siblings — `css/style.css` stays unresolved", () => {
+    // Cross-directory hrefs require knowing the build root / document
+    // root, conventions the scanner does not track. Don't widen
+    // beyond same-directory siblings. Even if a parsed sibling at
+    // `/proj/css/style.css` exists, the resolver only attempts the
+    // literal `<htmlDir>/<href>` join with a same-directory basename;
+    // cross-directory paths stay under the unresolved bucket so the
+    // agent can scope a follow-up.
+    const html = htmlFile(
+      "/proj/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="css/style.css"></head><body><p>hi</p></body></html>`,
+    );
+    const cssSource = `body { color: #333; }\n`;
+    const cssParsed = parseScss(cssSource);
+    const css: ParsedFile = {
+      filePath: "/proj/css/style.css",
+      source: cssSource,
+      ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
+    };
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
+    expect(result.unresolvedHrefCount).toBe(1);
+    expect(result.htmlFiles).toEqual(["/proj/index.html"]);
+    expect(result.topUnresolvedHrefs).toEqual(["css/style.css"]);
+  });
+
+  it("does NOT resolve when the sibling is NOT in the parsed-file set (warning fires)", () => {
+    // The resolver consults the in-scope file set — a `<link href="style.css">`
+    // pointing at a nonexistent or out-of-scope sibling stays unresolved
+    // because the contrast rule will not read it. Pins that the resolver
+    // depends on the in-scope index, not on the href shape alone.
+    const html = htmlFile(
+      "/proj/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.css"></head><body><p>hi</p></body></html>`,
+    );
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html]);
+    expect(result.unresolvedHrefCount).toBe(1);
+    expect(result.htmlFiles).toEqual(["/proj/index.html"]);
+    expect(result.topUnresolvedHrefs).toEqual(["style.css"]);
+  });
+
+  it("rejects same-directory resolution when the href carries a query/fragment suffix", () => {
+    // `style.css?v=hash` is a cache-busting marker the scanner cannot
+    // strip without inferring intent. Better to surface the literal
+    // value to the agent than silently resolve the wrong shape.
+    const html = htmlFile(
+      "/proj/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.css?v=2"></head><body><p>hi</p></body></html>`,
+    );
+    const cssSource = `body { color: #333; }\n`;
+    const cssParsed = parseScss(cssSource);
+    const css: ParsedFile = {
+      filePath: "/proj/style.css",
+      source: cssSource,
+      ast: { language: "css", root: cssParsed.root, errors: [...cssParsed.errors] },
+    };
+    const result = detectLinkedStylesheetsNotResolvedForContrast([html, css]);
+    expect(result.unresolvedHrefCount).toBe(1);
+    expect(result.topUnresolvedHrefs).toEqual(["style.css?v=2"]);
+  });
+
+  it("resolves SCSS / LESS siblings with the same-directory rule", () => {
+    // The contrast rule consults `.css`, `.scss`, and `.less` files;
+    // the resolver mirrors that extension set so an `<link href="style.scss">`
+    // pointing at an in-scope sibling is treated as resolved.
+    const htmlA = htmlFile(
+      "/proj-a/index.html",
+      `<!DOCTYPE html><html lang="en"><head><link rel="stylesheet" href="style.scss"></head><body><p>hi</p></body></html>`,
+    );
+    const scssSource = `body { color: #333; }\n`;
+    const scssParsed = parseScss(scssSource);
+    const scss: ParsedFile = {
+      filePath: "/proj-a/style.scss",
+      source: scssSource,
+      ast: { language: "css", root: scssParsed.root, errors: [...scssParsed.errors] },
+    };
+    expect(
+      detectLinkedStylesheetsNotResolvedForContrast([htmlA, scss]).unresolvedHrefCount,
+    ).toBe(0);
+  });
 });
 
 describe("applyScssUnresolvedVariablesAdjustment", () => {

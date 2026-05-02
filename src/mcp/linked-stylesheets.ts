@@ -29,6 +29,7 @@
  * next to its only consumer (the warnings dispatch).
  */
 
+import { posix } from "node:path";
 import { getHtmlAttribute, isHtmlFragment, walkHtmlElements } from "../engine/ast-helpers.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { HtmlDocument } from "../types/ast.ts";
@@ -123,6 +124,24 @@ const LINKED_STYLESHEET_TOP_HREFS_CAP = 10;
  * intentionally excluded — they don't activate the same parse-and-
  * resolve path the warning is about.
  *
+ * **Same-directory sibling resolution.** Before counting an href as
+ * unresolved, the detector checks whether the href resolves to a
+ * stylesheet sitting in the SAME directory as the linking HTML file
+ * AND already in the parsed-file set (`<htmlDir>/<href>` joined as
+ * POSIX). When the candidate matches an in-scope CSS-shaped sibling
+ * (`.css`, `.scss`, `.less`), the href is treated as resolved — the
+ * warning does NOT fire on `(html, css)` pairs the contrast rule will
+ * actually read together. Per AI-first doctrine "Routing skips that
+ * drop content are the symmetric twin of suppression," the previous
+ * behavior of counting every literal href as unresolved swept genuine
+ * sibling-pair successes into the warning, blocking `contrast/minimum`
+ * from establishing inheritance from a co-located `style.css`. The
+ * resolution scope is intentionally narrow — only same-directory
+ * siblings are matched. Cross-directory hrefs (`css/style.css`,
+ * `../shared/theme.css`, absolute `/assets/...`) stay under the
+ * unresolved bucket because resolving them requires walking conventions
+ * (build root, document root, alias maps) the scanner doesn't track.
+ *
  * Pure over its inputs. Output is deterministic across runs:
  * `htmlFiles` is sorted ascending and `topUnresolvedHrefs` is the
  * de-duplicated, sorted-ascending href slice capped at
@@ -131,6 +150,7 @@ const LINKED_STYLESHEET_TOP_HREFS_CAP = 10;
 export function detectLinkedStylesheetsNotResolvedForContrast(
   files: readonly ParsedFile[],
 ): LinkedStylesheetsUnresolvedForContrast {
+  const inScopeStylesheetPaths = collectInScopeStylesheetPaths(files);
   const htmlFiles = new Set<string>();
   const allHrefs = new Set<string>();
   let pairCount = 0;
@@ -146,6 +166,9 @@ export function detectLinkedStylesheetsNotResolvedForContrast(
         templateFiles.add(file.filePath);
         templateHrefs.add(href);
         templatePairCount++;
+        continue;
+      }
+      if (resolvesToSameDirectorySibling(file.filePath, href, inScopeStylesheetPaths)) {
         continue;
       }
       htmlFiles.add(file.filePath);
@@ -165,6 +188,69 @@ export function detectLinkedStylesheetsNotResolvedForContrast(
     templateExpressionFiles: sortedTemplateFiles,
     templateExpressionHrefs: sortedTemplateHrefs.slice(0, LINKED_STYLESHEET_TOP_HREFS_CAP),
   };
+}
+
+/**
+ * Builds the lookup set of CSS-shaped file paths in the parsed-file
+ * input. Restricted to the extensions the contrast rule actually
+ * consults during resolution (`.css`, `.scss`, `.less`) so an in-scope
+ * non-stylesheet sibling (e.g. a `style.html` with the same basename)
+ * does not falsely satisfy the resolution check. Pure over its input;
+ * output is a Set so the per-href lookup stays O(1).
+ */
+function collectInScopeStylesheetPaths(files: readonly ParsedFile[]): ReadonlySet<string> {
+  const paths = new Set<string>();
+  for (const file of files) {
+    if (isStylesheetExtension(file.filePath)) paths.add(file.filePath);
+  }
+  return paths;
+}
+
+/**
+ * `(htmlFilePath, href, inScopeStylesheetPaths) -> boolean` predicate:
+ * returns `true` when the href is a same-directory stylesheet sibling
+ * already in the scan set.
+ *
+ * Resolution is intentionally narrow — only the literal
+ * `<htmlDir>/<href>` join is attempted (with a leading `./` stripped if
+ * present). Hrefs containing `/` after the optional `./` prefix are
+ * cross-directory references and stay unresolved by design — resolving
+ * them would require knowing the build root / document root, conventions
+ * the scanner does not track. Per the backlog item closing this:
+ * "Don't widen the resolver beyond same-directory siblings — anything
+ * cross-directory is a separate scope."
+ *
+ * Hrefs carrying a query/fragment suffix (`?v=hash`, `#anchor`) are
+ * rejected from the same-directory-resolution path — the suffix is a
+ * cache-busting / fragment marker the scanner cannot strip without
+ * inferring intent (the literal href `style.css?v=2` may or may not
+ * map to a sibling `style.css?v=2` file). Better to let the warning
+ * fire on those and surface the literal value to the agent than to
+ * silently resolve the wrong shape.
+ */
+function resolvesToSameDirectorySibling(
+  htmlFilePath: string,
+  href: string,
+  inScopeStylesheetPaths: ReadonlySet<string>,
+): boolean {
+  if (href.includes("?") || href.includes("#")) return false;
+  const stripped = href.startsWith("./") ? href.slice(2) : href;
+  if (stripped.length === 0) return false;
+  if (stripped.includes("/")) return false;
+  if (!isStylesheetExtension(stripped)) return false;
+  const candidate = posix.join(posix.dirname(htmlFilePath), stripped);
+  return inScopeStylesheetPaths.has(candidate);
+}
+
+/**
+ * Predicate: returns `true` when the path's lowercase suffix is one of
+ * the stylesheet extensions the contrast rule consults during
+ * resolution. Centralized so the in-scope index and the same-directory
+ * resolver agree on the extension set.
+ */
+function isStylesheetExtension(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  return lower.endsWith(".css") || lower.endsWith(".scss") || lower.endsWith(".less");
 }
 
 /**
