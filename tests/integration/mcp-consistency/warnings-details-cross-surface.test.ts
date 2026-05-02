@@ -89,6 +89,9 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface ExtensionsSkippedPayload {
   readonly extensions: readonly string[];
+  // Per-extension count breakdown of the dotted-extensions slice,
+  // present-when-meaningful (omitted when `extensions: []`).
+  readonly perExtensionCounts?: Readonly<Record<string, number>>;
   // Present-when-meaningful: omitted when `extensions: []` (e.g. a
   // corpus where only no-extension filenames fired the warning).
   readonly topExtension?: string;
@@ -137,6 +140,28 @@ async function makeSkippedExtensionFixture(): Promise<string> {
   );
   // Unparseable-by-scanner file — drives the skip signal.
   await writeFile(join(dir, "component.vue"), `<template><div>hi</div></template>`);
+  return dir;
+}
+
+/**
+ * Fixture seeding `text_source_skipped` with multiple distinct
+ * unparseable text-source extensions so the per-extension breakdown
+ * has data to enforce. The `.coffee` and `.rmd` substrates are both
+ * parser-routable text-island extensions but NOT yet routed; the
+ * `.xml` substrate is data-only. Without `perExtensionCounts` an
+ * agent reading the warning would see `topExtension: ".xml"` and
+ * have no signal for the `.coffee` and `.rmd` actionable subsets.
+ */
+async function makeMultiExtensionSkippedFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-xsurface-multiext-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<html><body><img src="a.png" alt="alt"><p>hello</p></body></html>`,
+  );
+  // Multiple distinct text-source extensions, none parseable by ra11y.
+  await writeFile(join(dir, "report.rmd"), `# R Markdown\n\nbody\n`);
+  await writeFile(join(dir, "module.coffee"), `console.log "hi"\n`);
+  await writeFile(join(dir, "feed.xml"), `<?xml version="1.0"?><feed/>\n`);
   return dir;
 }
 
@@ -291,6 +316,53 @@ describe("warnings + warningsDetails coherence across scan_project / scan_file /
     // All three surfaces see the same `.scss` file → identical payload.
     expect(coveragePayload).toEqual(scanProjPayload);
     expect(checklistPayload).toEqual(scanProjPayload);
+  });
+
+  it("scan_project, coverage, and checklist agree on the per-extension breakdown of text_source_skipped (one-level-deeper cross-surface invariant)", async () => {
+    // The deep-equal already exists for the canonical text-source
+    // payload; this test pins the per-extension breakdown specifically
+    // so a future regression that drops `perExtensionCounts` from one
+    // surface (or computes it differently) is caught at the field
+    // level. Per AI-first doctrine "Cross-surface count invariant":
+    // every conceptual counter shipping from multiple project-rooted
+    // tools must agree on the same input.
+    const dir = await makeMultiExtensionSkippedFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+    ]);
+    const scanProj = warningsEnvelope(body<Record<string, unknown>>(responses[1]));
+    const coverage = warningsEnvelope(body<Record<string, unknown>>(responses[2]));
+    const checklist = warningsEnvelope(body<Record<string, unknown>>(responses[3]));
+
+    expect(scanProj.warnings ?? []).toContain("text_source_skipped");
+
+    const scanProjPayload = scanProj.warningsDetails?.text_source_skipped;
+    const coveragePayload = coverage.warningsDetails?.text_source_skipped;
+    const checklistPayload = checklist.warningsDetails?.text_source_skipped;
+
+    expect(scanProjPayload?.perExtensionCounts).toBeDefined();
+    expect(coveragePayload?.perExtensionCounts).toBeDefined();
+    expect(checklistPayload?.perExtensionCounts).toBeDefined();
+
+    // All three surfaces walked the same fixture — per-extension
+    // counts must match.
+    expect(coveragePayload?.perExtensionCounts).toEqual(scanProjPayload?.perExtensionCounts);
+    expect(checklistPayload?.perExtensionCounts).toEqual(scanProjPayload?.perExtensionCounts);
+
+    // Sanity: the breakdown enumerates every actionable extension with
+    // its true file count — one each for `.rmd`, `.coffee`, `.xml`.
+    expect(scanProjPayload?.perExtensionCounts).toEqual({
+      ".coffee": 1,
+      ".rmd": 1,
+      ".xml": 1,
+    });
+    // The headline scalar still derives from the dominant entry —
+    // ties in this fixture break alphabetically, so `.coffee` wins.
+    expect(scanProjPayload?.topExtension).toBe(".coffee");
+    expect(scanProjPayload?.topCount).toBe(1);
   });
 
   it("every surface emitting `warnings: [code]` with a payload-bearing code also emits `warningsDetails[code]` (present-when-meaningful)", async () => {

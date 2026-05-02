@@ -1665,6 +1665,92 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.text_source_skipped?.totalSkipped).toBe(328);
   });
 
+  it("emits per-extension counts so the actionable subset is visible (one-level-deeper than text-vs-binary split)", () => {
+    // Per AI-first doctrine "Routing skips that drop content are the
+    // symmetric twin of suppression": the agent budgeting against the
+    // warning needs the per-extension breakdown of the actionable
+    // text-source subset, not just a single dominant scalar. Without
+    // this field, a corpus skipping `.rmd: 3, .coffee: 2, .xml: 25`
+    // collapses under `topExtension: ".xml" / topCount: 25` and the
+    // agent has no way to see whether `.rmd` and `.coffee` carry 3
+    // files each or 300 each without descending into
+    // `meta.analysisCoverage.skippedByExtension`.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".rmd": 3, ".coffee": 2, ".xml": 25 },
+      },
+      filesByExtension: { ".html": 50 },
+    });
+    expect(details.text_source_skipped?.perExtensionCounts).toEqual({
+      ".xml": 25,
+      ".rmd": 3,
+      ".coffee": 2,
+    });
+    // Headline scalar derives as argmax(perExtensionCounts) — same
+    // dominant entry as the per-extension record reports.
+    expect(details.text_source_skipped?.topExtension).toBe(".xml");
+    expect(details.text_source_skipped?.topCount).toBe(25);
+    // Same key set as `extensions[]` (the array carries order; the
+    // record carries the count payload) — sibling fields naming the
+    // same concept partition cleanly.
+    expect(Object.keys(details.text_source_skipped?.perExtensionCounts ?? {}).sort()).toEqual(
+      [...(details.text_source_skipped?.extensions ?? [])].sort(),
+    );
+  });
+
+  it("omits `perExtensionCounts` when only no-extension filenames fired (present-when-meaningful — same partition as topExtension/topCount)", () => {
+    // Symmetric to the `topExtension`/`topCount` partition rule: when
+    // the dotted-extensions slice is empty, `perExtensionCounts` is
+    // omitted entirely so the agent walks `noExtensionFiles[]`
+    // directly rather than reading an empty `{}` sentinel that would
+    // be the warnings-channel analogue of an empty container.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { LICENSE: 1, README: 1 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(details.text_source_skipped).toBeDefined();
+    expect(details.text_source_skipped?.extensions).toEqual([]);
+    expect(
+      Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "perExtensionCounts"),
+    ).toBe(false);
+  });
+
+  it("`perExtensionCounts` mirrors the dotted-extensions slice when the union mixes filenames and dotted extensions (filename-channel never leaks)", () => {
+    // Stricter version of the omission rule above: even when a
+    // filename entry would dominate the union by count, the
+    // per-extension record stays partition-pure (dotted extensions
+    // only). The agent reading `noExtensionFiles[]` already sees the
+    // filename ranking; the per-extension record answers a different
+    // question.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { LICENSE: 99, ".php": 12, ".coffee": 4 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    // No filename token in the per-extension record.
+    expect(details.text_source_skipped?.perExtensionCounts).toEqual({
+      ".php": 12,
+      ".coffee": 4,
+    });
+    // Filename-only channel still surfaces under the parallel slot.
+    expect(details.text_source_skipped?.noExtensionFiles).toEqual(["LICENSE"]);
+  });
+
   it("breaks count ties alphabetically (determinism the sort depends on)", () => {
     const codes = ["text_source_skipped"] as const;
     const details = computeScanWarningDetails(codes, {

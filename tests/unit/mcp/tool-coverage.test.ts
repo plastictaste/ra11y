@@ -50,6 +50,7 @@ interface CoverageEnvelope {
   readonly warningsDetails?: {
     readonly text_source_skipped?: {
       readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
       readonly parserRoutableExtensions?: readonly string[];
       // Present-when-meaningful: omitted when `extensions: []`.
       readonly topExtension?: string;
@@ -58,6 +59,7 @@ interface CoverageEnvelope {
     };
     readonly binary_assets_skipped?: {
       readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
       readonly topExtension?: string;
       readonly topCount?: number;
       readonly totalSkipped: number;

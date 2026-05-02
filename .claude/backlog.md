@@ -369,8 +369,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Parser routing skips
 
-- [ ] **Q13-TEXT-SOURCE-SKIPPED-DOMINATED-BY-SINGLE-EXTENSION** `text_source_skipped.extensions` lumps actionable text-source extensions (`.rmd`, `.coffee`, `.xml`) under one summary dominated by a single high-count extension — agent has no per-extension breakdown for the actionable subset. Fix: emit per-extension counts so the actionable subset is visible; the topExtension scalar names the dominant entry but the array enumerates all. Per AI-first doctrine "Routing skips that drop content are the symmetric twin of suppression" (per-extension-split closure path).
-
 ### suggest_fix shape contradictions
 
 

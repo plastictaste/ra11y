@@ -1764,6 +1764,26 @@ export interface ScanWarningDetails {
    * the same concept must use one shape": derivation is strictly
    * partitioned so a token in `topExtension` is always a dotted
    * extension, never conflated with the canonical-filename channel.
+   * `topExtension` / `topCount` are derived as `argmax(perExtensionCounts)`
+   * so the headline scalar and the per-extension breakdown agree on
+   * the dominant entry — no two-numbers-disagreeing failure mode.
+   *
+   * `perExtensionCounts` is the per-extension breakdown of the dotted-
+   * extensions slice — `Record<extension, count>` enumerating every
+   * surviving entry alongside its count. Same key set as the
+   * `extensions` array (the array carries the descending-count order;
+   * the record carries the count payload). Without this field a top-
+   * level summary like `extensions: [".rmd", ".coffee", ".xml"]` plus
+   * a single dominant `topExtension: ".xml" / topCount: 25` collapses
+   * the actionable subset under one scalar — an agent reading the
+   * warning has no way to tell whether `.rmd` and `.coffee` carry 3
+   * files each or 300 each without descending into `meta.analysisCoverage`.
+   * Per AI-first "Routing skips that drop content are the symmetric
+   * twin of suppression," the per-extension visibility is the load-
+   * bearing budget signal; the scalar headline alone is dishonest one
+   * level deeper than the text-vs-binary split. Present-when-meaningful:
+   * omitted when `extensions` is empty (filename-only skips), same
+   * partition as `topExtension` / `topCount`.
    *
    * `parserRoutableExtensions` is a deterministic subset of
    * `extensions` naming the entries whose format spec defines an
@@ -1785,6 +1805,7 @@ export interface ScanWarningDetails {
    */
   readonly text_source_skipped?: {
     readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
     readonly noExtensionFiles?: readonly string[];
     readonly parserRoutableExtensions?: readonly string[];
     readonly topExtension?: string;
@@ -1809,6 +1830,7 @@ export interface ScanWarningDetails {
    */
   readonly binary_assets_skipped?: {
     readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
     readonly noExtensionFiles?: readonly string[];
     readonly topExtension?: string;
     readonly topCount?: number;
@@ -5171,6 +5193,7 @@ function summarizeDominantLanguage(coverage: Record<string, unknown> | undefined
 function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
       readonly noExtensionFiles?: readonly string[];
       readonly parserRoutableExtensions?: readonly string[];
       readonly topExtension?: string;
@@ -5211,6 +5234,7 @@ function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefine
 function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
       readonly noExtensionFiles?: readonly string[];
       readonly topExtension?: string;
       readonly topCount?: number;
@@ -5422,6 +5446,7 @@ function summarizeSkippedSubset(
 ):
   | {
       readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
       readonly noExtensionFiles?: readonly string[];
       readonly topExtension?: string;
       readonly topCount?: number;
@@ -5468,10 +5493,21 @@ function summarizeSkippedSubset(
   // predicate fired purely on no-extension filenames, both fields are
   // omitted (present-when-meaningful) so an agent walks
   // `noExtensionFiles[]` for the actionable list rather than reading a
-  // filename out of `topExtension`.
+  // filename out of `topExtension`. `perExtensionCounts` carries the
+  // per-extension breakdown so the agent can budget against the
+  // actionable subset without descending into `meta.analysisCoverage`;
+  // built from the same dotted-extensions slice and inserted in
+  // descending-count order so the wire shape stays deterministic
+  // (object key order is preserved at JSON serialization on both V8
+  // and modern engines).
   const topExtensionEntry = extensions[0];
+  const perExtensionCounts: Record<string, number> = {};
+  for (const [ext, count] of extensions) {
+    perExtensionCounts[ext] = count;
+  }
   return {
     extensions: extensions.map(([ext]) => ext),
+    ...(extensions.length > 0 ? { perExtensionCounts } : {}),
     ...(noExtensionFiles.length > 0 ? { noExtensionFiles } : {}),
     ...(topExtensionEntry === undefined
       ? {}
