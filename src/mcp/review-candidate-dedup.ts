@@ -275,9 +275,37 @@ export function dedupeReviewCandidatesForSingleFile(
 ): readonly DedupedReviewCandidate[] {
   const byReasonKey = passOneCollectByReasonKey(candidates);
   const byPositionKey = passTwoCollectByPosition(byReasonKey);
-  return [...byPositionKey.values()]
-    .sort((a, b) => a.order - b.order)
-    .map((acc) => materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths));
+  // Primary sort: scanner-emitted `order` (file alphabetic, line, column)
+  // — preserves the deterministic-shape contract callers depend on.
+  // Secondary partition: float non-vendor candidates ahead of vendor
+  // (build-artifact-pathed) candidates so the FIRST row the agent reads
+  // on `scan_file.reviewCandidates[]` / `scan_project.reviewCandidates[]`
+  // is non-vendor when one exists. Mirrors the per-item partition
+  // applied on `checklist.items[].candidates[]` (see
+  // `tool-checklist.ts#partitionVendorCandidatesLast`) so the cross-
+  // surface candidate-shape contract holds — per ai-first-consumer.md
+  // "Per-tool review-candidate shape must agree across surfaces" +
+  // "NextStep prioritization on truncated/bulk responses must avoid
+  // first-by-filename routing." Stable: ties (within a vendor group or
+  // within the non-vendor group) preserve `order`.
+  const ordered = [...byPositionKey.values()].sort((a, b) => a.order - b.order);
+  if (buildArtifactPaths.size > 0) {
+    const indexed = ordered.map((acc, idx) => ({
+      acc,
+      idx,
+      isVendor: buildArtifactPaths.has(acc.filePath),
+    }));
+    indexed.sort((a, b) => {
+      if (a.isVendor !== b.isVendor) return a.isVendor ? 1 : -1;
+      return a.idx - b.idx;
+    });
+    return indexed.map((e) =>
+      materializeDedupedCandidate(e.acc, criterionLevels, buildArtifactPaths),
+    );
+  }
+  return ordered.map((acc) =>
+    materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths),
+  );
 }
 
 /**

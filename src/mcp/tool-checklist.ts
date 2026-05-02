@@ -1125,6 +1125,29 @@ export const checklistTool: McpTool = {
     //     recording step after per-item investigation.
     // Conditional-spread discipline (CLAUDE.md §1): `nextStep` +
     // `nextStepStructured` ship together or not at all.
+    // All-vendor scope detection: every actionable item's grounded
+    // candidates land on paths classified under the corpus-level
+    // `buildArtifactPaths` set (vendor stylesheets, minified bundles).
+    // Per `docs/kb/architecture/ai-first-consumer.md` "NextStep
+    // handoffs must terminate at a narrowing tool" + "NextStep
+    // prioritization on truncated/bulk responses must avoid first-by-
+    // filename routing," when the only actionable work is on vendor
+    // input the agent can't fix in source, the next-step recommendation
+    // must route to a scope-narrowing call (`scan_project` with
+    // `additionalPaths` pointing at authored sub-trees) — NOT to a
+    // sibling tool that would re-scan the same vendor scope. Computed
+    // here so the gate fires only when actionable items exist (gate is
+    // dominated by the empty-actionable branch otherwise) AND only
+    // when the corpus actually carries vendor classification (fast
+    // path: empty `buildArtifactPaths` skips the per-item walk).
+    const allActionableOnVendor =
+      actionable.length > 0 &&
+      buildArtifactPaths.size > 0 &&
+      actionable.every(
+        (item) =>
+          item.candidates.length > 0 &&
+          item.candidates.every((c) => buildArtifactPaths.has(c.path)),
+      );
     const checklistNextStep = buildChecklistNextStep({
       actionableLen: actionable.length,
       truncated: page.paginationFields.truncated === true,
@@ -1136,6 +1159,7 @@ export const checklistTool: McpTool = {
       cwd,
       standard: strParam(params, "standard"),
       level: strParam(params, "level"),
+      allActionableOnVendor,
     });
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
     // a `checklist` response shaped like `{ items: [], untargetedCriteria: 0 }`
@@ -1781,6 +1805,50 @@ function finderOrBuiltSnippet(
   });
 }
 
+/**
+ * Stable secondary sort that floats non-vendor candidates ahead of
+ * vendor (build-artifact-pathed) candidates within a single checklist
+ * item's `candidates[]` array. The engine's primary sort
+ * (`compareCandidates` in `src/engine/scanner.ts`) already orders
+ * candidates by `(filePath, line, criterionId)` — alphabetical filename
+ * — so a vendor stylesheet whose path sorts before authored source
+ * lands as `candidates[0]` for the criterion. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "NextStep prioritization
+ * on truncated/bulk responses must avoid first-by-filename routing"
+ * the FIRST candidate the agent sees on each item must reflect impact,
+ * not lexical order. Surfacing a vendor file first wastes a `suggest_fix`
+ * call on a path the user didn't author.
+ *
+ * Per AI-first doctrine "Surface, don't suppress" + "Don't downgrade
+ * priority to hide things," vendor candidates remain in the array
+ * (the agent can still read them and decide); they just lose the
+ * `candidates[0]` slot to non-vendor siblings when one exists. Sort is
+ * stable: within the non-vendor group and within the vendor group, the
+ * upstream order from `compareCandidates` (filename-then-line) is
+ * preserved.
+ *
+ * No-op when `buildArtifactPaths` is empty (authored-source corpus, the
+ * fast path) — every candidate scores 0 and the upstream order survives.
+ */
+function partitionVendorCandidatesLast(
+  mapped: readonly ChecklistCandidateOut[],
+  buildArtifactPaths: ReadonlySet<string>,
+): ChecklistCandidateOut[] {
+  if (buildArtifactPaths.size === 0) return [...mapped];
+  // Carry the upstream index so the comparator is a stable sort: ties
+  // preserve `compareCandidates`'s filename-then-line ordering.
+  const indexed = mapped.map((c, idx) => ({
+    c,
+    idx,
+    isVendor: buildArtifactPaths.has(c.path),
+  }));
+  indexed.sort((a, b) => {
+    if (a.isVendor !== b.isVendor) return a.isVendor ? 1 : -1;
+    return a.idx - b.idx;
+  });
+  return indexed.map((e) => e.c);
+}
+
 function buildChecklistItem(
   criterion: { id: string; standardId: string; localId: string; title: string; level: string },
   candidates: readonly ReviewCandidate[],
@@ -1790,7 +1858,8 @@ function buildChecklistItem(
   stalenessProbe: AttestationStalenessProbe | undefined,
   buildArtifactPaths: ReadonlySet<string>,
 ): { item: ChecklistItemOut; relevant: boolean } {
-  const mapped = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
+  const mappedRaw = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
+  const mapped = partitionVendorCandidatesLast(mappedRaw, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
   // "low" confidence — by definition the scanner has no specific
@@ -2542,6 +2611,17 @@ interface ChecklistNextStepInputs {
   readonly cwd: string;
   readonly standard: string | undefined;
   readonly level: string | undefined;
+  /**
+   * True when every actionable item's `candidates[]` lands entirely on
+   * paths in the corpus-level `buildArtifactPaths` set (vendor /
+   * minified bundles). When set, the next-step recommendation routes
+   * to a scope-narrowing call (`scan_project` with `additionalPaths`)
+   * rather than at a sibling tool that would re-scan the same vendor
+   * scope — per `docs/kb/architecture/ai-first-consumer.md` "NextStep
+   * handoffs must terminate at a narrowing tool, never form a cycle
+   * between transport-failing siblings."
+   */
+  readonly allActionableOnVendor: boolean;
 }
 
 /**
@@ -2592,12 +2672,37 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
     totalCandidates,
     limit,
     cwd,
+    allActionableOnVendor,
   } = inputs;
   if (actionableLen === 0) {
     return {
       nextStep:
         "No actionable manual items. Call `coverage` for the per-standard compliance dashboard. For a full end-to-end conformance audit, use the `ra11y/audit` prompt (via `prompts/get`); for per-criterion VPAT narrative drafting, use the `ra11y/vpat-narrative` prompt.",
       nextStepStructured: { tool: "coverage", args: buildChecklistArgs(inputs) },
+    };
+  }
+  // All-vendor actionable scope: every grounded candidate sits on a
+  // path classified under `buildArtifactPaths`. The agent's per-item
+  // `suggest_fix` budget would burn on paths the user cannot edit in
+  // source. Per ai-first-consumer.md "NextStep handoffs must
+  // terminate at a narrowing tool" + "NextStep prioritization on
+  // truncated/bulk responses must avoid first-by-filename routing,"
+  // the structured hint routes to `scan_project` with
+  // `additionalPaths` so the agent re-scopes to authored sub-trees
+  // they own. Prose names the failure-mode and the scope-down move
+  // explicitly. Fires before the truncated / cursor / near-limit
+  // branches so the routing-into-vendor failure mode wins over the
+  // pagination branches — paginating into more vendor candidates is
+  // the cycle the doctrine warns against. Tested by the integration
+  // fixture under `tests/unit/mcp/tool-checklist-vendor-nextstep.test.ts`.
+  if (allActionableOnVendor) {
+    return {
+      nextStep:
+        "Every actionable item's candidates land on paths classified as build artifacts (vendor / minified bundles). These are not editable in source; the dismissal direction is to scope down. Call `scan_project` again with `additionalPaths` set to the authored sub-tree(s) you own (e.g. `['src']`, `['app/components']`) so the rerun excludes the vendor input, OR add the vendor path globs to your `ra11y.config.ts` `exclude` list so future scans drop them at discovery. After scoping, re-call `checklist` to see the authored-source manual-review queue.",
+      nextStepStructured: {
+        tool: "scan_project",
+        args: { cwd, additionalPaths: [] },
+      },
     };
   }
   if (truncated && typeof nextOffset === "number") {
