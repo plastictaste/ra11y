@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   classifyFragment,
+  inspectFragmentRole,
   isFragmentFile,
   looksLikeHtmlIncludePartialPath,
 } from "../../../src/engine/layout-partial.ts";
@@ -356,6 +357,142 @@ describe("looksLikeHtmlIncludePartialPath", () => {
 
     it("rejects HTML at the root (no convention dir)", () => {
       expect(looksLikeHtmlIncludePartialPath("index.html")).toBe(false);
+    });
+  });
+});
+
+describe("inspectFragmentRole", () => {
+  // Role-detection signals back the `composition_shell` /
+  // `leaf_partial` discriminator on
+  // `analysisCoverage.fragmentFiles[].kind`. Per AI-first consumer
+  // doctrine "Heuristic-mislabeled meta sub-fields are dishonest" the
+  // discriminator's load-bearing predicate is the AST evidence
+  // (`topLevelLandmarkTags`, `hasOnlyInlineContent`); path-token
+  // signals ride along as additive context only.
+
+  describe("topLevelLandmarkTags — AST evidence for composition_shell", () => {
+    it("surfaces a single top-level <header> tag", () => {
+      const doc = parse("<header><h1>Site</h1></header>");
+      const role = inspectFragmentRole(doc, "_includes/header.html");
+      expect(role.topLevelLandmarkTags).toEqual(["header"]);
+    });
+
+    it("surfaces a single top-level <nav> tag", () => {
+      const doc = parse('<nav><a href="/">Home</a></nav>');
+      const role = inspectFragmentRole(doc, "_includes/nav.html");
+      expect(role.topLevelLandmarkTags).toEqual(["nav"]);
+    });
+
+    it("surfaces a top-level <main> tag (the canonical landmark for content rules)", () => {
+      const doc = parse("<main><article>body</article></main>");
+      const role = inspectFragmentRole(doc, "_includes/main.html");
+      expect(role.topLevelLandmarkTags).toEqual(["main"]);
+    });
+
+    it("surfaces multiple top-level landmarks sorted alphabetically", () => {
+      const doc = parse("<header>h</header><footer>f</footer>");
+      const role = inspectFragmentRole(doc, "_includes/banner.html");
+      expect(role.topLevelLandmarkTags).toEqual(["footer", "header"]);
+    });
+
+    it("does NOT surface landmarks nested inside a presentational wrapper", () => {
+      // The discriminator's evidence is "the partial IS the landmark"
+      // — a `<header>` nested inside a `<div>` doesn't qualify
+      // because the partial's role is the wrapper div, not the
+      // landmark.
+      const doc = parse("<div><header>h</header></div>");
+      const role = inspectFragmentRole(doc, "_includes/wrapper.html");
+      expect(role.topLevelLandmarkTags).toEqual([]);
+    });
+
+    it("dedupes repeated top-level landmark tags", () => {
+      const doc = parse("<nav>a</nav><nav>b</nav>");
+      const role = inspectFragmentRole(doc, "_includes/dual-nav.html");
+      expect(role.topLevelLandmarkTags).toEqual(["nav"]);
+    });
+  });
+
+  describe("hasOnlyInlineContent — AST evidence for leaf_partial", () => {
+    it("returns true when every element is from the inline tag set", () => {
+      const doc = parse(
+        '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>',
+      );
+      const role = inspectFragmentRole(doc, "_includes/icon.html");
+      expect(role.hasOnlyInlineContent).toBe(true);
+    });
+
+    it("returns true on a link-list of inline anchors", () => {
+      const doc = parse('<a href="/a">A</a><a href="/b">B</a>');
+      const role = inspectFragmentRole(doc, "_includes/link-row.html");
+      expect(role.hasOnlyInlineContent).toBe(true);
+    });
+
+    it("returns false when any non-inline element is present (a single <div> defeats it)", () => {
+      // A `<div>` is neither a landmark nor an inline tag — its
+      // presence is uninformative for the leaf-partial predicate
+      // (divs appear in BOTH leaf and composition shells), so
+      // `hasOnlyInlineContent` reports false to keep the discriminator
+      // honest.
+      const doc = parse('<div><a href="/">Home</a></div>');
+      const role = inspectFragmentRole(doc, "_includes/wrapped-link.html");
+      expect(role.hasOnlyInlineContent).toBe(false);
+    });
+
+    it("returns false when a landmark element is present anywhere", () => {
+      const doc = parse('<header><a href="/">Home</a></header>');
+      const role = inspectFragmentRole(doc, "_includes/header.html");
+      expect(role.hasOnlyInlineContent).toBe(false);
+    });
+
+    it("returns false on an empty AST (no positive evidence)", () => {
+      // A fragment whose AST is empty is not "only inline content" —
+      // there is no positive AST evidence either way. Defaulting to
+      // false here keeps the leaf-partial discriminator from
+      // promoting on absence-of-evidence (which would be the
+      // "Heuristic-mislabeled meta sub-fields" anti-pattern).
+      const doc = parse("");
+      const role = inspectFragmentRole(doc, "_includes/empty.html");
+      expect(role.hasOnlyInlineContent).toBe(false);
+    });
+  });
+
+  describe("path-token additive evidence", () => {
+    it("matches `header.html` via path token", () => {
+      const role = inspectFragmentRole(parse(""), "_includes/header.html");
+      expect(role.pathSuggestsCompositionShell).toBe(true);
+      expect(role.pathSuggestsLeafPartial).toBe(false);
+    });
+
+    it("matches `MainNav.tsx` via camelCase tokenization", () => {
+      // The `MainNav` basename splits into `main` + `nav` tokens —
+      // composition-shell evidence on a TitleCase component name.
+      const role = inspectFragmentRole(parse(""), "components/MainNav.tsx");
+      expect(role.pathSuggestsCompositionShell).toBe(true);
+    });
+
+    it("matches `site-header.html` via dash tokenization", () => {
+      const role = inspectFragmentRole(parse(""), "_includes/site-header.html");
+      expect(role.pathSuggestsCompositionShell).toBe(true);
+    });
+
+    it("matches `icon-arrow.html` for the leaf-partial token", () => {
+      const role = inspectFragmentRole(parse(""), "_includes/icon-arrow.html");
+      expect(role.pathSuggestsLeafPartial).toBe(true);
+      expect(role.pathSuggestsCompositionShell).toBe(false);
+    });
+
+    it("does NOT match `mainstream.html` (no token boundary on `main`)", () => {
+      // The token-boundary requirement keeps `main` from
+      // false-positive-matching `mainstream` — the basename's
+      // dash/underscore segments are `mainstream`, not `main`.
+      const role = inspectFragmentRole(parse(""), "_includes/mainstream.html");
+      expect(role.pathSuggestsCompositionShell).toBe(false);
+    });
+
+    it("returns false on an empty path", () => {
+      const role = inspectFragmentRole(parse(""), "");
+      expect(role.pathSuggestsCompositionShell).toBe(false);
+      expect(role.pathSuggestsLeafPartial).toBe(false);
     });
   });
 });

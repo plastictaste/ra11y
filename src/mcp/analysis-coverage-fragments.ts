@@ -17,10 +17,58 @@
  * without an explicit type cast.
  */
 
-import type { FragmentClassificationSignals } from "../engine/layout-partial.ts";
+import {
+  type FragmentClassificationSignals,
+  type FragmentRoleSignals,
+  inspectFragmentRole,
+} from "../engine/layout-partial.ts";
+import type { ParsedFile } from "../engine/scanner.ts";
+import type { HtmlDocument } from "../types/ast.ts";
 import type { FragmentFileEntry } from "./analysis-coverage-types.ts";
-import { buildFragmentFileEntry, type LayoutCompositionEvidence } from "./markdown-classifier.ts";
+import {
+  buildFragmentFileEntry,
+  isFragmentRoleEligibleExtension,
+  type LayoutCompositionEvidence,
+} from "./markdown-classifier.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
+
+/**
+ * One entry in the fragment-files accumulator the parent module owns.
+ * Co-located here with `pushFragmentEntry` so the writer surface and
+ * the reader surface both live next to the assembler that consumes
+ * them. Mirrors the inline declaration on
+ * {@link import("./analysis-coverage.ts").CoverageAccumulator.fragmentFiles}.
+ */
+export interface FragmentAccumulatorEntry {
+  path: string;
+  signals: FragmentClassificationSignals;
+  roleSignals?: FragmentRoleSignals;
+}
+
+/**
+ * Pushes a `fragmentFiles[]` accumulator entry, computing role-
+ * detection signals on HTML-routed extensions only. Markdown / SVG
+ * fragments discriminate by extension at `classifyFragmentKind` so
+ * the AST role walk would be wasted work and would mislead an agent
+ * into reading the role signals as load-bearing for those kinds.
+ * Extracted from `accumulateHtmlCoverageForFile` so the parent module
+ * stays under the {@link MAX_FILE_LINES} budget; the per-file write
+ * path stays a single call site.
+ */
+export function pushFragmentEntry(
+  file: ParsedFile,
+  signals: FragmentClassificationSignals,
+  acc: { fragmentFiles: FragmentAccumulatorEntry[] },
+): void {
+  const roleSignals = isFragmentRoleEligibleExtension(file.filePath)
+    ? inspectFragmentRole(file.ast.root as HtmlDocument, file.filePath)
+    : undefined;
+  acc.fragmentFiles.push({
+    path: file.filePath,
+    signals,
+    ...(roleSignals === undefined ? {} : { roleSignals }),
+  });
+}
 
 /**
  * Narrow structural view of the `CoverageBlock` fields this assembler
@@ -58,14 +106,15 @@ export function assembleFragmentFilesBlock(
   fragmentFiles: readonly {
     readonly path: string;
     readonly signals: FragmentClassificationSignals;
+    readonly roleSignals?: FragmentRoleSignals;
   }[],
   coverage: FragmentCoverageWriter,
   evidence: LayoutCompositionEvidence,
 ): boolean {
   coverage.fragmentFileCount = fragmentFiles.length;
   const sorted = [...fragmentFiles].sort((a, b) => a.path.localeCompare(b.path));
-  const entries: FragmentFileEntry[] = sorted.map(({ path, signals }) =>
-    buildFragmentFileEntry(path, signals, evidence),
+  const entries: FragmentFileEntry[] = sorted.map(({ path, signals, roleSignals }) =>
+    buildFragmentFileEntry(path, signals, evidence, roleSignals),
   );
   const capped = capMetaArray(entries);
   coverage.fragmentFiles = capped.values;

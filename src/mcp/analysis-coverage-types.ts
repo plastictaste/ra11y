@@ -7,7 +7,10 @@
  * per-section logic, and the shared shapes they both touch live here.
  */
 
-import type { FragmentClassificationSignals } from "../engine/layout-partial.ts";
+import type {
+  FragmentClassificationSignals,
+  FragmentRoleSignals,
+} from "../engine/layout-partial.ts";
 
 /**
  * A file whose parser emitted errors. The `reason` is the first parse
@@ -80,23 +83,57 @@ export interface ParseErrorEntry {
  *
  *   - `html_partial` — generic HTML fragment that lacks the document
  *     envelope but does NOT match a recognized SSG include / partial
- *     path convention. The catch-all bucket: a snippet fixture, a
- *     README-embedded HTML island, or a partial under a non-
- *     conventional dir. Document-shaped rules (`landmark-main`,
- *     `heading-hierarchy`, `page-titled`, `lang-attribute`) are out
- *     of scope on the assumption a parent layout supplies the
- *     envelope.
+ *     path convention AND whose AST evidence is mixed / ambiguous for
+ *     the composition-vs-leaf discriminator. The catch-all bucket: a
+ *     snippet fixture, a README-embedded HTML island, or a partial
+ *     under a non-conventional dir. Document-shaped rules
+ *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
+ *     `lang-attribute`) are out of scope on the assumption a parent
+ *     layout supplies the envelope.
+ *   - `composition_shell` — HTML fragment whose AST surfaces a
+ *     top-level structural landmark (`<header>`, `<nav>`, `<main>`,
+ *     `<footer>`, `<aside>`, `<form>`, `<article>`) as a direct
+ *     document-root child. The fragment IS providing landmark
+ *     coverage the assembled document depends on — `landmark-main`
+ *     should evaluate at higher confidence on a `composition_shell`
+ *     containing `<main>`; `landmark-main` on a `composition_shell`
+ *     containing `<header>` should still skip (the file's role is the
+ *     header, not the main). Stricter-evidence sibling of
+ *     `layout_include_partial`: a file can be both (a Jekyll
+ *     `_includes/header.html` whose AST contains a top-level `<header>`
+ *     earns `composition_shell` over `layout_include_partial` because
+ *     the AST evidence is more specific about role). Per AI-first
+ *     consumer doctrine "Heuristic-mislabeled meta sub-fields are
+ *     dishonest," the discriminator requires AST evidence (path-
+ *     basename tokens like `header.html` are surfaced as additive
+ *     context but never load-bearing on their own).
+ *   - `leaf_partial` — HTML fragment whose AST contains zero landmark
+ *     elements and whose top-level content is exclusively inline tags
+ *     (`<a>`, `<span>`, `<button>`, `<svg>`, `<img>`, etc.). Pure
+ *     presentational / utility includes: an icon SVG host, a badge
+ *     wrapper, a code-demo snippet. Document-shape rules
+ *     (`landmark-main`, `heading-hierarchy`, `page-titled`,
+ *     `lang-attribute`) should NOT emit on a `leaf_partial` — the
+ *     fragment is NOT a document and the rule has no useful answer.
+ *     Also stricter-evidence sibling of `layout_include_partial`: a
+ *     file matching both (an `_includes/icon-arrow.html` with only
+ *     `<svg>`/`<path>` content) earns `leaf_partial` over
+ *     `layout_include_partial` because the AST evidence is more
+ *     specific.
  *   - `layout_include_partial` — HTML fragment whose path matches an
  *     SSG include / partial convention (`_includes/<name>.html`,
  *     `partials/<name>.html`, `_partials/<name>.html`,
  *     `templates/_<name>.html`) AND whose source lacks an `<html>`
- *     opener. Stricter-evidence sibling of `html_partial`: both path
- *     pattern and fragment shape agree the file is a Jekyll / Hugo /
- *     Eleventy / Pelican include intentionally composed by a parent
- *     layout, so the kind names that classification deterministically
- *     rather than leaving the agent to guess from the path. Per
- *     AI-first consumer doctrine "Routing skips that drop content are
- *     the symmetric twin of suppression": the scanner stops routing
+ *     opener AND whose AST evidence is ambiguous for the
+ *     composition-vs-leaf discriminator (mixed structural content,
+ *     no top-level landmark, but also non-inline elements present).
+ *     Stricter-evidence sibling of `html_partial`: both path pattern
+ *     and fragment shape agree the file is a Jekyll / Hugo / Eleventy
+ *     / Pelican include intentionally composed by a parent layout, so
+ *     the kind names that classification deterministically rather
+ *     than leaving the agent to guess from the path. Per AI-first
+ *     consumer doctrine "Routing skips that drop content are the
+ *     symmetric twin of suppression": the scanner stops routing
  *     these files into the `parseErrorFiles[]` bucket (where parser
  *     "Unclosed `<html>` element" reasons would mislead the agent)
  *     and surfaces the honest fragment classification instead.
@@ -139,6 +176,8 @@ export interface FragmentFileEntry {
   readonly path: string;
   readonly kind:
     | "html_partial"
+    | "composition_shell"
+    | "leaf_partial"
     | "layout_include_partial"
     | "markdown_residue"
     | "markdown_unclassified"
@@ -158,6 +197,25 @@ export interface FragmentFileEntry {
    * sub-field labels clear the "100% correct from the evidence" bar.
    */
   readonly fragmentClassificationSignals: FragmentClassificationSignals;
+  /**
+   * AST + path-side evidence — present-when-meaningful — backing the
+   * `composition_shell` / `leaf_partial` discriminator. Surfaced only
+   * on entries where the kind was promoted from the catch-all
+   * `html_partial` / `layout_include_partial` to the role-specific
+   * sibling, AND on `html_partial` / `layout_include_partial` entries
+   * where the evidence is mixed (the role-detection ran but the AST
+   * was ambiguous), so an agent auditing a `composition_shell` /
+   * `leaf_partial` classification reads the structural evidence the
+   * predicate consumed without re-deriving it. Omitted on
+   * non-HTML-fragment kinds (`markdown_*`, `svg_standalone`) where
+   * role detection is not meaningful.
+   *
+   * Per AI-first consumer doctrine "Heuristic-mislabeled meta sub-
+   * fields are dishonest," every signal here is provable from the
+   * file alone (AST tag walk, path basename) so the sub-field labels
+   * clear the "100% correct from the evidence" bar.
+   */
+  readonly fragmentRoleSignals?: FragmentRoleSignals;
   /**
    * Additive evidence — present-when-meaningful — naming the layout-
    * composition signal(s) that promoted a `.md` / `.markdown` entry

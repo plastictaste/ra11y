@@ -19,6 +19,7 @@
 
 import {
   type FragmentClassificationSignals,
+  type FragmentRoleSignals,
   looksLikeHtmlIncludePartialPath,
 } from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
@@ -201,6 +202,23 @@ export function isMarkdownFile(filePath: string): boolean {
 }
 
 /**
+ * True when `filePath` is an HTML / HTML-routed extension whose role
+ * signals are meaningful for the `composition_shell` / `leaf_partial`
+ * discriminator. Markdown (`.md` / `.markdown`) and SVG (`.svg` /
+ * `.svgz`) discriminate by extension at `classifyFragmentKind` so the
+ * AST role walk would be wasted work — and surfacing role signals on
+ * those entries would mislead an agent into reading them as load-
+ * bearing for the discriminator. Mirrors the extension-driven branch
+ * arms in {@link classifyFragmentKind}.
+ */
+export function isFragmentRoleEligibleExtension(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) return false;
+  if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return false;
+  return true;
+}
+
+/**
  * Categorizes a fragment file. The discriminator is provable from the
  * file extension AND deterministic in-scope layout-composition
  * evidence — per AI-first consumer doctrine "Heuristic-mislabeled
@@ -252,6 +270,7 @@ export function classifyFragmentKind(
   filePath: string,
   evidence?: LayoutCompositionEvidence,
   signals?: FragmentClassificationSignals,
+  roleSignals?: FragmentRoleSignals,
 ): { kind: FragmentFileEntry["kind"]; ssgEvidence?: readonly string[] } {
   const lower = filePath.toLowerCase();
   if (lower.endsWith(".svg") || lower.endsWith(".svgz")) return { kind: "svg_standalone" };
@@ -259,6 +278,38 @@ export function classifyFragmentKind(
     const ssgEvidence = collectSsgEvidenceTokens(evidence);
     if (ssgEvidence.length > 0) return { kind: "markdown_residue", ssgEvidence };
     return { kind: "markdown_unclassified" };
+  }
+  // Composition-shell / leaf-partial promotions: AST-evidence-driven
+  // discriminators that further specify HTML fragments where the
+  // scanner has structural evidence about the partial's role in the
+  // assembled document. Both run BEFORE `layout_include_partial` so a
+  // fragment that's BOTH an SSG include AND has unambiguous role
+  // evidence earns the role-specific kind (the AST evidence is more
+  // specific about what document-shape rules should do — a Jekyll
+  // `_includes/header.html` containing a top-level `<header>` is
+  // composition-shell first, include-partial second; the AI-first
+  // doctrine "Heuristic-mislabeled meta sub-fields are dishonest"
+  // requires the discriminator name the most specific evidence the
+  // scanner has).
+  //
+  // composition_shell: top-level landmark element present in the AST.
+  // The path-token evidence (`pathSuggestsCompositionShell`) is
+  // surfaced as additive context but NEVER the load-bearing
+  // predicate — a fragment named `header.html` with no `<header>` in
+  // the AST does not earn the kind, because the path-pattern alone
+  // is heuristic.
+  //
+  // leaf_partial: zero landmark elements anywhere in the AST AND
+  // every element is an inline tag from the curated set. The
+  // path-token evidence (`pathSuggestsLeafPartial`) is similarly
+  // additive context only.
+  if (roleSignals !== undefined) {
+    if (roleSignals.topLevelLandmarkTags.length > 0) {
+      return { kind: "composition_shell" };
+    }
+    if (roleSignals.hasOnlyInlineContent) {
+      return { kind: "leaf_partial" };
+    }
   }
   // Two-signal AND for the layout_include_partial promotion: the file
   // path matches an SSG include / partial convention AND the caller
@@ -290,12 +341,31 @@ export function buildFragmentFileEntry(
   path: string,
   fragmentClassificationSignals: FragmentClassificationSignals,
   evidence: LayoutCompositionEvidence,
+  roleSignals?: FragmentRoleSignals,
 ): FragmentFileEntry {
-  const classification = classifyFragmentKind(path, evidence, fragmentClassificationSignals);
+  const classification = classifyFragmentKind(
+    path,
+    evidence,
+    fragmentClassificationSignals,
+    roleSignals,
+  );
+  // `fragmentRoleSignals` is present-when-meaningful per AI-first
+  // consumer doctrine: surface only on HTML-fragment kinds where role
+  // detection actually ran. Markdown / SVG entries discard the role
+  // evidence because the discriminator is extension-driven and the
+  // AST evidence isn't part of the predicate.
+  const isHtmlFragmentKind =
+    classification.kind === "html_partial" ||
+    classification.kind === "composition_shell" ||
+    classification.kind === "leaf_partial" ||
+    classification.kind === "layout_include_partial";
   return {
     path,
     kind: classification.kind,
     fragmentClassificationSignals,
+    ...(roleSignals !== undefined && isHtmlFragmentKind
+      ? { fragmentRoleSignals: roleSignals }
+      : {}),
     ...(classification.ssgEvidence === undefined
       ? {}
       : { ssgEvidence: classification.ssgEvidence }),

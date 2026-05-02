@@ -232,13 +232,16 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
 
     // Both surfaces surface the same structural-signal evidence —
     // every signal is `false` (the AND-conjunction stamped fragment)
-    // and the kind is `layout_include_partial` (the recognized SSG
-    // include path AND fragment-shape gate fires).
+    // and the kind is `composition_shell` (the AST surfaces a top-
+    // level `<header>` landmark — the role-driven kind wins over
+    // `layout_include_partial` because the AST evidence is more
+    // specific about role per AI-first doctrine "Heuristic-mislabeled
+    // meta sub-fields are dishonest").
     const scanProjectEntry = analysisCoverageOf(scanProject)?.fragmentFiles?.find((e) =>
       e.path.endsWith("_includes/header.html"),
     );
-    expect(scanProjectEntry?.kind).toBe("layout_include_partial");
-    expect(scanFileEntry?.kind).toBe("layout_include_partial");
+    expect(scanProjectEntry?.kind).toBe("composition_shell");
+    expect(scanFileEntry?.kind).toBe("composition_shell");
     expect(scanProjectEntry?.fragmentClassificationSignals).toEqual({
       hasHtmlOpener: false,
       hasLayoutDirective: false,

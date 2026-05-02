@@ -319,6 +319,118 @@ function hasHtmlOpener(doc: HtmlDocument, source: string): boolean {
 }
 
 /**
+ * Tags treated as "structural landmarks" for the composition-shell-vs-
+ * leaf-partial discriminator on fragment files. A fragment whose AST
+ * carries one of these as a top-level child is composition-shell shape
+ * (the partial supplies a landmark the assembled document depends on);
+ * a fragment whose AST carries none of these is leaf-partial shape (a
+ * pure presentational include, an icon SVG host, a code-demo wrapper).
+ *
+ * Subset of the broader landmark set the rule engine reads for
+ * `landmark-main` / heading-hierarchy decisions: includes `<form>` and
+ * `<article>` because authored composition shells routinely lift those
+ * to top level (a navigation bar's `<form role="search">` often lives
+ * in the same partial as the surrounding `<header>` / `<nav>`). The
+ * predicate is provable from the AST alone — no path-pattern fallback —
+ * so the discriminator clears the AI-first consumer "no heuristic-
+ * mislabeled meta sub-fields" bar when AST evidence is sufficient.
+ */
+const COMPOSITION_LANDMARK_TAGS: ReadonlySet<string> = new Set([
+  "header",
+  "nav",
+  "main",
+  "footer",
+  "aside",
+  "form",
+  "article",
+]);
+
+/**
+ * Tags whose presence inside a fragment file signals "inline / leaf
+ * content" — pure presentational markup (icon hosts, badges, link
+ * lists, code-demo wrappers) with no structural landmark contribution.
+ * Used by {@link inspectFragmentRole} as the inline-content evidence
+ * the leaf-partial discriminator reads alongside the absence of any
+ * {@link COMPOSITION_LANDMARK_TAGS} entry. The set intentionally omits
+ * `<div>` / `<section>` because those elements appear in BOTH leaf
+ * and composition-shell partials, so their presence is uninformative.
+ */
+const INLINE_CONTENT_TAGS: ReadonlySet<string> = new Set([
+  "a",
+  "abbr",
+  "b",
+  "br",
+  "button",
+  "code",
+  "em",
+  "i",
+  "img",
+  "kbd",
+  "li",
+  "mark",
+  "ol",
+  "p",
+  "path",
+  "pre",
+  "samp",
+  "small",
+  "span",
+  "strong",
+  "svg",
+  "time",
+  "ul",
+  "use",
+]);
+
+/**
+ * Path-basename tokens whose presence in a fragment's filename is
+ * conventional evidence of a composition-shell role
+ * (`_includes/header.html`, `partials/nav.html`,
+ * `components/MainNav.tsx`, `_includes/site-footer.html`). Compared
+ * against the basename's stem (extension stripped) lowercased, with
+ * dash- or underscore-delimited substring matching so
+ * `site-header.html` and `MainNav.tsx` both match. Used by
+ * {@link inspectFragmentRole} as additive path-side evidence —
+ * surfaced on the role signals so an agent auditing the
+ * `composition_shell` discriminator reads both the AST evidence
+ * (top-level landmark tags) and the filename evidence in one pass.
+ *
+ * Per AI-first consumer doctrine "Heuristic-mislabeled meta sub-
+ * fields are dishonest," path-pattern alone NEVER promotes — the
+ * `composition_shell` kind requires AST evidence (top-level landmark
+ * tag actually present in the parsed file). The path-side tokens are
+ * surfaced as additive context, never as the load-bearing predicate.
+ */
+const COMPOSITION_SHELL_PATH_TOKENS: readonly string[] = [
+  "header",
+  "nav",
+  "navigation",
+  "footer",
+  "main",
+  "sidebar",
+  "masthead",
+];
+
+/**
+ * Path-basename tokens whose presence in a fragment's filename is
+ * conventional evidence of a leaf-partial role (icon hosts, badges,
+ * code-demo snippets, utility includes). Same matching shape as
+ * {@link COMPOSITION_SHELL_PATH_TOKENS}: extension-stripped basename,
+ * lowercased, dash/underscore-delimited substring match.
+ */
+const LEAF_PARTIAL_PATH_TOKENS: readonly string[] = [
+  "icon",
+  "badge",
+  "svg",
+  "code-demo",
+  "code-block",
+  "code-example",
+  "snippet",
+  "tag",
+  "label",
+];
+
+/**
  * Categorical signals captured during fragment classification. Surfaced
  * on `meta.analysisCoverage.fragmentFiles[]` per-entry as
  * `fragmentClassificationSignals` so an agent auditing a fragment
@@ -439,6 +551,166 @@ export function classifyFragment(
   };
   const isFragment = !(signals.hasHtmlOpener || signals.hasLayoutDirective || signals.inLayoutsDir);
   return { isFragment, signals };
+}
+
+/**
+ * AST + path-side evidence read once per HTML fragment to drive the
+ * `composition_shell` / `leaf_partial` discriminator on
+ * `analysisCoverage.fragmentFiles[].kind`. Computed by
+ * {@link inspectFragmentRole} alongside the existing
+ * {@link FragmentClassificationSignals}; threaded through the
+ * fragment-files accumulator into
+ * {@link import("../mcp/markdown-classifier.ts").classifyFragmentKind}.
+ *
+ * Each signal is provable from the file alone — `topLevelLandmarkTags`
+ * is the lowercased tag-name list of {@link COMPOSITION_LANDMARK_TAGS}
+ * elements that appear as direct top-level structural children of the
+ * parsed document; `hasOnlyInlineContent` is the AST-shape predicate
+ * "every top-level element is an inline tag from
+ * {@link INLINE_CONTENT_TAGS} and there are no landmark tags anywhere
+ * in the tree"; the path-token fields are extension-stripped basename
+ * substring matches against the tightly-curated token lists. Per
+ * AI-first consumer doctrine "Heuristic-mislabeled meta sub-fields
+ * are dishonest," the discriminator NEVER promotes on path tokens
+ * alone — AST evidence is load-bearing and the path-token signals are
+ * surfaced as additive context only.
+ */
+export interface FragmentRoleSignals {
+  /**
+   * Lowercased tag names of {@link COMPOSITION_LANDMARK_TAGS} elements
+   * that appear as direct top-level structural children of the parsed
+   * document (i.e. children of the document root, not nested inside
+   * another element). A fragment with at least one entry here AND a
+   * matching path-token earns the `composition_shell` kind. Empty when
+   * no qualifying top-level landmark is present — a leaf partial, a
+   * pure prose fragment, or a fragment whose landmark sits nested
+   * inside a presentational wrapper.
+   */
+  readonly topLevelLandmarkTags: readonly string[];
+  /**
+   * True when every element descendant of the parsed document is an
+   * inline tag from {@link INLINE_CONTENT_TAGS} (no `<header>` /
+   * `<nav>` / `<main>` / `<footer>` / `<aside>` / `<form>` /
+   * `<article>` / `<section>` / `<div>` anywhere in the tree). The
+   * AST-shape evidence the leaf-partial discriminator reads alongside
+   * a matching path-token. False when the fragment carries any
+   * non-inline element — even a single `<div>` defeats the predicate
+   * because divs appear in BOTH leaf and composition-shell partials,
+   * so their presence makes the AST evidence ambiguous.
+   */
+  readonly hasOnlyInlineContent: boolean;
+  /**
+   * True when the file's basename (extension stripped, lowercased,
+   * dash/underscore-tokenized) contains at least one entry from
+   * {@link COMPOSITION_SHELL_PATH_TOKENS}. Additive context for the
+   * `composition_shell` discriminator — never load-bearing on its
+   * own.
+   */
+  readonly pathSuggestsCompositionShell: boolean;
+  /**
+   * True when the file's basename matches at least one entry from
+   * {@link LEAF_PARTIAL_PATH_TOKENS}. Additive context for the
+   * `leaf_partial` discriminator — never load-bearing on its own.
+   */
+  readonly pathSuggestsLeafPartial: boolean;
+}
+
+/**
+ * Collects the AST + path evidence the fragment-kind classifier needs
+ * to discriminate `composition_shell` / `leaf_partial` from the
+ * existing catch-all `html_partial`. Pure function over the parsed
+ * document + file path; cheap to call (single O(n) walk over the
+ * document's top-level structural children plus a bounded basename
+ * tokenization).
+ *
+ * The function returns role evidence even when the file is not a
+ * fragment — callers that don't classify the file as a fragment simply
+ * discard the result. Called inline from
+ * {@link import("../mcp/analysis-coverage.ts").accumulateHtmlCoverageForFile}
+ * alongside {@link classifyFragment} so the role evidence rides through
+ * the accumulator with no extra parser work.
+ *
+ * @param doc parsed HTML document
+ * @param filePath the file's path (for basename-token evidence)
+ */
+export function inspectFragmentRole(doc: HtmlDocument, filePath: string): FragmentRoleSignals {
+  const topLevelLandmarkTags: string[] = [];
+  let hasOnlyInlineContent = true;
+  let sawAnyElement = false;
+  // Top-level landmark detection: walk the document's direct children,
+  // looking only at HtmlElement nodes whose tagName is in
+  // COMPOSITION_LANDMARK_TAGS. The "top-level" qualifier is structural
+  // — a landmark nested inside a presentational `<div>` does NOT
+  // count, because the partial's composition-shell role is the AST
+  // saying "I AM the landmark," not "I contain a landmark."
+  for (const child of doc.children) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    if (COMPOSITION_LANDMARK_TAGS.has(tag) && !topLevelLandmarkTags.includes(tag)) {
+      topLevelLandmarkTags.push(tag);
+    }
+  }
+  // Inline-only detection: walk the entire tree and check every
+  // element's tag against the inline-allowed set. The presence of ANY
+  // non-inline element (including `<div>`, `<section>`, or a landmark)
+  // defeats the predicate. The walker also surfaces nested top-level
+  // elements that didn't qualify above so the predicate stays honest
+  // on partials whose only structural content is wrapped in a `<div>`.
+  for (const el of walkHtmlElements(doc)) {
+    sawAnyElement = true;
+    const tag = el.tagName.toLowerCase();
+    if (!INLINE_CONTENT_TAGS.has(tag)) {
+      hasOnlyInlineContent = false;
+      break;
+    }
+  }
+  // An empty AST has nothing to prove either way — surface
+  // `hasOnlyInlineContent: false` so the leaf-partial promotion
+  // requires positive AST evidence rather than promoting on no
+  // evidence at all (per "Heuristic-mislabeled meta sub-fields are
+  // dishonest").
+  if (!sawAnyElement) hasOnlyInlineContent = false;
+  return {
+    topLevelLandmarkTags: topLevelLandmarkTags.sort(),
+    hasOnlyInlineContent,
+    pathSuggestsCompositionShell: pathBasenameMatches(filePath, COMPOSITION_SHELL_PATH_TOKENS),
+    pathSuggestsLeafPartial: pathBasenameMatches(filePath, LEAF_PARTIAL_PATH_TOKENS),
+  };
+}
+
+/**
+ * True when the file's basename (extension stripped, lowercased,
+ * dash/underscore-tokenized into segments) contains a segment that
+ * matches an entry in `tokens` — either as the whole segment or as a
+ * substring inside it. The substring branch lets `MainNav.tsx` match
+ * `nav` and `site-header.html` match `header` while still requiring
+ * the dash/underscore boundary so unrelated names like
+ * `mainstream.html` don't accidentally match `main`.
+ */
+function pathBasenameMatches(filePath: string, tokens: readonly string[]): boolean {
+  if (filePath.length === 0) return false;
+  const normalized = filePath.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  const basename = slash === -1 ? normalized : normalized.slice(slash + 1);
+  const dot = basename.lastIndexOf(".");
+  // Preserve case for the camelCase split, then lowercase after the
+  // split has run. Lowercasing first would erase the case-boundary
+  // signal `MainNav` → `main` + `nav` depends on.
+  const stem = dot === -1 ? basename : basename.slice(0, dot);
+  // Tokenize by dash, underscore, or camelCase boundary. The
+  // camelCase split lets `MainNav` separate into `main` + `nav` so
+  // composition-shell components named in TitleCase still match.
+  const segments = stem
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .split(/[-_]/);
+  for (const segment of segments) {
+    if (segment.length === 0) continue;
+    for (const token of tokens) {
+      if (segment === token) return true;
+    }
+  }
+  return false;
 }
 
 /**

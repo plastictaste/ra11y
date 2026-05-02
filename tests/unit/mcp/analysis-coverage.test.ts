@@ -2121,7 +2121,15 @@ describe("buildAnalysisCoverage — hints", () => {
       // Fragment classification fires alongside (the file is HTML,
       // has no `<html>` opener, lives at an SSG include path) so the
       // upstream classification surfaces the file via the honest
-      // narrative.
+      // narrative. The fixture's source AST is empty (the partial-
+      // parse stub never produced HtmlElement nodes), so the role
+      // signals report `topLevelLandmarkTags: []`,
+      // `hasOnlyInlineContent: false` (an empty AST defeats the
+      // leaf-partial predicate per `inspectFragmentRole`), and the
+      // path-token check matches `header` for the composition-shell
+      // additive evidence. Classifier falls back to
+      // `layout_include_partial` because no AST evidence promoted it
+      // to a role-specific kind.
       expect(analysisCoverage?.["fragmentFileCount"]).toBe(1);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
@@ -2131,6 +2139,12 @@ describe("buildAnalysisCoverage — hints", () => {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: [],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
           },
         },
       ]);
@@ -2259,9 +2273,11 @@ describe("buildAnalysisCoverage — hints", () => {
       // (only `_layouts/` and `layouts/` are), so a partial here still
       // classifies as a fragment when its source has no `<html>` opener
       // and no layout-shape composition directive. Kind promotes to
-      // `layout_include_partial` because the path matches an SSG
-      // include convention AND the source lacks `<html>` (two-signal
-      // AND per AI-first doctrine).
+      // `composition_shell` because the AST surfaces a top-level
+      // `<nav>` landmark — the more-specific role-driven sibling of
+      // `layout_include_partial` (the AST evidence overrides path-
+      // pattern alone per the "Heuristic-mislabeled meta sub-fields"
+      // doctrine).
       const fragment = parsedHtml(
         "_includes/header.html",
         '<nav><a href="/">Home</a><a href="/about">About</a></nav>',
@@ -2271,11 +2287,17 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/header.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["nav"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
           },
         },
       ]);
@@ -2292,30 +2314,47 @@ describe("buildAnalysisCoverage — hints", () => {
     // dishonest" the discriminator is provable from extension PLUS
     // (for the layout_include_partial promotion) deterministic path-
     // pattern + fragment-shape evidence.
-    it("tags Jekyll _includes/ HTML partials as kind: layout_include_partial", () => {
+    it("tags Jekyll _includes/ HTML partials with a top-level landmark as kind: composition_shell", () => {
+      // The `_includes/footer.html` partial whose AST surfaces a top-
+      // level `<footer>` is a composition shell — the partial IS
+      // providing the landmark the assembled document depends on.
+      // Stricter-evidence sibling of `layout_include_partial` (the
+      // role-driven kind wins over the path-driven kind because the
+      // AST evidence is more specific about role).
       const fragment = parsedHtml("_includes/footer.html", "<footer>©</footer>");
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/footer.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
           },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["footer"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
+          },
         },
       ]);
     });
 
-    it("tags generic HTML fragments outside SSG-convention paths as kind: html_partial", () => {
-      // `widgets/card.html` does not match any of the recognized SSG
-      // include / partial path conventions
-      // (`_includes/`, `_partials/`, `partials/`, `templates/_<...>`),
-      // so it stays in the catch-all `html_partial` bucket. The
-      // `layout_include_partial` promotion requires BOTH path-pattern
-      // AND fragment-shape evidence; path absent → catch-all kind.
-      const fragment = parsedHtml("widgets/card.html", "<article><h2>Card</h2></article>");
+    it("tags generic HTML fragments outside SSG-convention paths with non-landmark, non-inline content as kind: html_partial", () => {
+      // `widgets/card.html` whose AST is a top-level `<div>` doesn't
+      // match any of the recognized SSG include / partial path
+      // conventions, doesn't surface a landmark element at top level,
+      // AND isn't pure inline content (a `<div>` is neither landmark
+      // nor inline). The catch-all `html_partial` kind is the honest
+      // discriminator when the AST evidence is mixed/ambiguous and
+      // path-pattern doesn't promote either. Role signals ride along
+      // as additive context so the agent can see the AST evidence.
+      const fragment = parsedHtml(
+        "widgets/card.html",
+        '<div class="card"><h2>Card</h2><p>Body</p></div>',
+      );
       const { analysisCoverage } = buildAnalysisCoverage([fragment], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
@@ -2326,15 +2365,22 @@ describe("buildAnalysisCoverage — hints", () => {
             hasLayoutDirective: false,
             inLayoutsDir: false,
           },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: [],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: false,
+            pathSuggestsLeafPartial: false,
+          },
         },
       ]);
     });
 
-    it("tags Hugo partials/<name>.html as kind: layout_include_partial", () => {
-      // Hugo / Eleventy `partials/<name>.html` convention — same
-      // kind as Jekyll `_includes/`. The convention name varies
-      // across SSGs but the rendered behavior (composed by a parent
-      // layout at render time) does not, so the kind is uniform.
+    it("tags Hugo partials/<name>.html with a top-level landmark as kind: composition_shell", () => {
+      // Hugo / Eleventy `partials/<name>.html` carrying a top-level
+      // `<nav>` lands in `composition_shell` — the role-driven kind
+      // applies regardless of the SSG convention because the AST
+      // evidence is more specific. Path-token evidence (`nav`) rides
+      // along as additive context.
       const fragment = parsedHtml(
         "partials/breadcrumb.html",
         '<nav class="breadcrumb"><a href="/">Home</a></nav>',
@@ -2343,34 +2389,48 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "partials/breadcrumb.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
           },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["nav"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: false,
+            pathSuggestsLeafPartial: false,
+          },
         },
       ]);
     });
 
-    it("tags Pelican templates/_<name>.html as kind: layout_include_partial", () => {
+    it("tags Pelican templates/_<name>.html as kind: composition_shell when AST surfaces a landmark", () => {
       // Pelican / Django-class projects place include partials at
       // `templates/_<name>.html` — the underscore prefix on the
       // basename distinguishes the file from a renderable
-      // `templates/index.html` view. Sibling renderable views with
-      // no underscore stay in the catch-all `html_partial` kind
-      // (no path-pattern match → no promotion).
+      // `templates/index.html` view. The fragment with a top-level
+      // `<article>` lands in `composition_shell` (role-driven kind
+      // wins over `layout_include_partial`); the renderable view's
+      // top-level `<section>` is neither landmark nor inline → stays
+      // in the catch-all `html_partial` kind.
       const fragment = parsedHtml("templates/_card.html", "<article>card</article>");
       const view = parsedHtml("templates/listing.html", "<section>list</section>");
       const { analysisCoverage } = buildAnalysisCoverage([fragment, view], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "templates/_card.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["article"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: false,
+            pathSuggestsLeafPartial: false,
           },
         },
         {
@@ -2380,6 +2440,12 @@ describe("buildAnalysisCoverage — hints", () => {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: [],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: false,
+            pathSuggestsLeafPartial: false,
           },
         },
       ]);
@@ -2444,7 +2510,7 @@ describe("buildAnalysisCoverage — hints", () => {
       ]);
     });
 
-    it("classifies a mixed bucket with all four kinds in one scan", () => {
+    it("classifies a mixed bucket with multiple kinds in one scan", () => {
       // The canonical shape an agent triages on a static-site corpus:
       // partials, markdown docs, and brand-mark SVGs all reach the
       // bucket together. Wire output is sorted alphabetically
@@ -2455,9 +2521,12 @@ describe("buildAnalysisCoverage — hints", () => {
       // config, no sibling layout directive, no sibling in a layouts
       // dir — the `_includes/` partial is in a content-partials dir
       // but NOT a layouts dir under the shared classifier). The
-      // `_includes/nav.html` partial promotes to
-      // `layout_include_partial` (recognized SSG include path AND
-      // fragment shape).
+      // `_includes/nav.html` partial whose AST surfaces a top-level
+      // `<nav>` lands in `composition_shell` (role-driven kind wins
+      // over `layout_include_partial` because the AST evidence is
+      // more specific about role). Markdown / SVG entries discard the
+      // role evidence — extension-driven discriminator does not need
+      // AST signals.
       const partial = parsedHtml("_includes/nav.html", "<nav><a href='/'>Home</a></nav>");
       const readme = parsedHtml("README.md", "# Project\n");
       const icon = parsedHtml(
@@ -2474,11 +2543,17 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/nav.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["nav"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
           },
         },
         {
@@ -2683,21 +2758,36 @@ describe("buildAnalysisCoverage — hints", () => {
         hasLayoutDirective: false,
         inLayoutsDir: false,
       } as const;
+      // `<div>` is neither a landmark nor an inline tag — the role
+      // signals report `topLevelLandmarkTags: []` AND
+      // `hasOnlyInlineContent: false`, so neither role-driven kind
+      // promotes; the path-driven `layout_include_partial` is the
+      // honest fallback. Path-token check matches no entry on these
+      // generic basenames.
+      const noRoleSignals = {
+        topLevelLandmarkTags: [],
+        hasOnlyInlineContent: false,
+        pathSuggestsCompositionShell: false,
+        pathSuggestsLeafPartial: false,
+      } as const;
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/a-first.html",
           kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
+          fragmentRoleSignals: noRoleSignals,
         },
         {
           path: "_includes/m-middle.html",
           kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
+          fragmentRoleSignals: noRoleSignals,
         },
         {
           path: "_includes/z-last.html",
           kind: "layout_include_partial",
           fragmentClassificationSignals: noSignals,
+          fragmentRoleSignals: noRoleSignals,
         },
       ]);
     });
@@ -2715,11 +2805,17 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
           path: "_includes/nav.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["nav"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
           },
         },
       ]);
@@ -2737,11 +2833,17 @@ describe("buildAnalysisCoverage — hints", () => {
       const expected = [
         {
           path: "_includes/footer.html",
-          kind: "layout_include_partial",
+          kind: "composition_shell",
           fragmentClassificationSignals: {
             hasHtmlOpener: false,
             hasLayoutDirective: false,
             inLayoutsDir: false,
+          },
+          fragmentRoleSignals: {
+            topLevelLandmarkTags: ["footer"],
+            hasOnlyInlineContent: false,
+            pathSuggestsCompositionShell: true,
+            pathSuggestsLeafPartial: false,
           },
         },
       ];

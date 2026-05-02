@@ -28,8 +28,13 @@
  *     `<div class="page-content">` (closer in `_includes/footer.html`)
  *     does NOT appear in `parseErrorFiles[]`.
  *   - It DOES appear in `fragmentFiles[]` with kind
- *     `layout_include_partial` — the strong-evidence kind that names
- *     "this is an SSG include the parent layout composes."
+ *     `composition_shell` — the role-driven kind that names "this
+ *     partial IS providing a top-level `<header>` landmark the
+ *     assembled document depends on." Per AI-first doctrine
+ *     "Heuristic-mislabeled meta sub-fields are dishonest," the
+ *     AST-evidence-driven `composition_shell` discriminator wins
+ *     over the path-driven `layout_include_partial` because the AST
+ *     evidence is more specific about role.
  *
  * Companion to other parse-recovery fixtures
  * (`code-block-cdata`, `liquid-root-layout-parse-recovery`,
@@ -73,7 +78,7 @@ export const assertions: FixtureAssertions = {
     {
       kind: "meta-field",
       path: ["analysisCoverage", "fragmentFiles", "0", "kind"],
-      predicate: { equals: "layout_include_partial" },
+      predicate: { equals: "composition_shell" },
     },
     {
       kind: "meta-field",
@@ -83,7 +88,7 @@ export const assertions: FixtureAssertions = {
     {
       kind: "meta-field",
       path: ["analysisCoverage", "fragmentFiles", "1", "kind"],
-      predicate: { equals: "layout_include_partial" },
+      predicate: { equals: "composition_shell" },
     },
     // The substrate gate must keep the include partial OUT of
     // `parseErrorFiles[]`. With the Q9 always-populate fix the counter

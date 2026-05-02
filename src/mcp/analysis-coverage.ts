@@ -113,7 +113,11 @@ import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
 import { recordAstroIslandStripped } from "./analysis-coverage-astro.ts";
 import { recordErbIslandStripped } from "./analysis-coverage-erb.ts";
-import { assembleFragmentFilesBlock } from "./analysis-coverage-fragments.ts";
+import {
+  assembleFragmentFilesBlock,
+  type FragmentAccumulatorEntry,
+  pushFragmentEntry,
+} from "./analysis-coverage-fragments.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
 import { detectTemplateInterpolation } from "./analysis-coverage-template-tokens.ts";
@@ -530,7 +534,7 @@ interface CoverageAccumulator {
    * confidence telemetry paralleling `parseErrorFiles` /
    * `partialParseFiles`.
    */
-  readonly fragmentFiles: { path: string; signals: FragmentClassificationSignals }[];
+  readonly fragmentFiles: FragmentAccumulatorEntry[];
   /**
    * flipped to true the
    * first time any parsed HTML-family file opens with a YAML
@@ -1249,7 +1253,7 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
     file.source,
     file.filePath,
   );
-  if (isFragment) acc.fragmentFiles.push({ path: file.filePath, signals });
+  if (isFragment) pushFragmentEntry(file, signals, acc);
   acc.layoutEvidence.recordSiblingSignals(file.filePath, signals);
 }
 
