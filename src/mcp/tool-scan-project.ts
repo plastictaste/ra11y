@@ -52,6 +52,7 @@ import {
   withTopRules,
   withViolationsByScanKind,
 } from "./scan-assembly.ts";
+import { rewriteResponseToCollapsed } from "./scan-project-collapse-by-group.ts";
 import { GROUP_BY_VALUES, readGroupByParam, withByGroup } from "./scan-group-by.ts";
 import {
   assembleScanProjectResponse,
@@ -172,6 +173,11 @@ export const scanProjectTool: McpTool = {
           enum: [...GROUP_BY_VALUES],
           description:
             "Aggregate findings into a `plan.byGroup` summary keyed by `firstChildDir` (relative-to-cwd first path segment — the high-leverage case for catalog repos with N parallel sub-project subdirectories), `directory` (relative-to-cwd parent directory of each file), or `extension` (file extension without the leading dot). Each group reports `{ violations, filesWithFindings, mostCommonRule?, mostCommonCriterion? }`. The flat `files[]` list still ships in full — `byGroup` is an additive aggregator, not a replacement. Use this on bulk-template repos with parallel sub-projects to get one response with N rows per sub-project rather than N round-trips with `additionalPaths` per sub-project.",
+        },
+        collapseByGroupKey: {
+          type: "boolean",
+          description:
+            "When true, replace the per-file `files[]` view with a per-group `collapsedGroups[]` view: one entry per unique `(ruleId, groupKey)` carrying the canonical finding's `findingId`/`severity`/`fix`/etc. plus an `occurrences[]: [{path, line, column}]` enumeration of every emission that shared the predicate. Use on bulk-template catalogs (e.g. 174 sub-sites repeating the same Bootstrap navbar) where 40k per-file findings collapse to <500 unique groups — one `scan_project` call answers \"what kinds of problems exist?\" without paging through every file. Pagination/truncation semantics mirror the per-file path (`limit`, `offset`, `truncated`, `nextOffset`); the only shape change is the primary findings array. Headline counts on `plan` (`fixesByClass.*`, `topRules`, etc.) stay un-collapsed so the agent budgets against the real finding count; `plan.collapsedGroupCount` exposes the post-collapse count alongside so the two views reconcile. Default false preserves the existing per-file shape exactly.",
         },
       },
     },
@@ -532,8 +538,7 @@ export const scanProjectTool: McpTool = {
       files,
       limit: pageParams.limit,
     });
-    return textResult(
-      assembleScanProjectResponse({
+    const assembledResponse = assembleScanProjectResponse({
         params,
         session,
         // pass the scan-kind-enriched
@@ -614,8 +619,25 @@ export const scanProjectTool: McpTool = {
           // the emission gate.
           perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
         }),
-      }),
-    );
+      });
+    // V1-GROUPKEY-COLLAPSED-RESPONSE-MODE: opt-in collapsed-by-
+    // groupKey view. When true, swap the per-file `files[]` array
+    // for a per-group `collapsedGroups[]` array on the assembled
+    // response (and re-paginate over groups). Default false preserves
+    // the existing per-file shape exactly. Per the AI-first consumer
+    // doctrine "Cross-surface count invariant," the rewrite stamps
+    // `plan.collapsedGroupCount` so the post-collapse group count
+    // ships alongside the un-collapsed `plan.fixesByClass.*` headlines
+    // — the agent reads both numbers in the same response and never
+    // has to guess which view drove pagination.
+    const collapseByGroupKey = params["collapseByGroupKey"] === true;
+    const finalResponse = collapseByGroupKey
+      ? rewriteResponseToCollapsed(assembledResponse, {
+          fullFiles: formattedWithScanKind.files,
+          pageParams,
+        })
+      : assembledResponse;
+    return textResult(finalResponse);
   },
 };
 
