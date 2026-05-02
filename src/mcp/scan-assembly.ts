@@ -19,7 +19,7 @@ import type { FixesByClass } from "../output/agent-response/index.ts";
 import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
-import type { Rule } from "../types/rule.ts";
+import type { FixClass, Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
@@ -1185,11 +1185,25 @@ export const TOP_RULES_DEFAULT_LIMIT = 10;
  * info-only rule (e.g. `wrappers/inferred`) would crowd the top of
  * the list with non-actionable context — the agent reads
  * "{@link AgentPlan.notes}" for that surface separately.
+ *
+ * `fixClass` mirrors the rule's declared remediation lane (the same
+ * value `Violation.fixClass` carries on every per-finding emission)
+ * so the agent reading the headline can partition `topRules[]` by
+ * remediation lane and reach the per-rule subset of the
+ * `plan.fixesByClass.<lane>` headline tally without paging through
+ * `files[]` or `referenceGuide.fixDescriptions`. Per AI-first doctrine
+ * "Per-call shape must agree with per-class plan tally": when
+ * `plan.fixesByClass.mechanical: 14` advertises 14 mechanical
+ * findings, the topRules entries carrying `fixClass: "mechanical"`
+ * partition the per-rule axis of those 14 findings. Present-when-
+ * meaningful: omitted on the (theoretically degenerate) bucket where
+ * the rollup observed no findings carrying a `fixClass` token.
  */
 export interface TopRule {
   readonly ruleId: string;
   readonly count: number;
   readonly topFile?: string;
+  readonly fixClass?: FixClass;
 }
 
 /**
@@ -1219,7 +1233,11 @@ export interface TopRule {
 export function computeTopRules(
   files: readonly {
     readonly path: string;
-    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+    readonly findings: readonly {
+      readonly ruleId: string;
+      readonly severity: string;
+      readonly fixClass?: FixClass;
+    }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,
 ): readonly TopRule[] {
@@ -1228,7 +1246,13 @@ export function computeTopRules(
   for (const [ruleId, count] of tally.totals) {
     const fileCounts = tally.perFile.get(ruleId);
     const topFile = fileCounts === undefined ? undefined : pickDensestFile(fileCounts);
-    ranked.push({ ruleId, count, ...(topFile === undefined ? {} : { topFile }) });
+    const fixClass = tally.fixClass.get(ruleId);
+    ranked.push({
+      ruleId,
+      count,
+      ...(topFile === undefined ? {} : { topFile }),
+      ...(fixClass === undefined ? {} : { fixClass }),
+    });
   }
   // Count desc; ruleId asc tiebreak so the wire shape stays stable
   // across runs even when the underlying scanner reorders discovery.
@@ -1238,26 +1262,45 @@ export function computeTopRules(
 
 /**
  * Single-pass walker for {@link computeTopRules}. Builds the
- * per-rule total count and the per-(rule, path) sub-tally that the
- * `topFile` annotation reads from, in one walk over the input. Pure
- * over its input; extracted so the orchestrator
+ * per-rule total count, the per-(rule, path) sub-tally that the
+ * `topFile` annotation reads from, and the per-rule `fixClass`
+ * stamp the {@link TopRule} entry surfaces — in one walk over the
+ * input. Pure over its input; extracted so the orchestrator
  * {@link computeTopRules} stays inside the cognitive-complexity cap.
  *
  * Severity filter — info-severity findings are skipped here so both
  * the count axis and the densest-file selection stay aligned with
  * the error+warning surface `plan.fixesByClass` tallies.
+ *
+ * `fixClass` capture: the rule registry stamps a single `fixClass`
+ * onto every emission a rule produces (`Violation.fixClass` is
+ * required), so the first observed finding's `fixClass` is the
+ * rule's declared lane. Recording the first-seen value is enough —
+ * the per-violation suppression-flavored override that
+ * `countFixesByClass` re-routes via emission-text predicates lives
+ * downstream of the rule's declared lane and is intentionally not
+ * surfaced here (the rollup describes the rule's remediation lane,
+ * not the per-emission re-route — agents reading
+ * `plan.fixesByClass.suppressRecommended` get the per-emission view
+ * separately).
  */
 function tallyTopRules(
   files: readonly {
     readonly path: string;
-    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+    readonly findings: readonly {
+      readonly ruleId: string;
+      readonly severity: string;
+      readonly fixClass?: FixClass;
+    }[];
   }[],
 ): {
   readonly totals: ReadonlyMap<string, number>;
   readonly perFile: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  readonly fixClass: ReadonlyMap<string, FixClass>;
 } {
   const totals = new Map<string, number>();
   const perFile = new Map<string, Map<string, number>>();
+  const fixClass = new Map<string, FixClass>();
   for (const file of files) {
     for (const finding of file.findings) {
       if (finding.severity === "info") continue;
@@ -1269,9 +1312,12 @@ function tallyTopRules(
         perFile.set(ruleId, bucket);
       }
       bucket.set(file.path, (bucket.get(file.path) ?? 0) + 1);
+      if (finding.fixClass !== undefined && !fixClass.has(ruleId)) {
+        fixClass.set(ruleId, finding.fixClass);
+      }
     }
   }
-  return { totals, perFile };
+  return { totals, perFile, fixClass };
 }
 
 /**
@@ -1315,7 +1361,11 @@ export function withTopRules(
   plan: Record<string, unknown>,
   files: readonly {
     readonly path: string;
-    readonly findings: readonly { readonly ruleId: string; readonly severity: string }[];
+    readonly findings: readonly {
+      readonly ruleId: string;
+      readonly severity: string;
+      readonly fixClass?: FixClass;
+    }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,
 ): Record<string, unknown> {

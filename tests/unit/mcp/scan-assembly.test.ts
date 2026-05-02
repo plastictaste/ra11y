@@ -1667,6 +1667,51 @@ describe("computeTopRules — cross-file rule-frequency rollup", () => {
       [],
     );
   });
+
+  it("propagates per-rule `fixClass` so the headline reaches the per-class plan tally", () => {
+    // Per AI-first doctrine "Per-call shape must agree with per-class
+    // plan tally": when `plan.fixesByClass.mechanical: N` advertises N
+    // mechanical findings, the topRules entries carrying
+    // `fixClass: "mechanical"` partition the per-rule axis of those N
+    // findings without forcing the agent to page through `files[]` or
+    // `referenceGuide.fixDescriptions`.
+    const out = computeTopRules([
+      {
+        path: "src/a.tsx",
+        findings: [
+          { ruleId: "alt-text/missing", severity: "error", fixClass: "mechanical" },
+          { ruleId: "alt-text/missing", severity: "error", fixClass: "mechanical" },
+          { ruleId: "keyboard/handler-missing", severity: "warning", fixClass: "verify-in-source" },
+        ],
+      },
+    ]);
+    expect(out).toEqual([
+      {
+        ruleId: "alt-text/missing",
+        count: 2,
+        topFile: "src/a.tsx",
+        fixClass: "mechanical",
+      },
+      {
+        ruleId: "keyboard/handler-missing",
+        count: 1,
+        topFile: "src/a.tsx",
+        fixClass: "verify-in-source",
+      },
+    ]);
+  });
+
+  it("omits `fixClass` when no finding for the rule carries one (legacy / minimal callers)", () => {
+    // The field is optional on the input shape; omitting it yields an
+    // entry without `fixClass` so backward-compatible callers don't
+    // see a synthesized lane (per "Ambiguous field shapes are
+    // dishonest" — no sentinel value, the field just isn't there).
+    const out = computeTopRules([
+      { path: "src/a.tsx", findings: [{ ruleId: "rule/no-class", severity: "error" }] },
+    ]);
+    expect(out).toEqual([{ ruleId: "rule/no-class", count: 1, topFile: "src/a.tsx" }]);
+    expect(out[0]).not.toHaveProperty("fixClass");
+  });
 });
 
 describe("withTopRules — plan-stamping helper", () => {

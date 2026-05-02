@@ -374,7 +374,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### suggest_fix shape contradictions
 
-- [ ] **Q13-MECHANICAL-CLAIMED-NOT-VISIBLE-IN-PER-RULE** `plan.fixesByClass.mechanical: 14` advertises 14 deterministic-edit findings but `referenceGuide.fixDescriptions` only enumerates rules tagged `fixClass: "verify-in-source"` and the truncated 8-file window shows no per-finding `fixClass: "mechanical"` rows. The 14 mechanical findings are unverifiable from the response shape alone — agent cannot reconcile the headline tally with the per-rule attribution. Fix: when `plan.fixesByClass.mechanical > 0`, `plan.topRules[]` entries carry their `fixClass` attribution so the agent can reach the 14 findings from the headline; alternatively `referenceGuide.fixDescriptions` enumerates mechanical rules in addition to verify-in-source. Per AI-first doctrine "Per-call shape must agree with per-class plan tally."
 
 ### Rule predicate gaps (false negatives)
 
