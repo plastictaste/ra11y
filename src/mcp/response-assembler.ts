@@ -81,6 +81,8 @@ import {
 import {
   type DedupedReviewCandidate,
   dedupeReviewCandidatesForSingleFile,
+  type FindingCoveredBy,
+  filterCandidatesCoveredByFindings,
 } from "./review-candidate-dedup.ts";
 import {
   buildReviewCandidatePrompts,
@@ -397,14 +399,69 @@ function maybeDedupeReviewCandidates(args: {
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly criterionLevels: ReadonlyMap<string, string> | undefined;
   readonly buildArtifactPaths: ReadonlySet<string>;
-}): readonly DedupedReviewCandidate[] | undefined {
-  const { options, reviewCandidates, criterionLevels, buildArtifactPaths } = args;
-  if (options.includeReviewCandidates !== true) return undefined;
-  return dedupeReviewCandidatesForSingleFile(
-    reviewCandidates,
+  readonly fileEntries: readonly AssembledFile[];
+}): {
+  readonly deduped: readonly DedupedReviewCandidate[] | undefined;
+  /**
+   * Post-filter (pre-dedup) candidate list. Threaded through to
+   * {@link buildReviewCandidatePromptsField} so the per-criterion
+   * `genericReason` hoist describes only the criteria that actually
+   * survived the per-element dedup against findings — a criterion
+   * whose candidates were entirely elided no longer ships a stranded
+   * prompts entry.
+   */
+  readonly filteredRaw: readonly ReviewCandidate[];
+} {
+  const { options, reviewCandidates, criterionLevels, buildArtifactPaths, fileEntries } = args;
+  if (options.includeReviewCandidates !== true) {
+    return { deduped: undefined, filteredRaw: reviewCandidates };
+  }
+  // Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE: filter
+  // candidates whose `(file, line, criterion)` is already covered by
+  // a rule-emitted finding in the same response BEFORE the cross-
+  // standard fold runs. The rule's `satisfies` field carries every
+  // criterion the rule covers per the three-layer model, so the
+  // candidate's `criterionId` matches against the finding's `criteria`
+  // array. The agent reads the rule emission once with the WCAG
+  // attribution intact; the candidate is purely redundant. Per AI-
+  // first doctrine the inverse of "Surface, don't suppress" — signal
+  // redundancy without dedup is its own dishonesty. Authored-source
+  // common case (no rule findings on a file with candidates) pays
+  // a one-call no-op; the helper short-circuits on either empty input.
+  const coveredFindings = collectFindingsCoveredBy(fileEntries);
+  const filtered = filterCandidatesCoveredByFindings({
+    candidates: reviewCandidates,
+    findings: coveredFindings,
+  });
+  const deduped = dedupeReviewCandidatesForSingleFile(
+    filtered,
     criterionLevels ?? new Map(),
     buildArtifactPaths,
   );
+  return { deduped, filteredRaw: filtered };
+}
+
+/**
+ * Builds the {@link FindingCoveredBy} view the per-element dedup
+ * filter consumes from the assembled per-file findings buckets. Pure
+ * adapter — pulls the three load-bearing fields (`file`, `line`,
+ * `criteria`) off each agent-finding row so the dedup module stays
+ * decoupled from the agent-response shape (avoids a `src/mcp` ↔
+ * `src/output` cyclic import). Drops findings whose `criteria` is
+ * empty (synthetic `internal/rule-crash` rows or rules with no cited
+ * criteria); the dedup gate would no-op on those anyway.
+ */
+function collectFindingsCoveredBy(
+  fileEntries: readonly AssembledFile[],
+): readonly FindingCoveredBy[] {
+  const out: FindingCoveredBy[] = [];
+  for (const file of fileEntries) {
+    for (const finding of file.findings) {
+      if (finding.criteria.length === 0) continue;
+      out.push({ file: file.path, line: finding.line, criteria: finding.criteria });
+    }
+  }
+  return out;
 }
 
 /**
@@ -778,19 +835,28 @@ export function assembleScanFamilyResponse(
   // Threading happens inside {@link maybeDedupeReviewCandidates} so the
   // ternary + `?? new Map()` fallback don't bump this orchestrator
   // function over the cognitive-complexity cap.
-  const dedupedCandidates = maybeDedupeReviewCandidates({
-    options,
-    reviewCandidates,
-    criterionLevels,
-    // Same set used at line 666 to enrich findings with build-artifact
-    // path provenance — re-using it for the review-candidate priority
-    // resolution closes the cross-surface gap the doctrine line "Per-
-    // tool review-candidate shape must agree across surfaces" warns
-    // against (a candidate on a vendor `.min.js` shipping `priority:
-    // "high"` here while `tool-checklist.ts`'s `priorityFor()` ranker
-    // shipped the same candidate at `"medium"` via `vendorContext`).
-    buildArtifactPaths,
-  });
+  const { deduped: dedupedCandidates, filteredRaw: filteredRawCandidates } =
+    maybeDedupeReviewCandidates({
+      options,
+      reviewCandidates,
+      criterionLevels,
+      // Same set used at line 666 to enrich findings with build-artifact
+      // path provenance — re-using it for the review-candidate priority
+      // resolution closes the cross-surface gap the doctrine line "Per-
+      // tool review-candidate shape must agree across surfaces" warns
+      // against (a candidate on a vendor `.min.js` shipping `priority:
+      // "high"` here while `tool-checklist.ts`'s `priorityFor()` ranker
+      // shipped the same candidate at `"medium"` via `vendorContext`).
+      buildArtifactPaths,
+      // Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE: thread the
+      // post-hoist `fileEntries` so the dedup helper can elide
+      // candidates whose `(file, line, criterion)` is already covered by
+      // a rule emission in the same response. The hoist preserves
+      // every finding's `criteria` field — only `fix.description` is
+      // re-pointed — so the post-hoist view carries the load-bearing
+      // axis the filter reads.
+      fileEntries,
+    });
 
   // (8) Warnings channel — extracted to keep this orchestrator's
   // cognitive complexity inside the lint cap as new signals accrete.
@@ -854,7 +920,12 @@ export function assembleScanFamilyResponse(
   // genericReason names what each finder actually emitted.
   const reviewCandidatePromptsField = buildReviewCandidatePromptsField({
     dedupedCandidates,
-    reviewCandidates,
+    // Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE: thread the
+    // post-filter (pre-dedup) candidate list so the per-criterion
+    // `genericReason` hoist describes only the criteria that survived
+    // the per-element dedup. A criterion whose candidates were
+    // entirely elided no longer ships a stranded prompts entry.
+    reviewCandidates: filteredRawCandidates,
   });
 
   // Base response — every optional field conditional-spread per

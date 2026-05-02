@@ -333,6 +333,51 @@ describe("assembleScanFamilyResponse", () => {
     expect(r.reviewCandidates?.[0]?.criteria).toEqual(["section508:1194.22.a", "wcag22:1.4.5"]);
   });
 
+  it("Q14: elides review candidate whose (file, line, criterion) is already covered by a rule finding in the same response", () => {
+    // Canonical Q14 case: the rule emission satisfies wcag22:4.1.2 at
+    // line 12; a parallel review candidate at the same line under the
+    // same criterion is purely redundant — the agent already has the
+    // actionable signal on the rule finding with WCAG attribution
+    // intact. Per AI-first doctrine the inverse of "Surface, don't
+    // suppress": signal redundancy without dedup is its own dishonesty.
+    const r = assembleScanFamilyResponse(
+      baseInput({
+        violations: [violation("/src/a.tsx", 12, "aria/expanded-on-disclosure")],
+        reviewCandidates: [
+          {
+            criterionId: "wcag22:1.1.1",
+            location: { filePath: "/src/a.tsx", line: 12, column: 4 },
+            reason: "covered by rule finding (same criterion)",
+            confidence: "medium",
+          },
+          {
+            criterionId: "wcag22:3.3.8",
+            location: { filePath: "/src/a.tsx", line: 12, column: 4 },
+            reason: "different criterion at same line — survives",
+            confidence: "medium",
+          },
+          {
+            criterionId: "wcag22:1.1.1",
+            location: { filePath: "/src/a.tsx", line: 25, column: 4 },
+            reason: "different line — survives",
+            confidence: "medium",
+          },
+        ],
+      }),
+      { includeReviewCandidates: true },
+    );
+    // The fixture violation() helper stamps `criteria: ["wcag22:1.1.1"]`
+    // on every finding regardless of ruleId — this lets the test
+    // assert the dedup predicate without coupling to any specific
+    // rule's `satisfies` set. The wcag22:1.1.1 candidate at line 12
+    // is dropped; the other two survive.
+    expect(r.reviewCandidates?.length).toBe(2);
+    const surviving = (r.reviewCandidates ?? [])
+      .map((c) => `${c.line}:${c.criteria.join(",")}`)
+      .sort();
+    expect(surviving).toEqual(["12:wcag22:3.3.8", "25:wcag22:1.1.1"]);
+  });
+
   it("passes `scannedBuildArtifactsPresent` through to the warnings channel", () => {
     const r = assembleScanFamilyResponse(baseInput({ scannedBuildArtifactsPresent: true }));
     expect(r.warnings).toContain("scanned_build_artifacts_present");

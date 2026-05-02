@@ -30,6 +30,7 @@ import { describe, expect, it } from "bun:test";
 import {
   dedupeReviewCandidatesByReason,
   dedupeReviewCandidatesForSingleFile,
+  filterCandidatesCoveredByFindings,
 } from "../../../src/mcp/review-candidate-dedup.ts";
 import type { ReviewCandidate } from "../../../src/types/review.ts";
 
@@ -481,5 +482,95 @@ describe("dedupeReviewCandidatesByReason — cross-criterion fold for the by-row
     ]);
     expect(out).toHaveLength(1);
     expect(out[0]?.confidence).toBe("high");
+  });
+});
+
+describe("filterCandidatesCoveredByFindings — per-element dedup against rule findings", () => {
+  it("elides candidate whose (file, line, criterion) matches a finding's (file, line, satisfied criterion)", () => {
+    // Canonical Q14 case: `aria/expanded-on-disclosure` fires on a
+    // `.navbar-toggle` button at line 12 satisfying wcag22:4.1.2;
+    // a parallel review candidate fires on the same button under
+    // wcag22:4.1.2 (e.g. cross-file-click-handler review). Filter
+    // elides the candidate so the agent reads the rule emission once.
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [candidate("wcag22:4.1.2", "<button class='navbar-toggle'> verify aria-expanded", 12, 2)],
+      findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2", "wcag21:4.1.2"] }],
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it("keeps candidate when the line matches but the criterion does not intersect", () => {
+    // Two channels narrating different criteria at the same line is
+    // honest signal — both go to the agent; the line just happens to
+    // host two distinct WCAG concerns. Strict per-criterion gate.
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [candidate("wcag22:3.3.8", "password input", 12, 2)],
+      findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2"] }],
+    });
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps candidate when the criterion matches but the line does not", () => {
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [candidate("wcag22:4.1.2", "another control", 25, 2)],
+      findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2"] }],
+    });
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps candidate when the file does not match", () => {
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [candidate("wcag22:4.1.2", "control on other file", 12, 2)],
+      findings: [{ file: "/repo/other.html", line: 12, criteria: ["wcag22:4.1.2"] }],
+    });
+    expect(out).toHaveLength(1);
+  });
+
+  it("elides each per-criterion finder copy independently when its criterionId matches", () => {
+    // Pre-cross-standard-fold input — the cross-file-click-handler
+    // finder emits one candidate per criterion (`wcag22:2.1.1`,
+    // `wcag21:2.1.1`, `wcag22:4.1.2`, `wcag21:4.1.2`). When a rule
+    // finding satisfies 4.1.2 (both 22 and 21), both 4.1.2 copies
+    // elide; the 2.1.1 pair survives because the keyboard rule
+    // didn't fire on this line.
+    const r = "<button class='navbar-toggle'> review";
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [
+        candidate("wcag22:2.1.1", r, 12, 2),
+        candidate("wcag21:2.1.1", r, 12, 2),
+        candidate("wcag22:4.1.2", r, 12, 2),
+        candidate("wcag21:4.1.2", r, 12, 2),
+      ],
+      findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2", "wcag21:4.1.2"] }],
+    });
+    expect(out).toHaveLength(2);
+    expect(out.map((c) => c.criterionId).sort()).toEqual(["wcag21:2.1.1", "wcag22:2.1.1"]);
+  });
+
+  it("returns input unchanged when findings array is empty (fast path)", () => {
+    const candidates = [candidate("wcag22:4.1.2", "x", 12, 2)];
+    const out = filterCandidatesCoveredByFindings({ candidates, findings: [] });
+    expect(out).toBe(candidates);
+  });
+
+  it("returns input unchanged when candidates array is empty (fast path)", () => {
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [],
+      findings: [{ file: FILE, line: 12, criteria: ["wcag22:4.1.2"] }],
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("indexes by (file, line) so a candidate's filePath is honored", () => {
+    const out = filterCandidatesCoveredByFindings({
+      candidates: [
+        candidate("wcag22:4.1.2", "x", 12, 2, { location: { filePath: "/a.html", line: 12, column: 2 } }),
+        candidate("wcag22:4.1.2", "x", 12, 2, { location: { filePath: "/b.html", line: 12, column: 2 } }),
+      ],
+      findings: [{ file: "/a.html", line: 12, criteria: ["wcag22:4.1.2"] }],
+    });
+    // Only the /a.html candidate elides; /b.html survives.
+    expect(out).toHaveLength(1);
+    expect(out[0]?.location.filePath).toBe("/b.html");
   });
 });

@@ -424,8 +424,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Heuristic emission (rule false-positive on speculative composition)
 
-- [ ] **Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE** Same element/line gets a finding (`aria/expanded-on-disclosure` on a `.navbar-toggle` button) AND a parallel review candidate (`wcag22:4.1.2` on the same button at the same line). Two channels narrate the same element twice; the agent reading sequentially gets a duplicate. Closure: dedupe at the response-assembly site — when a rule emission already covers an element/criterion, the criterion's review candidate elides for that file:line; or merge the two emissions so the rule finding carries the criterion's candidate-shaped reason inline. Per AI-first doctrine "Surface, don't suppress" inverse — signal redundancy without de-dup is its own dishonesty.
-
 ### Parser routing skips
 
 ### NextStep / nextStepStructured routing

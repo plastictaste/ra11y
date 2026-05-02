@@ -395,6 +395,97 @@ export function dedupeReviewCandidatesByReason(
 export { buildCriterionLevelMap } from "./review-candidate-priority.ts";
 
 /**
+ * Minimum shape an item must satisfy to participate in the
+ * {@link filterCandidatesCoveredByFindings} pass. The same fields the
+ * `AgentFinding` / `Violation` shapes carry on the wire — extracted
+ * here as a structural type so the helper stays decoupled from the
+ * agent-response and violation modules (avoids a `src/mcp` ↔ `src/output`
+ * / `src/types` cyclic import). The caller adapts whichever shape is
+ * already on its stack into this minimum view.
+ */
+export interface FindingCoveredBy {
+  readonly file: string;
+  readonly line: number;
+  readonly criteria: readonly string[];
+}
+
+/**
+ * Drops review candidates whose `(file, line, ≥1 criterion)` is already
+ * covered by a rule-emitted finding in the same response. Closes the
+ * Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE drift on
+ * `scan_file.reviewCandidates[]`: pre-dedup the agent saw a rule
+ * finding (e.g. `aria/expanded-on-disclosure` on a `.navbar-toggle`
+ * button satisfying `wcag22:4.1.2`) AND a parallel review candidate
+ * (e.g. `wcag22:4.1.2` on the same button at the same line) — two
+ * channels narrating the same element twice. Per AI-first doctrine
+ * "Surface, don't suppress" inverse: signal redundancy without
+ * dedup is its own dishonesty, and the agent already has the
+ * actionable signal on the rule emission so the candidate is purely
+ * redundant.
+ *
+ * Predicate is intentionally strict — three legs must agree:
+ *
+ *   1. The candidate's `location.line` matches a finding's `line`,
+ *   2. The candidate's `location.filePath` matches a finding's `file`,
+ *   3. The candidate's `criterionId` matches at least one criterion in
+ *      the finding's `criteria` array (sourced from the rule's
+ *      `satisfies` field per the three-layer model).
+ *
+ * The strict per-line + per-criterion gate avoids the "labeled bucket"
+ * failure mode the doctrine warns against: a candidate at a different
+ * line, or covering a criterion no rule satisfies, stays surfaced.
+ * Cross-file dedup is NOT performed — the rule-finding-vs-candidate
+ * relationship is a per-element claim, not a corpus-level one.
+ *
+ * Filter runs over the RAW {@link ReviewCandidate} input (the per-
+ * candidate `criterionId` is the unit of dedup, since the cross-
+ * standard fold has not yet collapsed the per-criterion copies). When
+ * BOTH `wcag22:4.1.2` and `wcag21:4.1.2` finder copies match a rule
+ * finding's `satisfies` set, the entire group elides — the dedup
+ * passes downstream then have nothing to fold.
+ *
+ * The helper is pure over its inputs and runs in
+ * O(findings + candidates) time after building the per-(file, line)
+ * covered-criteria index once.
+ *
+ * Per the doctrine bullet "Per-tool review-candidate shape must agree
+ * across surfaces": this filter operates on the `scan_file` /
+ * `scan_project` per-file output. `checklist.items[].candidates[]`
+ * is per-criterion-bucketed and reads through a different path; the
+ * cross-criterion `criteria: [...]` annotation already disambiguates
+ * the same conceptual claim there.
+ */
+export function filterCandidatesCoveredByFindings(args: {
+  readonly candidates: readonly ReviewCandidate[];
+  readonly findings: readonly FindingCoveredBy[];
+}): readonly ReviewCandidate[] {
+  const { candidates, findings } = args;
+  if (candidates.length === 0 || findings.length === 0) return candidates;
+  // Build a `(file, line) -> covered criteria` index so the filter
+  // pays one hash lookup per candidate instead of an O(findings)
+  // inner scan. Authored-source corpora typically have < 100
+  // findings per file; the Map+Set shape is fast enough that we
+  // skip the additional file-scoped pre-filter.
+  const coveredCriteriaByKey = new Map<string, Set<string>>();
+  for (const f of findings) {
+    const key = `${f.file}\x00${f.line}`;
+    let bucket = coveredCriteriaByKey.get(key);
+    if (bucket === undefined) {
+      bucket = new Set();
+      coveredCriteriaByKey.set(key, bucket);
+    }
+    for (const id of f.criteria) bucket.add(id);
+  }
+  if (coveredCriteriaByKey.size === 0) return candidates;
+  return candidates.filter((c) => {
+    const key = `${c.location.filePath}\x00${c.location.line}`;
+    const covered = coveredCriteriaByKey.get(key);
+    if (covered === undefined) return true;
+    return !covered.has(c.criterionId);
+  });
+}
+
+/**
  * Output shape of {@link dedupeReviewCandidatesByReason}. Carries the
  * full {@link ReviewCandidate} field set so a tool that already maps
  * `ReviewCandidate` rows can drop the helper output in with the only
