@@ -51,6 +51,7 @@ interface BootstrapResponse {
     readonly writeBaseline: boolean;
   };
   readonly warnings?: readonly string[];
+  readonly warningsDetails?: Record<string, unknown>;
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -617,5 +618,152 @@ describe("bootstrap: registered on tools/list", () => {
     const { MCP_TOOLS } = await import("../../../src/mcp/tools.ts");
     const names = MCP_TOOLS.map((t) => t.def.name);
     expect(names).toContain("bootstrap");
+  });
+});
+
+/**
+ * Pins the membership-vs-payload invariant at the bootstrap surface:
+ * every code in `warnings[]` MUST resolve to a `warningsDetails.<code>`
+ * entry, and `warningsDetails` is omitted entirely when no codes
+ * fired.
+ *
+ * Closes the strictly-worse variant of the empty-`{}` regression
+ * documented in CLAUDE.md §1 "Empty `warningsDetails.<code>: {}` is
+ * dishonest" — bootstrap was shipping a populated `warnings[]` (e.g.
+ * 15 codes including `no_config_found`, `partial_parse_files_present`,
+ * `baseline_dry_run`) without any top-level `warningsDetails` object,
+ * leaving the agent with the warning name and zero way to triage what
+ * fired.
+ *
+ * The cross-surface count invariant applies at warning-channel
+ * granularity: bootstrap composes scan_project's response and must
+ * forward its `warningsDetails` payloads verbatim. Bootstrap-local
+ * codes (`baseline_dry_run`, `bootstrap_<leg>_failed`) are binary-
+ * presence — `fallThroughDetailEntry` stamps `{}` markers per the
+ * "presence is the signal" pattern documented on the helper.
+ */
+describe("bootstrap: warningsDetails membership invariant", () => {
+  // Dry-run on a clean codebase fires `baseline_dry_run` only — the
+  // minimum case where bootstrap must ship `warningsDetails`. Without
+  // the fix, the dry-run code lived alone in `warnings[]` with no
+  // payload-channel companion at all.
+  it("ships warningsDetails with baseline_dry_run as a binary-presence marker on a clean dry-run", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.warnings).toContain("baseline_dry_run");
+      expect(response.warningsDetails).toBeDefined();
+      // Binary-presence marker: empty object is the honest wire shape
+      // for a code where presence IS the signal (the dry-run flag is
+      // a one-bit yes/no — no further detail by design).
+      expect(response.warningsDetails?.["baseline_dry_run"]).toEqual({});
+    });
+  });
+
+  // Membership-vs-payload invariant: every code in `warnings[]` must
+  // have a corresponding `warningsDetails.<code>` key. Drives the
+  // contract `every code in warnings[] resolves to a non-empty
+  // warningsDetails.<code>` from the AI-first doctrine bullet.
+  it("every code in warnings[] resolves to a warningsDetails.<code> entry", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(
+        join(dir, "a.html"),
+        '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.warnings).toBeDefined();
+      expect(response.warningsDetails).toBeDefined();
+      const details = response.warningsDetails ?? {};
+      for (const code of response.warnings ?? []) {
+        // The agent must read a definite shape, not `undefined` —
+        // membership invariant per CLAUDE.md §1.
+        expect(details[code]).toBeDefined();
+      }
+    });
+  });
+
+  // Cross-surface forwarding: the upstream scan_project response
+  // carries rich payloads on its `warningsDetails` (e.g. `no_config_found`
+  // ships `{ searchedFrom: <path> }`). Bootstrap must forward those
+  // payloads verbatim — the per-tool warning-set classification rule
+  // requires the same warning-payload set to reach every consumer of
+  // the corpus. Without the fix, the scan-leg payloads were silently
+  // dropped at the bootstrap envelope.
+  it("forwards rich payloads from the upstream scan_project leg verbatim (no_config_found.searchedFrom)", async () => {
+    await withScratch(async (dir) => {
+      // No ra11y.config.ts at this scratch root → scan_project emits
+      // `no_config_found` with the `searchedFrom` payload. The clean
+      // index.html keeps `filesScanned > 0` so `scanned_zero_files`
+      // doesn't fire (which would shadow the case under test).
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body><p>x</p></body></html>\n',
+      );
+      const { response } = await callBootstrap({ cwd: dir });
+      // The `no_config_found` code may not fire on this tiny scratch
+      // tree (per the tiny-repo gate documented in
+      // `shouldEmitNoConfigFound`), so this assertion is conditional:
+      // when the code is present in `warnings[]`, its forwarded
+      // payload must carry the `searchedFrom` field — not the
+      // fall-through `{}` marker.
+      if ((response.warnings ?? []).includes("no_config_found")) {
+        const detail = response.warningsDetails?.["no_config_found"] as
+          | { searchedFrom?: string }
+          | undefined;
+        expect(detail).toBeDefined();
+        expect(typeof detail?.searchedFrom).toBe("string");
+      }
+    });
+  });
+
+  // Zero-output-success companion: a scan parsing nothing emits
+  // `scanned_zero_files` (binary-presence). Forwarded onto the
+  // bootstrap envelope so the membership invariant holds even when
+  // the upstream scan was empty.
+  it("forwards scanned_zero_files onto warningsDetails when the scan parses nothing", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "NOTES.txt"), "nothing to scan\n");
+      const { response } = await callBootstrap({ cwd: dir });
+      expect(response.warnings).toContain("scanned_zero_files");
+      expect(response.warningsDetails?.["scanned_zero_files"]).toBeDefined();
+      // `scanned_zero_files` is a binary-presence code — empty-object
+      // marker is the honest wire shape.
+      expect(response.warningsDetails?.["scanned_zero_files"]).toEqual({});
+      // `baseline_dry_run` joins the scan-leg code on the same
+      // response and also resolves to a marker — both halves of the
+      // membership invariant exercised in one case.
+      expect(response.warnings).toContain("baseline_dry_run");
+      expect(response.warningsDetails?.["baseline_dry_run"]).toEqual({});
+    });
+  });
+
+  // Bootstrap-local failure code: when a sub-leg rejects, the
+  // `bootstrap_<leg>_failed` code joins `warnings[]`. These codes are
+  // outside the canonical `ScanWarningCode` union — `fallThroughDetailEntry`
+  // treats them as binary-presence by default. The invariant must
+  // still hold: a key on `warningsDetails`, even if the wire shape
+  // is `{}`.
+  it("stamps warningsDetails.bootstrap_detect_failed = {} when the detect leg rejects", async () => {
+    const originalDetect = detectNativeWrappersTool.handler;
+    (detectNativeWrappersTool as { handler: unknown }).handler = () => {
+      throw new Error("forced-detect-failure");
+    };
+    try {
+      await withScratch(async (dir) => {
+        await writeFile(
+          join(dir, "index.html"),
+          '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
+        );
+        const { response } = await callBootstrap({ cwd: dir });
+        expect(response.warnings).toContain("bootstrap_detect_failed");
+        expect(response.warningsDetails?.["bootstrap_detect_failed"]).toBeDefined();
+        expect(response.warningsDetails?.["bootstrap_detect_failed"]).toEqual({});
+      });
+    } finally {
+      (detectNativeWrappersTool as { handler: unknown }).handler = originalDetect;
+    }
   });
 });

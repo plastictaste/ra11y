@@ -304,6 +304,56 @@ describe("review_candidates emits top-level `warnings` for silent-failure modes"
   });
 });
 
+describe("bootstrap emits warningsDetails alongside warnings (membership invariant)", () => {
+  // Closes the strictly-worse variant of the empty-`{}` regression
+  // documented in CLAUDE.md §1 "Empty `warningsDetails.<code>: {}` is
+  // dishonest" — bootstrap was shipping a populated `warnings[]` (e.g.
+  // 15 codes including `no_config_found`, `partial_parse_files_present`,
+  // `baseline_dry_run`) without a top-level `warningsDetails` object at
+  // all. The membership invariant requires every code in `warnings[]`
+  // to resolve to a `warningsDetails.<code>` entry — the agent reads a
+  // definite shape rather than `undefined`.
+  //
+  // Cross-surface count invariant applied at warning-channel
+  // granularity: bootstrap composes scan_project's response and must
+  // forward its `warningsDetails` payloads verbatim. The bulk of the
+  // codes a real-corpus scan ships (`no_config_found`,
+  // `partial_parse_files_present`, etc.) come from the underlying scan
+  // leg — without forwarding the details, the agent gets the names
+  // without the per-code triage payload (`searchedFrom`, `parseErrorsByParser`).
+  it("scan-driven warning codes resolve to a warningsDetails.<code> entry over the MCP transport", async () => {
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "bootstrap", { cwd: TEMPLATE_FIXTURE }),
+    ]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warningsDetails).toBeDefined();
+    // Membership invariant: every code in `warnings[]` MUST resolve
+    // to a `warningsDetails.<code>` key. Tested by iteration so any
+    // future code added to the bootstrap warnings channel is covered
+    // automatically — the test breaks if a new code lands without a
+    // companion entry.
+    for (const code of body.warnings ?? []) {
+      expect(body.warningsDetails?.[code]).toBeDefined();
+    }
+    // The template-directives fixture is a known carrier of
+    // `template_files_parsed_as_literal` (verified by the parallel
+    // scan_project / checklist tests above), so this assertion pins
+    // forwarding of a payload-bearing scan code through the bootstrap
+    // envelope explicitly.
+    if ((body.warnings ?? []).includes("template_files_parsed_as_literal")) {
+      const detail = body.warningsDetails?.["template_files_parsed_as_literal"] as
+        | { files: readonly string[]; extensions: readonly string[] }
+        | undefined;
+      assertTemplateLiteralPayload(detail, "template-directives/source");
+    }
+  });
+});
+
 describe("scan emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the paths exist but resolve to zero parseable files", async () => {
     // Nonexistent-path inputs now hard-error with `scan-paths-not-found`

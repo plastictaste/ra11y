@@ -24,7 +24,15 @@
  *     preserve CI wiring regardless of current violations.
  *   - `warnings` propagates scan-leg codes verbatim plus
  *     `bootstrap_<leg>_failed` entries and `baseline_dry_run` when
- *     applicable; omitted when empty.
+ *     applicable; omitted when empty. `warningsDetails` ships
+ *     alongside, forwarding the upstream scan's payloads verbatim
+ *     and stamping fall-through entries (`{}` markers for binary-
+ *     presence codes including the bootstrap-local ones) for codes
+ *     without a forwarded payload, so the membership-vs-payload
+ *     invariant holds at the bootstrap surface (every code in
+ *     `warnings[]` resolves to a `warningsDetails.<code>` entry —
+ *     CLAUDE.md §1 "Empty `warningsDetails.<code>: {}` is dishonest"
+ *     extension: missing entirely is the worse case).
  *   - `scan` subset preserves the upstream `plan` split verbatim —
  *     `violationsCount` and `notesCount` stay separate (no
  *     `totalFindings` re-sum), and the per-lane `fixesByClass` tally
@@ -55,6 +63,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import { fallThroughDetailEntry } from "./warnings.ts";
 
 /** Sub-legs the bootstrap composes; surfaces as `bootstrap_<leg>_failed` codes. */
 type SubLeg = "detect" | "propose_config" | "baseline";
@@ -152,6 +161,21 @@ export const bootstrapTool: McpTool = {
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
       ...(writeBaseline ? [] : ["baseline_dry_run"]),
     ];
+    // Forward the underlying scan's `warningsDetails` payloads verbatim
+    // and stamp fall-through entries for bootstrap-local codes
+    // (`baseline_dry_run`, `bootstrap_<leg>_failed`) so the membership-
+    // vs-payload invariant holds at the bootstrap surface (every code
+    // in `warnings[]` resolves to a `warningsDetails.<code>` entry).
+    // Without this, an agent reading bootstrap had the warning name
+    // and zero way to triage what fired — strictly worse than the
+    // empty-`{}` regression CLAUDE.md §1 "Empty `warningsDetails.<code>:
+    // {}` is dishonest" warns against (the entire container was
+    // missing). `fallThroughDetailEntry` returns `{}` for binary-
+    // presence codes and the truncation sentinel for payload-bearing
+    // codes whose summarizer didn't run on this surface, so each entry
+    // honestly signals what shape the agent should expect.
+    const scanWarningsDetails = readWarningsDetails(scan);
+    const warningsDetails = buildWarningsDetails(warnings, scanWarningsDetails);
 
     // Snippet content tracks actual baseline-existence on disk: pasting
     // a `baseline check` incantation into CI before `.ra11y-baseline.json`
@@ -213,6 +237,10 @@ export const bootstrapTool: McpTool = {
         ...(additionalPaths.length > 0 ? { additionalPaths } : {}),
       },
       ...(warnings.length > 0 ? { warnings } : {}),
+      // `warningsDetails` ships only when at least one code fired —
+      // membership-vs-payload invariant (every `warnings[]` code has a
+      // `warningsDetails.<code>` key, no extras when codes is empty).
+      ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
     });
   },
 };
@@ -491,6 +519,44 @@ function readStringArray(value: unknown, key: string): readonly string[] {
   const raw = (value as Record<string, unknown>)[key];
   if (!Array.isArray(raw)) return [];
   return raw.filter((x): x is string => typeof x === "string");
+}
+
+/**
+ * Reads the `warningsDetails` object off the upstream scan response.
+ * Returns an empty record when the scan emitted no payloads (e.g.
+ * clean Node-toolchain repo with no warnings) so the merge site can
+ * unconditionally spread without a null guard.
+ */
+function readWarningsDetails(scan: unknown): Record<string, unknown> {
+  if (!scan || typeof scan !== "object") return {};
+  const raw = (scan as Record<string, unknown>)["warningsDetails"];
+  if (!raw || typeof raw !== "object") return {};
+  return raw as Record<string, unknown>;
+}
+
+/**
+ * Builds the bootstrap-surface `warningsDetails` payload by forwarding
+ * every entry from the upstream scan's `warningsDetails` and stamping
+ * fall-through entries for any code in `warnings[]` that lacks one.
+ *
+ * `fallThroughDetailEntry` discriminates binary-presence codes (where
+ * `{}` is the honest wire shape — `baseline_dry_run`, the bootstrap-
+ * local `bootstrap_<leg>_failed` strings) from payload-bearing codes
+ * whose summarizer didn't run on this surface (sentinel `{ truncated:
+ * true, reason: "summarizer_inputs_unavailable" }`). Either way the
+ * membership-vs-payload invariant holds: every code has a key, and
+ * the agent reads a definite shape rather than `undefined`.
+ */
+function buildWarningsDetails(
+  warnings: readonly string[],
+  baseDetails: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...baseDetails };
+  for (const code of warnings) {
+    if (out[code] !== undefined) continue;
+    out[code] = fallThroughDetailEntry(code);
+  }
+  return out;
 }
 
 function readNumberFromRecord(value: unknown, key: string): number | null | undefined {
