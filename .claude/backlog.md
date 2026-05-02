@@ -446,7 +446,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Citation correctness
 
-- [ ] **Q14-RULE-CITES-WRONG-LINE-FOR-MATCHED-SELECTOR** `layout/horizontal-scroll-no-keyboard` cites a normalize-style stylesheet `:285` for the textarea predicate; line 285 is `[type="submit"]::-moz-focus-inner` and the actual `textarea { overflow: auto }` blocks live at lines 244 and 345. Wrong line citation — agent reading L285 sees no textarea selector. Closure: cited line derived from the AST node range of the matched selector, not a heuristic offset; integration test asserting cited-line content contains the rule's predicate token. Per AI-first doctrine "Reason / priority / fix-description must agree across all three channels" — extended to "the cited line must match the cited predicate."
 
 ### 2026-04-30 round recurrences (folded onto existing Q9/Q10/Q11/Q12/Q13 rows)
 

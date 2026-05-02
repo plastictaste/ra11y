@@ -253,6 +253,87 @@ describe("rule layout/horizontal-scroll-no-keyboard", () => {
     });
   });
 
+  describe("cited line points at the matched selector branch", () => {
+    // Per the AI-first doctrine "Reason / priority / fix-description must
+    // agree" extension to "the cited line must point at the predicate the
+    // reason names": for a multi-selector ruleset, the location must
+    // resolve to the first non-focusable branch — not to the declaration
+    // line and not to a sibling focusable selector. Agents read the cited
+    // file at the cited line; if the line shows a different selector than
+    // the rule's reason names, the trust contract is broken.
+    it("cites the first non-focusable branch in a multi-line comma list", () => {
+      // textarea (focusable, line 5) precedes .card (non-focusable, line 6).
+      // The cited line must be 6 — where the predicate the agent verifies
+      // actually lives in source.
+      const source = [
+        "/* preamble */",
+        "/* line 2 */",
+        "/* line 3 */",
+        "textarea,",
+        ".card,",
+        ".widget {",
+        "  overflow: auto;",
+        "}",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "style.css" });
+      expect(violations).toHaveLength(1);
+      // .card sits on line 5 (1-based after the 4 preamble/textarea lines).
+      expect(violations[0]?.location.line).toBe(5);
+      // Read the cited line out of the source and assert the predicate
+      // token the reason names is actually present there.
+      const lines = source.split("\n");
+      const cited = lines[(violations[0]?.location.line ?? 0) - 1] ?? "";
+      expect(cited).toContain(".card");
+    });
+
+    it("cites the first selector line — not the declaration line — for a single-selector multi-line ruleset", () => {
+      // The selector `.table-wrapper` is on line 4; the `overflow-x` body
+      // is on line 5. The cited line must be 4 (the selector position),
+      // matching the rule's `'<selector> { … }'` reason text.
+      const source = ["/* line 1 */", "/* line 2 */", "/* line 3 */", ".table-wrapper {", "  overflow-x: auto;", "}"].join("\n");
+      const violations = runRule(rule, source, { filePath: "style.css" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.location.line).toBe(4);
+      const lines = source.split("\n");
+      const cited = lines[(violations[0]?.location.line ?? 0) - 1] ?? "";
+      expect(cited).toContain(".table-wrapper");
+    });
+
+    it("cites the non-focusable branch when sibling focusable branches sit on intervening lines", () => {
+      // Mirrors the field-report shape: a long comma-separated list with
+      // focusable selectors interleaved. The cited line must be the
+      // non-focusable branch's actual line — not the declaration line
+      // (which would land on a sibling selector or on the body).
+      const source = [
+        "input,", // line 1, focusable
+        "select,", // line 2, focusable
+        "textarea,", // line 3, focusable
+        "button,", // line 4, focusable
+        ".scroll-region {", // line 5, NON-focusable — this is the candidate
+        "  overflow-x: auto;", // line 6, declaration body
+        "}",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "style.css" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.location.line).toBe(5);
+      const lines = source.split("\n");
+      const cited = lines[(violations[0]?.location.line ?? 0) - 1] ?? "";
+      expect(cited).toContain(".scroll-region");
+      // Negative assertion: the cited line is NOT the declaration line.
+      expect(cited).not.toContain("overflow-x:");
+    });
+
+    it("cites column 1 when the branch starts at the line's first character", () => {
+      // Selector branches on their own lines start at column 1; the cited
+      // column must reflect that, not echo the declaration's indent column.
+      const source = [".alpha,", ".beta {", "  overflow: scroll;", "}"].join("\n");
+      const violations = runRule(rule, source, { filePath: "style.css" });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.location.line).toBe(1);
+      expect(violations[0]?.location.column).toBe(1);
+    });
+  });
+
   describe("rule metadata", () => {
     it("declares wcag22:2.1.1 and wcag21:2.1.1", () => {
       expect(rule.satisfies).toContain("wcag22:2.1.1");

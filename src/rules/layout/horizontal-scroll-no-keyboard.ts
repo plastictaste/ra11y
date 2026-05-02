@@ -120,14 +120,18 @@ interface ScrollableDeclaration {
 function checkRule(cssRule: CssRule, emit: Emit): void {
   const offending = findScrollableDeclaration(cssRule.declarations);
   if (!offending) return;
-  if (selectorTargetsOnlyFocusableElements(cssRule.selector)) return;
+  const targeted = firstNonFocusableBranchPosition(cssRule);
+  // `firstNonFocusableBranchPosition` returns null only when every
+  // comma-separated branch is intrinsically focusable — the same predicate
+  // the rule's docstring suppresses on (textbook reset CSS).
+  if (!targeted) return;
 
   emit({
     severity: "warning",
     location: {
       filePath: "",
-      line: offending.decl.loc.start.line,
-      column: offending.decl.loc.start.column,
+      line: targeted.line,
+      column: targeted.column,
     },
     message: buildMessage(cssRule.selector, offending),
     suggestion: buildSuggestion(cssRule.selector, offending),
@@ -228,52 +232,100 @@ const CONDITIONAL_FOCUSABLE_TYPES: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
- * True when EVERY comma-separated branch of `selector` targets an
- * intrinsically focusable element — either an always-focusable type
- * (`textarea`, `input`, `select`, `button`, `iframe`), a conditionally
- * focusable type with its required attribute (`a[href]`,
- * `audio[controls]`, `video[controls]`), or any element with an
- * explicit `[tabindex]` attribute selector.
+ * Walks the comma-separated branches of `cssRule.selector` and returns
+ * the source position of the FIRST branch that is non-focusable — the
+ * branch the rule's reason text frames as the candidate to verify.
  *
- * The check is conservative: if ANY branch is non-focusable (a class /
- * id / generic compound selector), the function returns false and the
- * rule still emits — the candidate covers the non-focusable branch and
- * the agent reads the rendered consumer to triage. Falls back to false
- * on selectors the parser shape can't cleanly decompose (`:is(...)` /
- * `:where(...)` containing the rightmost compound), so the rule errs
- * on the side of surfacing rather than suppressing.
+ * Returns `null` when every comma-separated branch is intrinsically
+ * focusable (textbook reset CSS pattern); the caller then suppresses
+ * the emission, matching the docstring's focusable-only carve-out.
+ *
+ * The position math: `cssRule.loc.start` is the position of the FIRST
+ * non-whitespace character of the selector text in the source (the
+ * parser calls `#skipWhitespace()` before `#consumeQualifiedRule`).
+ * The stored `cssRule.selector` is `.trim()`'d but `.trim()` only
+ * removes leading/trailing whitespace — internal newlines and column
+ * offsets stay intact. Walking the trimmed selector string while
+ * counting newlines therefore produces a (line, column) for any byte
+ * offset within the selector, anchored at `cssRule.loc.start`.
+ *
+ * Per the AI-first doctrine "Reason / priority / fix-description must
+ * agree" extension to "the cited line must point at the predicate the
+ * reason names": when the rule reports `'<selector> { overflow: auto }'`
+ * with the matched non-focusable branch as the candidate, the cited
+ * (line, column) must land on that branch in the source — not on a
+ * sibling selector and not on the declaration line.
  */
-function selectorTargetsOnlyFocusableElements(selector: string): boolean {
-  const branches = splitTopLevel(selector, ",");
-  if (branches.length === 0) return false;
+function firstNonFocusableBranchPosition(
+  cssRule: CssRule,
+): { line: number; column: number } | null {
+  const branches = splitTopLevelWithOffsets(cssRule.selector, ",");
+  if (branches.length === 0) return null;
   for (const branch of branches) {
-    if (!branchIsFocusable(branch)) return false;
+    if (!branchIsFocusable(branch.text)) {
+      return offsetToPosition(
+        cssRule.selector,
+        branch.offset,
+        cssRule.loc.start.line,
+        cssRule.loc.start.column,
+      );
+    }
   }
-  return true;
+  return null;
 }
 
 /**
  * Splits `input` on `delimiter`, but only at top-level (depth 0 with
- * respect to `()` and `[]`). Empty segments are dropped.
+ * respect to `()` and `[]`). Returns each non-empty segment paired with
+ * its 0-based byte offset within `input` (the offset of the segment's
+ * first non-whitespace character — leading whitespace inside the
+ * segment is skipped so the offset lands on the selector token, not on
+ * the post-comma newline).
  */
-function splitTopLevel(input: string, delimiter: string): string[] {
-  const out: string[] = [];
+function splitTopLevelWithOffsets(
+  input: string,
+  delimiter: string,
+): { text: string; offset: number }[] {
+  const out: { text: string; offset: number }[] = [];
   let depth = 0;
-  let current = "";
-  for (const ch of input) {
+  let segmentStart = 0;
+  for (let i = 0; i <= input.length; i++) {
+    const ch = i < input.length ? input[i] : delimiter;
     if (ch === "(" || ch === "[") depth++;
     else if (ch === ")" || ch === "]") depth = Math.max(0, depth - 1);
     if (ch === delimiter && depth === 0) {
-      const trimmed = current.trim();
-      if (trimmed.length > 0) out.push(trimmed);
-      current = "";
-      continue;
+      const raw = input.slice(segmentStart, i);
+      const leading = raw.length - raw.trimStart().length;
+      const text = raw.trim();
+      if (text.length > 0) out.push({ text, offset: segmentStart + leading });
+      segmentStart = i + 1;
     }
-    current += ch;
   }
-  const tail = current.trim();
-  if (tail.length > 0) out.push(tail);
   return out;
+}
+
+/**
+ * Converts a 0-based byte offset within `text` to a 1-based (line,
+ * column) position in the source, anchored at (`originLine`,
+ * `originColumn`) — the source position of `text[0]`.
+ */
+function offsetToPosition(
+  text: string,
+  offset: number,
+  originLine: number,
+  originColumn: number,
+): { line: number; column: number } {
+  let line = originLine;
+  let column = originColumn;
+  for (let i = 0; i < offset && i < text.length; i++) {
+    if (text[i] === "\n") {
+      line += 1;
+      column = 1;
+    } else {
+      column += 1;
+    }
+  }
+  return { line, column };
 }
 
 /**
@@ -306,8 +358,8 @@ function rightmostCompound(branch: string): string {
 
 /**
  * True when the rightmost compound of `branch` is a focusable subject.
- * See {@link selectorTargetsOnlyFocusableElements} for the predicate
- * shape.
+ * See {@link firstNonFocusableBranchPosition} for the predicate shape
+ * — the rule emits when at least one branch returns false here.
  */
 function branchIsFocusable(branch: string): boolean {
   const subject = rightmostCompound(branch);
