@@ -68,6 +68,7 @@ import {
   peekOpeningTagName,
 } from "./html-implicit-close.ts";
 import { detectLiquidIncludeHead, strayClosingTagMessage } from "./html-layout-tail.ts";
+import { OPAQUE_TEXT_ELEMENTS, scanOpaqueTextBody } from "./html-opaque-text.ts";
 import {
   matchesTemplateEndTag,
   OPAQUE_BLOCK_DIRECTIVES,
@@ -305,20 +306,19 @@ class HtmlParser {
   #consumeChildren(parentTag: string): HtmlNode[] {
     const children: HtmlNode[] = [];
     const parentLower = parentTag.toLowerCase();
-    const isRawText = RAW_TEXT_ELEMENTS.has(parentLower);
     const hasImpliedEnd = IMPLIED_END_TAG_ELEMENTS.has(parentLower);
     // Track nesting depth so `strayClosingTagMessage` can scope the
     // Liquid layout-tail rename to document-top (`depth === 0`).
     this.#depth += 1;
     this.#openStack.push(parentLower);
+    // Opaque-body elements (script/style/textarea/title; <code>/<pre>)
+    // suspend tag-recognition inside their body. Uniform shape.
+    if (this.#tryAppendOpaqueBody(parentTag, parentLower, children)) {
+      return this.#exitChildren(children);
+    }
     while (!this.#eof()) {
       if (this.#startsWithClosingTag(parentTag)) {
         this.#consumeClosingTag();
-        return this.#exitChildren(children);
-      }
-      if (isRawText) {
-        children.push(this.#consumeRawText(parentTag));
-        if (!this.#eof()) this.#consumeClosingTag();
         return this.#exitChildren(children);
       }
       if (hasImpliedEnd && this.#shouldImplicitlyClose(parentLower)) {
@@ -342,6 +342,38 @@ class HtmlParser {
       });
     }
     return this.#exitChildren(children);
+  }
+
+  /**
+   * Routes opaque-body parents to the right body-scan and assembles
+   * the HtmlText node. Two flavors: `RAW_TEXT_ELEMENTS`
+   * (script/style/textarea/title — flat raw text up to the matching
+   * `</tag>`) and `OPAQUE_TEXT_ELEMENTS` (`<code>`/`<pre>` —
+   * depth-balanced opaque text; see `./html-opaque-text.ts`). Returns
+   * null when the parent is neither. `<title>` and `<textarea>` are
+   * visible to AT, so directives are stripped from the rendered value;
+   * for `<script>` / `<style>` the strip is a no-op on well-formed
+   * directives. Opaque-text bodies decode entities (the body is shown
+   * to the user); raw-text bodies do not.
+   */
+  #tryAppendOpaqueBody(parentTag: string, parentLower: string, children: HtmlNode[]): boolean {
+    const isRaw = RAW_TEXT_ELEMENTS.has(parentLower);
+    const isOpaque = !isRaw && OPAQUE_TEXT_ELEMENTS.has(parentLower);
+    if (!(isRaw || isOpaque)) return false;
+    const start = this.#pos;
+    const startPos = this.#position();
+    if (isRaw) while (!(this.#eof() || this.#startsWithClosingTag(parentTag))) this.#advance(1);
+    else this.#advance(scanOpaqueTextBody(this.#source, this.#pos, parentLower) - this.#pos);
+    const { value, stripped } = stripTemplateDirectives(this.#source.slice(start, this.#pos));
+    children.push({
+      kind: "HtmlText",
+      range: { start, end: this.#pos },
+      loc: { start: startPos, end: this.#position() },
+      value: isOpaque ? decodeEntities(value) : value,
+      ...(stripped ? { containsTemplateDirective: true } : {}),
+    });
+    if (!this.#eof()) this.#consumeClosingTag();
+    return true;
   }
 
   /**
@@ -379,30 +411,6 @@ class HtmlParser {
       if (closersForParent?.has(openerName)) return true;
     }
     return false;
-  }
-
-  /**
-   * Consumes raw-text element content (script/style/title/textarea).
-   * `<title>` and `<textarea>` are visible to users and AT, so
-   * template directives are stripped from the rendered value; for
-   * `<script>` and `<style>` the strip is a no-op on well-formed
-   * directives and harmless otherwise.
-   */
-  #consumeRawText(parentTag: string): HtmlText {
-    const start = this.#pos;
-    const startPos = this.#position();
-    while (!(this.#eof() || this.#startsWithClosingTag(parentTag))) {
-      this.#advance(1);
-    }
-    const raw = this.#source.slice(start, this.#pos);
-    const { value, stripped } = stripTemplateDirectives(raw);
-    return {
-      kind: "HtmlText",
-      range: { start, end: this.#pos },
-      loc: { start: startPos, end: this.#position() },
-      value,
-      ...(stripped ? { containsTemplateDirective: true } : {}),
-    };
   }
 
   #consumeClosingTag(): void {
@@ -776,9 +784,7 @@ class HtmlParser {
   }
 
   #readUntil(stop: string): void {
-    while (!this.#eof() && this.#peek() !== stop) {
-      this.#advance(1);
-    }
+    while (!this.#eof() && this.#peek() !== stop) this.#advance(1);
   }
 
   #range(start: number, end?: number): SourceRange {

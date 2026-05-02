@@ -110,6 +110,71 @@ describe("parseHtml", () => {
     expect(style?.children[0]?.kind).toBe("HtmlText");
   });
 
+  describe("opaque-text carve-out for <code> and <pre>", () => {
+    // Documentation pages routinely use <code> and <pre> to display
+    // literal HTML examples (sometimes balanced, sometimes intentionally
+    // showing only a close tag for narrative purposes). The parser
+    // treats their text content as opaque so a literal `</ul>` shown
+    // for narrative purposes is not a stray-close diagnostic. See
+    // src/input/parsers/html.ts::OPAQUE_TEXT_ELEMENTS for the carve-out
+    // definition and the code-block-cdata real-world fixture for the
+    // originating bug.
+
+    it("treats <code> body as opaque text — literal close tags do not surface as stray closers", () => {
+      const { root, errors } = parseHtml("<code></ul></code>");
+      expect(errors.length).toBe(0);
+      const code = findFirst(root, "code");
+      expect(code?.children.length).toBe(1);
+      expect(code?.children[0]?.kind).toBe("HtmlText");
+      const text = code?.children[0] as { value: string };
+      expect(text.value).toBe("</ul>");
+    });
+
+    it("treats <pre> body as opaque text — literal close tags do not surface as stray closers", () => {
+      const { root, errors } = parseHtml("<pre></button></pre>");
+      expect(errors.length).toBe(0);
+      const pre = findFirst(root, "pre");
+      expect(pre?.children[0]?.kind).toBe("HtmlText");
+      const text = pre?.children[0] as { value: string };
+      expect(text.value).toBe("</button>");
+    });
+
+    it("does not parse a literal <a> nested inside <code> as a child element (carve-out trade-off)", () => {
+      const { root, errors } = parseHtml(`<code><a href="#">x</a></code>`);
+      expect(errors.length).toBe(0);
+      // The <a> is text inside the <code>, not a child element — that's
+      // the intended outcome for content shown as a code example.
+      expect(findFirst(root, "a")).toBeNull();
+      const code = findFirst(root, "code");
+      expect(code?.children.length).toBe(1);
+      expect(code?.children[0]?.kind).toBe("HtmlText");
+    });
+
+    it("balances same-tag nesting — <code><code>x</code></code> closes the outer at the matching outer </code>", () => {
+      const { root, errors } = parseHtml("<code><code>x</code></code>after");
+      expect(errors.length).toBe(0);
+      const code = findFirst(root, "code");
+      expect(code?.children.length).toBe(1);
+      // The body is the literal inner-tag string (entities decoded as
+      // for any opaque-text body).
+      const text = code?.children[0] as { value: string };
+      expect(text.value).toBe("<code>x</code>");
+      // "after" is a sibling text node of <code>, not nested.
+      const docTexts = root.children.filter((c) => c.kind === "HtmlText");
+      expect(docTexts.some((t) => (t as { value: string }).value.includes("after"))).toBe(true);
+    });
+
+    it("attribute quotes inside an inner same-tag opener don't terminate the opaque body prematurely", () => {
+      // Inner `<code class="x">` has a `>` inside an attribute value
+      // shape; the opaque-text walker must skip the start-tag body
+      // quote-aware so depth balancing stays accurate.
+      const { root, errors } = parseHtml('<code><code class=">"></code></code>tail');
+      expect(errors.length).toBe(0);
+      const code = findFirst(root, "code");
+      expect(code?.children[0]?.kind).toBe("HtmlText");
+    });
+  });
+
   it("decodes named HTML entities in text", () => {
     const { root } = parseHtml("<p>Tom &amp; Jerry &copy; 2026</p>");
     const p = findFirst(root, "p");

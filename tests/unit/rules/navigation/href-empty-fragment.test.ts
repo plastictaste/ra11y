@@ -314,16 +314,22 @@ describe("rule navigation/href-empty-fragment", () => {
       expect(violations[0]?.message).toContain("<CodeBlock> component");
     });
 
-    it("HTML: anchor inside <pre><code> adds a code-display block hint", () => {
-      // The ancestor walk goes child → parent, so <code> is the closest
-      // matching ancestor and wins. Either tag is a valid hint — assert
-      // on the substring "block" to keep the test robust to either.
+    it("HTML: anchor literally nested inside <pre><code> does not surface (opaque-text carve-out)", () => {
+      // The HTML parser treats `<code>` and `<pre>` text content as
+      // opaque (CDATA-like) — the literal `<a href="#">x</a>` shown
+      // inside the code block is documentation prose, not a parsed
+      // element. The rule consequently doesn't fire here, which is the
+      // intended outcome: a snippet displayed for narrative purposes
+      // is not a live control. The hint mechanism remains exercised
+      // for JSX wrappers (Example/CodeBlock/Demo), where the wrapper
+      // is a real component ancestor and the inner `<a>` is a real
+      // JSX element. See `src/input/parsers/html.ts::OPAQUE_TEXT_ELEMENTS`
+      // for the carve-out definition and the code-block-cdata
+      // real-world fixture for the originating bug.
       const violations = runRule(rule, `<pre><code><a href="#">x</a></code></pre>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toContain("block");
-      expect(violations[0]?.message).toContain("<code> block");
+      expect(violations).toHaveLength(0);
     });
 
     it("HTML: anchor inside class-tagged wrapper adds the class-name hint", () => {
