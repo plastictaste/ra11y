@@ -449,7 +449,14 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
   "partial_parse_files_present",
-  "parser_bailed_zero_findings",
+  // `parser_bailed_zero_findings` is now payload-bearing on the canonical
+  // surfaces — the warnings aggregator threads `analysisCoverage` through
+  // and the summarizer materializes `{ parseErrorFileCount, topFiles?, reason }`
+  // when the predicate fires. The typed schema removed the
+  // `BinaryPresenceMarker` slot so the code no longer belongs in this
+  // exclusively-binary set; derivative surfaces that don't materialize
+  // the coverage block still fall back to the truncation sentinel via
+  // the schema-discipline contract.
   "dist_only_scan_detected",
 ]);
 

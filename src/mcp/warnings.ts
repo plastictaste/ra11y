@@ -2471,7 +2471,49 @@ export interface ScanWarningDetails {
   };
   readonly baseline_dry_run?: BinaryPresenceMarker;
   readonly partial_parse_files_present?: BinaryPresenceMarker;
-  readonly parser_bailed_zero_findings?: BinaryPresenceMarker;
+  /**
+   * Payload for `parser_bailed_zero_findings`. Carries the load-bearing
+   * routing-decision identity an agent needs to triage the
+   * "parser silenced everything" regime: how many files drove the
+   * predicate, a sample slice of the affected paths, and the predicate
+   * name itself so an agent reading the warning channel can branch
+   * without descending into `meta.analysisCoverage.parseErrorFiles[]`.
+   *
+   * - `parseErrorFileCount` — total count of errored files that fed
+   *   the predicate (sourced from `analysisCoverage.parseErrorFileCount`,
+   *   the authoritative scalar at every wire shape — present even when
+   *   the inline `parseErrorFiles[]` array was replaced by the
+   *   `parseErrorTopReasons` rollup at large counts per
+   *   {@link import("./analysis-coverage-parse-errors.ts").PARSE_ERROR_INLINE_THRESHOLD}).
+   * - `topFiles` — sorted-ascending head-slice of up to
+   *   {@link PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP} paths drawn
+   *   verbatim from `analysisCoverage.parseErrorFiles[].path`.
+   *   Present-when-meaningful: omitted when the inline array was
+   *   replaced by the `parseErrorTopReasons` rollup at default
+   *   verbosity (the count + reason still ride; the agent reads
+   *   `meta.analysisCoverage.parseErrorTopReasons[]` for the per-reason
+   *   rollup or re-fetches under `verboseMeta: true` for the full
+   *   per-file list). Same wire-shape pattern as
+   *   `scanned_build_artifacts_present.top` — a bounded inline
+   *   triage slice with the long tail reachable on the meta surface.
+   * - `reason` — names the predicate verbatim so the warning channel
+   *   carries the same predicate text the agent reads in the rule-file
+   *   header. Per the AI-first doctrine "Empty `warningsDetails.<code>: {}`
+   *   is dishonest" — without this payload, the agent reading the bare
+   *   code knows the parser silenced findings somewhere but cannot
+   *   triage which files to scope around or whether the regime is
+   *   one stray failed file vs. every file in the scan.
+   *
+   * Pairs structurally with `parse_errors_present` (broader union code,
+   * different payload shape — that one splits the count into
+   * full-vs-partial buckets); this code names the more specific shape
+   * where parse errors silenced every rule across the entire scan.
+   */
+  readonly parser_bailed_zero_findings?: {
+    readonly parseErrorFileCount: number;
+    readonly topFiles?: readonly string[];
+    readonly reason: string;
+  };
   readonly dist_only_scan_detected?: BinaryPresenceMarker;
   /**
    * Payload for `js_innerhtml_template_literal_unparsed`. Carries up to
@@ -2720,7 +2762,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "restrict_to_paths_no_matches",
   "baseline_dry_run",
   "partial_parse_files_present",
-  "parser_bailed_zero_findings",
   "dist_only_scan_detected",
   "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
@@ -4086,6 +4127,10 @@ function buildScanWarningDetailsDispatch(
       summarize: () => summarizeParseErrors(inputs.analysisCoverage),
     },
     {
+      code: "parser_bailed_zero_findings",
+      summarize: () => summarizeParserBailedZeroFindings(inputs.analysisCoverage),
+    },
+    {
       code: "php_islands_stripped",
       summarize: () => summarizePhpIslandsStripped(inputs.analysisCoverage),
     },
@@ -4644,6 +4689,86 @@ function summarizeJsInnerHtmlTemplateLiteralUnparsed(
  * so the wire payload stays bounded even when many files contributed.
  */
 const INLINE_HTML_FILE_SAMPLES_CAP = 5;
+
+/**
+ * Hard cap on the number of `topFiles` entries surfaced on
+ * `warningsDetails.parser_bailed_zero_findings.topFiles`. Mirrors
+ * {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP} so the wire payload stays
+ * bounded on bulk-template corpora where `parseErrorFiles[]` may
+ * carry hundreds of entries before the inline-vs-rollup gate
+ * (`PARSE_ERROR_INLINE_THRESHOLD`) replaces the array with the
+ * top-reasons rollup. The cap is a wire-shape concern only —
+ * `parseErrorFileCount` carries the authoritative scalar at every
+ * shape, and the long tail is reachable via
+ * `meta.analysisCoverage.parseErrorFiles[]` (verbose=true) or
+ * `parseErrorTopReasons[]` (default rollup).
+ */
+export const PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP = 10;
+
+/**
+ * Builds the `parser_bailed_zero_findings` payload from the caller's
+ * `analysisCoverage` block. Returns `undefined` when the coverage block
+ * is absent or carries no `parseErrorFileCount` — both states mean the
+ * code's predicate did not honestly fire (the predicate gates on
+ * `parseErrorFileCount > 0`) and surfacing a degenerate payload would
+ * lie about the evidence per the doctrine bullet "Empty
+ * `warningsDetails.<code>: {}` is dishonest."
+ *
+ * `topFiles` is present-when-meaningful: populated from
+ * `analysisCoverage.parseErrorFiles[].path` (capped at
+ * {@link PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP} sorted-ascending)
+ * when the inline list ships, omitted when the count exceeded
+ * `PARSE_ERROR_INLINE_THRESHOLD` and the list was replaced by the
+ * `parseErrorTopReasons` rollup. The agent reading the warning channel
+ * still gets `parseErrorFileCount` + `reason` in the rollup regime;
+ * the per-file slice is additive triage evidence when available.
+ *
+ * Pure shape-builder; the predicate (`totalFindings === 0` AND
+ * `parseErrorFileCount > 0`) lives in {@link parserBailedZeroFindings}
+ * and the dispatch table only invokes this summarizer when the code
+ * fired.
+ */
+function summarizeParserBailedZeroFindings(
+  coverage: WarningInputs["analysisCoverage"],
+): NonNullable<ScanWarningDetails["parser_bailed_zero_findings"]> | undefined {
+  if (coverage === undefined) return undefined;
+  const rawCount = coverage["parseErrorFileCount"];
+  if (typeof rawCount !== "number" || rawCount <= 0) return undefined;
+  const topFiles = readParserBailedTopFiles(coverage);
+  return {
+    parseErrorFileCount: rawCount,
+    ...(topFiles === undefined ? {} : { topFiles }),
+    reason:
+      "parseErrorFileCount > 0 AND scan-wide totalFindings === 0; parser silenced every rule on the listed files",
+  };
+}
+
+/**
+ * Reads the per-file path slice off `analysisCoverage.parseErrorFiles[]`
+ * for the {@link summarizeParserBailedZeroFindings} payload. Returns
+ * `undefined` when the inline array is absent (the count exceeded
+ * `PARSE_ERROR_INLINE_THRESHOLD` and was replaced by the
+ * `parseErrorTopReasons` rollup, or the producer never populated it),
+ * or when the slice would be empty after filtering — present-when-
+ * meaningful per the AI-first doctrine "Ambiguous field shapes are
+ * dishonest." Sorts the resulting paths ascending and caps at
+ * {@link PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP} so the wire shape
+ * stays bounded.
+ */
+function readParserBailedTopFiles(
+  coverage: Record<string, unknown>,
+): readonly string[] | undefined {
+  const raw = coverage["parseErrorFiles"];
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const paths: string[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const path = (entry as { path?: unknown }).path;
+    if (typeof path === "string" && path.length > 0) paths.push(path);
+  }
+  if (paths.length === 0) return undefined;
+  return paths.sort().slice(0, PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP);
+}
 
 /**
  * Builds the `parser_bailed_on_non_jsx_in_tsx_route` payload from the

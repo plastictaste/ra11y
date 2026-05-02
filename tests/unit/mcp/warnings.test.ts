@@ -685,6 +685,88 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("parser_bailed_zero_findings");
   });
 
+  it("populates `warningsDetails.parser_bailed_zero_findings` with parseErrorFileCount + topFiles + reason — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — when the warning fires, the agent must be able to
+    // see how many files drove the predicate, a sample of which paths
+    // failed, and the predicate text itself, without descending into
+    // `meta.analysisCoverage.parseErrorFiles[]`.
+    const inputs = {
+      filesScanned: 3,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        parseErrorFileCount: 3,
+        parseErrorFiles: [
+          { path: "lib/c.js", parserAttempted: "tsx", reason: "Unexpected token" },
+          { path: "lib/a.js", parserAttempted: "tsx", reason: "Unexpected token" },
+          { path: "lib/b.js", parserAttempted: "tsx", reason: "Unexpected token" },
+        ],
+      },
+      filesByExtension: { ".js": 3 },
+      totalFindings: 0,
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("parser_bailed_zero_findings");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.parser_bailed_zero_findings).toEqual({
+      parseErrorFileCount: 3,
+      topFiles: ["lib/a.js", "lib/b.js", "lib/c.js"],
+      reason:
+        "parseErrorFileCount > 0 AND scan-wide totalFindings === 0; parser silenced every rule on the listed files",
+    });
+  });
+
+  it("`warningsDetails.parser_bailed_zero_findings.topFiles` caps at PARSER_BAILED_ZERO_FINDINGS_TOP_FILES_CAP entries — wire-shape bound only; full count stays on parseErrorFileCount", () => {
+    // Mirror of `scanned_build_artifacts_present.top` — the inline
+    // slice is bounded so the wire stays small on bulk-template
+    // corpora; the agent reads the full list off
+    // `meta.analysisCoverage.parseErrorFiles` under verboseMeta.
+    const parseErrorFiles = Array.from({ length: 25 }, (_, i) => ({
+      path: `lib/file-${String(i).padStart(3, "0")}.js`,
+      parserAttempted: "tsx",
+      reason: "Unexpected token",
+    }));
+    const inputs = {
+      filesScanned: 25,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 25, parseErrorFiles },
+      filesByExtension: { ".js": 25 },
+      totalFindings: 0,
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.parser_bailed_zero_findings;
+    expect(payload?.parseErrorFileCount).toBe(25);
+    expect(payload?.topFiles?.length).toBe(10);
+    // First sorted entry is `file-000.js` per the deterministic ascending sort.
+    expect(payload?.topFiles?.[0]).toBe("lib/file-000.js");
+  });
+
+  it("`warningsDetails.parser_bailed_zero_findings.topFiles` is omitted when parseErrorFiles[] is absent (count > inline threshold replaced by parseErrorTopReasons rollup)", () => {
+    // At default verbosity above PARSE_ERROR_INLINE_THRESHOLD, the
+    // analysis-coverage assembler replaces the inline `parseErrorFiles[]`
+    // array with the `parseErrorTopReasons` rollup. The summarizer
+    // honors present-when-meaningful: count + reason ride; the per-file
+    // slice is omitted. The agent reads the rollup on the meta surface
+    // for per-reason triage.
+    const inputs = {
+      filesScanned: 538,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { parseErrorFileCount: 538 },
+      filesByExtension: { ".js": 538 },
+      totalFindings: 0,
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.parser_bailed_zero_findings;
+    expect(payload?.parseErrorFileCount).toBe(538);
+    expect(payload?.topFiles).toBeUndefined();
+    expect(payload?.reason).toContain("parseErrorFileCount > 0");
+  });
+
   it("fires `parser_bailed_on_non_jsx_in_tsx_route` when the bailed-file list is non-empty — actual bail evidence (parse errors + zero findings on the file)", () => {
     // The doctrine names the conjunction of bail evidence and zero
     // findings on the file as the routing-skip hazard — the routing
