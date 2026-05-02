@@ -334,7 +334,23 @@ export interface ProjectContext {
  */
 export type EmittedViolation = Omit<
   Violation,
-  "ruleId" | "criteria" | "findingId" | "findingGroupId" | "groupKey" | "fixClass"
+  "ruleId" | "criteria" | "findingId" | "findingGroupId" | "groupKey" | "fixClass" | "cssPatternId"
 > & {
   readonly variantKey?: string;
+  /**
+   * Structured CSS-declaration fingerprint inputs the engine hashes
+   * into the final {@link Violation.cssPatternId}. Sibling input to
+   * `snippet` (which feeds {@link Violation.patternId}) for rules
+   * whose dedup unit is a CSS selector + property + value triple
+   * rather than an HTML/JSX element snippet — the contrast family
+   * and `motion/pause-stop-hide`'s CSS branches.
+   *
+   * Optional / present-when-meaningful: rules that don't emit on CSS
+   * declarations omit the field; the engine stamps `cssPatternId`
+   * only when this triple is populated. Per CLAUDE.md §1 "Ambiguous
+   * field shapes are dishonest."
+   *
+   * See `src/utils/css-pattern-id.ts` for the canonicalization recipe.
+   */
+  readonly cssFingerprint?: import("../utils/css-pattern-id.ts").CssFingerprintInputs;
 };

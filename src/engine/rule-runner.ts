@@ -13,6 +13,7 @@ import type { Ast } from "../types/ast.ts";
 import type { EmittedViolation, FixClass, Language, Rule } from "../types/rule.ts";
 import type { Severity, Violation } from "../types/violation.ts";
 import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
+import { maybeCssPatternId } from "../utils/css-pattern-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { maybePatternId } from "../utils/pattern-id.ts";
@@ -288,6 +289,12 @@ function stampViolation(
   // Cross-template pattern fingerprint — stamped only when the rule
   // emitted a non-empty `snippet`. See `src/utils/pattern-id.ts`.
   const patternId = maybePatternId(ruleId, emitted.snippet);
+  // CSS-declaration cross-file fingerprint — sibling of `patternId`
+  // for rules whose dedup unit is a CSS selector + property + value
+  // triple rather than an HTML/JSX element snippet. Stamped only when
+  // the rule emitted a non-empty `cssFingerprint`.
+  // See `src/utils/css-pattern-id.ts`.
+  const cssPatternId = maybeCssPatternId(ruleId, emitted.cssFingerprint);
   return {
     ruleId,
     fixClass,
@@ -308,6 +315,7 @@ function stampViolation(
     findingGroupId,
     groupKey,
     ...(patternId !== undefined && { patternId }),
+    ...(cssPatternId !== undefined && { cssPatternId }),
     ...(emitted.suggestion !== undefined && { suggestion: emitted.suggestion }),
     ...(emitted.fix !== undefined && { fix: emitted.fix }),
     ...(emitted.fixPaths !== undefined && { fixPaths: emitted.fixPaths }),

@@ -29,6 +29,7 @@ const F = (overrides: {
   findingId?: string;
   message?: string;
   snippet?: string;
+  cssPatternId?: string;
 }): FindingShape => {
   const base: Record<string, unknown> = {
     ruleId: overrides.ruleId,
@@ -48,6 +49,7 @@ const F = (overrides: {
     suppressWith: "media/alt-text-missing",
   };
   if (overrides.snippet !== undefined) base["snippet"] = overrides.snippet;
+  if (overrides.cssPatternId !== undefined) base["cssPatternId"] = overrides.cssPatternId;
   return base as unknown as FindingShape;
 };
 
@@ -166,6 +168,123 @@ describe("collapseFilesByGroupKey — per-group rollup", () => {
     // collapse into one entry rather than duplicating per file.
     expect(out.length).toBe(1);
     expect(out[0]?.occurrenceCount).toBe(2);
+  });
+
+  describe("cssPatternId-aware collapse — cross-file CSS-declaration dedup", () => {
+    it("117 byte-identical .img-thumbnail transitions across 117 files collapse to 1 group", () => {
+      // The headline invariant from the backlog item: 117 sibling
+      // vendor stylesheets each ship the same `.img-thumbnail
+      // { transition: ... }` rule. Each per-file emit produces a
+      // distinct `groupKey` because the AST shape walk is per-file.
+      // With `cssPatternId` populated, the collapse helper buckets
+      // on the fingerprint instead of the per-file groupKey, so all
+      // 117 copies fold into one canonical entry with full
+      // occurrences[].
+      const files = Array.from({ length: 117 }, (_, i) => ({
+        path: `/templates/site-${(i + 1).toString().padStart(3, "0")}/css/bootstrap.css`,
+        findings: [
+          F({
+            ruleId: "motion/pause-stop-hide",
+            // Each file emits its own per-file groupKey — the AST-
+            // shape walk produces distinct tokens per AST node.
+            groupKey: `gkey-file-${i}`,
+            line: 84,
+            column: 1,
+            cssPatternId: "css-pattern-shared",
+          }),
+        ],
+      }));
+      const out = collapseFilesByGroupKey(files);
+      expect(out.length).toBe(1);
+      expect(out[0]?.occurrenceCount).toBe(117);
+      expect(out[0]?.cssPatternId).toBe("css-pattern-shared");
+    });
+
+    it("buckets on cssPatternId even when groupKeys differ", () => {
+      const out = collapseFilesByGroupKey([
+        {
+          path: "/templates/a/main.css",
+          findings: [
+            F({
+              ruleId: "contrast/minimum",
+              groupKey: "diff-1",
+              line: 5,
+              column: 1,
+              cssPatternId: "shared-css-id",
+            }),
+          ],
+        },
+        {
+          path: "/templates/b/main.css",
+          findings: [
+            F({
+              ruleId: "contrast/minimum",
+              groupKey: "diff-2",
+              line: 12,
+              column: 1,
+              cssPatternId: "shared-css-id",
+            }),
+          ],
+        },
+      ]);
+      expect(out.length).toBe(1);
+      expect(out[0]?.occurrenceCount).toBe(2);
+    });
+
+    it("findings without cssPatternId still bucket on (ruleId, groupKey)", () => {
+      const out = collapseFilesByGroupKey([
+        {
+          path: "/repo/a.html",
+          findings: [
+            F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 1, column: 1 }),
+          ],
+        },
+        {
+          path: "/repo/b.html",
+          findings: [
+            F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 2, column: 1 }),
+          ],
+        },
+      ]);
+      expect(out.length).toBe(1);
+      expect(out[0]?.cssPatternId).toBeUndefined();
+      expect(out[0]?.occurrenceCount).toBe(2);
+    });
+
+    it("does not alias a cssPatternId value with an identical-looking groupKey", () => {
+      // Two findings with the same string token, one as groupKey and
+      // one as cssPatternId, must NOT collapse together — the bucket
+      // axes are different. The `c:` / `g:` prefix in the bucket key
+      // makes the disambiguation explicit.
+      const out = collapseFilesByGroupKey([
+        {
+          path: "/a.css",
+          findings: [
+            F({
+              ruleId: "contrast/minimum",
+              groupKey: "shared-token",
+              line: 1,
+              column: 1,
+            }),
+          ],
+        },
+        {
+          path: "/b.css",
+          findings: [
+            F({
+              ruleId: "contrast/minimum",
+              groupKey: "other-key",
+              line: 2,
+              column: 1,
+              cssPatternId: "shared-token",
+            }),
+          ],
+        },
+      ]);
+      // Two distinct buckets — one keyed on groupKey, one on
+      // cssPatternId. They must not silently merge.
+      expect(out.length).toBe(2);
+    });
   });
 });
 

@@ -273,6 +273,42 @@ export interface Violation {
    */
   readonly patternId?: string;
   /**
+   * Sibling cross-file fingerprint for findings whose dedup unit is a
+   * CSS selector + property + value triple rather than an HTML/JSX
+   * element snippet. {@link patternId} cannot fingerprint CSS-
+   * declaration rules because its canonicalization gates on a non-
+   * empty `snippet`, and rules like `contrast/minimum`,
+   * `contrast/non-text`, `contrast/enhanced`, and
+   * `motion/pause-stop-hide`'s CSS branches don't emit one. Without
+   * this token, a website-template catalog with 117 byte-identical
+   * `.img-thumbnail { transition: …; }` rules collapses to 117
+   * distinct `(ruleId, groupKey)` pairs because `groupKey` walks the
+   * per-file AST shape — the cross-file collapse mode has no
+   * affordance for "same canonical CSS declaration, N copies."
+   *
+   * `cssPatternId` is computed from
+   * `sha256(ruleId + selectorFamily + propertyFamily + valueShape)`
+   * (see `src/utils/css-pattern-id.ts`) — not from a snippet — so the
+   * 117 copies collapse to one fingerprint by construction. Rules
+   * populate the structured triple at emit time via
+   * {@link import("./rule.ts").EmittedViolation.cssFingerprint}; the
+   * engine's stamp sites hash it into this token.
+   *
+   * Surface-don't-suppress: every finding still appears individually;
+   * `cssPatternId` is additive affordance, not a filter (per
+   * docs/kb/architecture/ai-first-consumer.md). The collapse helper
+   * in `src/mcp/scan-project-collapse-by-group.ts` consumes the token
+   * to bucket cross-file copies into one canonical entry with a
+   * full `occurrences[]` enumeration — the agent reads "117 copies of
+   * one canonical pattern" without paging through 117 finding rows.
+   *
+   * Optional / present-when-meaningful: only stamped when the rule
+   * emitted a non-empty `cssFingerprint`. Forwarders MUST use a
+   * conditional spread so `cssPatternId: undefined` never reaches
+   * the wire (CLAUDE.md §1 "Ambiguous field shapes are dishonest").
+   */
+  readonly cssPatternId?: string;
+  /**
    * Structured reason codes naming known escape hatches that could
    * make this finding a false positive in context. Each entry is a
    * stable snake_case identifier (`replacement_indicator_in_sibling_file`,

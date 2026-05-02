@@ -87,6 +87,16 @@ export type Emit = (v: {
   decline?: number;
   message: string;
   suggestion: string;
+  /**
+   * Cross-file CSS-declaration fingerprint inputs. Hashed by the
+   * engine into {@link import("../../types/violation.ts").Violation.cssPatternId}
+   * — see `src/utils/css-pattern-id.ts`. Optional / present-when-
+   * meaningful: stamped on stylesheet and inline-style emit sites
+   * where the dedup unit is "same selector + property + value triple
+   * across files." Omitted on the `<marquee>` element-level emit
+   * where the dedup question is per-element, not per-declaration.
+   */
+  cssFingerprint?: import("../../utils/css-pattern-id.ts").CssFingerprintInputs;
 }) => void;
 
 export interface PositionOffset {

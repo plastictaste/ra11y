@@ -227,6 +227,14 @@ function buildInheritedViolation(
     // sweep. Conditional spread per CLAUDE.md §1 "Ambiguous field
     // shapes are dishonest."
     ...(source.patternId !== undefined && { patternId: source.patternId }),
+    // Sibling cross-file CSS-declaration fingerprint — same forwarding
+    // logic as `patternId`: an inherited finding describes the same
+    // canonicalized CSS pattern as its source site, so agents bulk-
+    // dismissing by `cssPatternId` across sibling template copies catch
+    // both the wrapper definition and every call site in one sweep.
+    // Conditional spread per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest."
+    ...(source.cssPatternId !== undefined && { cssPatternId: source.cssPatternId }),
     ...(source.couldBeWrongBecause && source.couldBeWrongBecause.length > 0
       ? { couldBeWrongBecause: source.couldBeWrongBecause }
       : {}),

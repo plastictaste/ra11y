@@ -416,6 +416,17 @@ function checkBoundary(
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
     ...(tailwindOverride ? { couldBeWrongBecause: [TAILWIND_CLASS_ON_CONSUMER] } : {}),
+    // Cross-file CSS-declaration fingerprint — see
+    // `src/utils/css-pattern-id.ts`. The selector + boundary-axis
+    // (`border` / `outline` / `fill` / `stroke` against background)
+    // + the resolved fg/bg/ratio triple identifies "the same
+    // canonical 1.4.11 boundary pair" across sibling vendor-stylesheet
+    // copies.
+    cssFingerprint: {
+      selectorFamily: cssRule.selector,
+      propertyFamily: `${prop}+background`,
+      valueShape: `${fg.source}|${bg.source}|${WCAG_AA_MIN_NON_TEXT}`,
+    },
   };
   ctx.emit(emitted);
 }

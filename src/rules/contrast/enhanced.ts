@@ -199,6 +199,14 @@ function emitFinding(
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
     ...(reasons.length > 0 ? { couldBeWrongBecause: reasons } : {}),
+    // Cross-file CSS-declaration fingerprint mirroring
+    // `contrast/minimum`'s emission — see
+    // `src/utils/css-pattern-id.ts`.
+    cssFingerprint: {
+      selectorFamily: finding.selector,
+      propertyFamily: "color+background",
+      valueShape: `${finding.fgSource}|${finding.bgSource}|${finding.minimum}`,
+    },
   };
   ctx.emit(emitted);
 }

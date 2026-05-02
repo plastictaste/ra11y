@@ -16,6 +16,7 @@
 import type { Ast } from "../types/ast.ts";
 import type { EmittedViolation, Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
+import { maybeCssPatternId } from "../utils/css-pattern-id.ts";
 import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { maybePatternId } from "../utils/pattern-id.ts";
@@ -52,6 +53,10 @@ export function stampProjectEmission(
     shape: shapeAtEmission(astsByPath, em.location.filePath, em.location.line, em.location.column),
   });
   const patternId = maybePatternId(rule.id, em.snippet);
+  // CSS-declaration cross-file fingerprint — sibling of `patternId`
+  // for rules whose dedup unit is a CSS selector + property + value
+  // triple. See `src/utils/css-pattern-id.ts`.
+  const cssPatternId = maybeCssPatternId(rule.id, em.cssFingerprint);
   return {
     ruleId: rule.id,
     fixClass: rule.fixClass,
@@ -64,6 +69,7 @@ export function stampProjectEmission(
     findingGroupId,
     groupKey,
     ...(patternId !== undefined && { patternId }),
+    ...(cssPatternId !== undefined && { cssPatternId }),
     ...(em.suggestion !== undefined && { suggestion: em.suggestion }),
     ...(em.fix !== undefined && { fix: em.fix }),
     ...(em.fixPaths !== undefined && { fixPaths: em.fixPaths }),

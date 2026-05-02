@@ -131,6 +131,24 @@ export interface AgentFinding {
    * docs/adr/0008-violation-group-key.md.
    */
   readonly groupKey: string;
+  /**
+   * Cross-file CSS-declaration fingerprint, mirrored from
+   * {@link import("../../types/violation.ts").Violation.cssPatternId}.
+   * Present on findings emitted by CSS-declaration rules
+   * (`contrast/minimum`, `contrast/non-text`, `contrast/enhanced`,
+   * `motion/pause-stop-hide`'s CSS branches) — N copies of the same
+   * canonicalized selector + property + value triple share one token
+   * even when their per-file AST-shape `groupKey` differs. The
+   * collapsed-by-group response mode in
+   * `src/mcp/scan-project-collapse-by-group.ts` uses this token to
+   * roll up cross-template-catalog CSS findings into one canonical
+   * entry with a full `occurrences[]` enumeration.
+   *
+   * Optional / present-when-meaningful per CLAUDE.md §1 "Ambiguous
+   * field shapes are dishonest": only stamped when the rule emitted
+   * a non-empty `cssFingerprint`.
+   */
+  readonly cssPatternId?: string;
   readonly ruleId: string;
   /**
    * Per-finding remediation lane stamped from the rule's `fixClass`

@@ -208,6 +208,16 @@ function checkHtmlInlineStyles(doc: HtmlDocument, emit: Emit): void {
       },
       message: `${echoTag} inline style sets '${echoValue}' (${profile.contextNote}) — inline declarations cannot be scoped to a prefers-reduced-motion media query, so users who prefer reduced motion cannot disable this motion.`,
       suggestion: `Move the ${triggering.property} declaration into a stylesheet rule wrapped in @media (prefers-reduced-motion: reduce) { … } with a reduced-motion alternative (animation: none or duration: 0.01ms), or remove the inline declaration if the motion is decorative.`,
+      // Cross-file CSS-declaration fingerprint — see
+      // `src/utils/css-pattern-id.ts`. Inline-style copies of the
+      // same `<tag style="animation: …">` across template-catalog
+      // copies collapse identically so the agent gets one canonical
+      // entry per fingerprint.
+      cssFingerprint: {
+        selectorFamily: `<${element.tagName.toLowerCase()} inline style>`,
+        propertyFamily: triggering.property,
+        valueShape: triggering.value,
+      },
     });
   }
 }
@@ -434,6 +444,16 @@ function checkCssStylesheet(stylesheet: CssStylesheet, emit: Emit, offset: Posit
       ...(declarationLine === selectorLine ? {} : { decline: declarationLine }),
       message: `'${echoSelector}' uses ${decl.property} (${profile.contextNote}) without a prefers-reduced-motion media query guard${mixedNote} — users who prefer reduced motion cannot disable this animation.`,
       suggestion: `Wrap the animation in @media (prefers-reduced-motion: reduce) { ${echoSelector} { ${decl.property}: none; } } or move the entire rule inside a prefers-reduced-motion query.`,
+      // Cross-file CSS-declaration fingerprint feeds
+      // `Violation.cssPatternId` — see `src/utils/css-pattern-id.ts`.
+      // 117 byte-identical `.img-thumbnail { transition: …; }` copies
+      // across sibling vendor stylesheet files collapse to one
+      // canonical entry by construction in the collapse helper.
+      cssFingerprint: {
+        selectorFamily: cssRule.selector,
+        propertyFamily: decl.property,
+        valueShape: decl.value,
+      },
     });
   }
 }

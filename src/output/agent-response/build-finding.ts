@@ -255,6 +255,16 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     findingId: v.findingId,
     findingGroupId: v.findingGroupId,
     groupKey: v.groupKey,
+    // CSS-declaration cross-file fingerprint — sibling of `groupKey`
+    // for the contrast family and `motion/pause-stop-hide`'s CSS
+    // branches. Surfaced on the agent finding so the collapsed-by-
+    // group response mode (`src/mcp/scan-project-collapse-by-group.ts`)
+    // can prefer it over `groupKey` when bucketing findings — the
+    // 117-copy `.img-thumbnail` template-catalog case collapses to
+    // one canonical entry by construction. Conditional spread keeps
+    // `cssPatternId: undefined` off the wire per CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest."
+    ...(v.cssPatternId !== undefined && { cssPatternId: v.cssPatternId }),
     ruleId: v.ruleId,
     fixClass: v.fixClass,
     criteria: [...v.criteria],

@@ -385,6 +385,18 @@ function emitFinding(
     // Conditional spread — `couldBeWrongBecause: []` would be a
     // dishonest empty-vs-unpopulated sentinel per CLAUDE.md §1.
     ...(reasons.length > 0 ? { couldBeWrongBecause: reasons } : {}),
+    // Cross-file CSS-declaration fingerprint — see
+    // `src/utils/css-pattern-id.ts`. The selector + the
+    // `color/background` axis + the resolved fg/bg/threshold triple
+    // is enough to identify "the same canonical contrast pair" across
+    // sibling vendor-stylesheet copies (.img-thumbnail with
+    // identical fg/bg/min produces one fingerprint regardless of
+    // which file the rule fired in).
+    cssFingerprint: {
+      selectorFamily: finding.selector,
+      propertyFamily: "color+background",
+      valueShape: `${finding.fgSource}|${finding.bgSource}|${finding.minimum}`,
+    },
   };
   ctx.emit(emitted);
 }
