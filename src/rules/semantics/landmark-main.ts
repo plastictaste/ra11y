@@ -191,25 +191,41 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
  * per-finding evidence it can act on without re-reading the source.
  *
  * On the full-confidence branch (non-layout-partial) we additionally
- * check the body for an "isolated component demo page" shape — a body
- * whose only visible direct child is a single component wrapper, with
- * an optional `<script>` tag (the visual-test / examples / demos
- * shape). When the shape matches we attach `couldBeWrongBecause:
- * ["isolated_component_demo_page"]` AND downgrade severity to `info`
- * with please-verify framing in the message — per
- * docs/kb/architecture/ai-first-consumer.md "Reason text and severity
- * must agree" and "Heuristic emission is the symmetric twin of
- * heuristic suppression": a `couldBeWrongBecause` token that concedes
- * the file may be composed elsewhere must not ship alongside `warning`
- * severity. The candidate stays in the primary list (surface-don't-
- * suppress) but the attention-budgeting signal matches the conceded
- * uncertainty. The predicate is in-file only — we don't depend on
- * cross-context build-artifact classification because the agent already
- * has that signal from `scannedBuildArtifacts` in scan_project meta.
- * The layout-partial branch already carries its own stronger code and
- * is not double-tagged: a layout/partial is provably not a demo page
- * (it has a composition directive), and stacking codes dilutes the
- * per-finding signal the agent reads first.
+ * check two layered downgrades — both close speculative-emission gaps
+ * per docs/kb/architecture/ai-first-consumer.md "Heuristic emission is
+ * the symmetric twin of heuristic suppression" + "Reason text and
+ * severity must agree":
+ *
+ *   1. Isolated-component-demo shape (≤2 element children with ≤1
+ *      non-`<script>`) — the body looks like a visual-test / examples
+ *      / demos page composed into a parent layout elsewhere. Tagged
+ *      with `isolated_component_demo_page` + severity `info`.
+ *   2. Largest-block-guess shape (a probable-main candidate exists AND
+ *      no sibling landmarks `<nav>` / `<header>` / `<aside>` /
+ *      `<footer>` are present anywhere in the document). The
+ *      probable-candidate hint is itself a "largest non-landmark block"
+ *      ranking that depends on rendered layout, not static AST — when
+ *      the page also lacks any positive multi-landmark evidence,
+ *      asserting the page genuinely needs `<main>` requires guessing at
+ *      composition we cannot observe in-file. Tagged with
+ *      `largest_block_guess_unobservable` + severity `info`.
+ *
+ * The two downgrade branches are disjoint by construction: branch 1
+ * is the more specific narrative (single-wrapper demo) and takes
+ * precedence; branch 2 covers the broader speculative-emission case
+ * where there's a probable wrapping target but no in-file evidence the
+ * page is intentionally multi-landmark. When sibling landmarks ARE
+ * present, the missing `<main>` is the only landmark-graph gap and the
+ * emission is observable from in-file evidence — severity stays
+ * `warning`. The predicate is in-file only — we don't depend on
+ * cross-context build-artifact classification because the agent
+ * already has that signal from `scannedBuildArtifacts` in scan_project
+ * meta. The layout-partial branch already carries its own stronger
+ * code and is not double-tagged: a layout/partial is provably not a
+ * demo page (it has a composition directive) and the largest-block
+ * guess on a partial points at a candidate the composed child may
+ * supply via its own envelope; stacking codes dilutes the per-finding
+ * signal the agent reads first.
  */
 function emitMissingMain(
   ctx: FileContext,
@@ -227,28 +243,67 @@ function emitMissingMain(
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
-  const isolatedDemo = body ? isIsolatedComponentBodyShape(body) : false;
-  // Severity downgrade gate: when the body shape matches the isolated-
-  // component-demo predicate, the `couldBeWrongBecause` code concedes
-  // the page may be composed elsewhere into a real document envelope.
-  // Per "Reason text and severity must agree," a `warning` severity
-  // alongside a "may not apply" reason is a dishonest shape; downgrade
-  // to `info` so the attention-budgeting signal matches the conceded
-  // uncertainty. The candidate still surfaces (surface-don't-suppress);
-  // the agent reads the demo-page code and please-verify message and
-  // either confirms or dismisses.
-  const severity: "warning" | "info" = isolatedDemo ? "info" : "warning";
-  const headlineMessage = isolatedDemo
-    ? "Document has no <main> landmark, but the body shape (single wrapper element +/- a <script>) matches an isolated component demo page — verify whether this file is the full page envelope or a single-component demo composed into a parent layout elsewhere."
-    : "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.";
+  const downgrade = resolveDowngrade(body, doc, probable);
   ctx.emit({
-    severity,
+    severity: downgrade.severity,
     location: { filePath: "", line, column },
-    message: `${headlineMessage}${shapeSuffix}${candidateSuffix}`,
+    message: `${downgrade.headline}${shapeSuffix}${candidateSuffix}`,
     suggestion: buildMissingMainSuggestion(probable),
-    ...(isolatedDemo ? { couldBeWrongBecause: [ISOLATED_COMPONENT_DEMO_CODE] } : {}),
+    ...(downgrade.code ? { couldBeWrongBecause: [downgrade.code] } : {}),
     ...(probable ? { evidence: probableCandidateEvidence(probable) } : {}),
   });
+}
+
+/**
+ * Resolves the severity / headline / `couldBeWrongBecause` code triple
+ * for a missing-`<main>` emit on the non-layout-partial branch. Two
+ * speculative-emission downgrades are layered in precedence order:
+ *
+ *   1. {@link ISOLATED_COMPONENT_DEMO_CODE} — single-wrapper body shape
+ *      (≤2 direct element children with ≤1 non-`<script>`). The more
+ *      specific narrative; wins when both predicates match.
+ *   2. {@link LARGEST_BLOCK_GUESS_CODE} — a probable-main candidate
+ *      exists AND the document carries no sibling `<header>` / `<nav>`
+ *      / `<footer>` / `<aside>` landmarks. Without sibling landmarks
+ *      we lack positive in-file evidence the page is multi-landmark,
+ *      and the largest-block ranking depends on rendered layout
+ *      (unobservable from static AST).
+ *
+ * Both downgrades produce severity `info` so the attention-budgeting
+ * signal matches the conceded uncertainty in `couldBeWrongBecause` —
+ * per docs/kb/architecture/ai-first-consumer.md "Reason text and
+ * severity must agree" + "Heuristic emission is the symmetric twin of
+ * heuristic suppression." When neither predicate matches the page has
+ * positive in-file landmark evidence and the emit fires at full
+ * `warning` confidence with the canonical headline.
+ */
+function resolveDowngrade(
+  body: HtmlElement | undefined,
+  doc: HtmlDocument,
+  probable: ProbableMainCandidate | undefined,
+): { severity: "warning" | "info"; headline: string; code: string | undefined } {
+  if (body && isIsolatedComponentBodyShape(body)) {
+    return {
+      severity: "info",
+      headline:
+        "Document has no <main> landmark, but the body shape (single wrapper element +/- a <script>) matches an isolated component demo page — verify whether this file is the full page envelope or a single-component demo composed into a parent layout elsewhere.",
+      code: ISOLATED_COMPONENT_DEMO_CODE,
+    };
+  }
+  if (probable !== undefined && collectSiblingLandmarks(doc).length === 0) {
+    return {
+      severity: "info",
+      headline:
+        "Document has no <main> landmark and no sibling <header>/<nav>/<footer>/<aside> landmarks either — verify whether this page intends multiple landmarks (the largest-non-landmark-block ranking is unobservable from static analysis), is a composed fragment whose parent layout supplies the envelope, or is a single-region page where adding <main> around the existing wrapper is the intended fix.",
+      code: LARGEST_BLOCK_GUESS_CODE,
+    };
+  }
+  return {
+    severity: "warning",
+    headline:
+      "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.",
+    code: undefined,
+  };
 }
 
 /**
@@ -277,6 +332,28 @@ function emitMissingMain(
  * already reads it from scan_project meta.
  */
 const ISOLATED_COMPONENT_DEMO_CODE = "isolated_component_demo_page";
+
+/**
+ * Structured `couldBeWrongBecause` code surfaced when the missing-
+ * `<main>` emission rests on a "largest non-landmark block" guess
+ * — the {@link findProbableMainCandidate} ranking — AND the document
+ * carries no sibling `<header>` / `<nav>` / `<footer>` / `<aside>`
+ * landmarks anywhere. Without sibling landmarks the page lacks any
+ * positive in-file evidence that it intends multiple landmarks, and
+ * the largest-block ranking depends on rendered layout (which the
+ * static AST cannot observe). The emission still surfaces so the agent
+ * sees the gap, but severity downgrades to `info` and the message
+ * frames the question rather than asserting the predicate — per
+ * docs/kb/architecture/ai-first-consumer.md "Reason text and severity
+ * must agree" + "Heuristic emission is the symmetric twin of heuristic
+ * suppression."
+ *
+ * Disjoint from {@link ISOLATED_COMPONENT_DEMO_CODE}: when both
+ * predicates match, the more specific isolated-demo narrative wins.
+ * The two codes are never stacked. Predicate is in-file only — no
+ * cross-context lookups.
+ */
+const LARGEST_BLOCK_GUESS_CODE = "largest_block_guess_unobservable";
 
 /**
  * True when `<body>` has at most 2 direct element children AND at most

@@ -1200,13 +1200,16 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
     });
 
-    it("does NOT attach the qualifier on a full-page chrome shape", () => {
+    it("does NOT attach the isolated-demo qualifier on a full-page chrome shape (largest-block-guess takes over)", () => {
       // counter-style page: h1 + p + 2 buttons + script = 5 visible
       // body children. Real authored content with multiple sibling
       // elements — the demo-page heuristic must not fire so the agent
       // does not mis-route a real page as "probably composed elsewhere."
-      // Severity stays at `warning` because the qualifier is absent —
-      // the file is structurally a real page that lacks a landmark.
+      // The page also has no sibling landmarks (no <header> / <nav> /
+      // <footer> / <aside>) so the largest-block-guess downgrade fires
+      // instead — without sibling landmarks we lack positive in-file
+      // evidence the page is multi-landmark, and the probable-candidate
+      // ranking is unobservable from static AST.
       const v = runRule(
         rule,
         [
@@ -1223,8 +1226,8 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "counter.html" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
-      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
+      expect(v[0]?.severity).toBe("info");
     });
 
     it("does NOT attach the qualifier when body has 3+ element children", () => {
@@ -1297,6 +1300,228 @@ describe("rule semantics/landmark-main", () => {
       );
       expect(v).toHaveLength(1);
       expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Largest-block-guess downgrade qualifier.
+  //
+  // When the missing-<main> emission rests on the probable-main candidate
+  // ranking AND the document carries no sibling <header>/<nav>/<footer>/
+  // <aside> landmarks anywhere, the predicate "this page genuinely needs
+  // <main>" depends on a largest-non-landmark-block guess unobservable
+  // from static AST. Without sibling landmarks we lack any positive
+  // in-file evidence the page is multi-landmark. The candidate still
+  // surfaces (surface-don't-suppress) but severity downgrades to `info`
+  // and the message frames the question rather than asserting the
+  // predicate — per docs/kb/architecture/ai-first-consumer.md "Reason
+  // text and severity must agree" + "Heuristic emission is the symmetric
+  // twin of heuristic suppression."
+  // ─────────────────────────────────────────────────────────────────────────
+  describe("largest-block-guess qualifier", () => {
+    it("downgrades to info on a single-<div class='container'> page with no other landmarks", () => {
+      // The canonical regression fixture from the backlog item: a
+      // single wrapping container with three sibling sections inside
+      // and no other landmarks at the document level. Pre-fix this
+      // emitted at warning severity claiming the largest-block ranking
+      // identified the page's main content; the predicate is
+      // unobservable from static AST and the absence of sibling
+      // landmarks denies any positive evidence the page is intended
+      // multi-landmark. Body has 1 visible direct child (the container)
+      // — but the isolated-demo predicate matches at ≤2 element
+      // children with ≤1 non-script. Use a body with 3+ direct children
+      // so the largest-block-guess downgrade fires instead of the
+      // isolated-demo branch.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          "      <h1>Welcome</h1>",
+          "      <p>Some intro prose.</p>",
+          "      <p>Another paragraph.</p>",
+          "    </div>",
+          "    <p>Sibling paragraph one.</p>",
+          "    <p>Sibling paragraph two.</p>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "single-container.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
+      expect(v[0]?.message).toContain("verify whether this page intends multiple landmarks");
+      expect(v[0]?.message).toContain("largest-non-landmark-block ranking is unobservable");
+    });
+
+    it("does NOT downgrade when a sibling <header> is present (positive multi-landmark evidence)", () => {
+      // header sibling is positive in-file evidence the page intends
+      // multi-landmark structure. With that, the missing-<main>
+      // emission is observable from in-file evidence alone and severity
+      // stays at `warning`.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>nav</header>",
+          '    <div class="container">',
+          "      <h1>Welcome</h1>",
+          "      <p>Some intro prose.</p>",
+          "      <p>Another paragraph.</p>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "with-header.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT downgrade when a sibling <nav> is present", () => {
+      // nav alone (without header/footer) is also positive multi-
+      // landmark evidence — guards that the predicate is presence-OR-of
+      // any landmark, not a header-only check.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <nav>links</nav>",
+          '    <div id="content">',
+          "      <h1>Title</h1>",
+          "      <p>Body.</p>",
+          "      <p>More body.</p>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "with-nav.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("isolated-demo precedence: single-wrapper body uses isolated_component_demo_page, not largest-block-guess", () => {
+      // Both predicates match the demo-shape fixture: ≤2 element
+      // children with ≤1 non-script (isolated-demo TRUE) AND a probable
+      // candidate exists with no sibling landmarks (largest-block-guess
+      // would also be TRUE in isolation). Per the precedence rule,
+      // isolated-demo wins because the single-wrapper narrative carries
+      // more triage signal than "largest block of unknown nature."
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <div class="container">',
+          '      <div class="needle hour"></div>',
+          '      <div class="needle minute"></div>',
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "demo.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
+    });
+
+    it("does NOT downgrade when the body has only landmark children (no probable candidate)", () => {
+      // Every direct child is a landmark; findProbableMainCandidate
+      // returns undefined. With no probable candidate the largest-
+      // block-guess predicate cannot fire — there's no guess to
+      // concede. The all-landmarks case is observably "real
+      // multi-landmark page just missing main" and stays at warning.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          "    <header>top</header>",
+          "    <nav>links</nav>",
+          "    <footer>bottom</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "all-landmarks.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+    });
+
+    it("does NOT downgrade on the layout-partial branch (composition directive carries stronger code)", () => {
+      // Layout / partial files already carry the
+      // partial_or_layout_file_requires_composed_check code. Stacking
+      // largest-block-guess on top would dilute the per-finding signal
+      // the agent reads first; the layout-partial branch is provably a
+      // composition site, not a single-region page that needs landmark
+      // wrapping. Body must clear `looksLikeFullPage`; pair the
+      // `{{ content }}` directive with an h1 + ≥5 visible descendants
+      // (branch B) so the page-shape predicate resolves true.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <body>",
+          '    <div id="content">',
+          "      <h1>X</h1>",
+          "      <p>One.</p>",
+          "      <p>Two.</p>",
+          "      <p>Three.</p>",
+          "      {{ content }}",
+          "      <p>Four.</p>",
+          "    </div>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+    });
+
+    it("evidence still carries the probable-candidate hint on downgraded emissions", () => {
+      // Per "surface, don't suppress" the per-finding evidence stays
+      // populated even when severity downgrades — the agent still
+      // reads the candidate hint to decide where to wrap. The downgrade
+      // is on the attention-budgeting signal (severity), not on the
+      // descriptive payload.
+      const v = runRule(
+        rule,
+        [
+          "<html>",
+          "  <body>",
+          '    <article id="post">',
+          "      <h1>Title</h1>",
+          "      <p>Body.</p>",
+          "      <p>More body.</p>",
+          "    </article>",
+          "    <p>Sibling.</p>",
+          "    <p>Another sibling.</p>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "article-only.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
+      const evidence = v[0]?.evidence;
+      expect(evidence?.kind).toBe("landmark-main-probable-candidate");
+      if (evidence?.kind === "landmark-main-probable-candidate") {
+        expect(evidence.tag).toBe("article");
+        expect(evidence.selectorHint).toBe("article#post");
+      }
     });
   });
 
