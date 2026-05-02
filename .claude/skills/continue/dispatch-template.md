@@ -63,6 +63,8 @@ If it fails, fix the issue, make another commit, re-run. If you cannot get it gr
 
 **Timing-flake exemption.** If the only failures are integration tests that time out under concurrent full-verify load but pass when re-run in isolation, treat as a subprocess startup-ordering flake — not a real failure. Re-run `bun run verify:precommit` once alone (no parallel verify in other worktrees) before treating as red. If the isolation retry passes, treat as green and proceed. Signal this in your return as `signals[].code: verify_flaky_mcp_subprocess` with the test names in `evidence`, but do NOT return `blocked`. The integrator has the same exemption at final-verify time; this ensures consistent handling at the specialist pre-commit verify stage too.
 
+**Pre-existing-debt attribution requires concrete evidence.** When a lint, format, or type failure occurs in `verify:precommit`, do NOT claim the failure is pre-existing main debt unless you have verified it with `git show main:<path>` and can cite the exact output confirming the failing lines exist on `main` unmodified. Free-form attestation ("I verified each line exists on main") is not credible evidence and will be re-checked by the integrator's independent verify. If you cannot confirm the failure is pre-existing with a concrete citation, treat it as your own regression and fix it before returning `verifyPrecommit: "ok"`. Emitting a false `signals[].code: verify_red_pre_existing_on_main` claim degrades the integrator's trust calibration; the integrator always re-runs full verify post-cherry-pick regardless.
+
 Your worktree is isolated, so the verify output stays in your context, not the orchestrator's. Absorb it and return a clean summary.
 
 ## 5. Structured return contract
