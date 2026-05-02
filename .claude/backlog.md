@@ -572,7 +572,6 @@ Catalog-scale perf / scoping:
 
 Review-finder noise / dedup:
 
-- [ ] **V1-CHECKLIST-CRITERION-CANDIDATE-DEDUPE-ACROSS-IDS** Same `(file, line, reason)` candidate fires under multiple criterion IDs with byte-identical reason text. On `ratio.mdx:14` cited 3× under `wcag22:1.2.1`/`1.2.3`/`1.2.5`; sound-board `<audio>` rows fire 6 elements × 3 criteria = 18 candidates with 3 unique reason strings; template-catalog `fancybox.pack.js:4` cited 74× × 3 criteria = 222 likelyIrrelevant rows. Fix: when a candidate's `(ruleId, snippet, reason)` tuple is identical across N criterion IDs, fold to one candidate with `criterionIds: [...]` array; `verdict_candidate` then applies one verdict to all listed criteria. Pairs with V1-REVIEW-CANDIDATES-SIBLING-REASON-DEDUP (per-criterion sibling axis); this is the cross-criterion same-candidate axis.
 
 Response shape / cross-surface drift / honesty:
 

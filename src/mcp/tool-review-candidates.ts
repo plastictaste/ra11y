@@ -23,8 +23,12 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import type { CandidateFinder, ReviewCandidate } from "../types/review.ts";
+import type { CandidateFinder } from "../types/review.ts";
 import type { Standard } from "../types/standard.ts";
+import {
+  dedupeReviewCandidatesByReason,
+  type ReasonDedupedCandidate,
+} from "./review-candidate-dedup.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "./source-snippet.ts";
 import {
@@ -44,7 +48,7 @@ export const reviewCandidatesTool: McpTool = {
   def: {
     name: "review_candidates",
     description:
-      "List tier-1 manual-review candidates with source context. Use this to drive an LLM-assisted manual review loop: iterate candidates, read the snippet, answer the prompt, report verdict. The pass/fail review prompt is deduped to `prompts[criterionId].text` at the top level — each candidate carries `criterionId`, look up the prompt there. Pair with `scan` for full coverage.",
+      "List tier-1 manual-review candidates with source context. Use this to drive an LLM-assisted manual review loop: iterate candidates, read the snippet, answer the prompt, report verdict. The pass/fail review prompt is deduped to `prompts[criterionId].text` at the top level — each candidate carries `criterionId`, look up the prompt there. When a finder declares multiple criterion IDs (e.g. `wcag22:1.3.6` + `wcag21:1.3.6` for the same `<input>`), the candidate is folded into one row carrying `criteria: [...ids]` (sorted union; canonical first ID populates the singular `criterionId` slot for filter compatibility); pass the array through to `verdict_candidate.candidate.criteria` so one verdict applies to every listed criterion atomically. Pair with `scan` for full coverage.",
     inputSchema: {
       type: "object",
       properties: {
@@ -112,30 +116,34 @@ export const reviewCandidatesTool: McpTool = {
       level,
     });
 
-    const candidates = (report.candidates ?? []).filter((c) => {
+    const rawCandidates = (report.candidates ?? []).filter((c) => {
       if (filterCriterion && c.criterionId !== filterCriterion) return false;
       return isCriterionInLevel(c.criterionId, level, session);
     });
+
+    // Cross-criterion dedup: when a finder declares multiple criterion
+    // IDs (canonical case: `review/identify-purpose` covering both
+    // `wcag22:1.3.6` and `wcag21:1.3.6`), it emits one row per criterion
+    // at the same `(file, line, column)` with byte-identical reason
+    // text. Pre-fold the agent saw N rows under one location with the
+    // same evidence; post-fold one row carrying every covered criterion
+    // in `criteria: string[]`. The downstream `verdict_candidate` tool
+    // accepts that array and applies one verdict to all listed criteria
+    // atomically — same evidence, one agent action. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces": the by-position
+    // surfaces (`scan_file.reviewCandidates[]` /
+    // `scan_project.reviewCandidates[]`) already dedup the same union
+    // via the per-position helper; the by-row surface dedups via the
+    // by-reason helper so the same conceptual candidate carries one
+    // identity-shaped entry across both surface families.
+    const candidates = dedupeReviewCandidatesByReason(rawCandidates);
 
     const findersByCriterion = indexFindersByCriterion(session);
     const standardsById = new Map(session.registry.standards.map((s) => [s.id, s]));
     const sources = sourceIndex(files);
 
-    // Build the keyed prompt map on the fly from the criterion IDs
-    // actually present in the candidate list. We only emit an entry when
-    // a finder exists for that criterion — omission is the honest
-    // signal (see CLAUDE.md §1 "Ambiguous field shapes are dishonest")
-    // rather than `{ text: "", finderId: null }`.
-    const prompts: Record<string, { readonly text: string; readonly finderId: string }> = {};
-    for (const c of candidates) {
-      if (prompts[c.criterionId] !== undefined) continue;
-      const finder = findersByCriterion.get(c.criterionId);
-      if (finder === undefined) continue;
-      prompts[c.criterionId] = {
-        text: finder.docs.reviewPrompt,
-        finderId: finder.id,
-      };
-    }
+    const prompts = buildPromptsMap(candidates, findersByCriterion);
     const hasPrompts = Object.keys(prompts).length > 0;
 
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
@@ -153,7 +161,7 @@ export const reviewCandidatesTool: McpTool = {
       candidates.length > 0
         ? {
             nextStep:
-              "For each candidate: read the `snippet` + `reason`, look up `prompts[criterionId].text` for the pass/fail question, then verdict. Run the `ra11y/triage` prompt (via `prompts/get`) to batch-process all candidates in one structured pass.",
+              "For each candidate: read the `snippet` + `reason`, look up `prompts[criterionId].text` for the pass/fail question, then verdict. When a candidate carries `criteria: [...ids]` (cross-criterion union: same evidence covers multiple criteria), pass the array through to `verdict_candidate.candidate.criteria` so one verdict applies to every listed criterion atomically. Run the `ra11y/triage` prompt (via `prompts/get`) to batch-process all candidates in one structured pass.",
           }
         : {};
     return textResult({
@@ -178,18 +186,61 @@ export const reviewCandidatesTool: McpTool = {
 };
 
 /**
- * Maps one engine-emitted {@link ReviewCandidate} onto the
- * `review_candidates` wire shape. Extracted from the tool's main
- * handler so the per-candidate present-when-meaningful spreads
- * (siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
- * durationLiteralMs, durationExpression, sourceCount, dismissalKey) live in
- * one place rather than inflating the handler's cognitive complexity above
- * the linter's cap. `confidence` is required on every grounded candidate;
- * `title` / `level` come from the standard's criterion record and
- * conditional-spread when the resolution succeeds.
+ * Builds the top-level `prompts: Record<criterionId, { text, finderId }>`
+ * map for the response. Iterates each candidate's full `criteria`
+ * array (the cross-criterion fold may have collapsed N per-criterion
+ * siblings into one row) so an agent looking up `prompts[id]` for any
+ * covered criterion resolves — required when the canonical singular
+ * `criterionId` slot holds the sorted-first union member but the agent
+ * verdicts via the full union.
+ *
+ * Per CLAUDE.md §1 "Ambiguous field shapes are dishonest", emits an
+ * entry only when a finder exists for that criterion — omission is
+ * the honest signal that no finder prompt is available, not a
+ * `{ text: "", finderId: null }` sentinel.
+ *
+ * Extracted from the tool's main handler so the iteration branches
+ * stay out of the parent's cognitive-complexity score.
+ */
+function buildPromptsMap(
+  candidates: readonly ReasonDedupedCandidate[],
+  findersByCriterion: ReadonlyMap<string, CandidateFinder>,
+): Record<string, { readonly text: string; readonly finderId: string }> {
+  const out: Record<string, { readonly text: string; readonly finderId: string }> = {};
+  for (const c of candidates) {
+    for (const cid of c.criteria) {
+      if (out[cid] !== undefined) continue;
+      const finder = findersByCriterion.get(cid);
+      if (finder === undefined) continue;
+      out[cid] = { text: finder.docs.reviewPrompt, finderId: finder.id };
+    }
+  }
+  return out;
+}
+
+/**
+ * Maps one cross-criterion-deduped candidate onto the `review_candidates`
+ * wire shape. Extracted from the tool's main handler so the
+ * per-candidate present-when-meaningful spreads (siblingOccurrences,
+ * vendorPathHint, vendorContext, predicateConceded, durationLiteralMs,
+ * durationExpression, sourceCount, dismissalKey) live in one place rather
+ * than inflating the handler's cognitive complexity above the linter's
+ * cap. `confidence` is required on every grounded candidate; `title` /
+ * `level` come from the standard's criterion record (looked up via the
+ * canonical `criterionId` slot) and conditional-spread when the
+ * resolution succeeds.
+ *
+ * `criteria` is the cross-criterion union of every ID this candidate's
+ * evidence covers, sorted. Omitted when length is 1 per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest" — a length-1 array next to
+ * `criterionId` would be redundant noise; the field surfaces only when
+ * it carries new information (the multi-criterion union). When emitted,
+ * `verdict_candidate` accepts the array on the input candidate and
+ * applies one verdict to all listed criteria atomically — same
+ * evidence, one agent action.
  */
 function mapCandidateOut(
-  c: ReviewCandidate,
+  c: ReasonDedupedCandidate,
   standardsById: ReadonlyMap<string, Standard>,
   sources: ReadonlyMap<string, SourceEntry>,
 ): Record<string, unknown> {
@@ -199,12 +250,28 @@ function mapCandidateOut(
   const snippet = candidateSnippet(c, sources);
   return {
     criterionId: c.criterionId,
+    ...(c.criteria.length > 1 ? { criteria: c.criteria } : {}),
     ...(criterion?.title ? { title: criterion.title } : {}),
     ...(criterion?.level ? { level: criterion.level } : {}),
     location: c.location,
     reason: c.reason,
     confidence: c.confidence,
     ...(snippet === undefined ? {} : { snippet }),
+    ...additiveEvidenceFields(c),
+  };
+}
+
+/**
+ * Conditional-spreads every present-when-meaningful additive evidence
+ * field a candidate may carry — extracted from {@link mapCandidateOut}
+ * so the per-field branches don't push the parent's cognitive
+ * complexity above the lint cap as new evidence sub-fields accrete.
+ * Each branch follows the canonical CLAUDE.md §1 shape: omit entirely
+ * when the source value is undefined / empty so a downstream consumer
+ * never has to disambiguate "absent" from "present-but-empty."
+ */
+function additiveEvidenceFields(c: ReasonDedupedCandidate): Record<string, unknown> {
+  return {
     ...(c.siblingOccurrences !== undefined &&
       c.siblingOccurrences.length > 0 && {
         siblingOccurrences: c.siblingOccurrences,

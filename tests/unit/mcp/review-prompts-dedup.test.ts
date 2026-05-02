@@ -69,9 +69,20 @@ describe("review_candidates: top-level prompts map dedupe", () => {
     // (one per divergent nav). All of them should reference a single
     // prompts["wcag22:3.2.3"] entry rather than inlining the prompt
     // text on each row.
+    //
+    // The cross-criterion dedup folds each finder emission into one
+    // row whose `criteria` array carries every covered ID; the
+    // canonical singular `criterionId` slot holds the sorted-first
+    // union member. Membership filtering uses `criteria.includes(...)`
+    // to find every candidate covering wcag22:3.2.3 regardless of
+    // which ID landed in the canonical slot.
     const body = await runReviewCandidates({ paths: [CONSISTENT_NAV_BAD] });
 
-    const sameCriterion = body.candidates.filter((c) => c["criterionId"] === "wcag22:3.2.3");
+    const sameCriterion = body.candidates.filter((c) => {
+      const cid = c["criterionId"] as string;
+      const criteria = (c["criteria"] as readonly string[] | undefined) ?? [cid];
+      return criteria.includes("wcag22:3.2.3");
+    });
     expect(sameCriterion.length).toBeGreaterThan(1);
 
     // Prompt present exactly once for that criterion.
@@ -150,31 +161,47 @@ describe("review_candidates: top-level prompts map dedupe", () => {
 
   it("serialized response is measurably smaller than the pre-dedupe shape on a many-candidate criterion", async () => {
     // Compare the actual response size against a reconstructed
-    // "pre-dedupe" shape where every candidate carries the full
-    // reviewPrompt text inline. For a criterion with N candidates
-    // sharing one prompt, the per-row duplication is ~(N-1) * promptLen.
-    // We want a non-trivial reduction (not just "equal or smaller")
-    // so the test catches a regression where the prompt leaks back in.
+    // "pre-dedupe" shape where every candidate is fanned out across
+    // all its `criteria` IDs (the cross-criterion dedup unwound) AND
+    // every per-criterion row carries the full reviewPrompt text
+    // inline (the prompts-map hoisting unwound). The combined transform
+    // is lossless; the size delta proves both savings layers earn their
+    // bytes — pre-dedup, a finder with K criterion IDs declared and N
+    // distinct evidence locations emitted N×K rows each carrying ~450
+    // chars of prompt prose; post-dedup it's N rows + K prompt entries.
     const body = await runReviewCandidates({ paths: [CONSISTENT_NAV_BAD] });
-    expect(body.candidates.length).toBeGreaterThan(1);
+    expect(body.candidates.length).toBeGreaterThan(0);
     const prompts = body.prompts ?? {};
 
     const dedupedSize = JSON.stringify(body).length;
+
+    // Fan each deduped row back out across its `criteria` array (or
+    // singleton `criterionId` when no `criteria` was emitted), then
+    // inline the prompt text on every per-criterion row.
+    const fannedRows = body.candidates.flatMap((c) => {
+      const cid = c["criterionId"] as string;
+      const criteria = (c["criteria"] as readonly string[] | undefined) ?? [cid];
+      return criteria.map((id) => {
+        const prompt = prompts[id];
+        // Strip the dedup hint on the unwound shape so the size
+        // comparison reflects the pre-dedup row exactly.
+        const { criteria: _omit, ...rest } = c as Record<string, unknown>;
+        const base = { ...rest, criterionId: id };
+        return prompt === undefined
+          ? base
+          : { ...base, reviewPrompt: prompt.text, finderId: prompt.finderId };
+      });
+    });
     const inlined = {
       ...body,
       prompts: undefined,
-      candidates: body.candidates.map((c) => {
-        const cid = c["criterionId"] as string;
-        const prompt = prompts[cid];
-        return prompt === undefined
-          ? c
-          : { ...c, reviewPrompt: prompt.text, finderId: prompt.finderId };
-      }),
+      candidates: fannedRows,
     };
     const inlinedSize = JSON.stringify(inlined).length;
 
-    // Proves the lossless transform actually saves bytes; should be
-    // comfortably more than a rounding-error difference.
+    // Proves the combined transform (cross-criterion dedup + prompts
+    // hoist) actually saves bytes; should be comfortably more than a
+    // rounding-error difference.
     expect(inlinedSize).toBeGreaterThan(dedupedSize);
     expect(inlinedSize - dedupedSize).toBeGreaterThan(100);
   });

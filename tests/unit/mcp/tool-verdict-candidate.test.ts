@@ -345,3 +345,133 @@ describe("verdict_candidate: schema validation", () => {
     expect(body["code"]).toBe("invalid-param");
   });
 });
+
+describe("verdict_candidate: cross-criterion `criteria` echo", () => {
+  // The by-row review-candidates surface folds finder emissions whose
+  // `(file, line, reason)` tuple matches across N criterion IDs into a
+  // single row carrying the sorted union as `criteria: [...]`. The
+  // verdict surface accepts that array on the input candidate and
+  // echoes it on the response so one verdict applies to every listed
+  // criterion atomically — same evidence, one agent action. The
+  // `criterionId` slot stays populated with the canonical first ID
+  // for backward compatibility with consumers that read the singular
+  // field; per CLAUDE.md §1 "Ambiguous field shapes are dishonest" the
+  // `criteria` slot is omitted from the response when the input did
+  // not carry one (or when the union has fewer than 2 distinct IDs).
+
+  it("echoes the cross-criterion union on the response when the input candidate carries `criteria`", async () => {
+    const session = samplingSession({
+      role: "assistant",
+      content: {
+        type: "text",
+        text: JSON.stringify({
+          status: "fail",
+          reasoning: "<input> collects email; missing autocomplete=email.",
+          confidence: "high",
+        }),
+      },
+      model: "test-model",
+    });
+    const { isError, body } = await call(session, {
+      candidate: {
+        criterionId: "wcag22:1.3.6",
+        criteria: ["wcag21:1.3.6", "wcag22:1.3.6"],
+        location: { filePath: "src/Form.tsx", line: 7, column: 2 },
+        reason: "<input> no autocomplete attribute",
+        confidence: "medium",
+      },
+      reviewPrompt: "Does this control collect a WCAG Input Purpose?",
+    });
+    expect(isError).toBe(false);
+    expect(body["status"]).toBe("fail");
+    expect(body["criterionId"]).toBe("wcag22:1.3.6");
+    // Response carries every covered criterion so the agent records
+    // one verdict against the full union without re-running the sample.
+    expect(body["criteria"]).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+  });
+
+  it("normalizes the `criteria` array — folds the canonical `criterionId` in even when the input array omits it", async () => {
+    // Defensive normalization: an agent that pulled `criteria` from an
+    // older response shape (or hand-built it) may pass an array that
+    // does not include the row's canonical `criterionId`. The tool
+    // folds the canonical in so the verdict scope can never miss the
+    // criterion that grounds the candidate row.
+    const session = samplingSession({
+      role: "assistant",
+      content: {
+        type: "text",
+        text: JSON.stringify({ status: "pass", reasoning: "ok", confidence: "high" }),
+      },
+      model: "m",
+    });
+    const { body } = await call(session, {
+      candidate: {
+        criterionId: "wcag22:1.3.6",
+        criteria: ["wcag21:1.3.6"], // omits the canonical
+        location: { filePath: "src/Form.tsx", line: 7 },
+        reason: "<input> no autocomplete attribute",
+      },
+      reviewPrompt: "prompt",
+    });
+    expect(body["criteria"]).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+  });
+
+  it("omits `criteria` from the response when the input did not carry one (singleton candidate)", async () => {
+    const session = samplingSession({
+      role: "assistant",
+      content: {
+        type: "text",
+        text: JSON.stringify({ status: "pass", reasoning: "ok", confidence: "high" }),
+      },
+      model: "m",
+    });
+    const { body } = await call(session, {
+      candidate: validCandidate(),
+      reviewPrompt: "prompt",
+    });
+    // Singleton case — `criterionId` alone scopes the verdict;
+    // `criteria` is present-when-meaningful per CLAUDE.md §1 so the
+    // length-1 union does not ship as a redundant `[criterionId]` echo.
+    expect(body["criteria"]).toBeUndefined();
+    expect(body["criterionId"]).toBe("wcag22:1.2.1");
+  });
+
+  it("omits `criteria` from the response when the input array degenerates to a single ID after normalization", async () => {
+    // The agent passed `criteria: ["wcag22:1.2.1"]` — same as the
+    // canonical `criterionId`, no cross-criterion union. After dedupe
+    // the helper drops the field per CLAUDE.md §1.
+    const session = samplingSession({
+      role: "assistant",
+      content: {
+        type: "text",
+        text: JSON.stringify({ status: "pass", reasoning: "ok", confidence: "high" }),
+      },
+      model: "m",
+    });
+    const { body } = await call(session, {
+      candidate: { ...validCandidate(), criteria: ["wcag22:1.2.1"] },
+      reviewPrompt: "prompt",
+    });
+    expect(body["criteria"]).toBeUndefined();
+  });
+
+  it("echoes `criteria` on the cannot_verdict (sampling-unsupported) degrade path", async () => {
+    // Degraded responses carry the same scope-fields as the success
+    // path so the agent's downstream attestation logic reads the
+    // verdict scope from one place regardless of whether the host
+    // answered or declined.
+    const session = new McpSession();
+    const { body } = await call(session, {
+      candidate: {
+        criterionId: "wcag22:1.3.6",
+        criteria: ["wcag21:1.3.6", "wcag22:1.3.6"],
+        location: { filePath: "src/Form.tsx", line: 7 },
+        reason: "r",
+      },
+      reviewPrompt: "prompt",
+    });
+    expect(body["status"]).toBe("cannot_verdict");
+    expect(body["criterionId"]).toBe("wcag22:1.3.6");
+    expect(body["criteria"]).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+  });
+});

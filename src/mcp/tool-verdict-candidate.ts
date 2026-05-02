@@ -45,9 +45,21 @@ interface VerdictBody {
  * stamps (e.g. `confidence` is optional on the MCP call because the
  * agent may synthesize a candidate from an older scan). Schema-matched
  * against the tool's `inputSchema` in `tools.ts`.
+ *
+ * `criteria` is the cross-criterion union the by-row review-candidates
+ * surface emits (`review_candidates.candidates[].criteria`) when one
+ * finder declares multiple criterion IDs (canonical case:
+ * `review/identify-purpose` covering both `wcag22:1.3.6` and
+ * `wcag21:1.3.6`). Pass it through verbatim and the verdict applies
+ * to every listed criterion atomically — same evidence, one agent
+ * action. Omitted on singleton candidates; in that case `criterionId`
+ * alone carries the verdict scope. When `criteria` is provided, the
+ * tool emits `criteria` in the response shape so the agent records
+ * verdicts per-criterion at its end without re-running the sample.
  */
 interface CandidateInput {
   readonly criterionId: string;
+  readonly criteria?: readonly string[];
   readonly location: {
     readonly filePath: string;
     readonly line: number;
@@ -64,7 +76,7 @@ export const verdictCandidateTool: McpTool = {
   def: {
     name: "verdict_candidate",
     description:
-      "Ask the host's LLM — via MCP sampling — to verdict a single manual-review candidate pass/fail (or honest `unclear`) with reasoning. Input: the candidate (`criterionId`, `location`, `reason`, optional `snippet`) plus the finder's `reviewPrompt` and optional inline `sourceContent`. Output: `{ status, reasoning, confidence, citations? }` plus `_meta.samplingModelHint` when the host exposes its model id.\n\nOn hosts without sampling capability, the response degrades to `status: \"cannot_verdict\"` + `verdictPromptForAgent` — the full prompt the agent can run inline against its own model. Point-query tool: no file walking, no scanning — caller provides the grounding. Pair with `review_candidates` to enumerate candidates first.",
+      "Ask the host's LLM — via MCP sampling — to verdict a single manual-review candidate pass/fail (or honest `unclear`) with reasoning. Input: the candidate (`criterionId`, optional `criteria` cross-criterion union, `location`, `reason`, optional `snippet`) plus the finder's `reviewPrompt` and optional inline `sourceContent`. Output: `{ criterionId, criteria?, status, reasoning, confidence, citations? }` plus `_meta.samplingModelHint` when the host exposes its model id. When the input candidate carries `criteria: [...ids]` (the by-row dedup surface emits this when one finder declares multiple criterion IDs), the response echoes the array so one verdict applies to every listed criterion atomically — same evidence, one agent action.\n\nOn hosts without sampling capability, the response degrades to `status: \"cannot_verdict\"` + `verdictPromptForAgent` — the full prompt the agent can run inline against its own model. Point-query tool: no file walking, no scanning — caller provides the grounding. Pair with `review_candidates` to enumerate candidates first.",
     inputSchema: {
       type: "object",
       properties: {
@@ -75,7 +87,14 @@ export const verdictCandidateTool: McpTool = {
           properties: {
             criterionId: {
               type: "string",
-              description: "Criterion this candidate maps to (e.g. wcag22:1.2.1).",
+              description:
+                "Criterion this candidate maps to (e.g. wcag22:1.2.1). When the source candidate also carries a `criteria` array (cross-criterion union), `criterionId` holds the canonical first ID; pass `criteria` through to verdict every listed criterion atomically.",
+            },
+            criteria: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Optional cross-criterion union — the sorted list of every criterion ID this candidate's evidence covers. Pass through verbatim from `review_candidates.candidates[].criteria` (or `scan_file.reviewCandidates[].criteria`) when present; the response then carries the same array so one verdict applies to every listed criterion atomically. Omit on singleton candidates — `criterionId` alone is sufficient.",
             },
             location: {
               type: "object",
@@ -188,7 +207,7 @@ async function runVerdict(
       // fabricate a verdict — degrade to cannot_verdict with the raw
       // reply so the agent can inspect it and decide.
       const body: Record<string, unknown> = {
-        criterionId: candidate.criterionId,
+        ...verdictScopeFields(candidate),
         status: "cannot_verdict",
         reason: "sampling_reply_unparseable",
         verdictPromptForAgent: promptText,
@@ -198,7 +217,7 @@ async function runVerdict(
       return textResult(body);
     }
     const okBody: Record<string, unknown> = {
-      criterionId: candidate.criterionId,
+      ...verdictScopeFields(candidate),
       status: parsed.status,
       reasoning: parsed.reasoning,
       confidence: parsed.confidence,
@@ -211,7 +230,7 @@ async function runVerdict(
       // Host declined sampling. Return the prompt so the agent runs
       // the model call itself — first-class degradation per ADR 0005.
       return textResult({
-        criterionId: candidate.criterionId,
+        ...verdictScopeFields(candidate),
         status: "cannot_verdict",
         reason: "sampling_unsupported",
         verdictPromptForAgent: promptText,
@@ -219,6 +238,29 @@ async function runVerdict(
     }
     throw err;
   }
+}
+
+/**
+ * Verdict-scope fields the response carries on every body shape
+ * (success, parse-degrade, capability-degrade). Always emits
+ * `criterionId` (the singular slot every consumer reads); also emits
+ * `criteria` when the input candidate carries the cross-criterion
+ * union — same `(file, line, reason)` evidence the caller pulled from
+ * `review_candidates.candidates[].criteria` (or
+ * `scan_file.reviewCandidates[].criteria`). The dual-field shape lets
+ * one verdict apply to every listed criterion atomically (the agent
+ * reads `criteria` and records per-criterion verdicts at its end)
+ * without breaking the existing `criterionId`-only contract for
+ * singleton candidates. Per CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest" the `criteria` slot is omitted when the union has fewer
+ * than 2 IDs — a length-1 array next to `criterionId` would be
+ * redundant noise.
+ */
+function verdictScopeFields(candidate: CandidateInput): Record<string, unknown> {
+  return {
+    criterionId: candidate.criterionId,
+    ...(candidate.criteria === undefined ? {} : { criteria: candidate.criteria }),
+  };
 }
 
 const VERDICT_SYSTEM_PROMPT =
@@ -291,13 +333,42 @@ function parseCandidate(raw: unknown): CandidateInput | null {
   if (criterionId === null || reason === null || location === null) return null;
   const snippet = typeof r["snippet"] === "string" ? r["snippet"] : undefined;
   const confidence = typeof r["confidence"] === "string" ? r["confidence"] : undefined;
+  const criteria = parseCriteria(r["criteria"], criterionId);
   return {
     criterionId,
+    ...(criteria === undefined ? {} : { criteria }),
     location,
     reason,
     ...(snippet === undefined ? {} : { snippet }),
     ...(confidence === undefined ? {} : { confidence }),
   };
+}
+
+/**
+ * Coerce `params.candidate.criteria` into a normalized cross-criterion
+ * union list. Returns:
+ *   - `undefined` when the input is absent, malformed, or carries fewer
+ *     than 2 distinct IDs (the field is present-when-meaningful per
+ *     CLAUDE.md §1 "Ambiguous field shapes are dishonest" — a single-
+ *     element array next to `criterionId` would be redundant noise);
+ *   - the deduped + sorted union otherwise, with `canonicalCriterionId`
+ *     guaranteed to be a member.
+ *
+ * Defensive normalization: agents may pass the array with the canonical
+ * `criterionId` either present or absent; the helper folds it in either
+ * way so the verdict scope reflects every criterion the original
+ * candidate's `criteria` field carried plus the singular `criterionId`
+ * that grounds the row.
+ */
+function parseCriteria(raw: unknown, canonicalCriterionId: string): readonly string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = new Set<string>();
+  ids.add(canonicalCriterionId);
+  for (const v of raw) {
+    if (typeof v === "string" && v.length > 0) ids.add(v);
+  }
+  if (ids.size < 2) return undefined;
+  return [...ids].sort();
 }
 
 /**

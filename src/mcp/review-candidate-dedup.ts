@@ -213,6 +213,31 @@ interface DedupAcc {
   matchOffset: number | undefined;
   matchLength: number | undefined;
   /**
+   * Pass-through of {@link ReviewCandidate.handlerFunctionName} for
+   * surfaces that consume the dedup output (today: the by-reason
+   * surface used by `review_candidates`). Preserved on the first-seen
+   * candidate; per-criterion siblings under the same key share the
+   * same value because the field is keyed off the AST node, not the
+   * criterion ID.
+   */
+  handlerFunctionName: string | undefined;
+  /**
+   * Pass-through of {@link ReviewCandidate.dismissalKey}. Same shape
+   * rationale as {@link DedupAcc.handlerFunctionName} — finder-level
+   * fingerprint that does not vary across per-criterion siblings.
+   */
+  dismissalKey: string | undefined;
+  /**
+   * Pass-through of {@link ReviewCandidate.couldBeWrongBecause}.
+   * The finder owns this signal at the candidate level; per-criterion
+   * siblings carry the same value, so first-seen wins. The deduped
+   * `scan_file` materializer overrides this when the minified-vendor-
+   * no-sourcemap gate fires (see {@link materializeDedupedCandidate});
+   * the by-reason materializer leaves it as the finder's verbatim
+   * value.
+   */
+  couldBeWrongBecause: readonly string[] | undefined;
+  /**
    * Every source candidate's confidence — folded across pass 1 + 2
    * so {@link materializeDedupedCandidate} can take the highest via
    * {@link highestCandidateConfidence}. A union of N per-criterion
@@ -255,10 +280,171 @@ export function dedupeReviewCandidatesForSingleFile(
     .map((acc) => materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths));
 }
 
+/**
+ * Cross-criterion dedup for the by-row review-candidates surface. When
+ * a finder declares multiple criterion IDs (canonical case:
+ * `review/identify-purpose` declaring `wcag22:1.3.6` + `wcag21:1.3.6`)
+ * it emits one candidate per criterion at the same `(filePath, line,
+ * column)` with byte-identical reason text. Pre-fold the agent saw
+ * N rows under one location with the same evidence; post-fold one row
+ * carrying every covered criterion in a sorted `criteria` list. The
+ * `verdict_candidate` tool then accepts that list and applies one
+ * verdict to all listed criteria atomically — same evidence, one
+ * agent action.
+ *
+ * Pass-1-only semantics: same finder, same evidence, distinct criteria
+ * fold; cross-finder coincidences at the same `(line, column)` with
+ * different reasons stay as distinct rows so each finder's WCAG-
+ * specific framing survives. The per-position fold (used by
+ * `scan_file.reviewCandidates[]` / `scan_project.reviewCandidates[]`
+ * via {@link dedupeReviewCandidatesForSingleFile}) collapses those
+ * cross-finder coincidences too because that surface is a per-position
+ * tree, not a flat by-row list — see the function-level docstring
+ * there for the two-pass rationale.
+ *
+ * Multi-file safe: the input may carry candidates from any number of
+ * source files; the helper buckets by `filePath` first so a `(line,
+ * column)` collision across two distinct files cannot fold (a latent
+ * issue in the per-position pass that's invisible in practice for
+ * single-file surfaces).
+ *
+ * Returns an augmented shape sharing `ReviewCandidate`'s field names so
+ * surface mappers can pass-through every existing field without a new
+ * conversion layer; the only added field is `criteria: string[]`
+ * (sorted, always populated, ≥1 ID; the canonical first ID matches
+ * the row's `criterionId` for surfaces that retain the singular field
+ * for filter compatibility).
+ */
+export function dedupeReviewCandidatesByReason(
+  candidates: readonly ReviewCandidate[],
+): readonly ReasonDedupedCandidate[] {
+  const byFile = new Map<string, ReviewCandidate[]>();
+  for (const c of candidates) {
+    const arr = byFile.get(c.location.filePath);
+    if (arr === undefined) byFile.set(c.location.filePath, [c]);
+    else arr.push(c);
+  }
+  const out: ReasonDedupedCandidate[] = [];
+  for (const fileCandidates of byFile.values()) {
+    const byReasonKey = passOneCollectByReasonKey(fileCandidates);
+    for (const acc of byReasonKey.values()) {
+      out.push(materializeReasonDeduped(acc));
+    }
+  }
+  return out;
+}
+
 // Re-export the helper so callers (e.g. response-assembler) can
 // build the lookup map once from the standards registry without
 // reaching into the priority module directly.
 export { buildCriterionLevelMap } from "./review-candidate-priority.ts";
+
+/**
+ * Output shape of {@link dedupeReviewCandidatesByReason}. Carries the
+ * full {@link ReviewCandidate} field set so a tool that already maps
+ * `ReviewCandidate` rows can drop the helper output in with the only
+ * added concern being the new `criteria` array. The `criterionId` slot
+ * holds the canonical first ID of the sorted union — surfaces that
+ * retain the singular field (e.g. `review_candidates` for filter
+ * compatibility) read it; surfaces that key on the union read
+ * `criteria`.
+ *
+ * `criteria` is always populated (≥1 element, sorted). Wire-shape
+ * mappers omit the array when length is 1 per CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest" — a length-1 `criteria: ["wcag22:1.3.6"]`
+ * sibling next to `criterionId: "wcag22:1.3.6"` would be redundant
+ * noise; the array surfaces only when it carries new information
+ * (the cross-criterion union).
+ */
+export interface ReasonDedupedCandidate
+  extends Omit<ReviewCandidate, "criterionId" | "couldBeWrongBecause"> {
+  /** Canonical (sorted-first) criterion ID of the folded union. */
+  readonly criterionId: string;
+  /**
+   * Every criterion ID this candidate's evidence covers, sorted. Always
+   * populated with ≥1 element; surfaces conditional-spread the field
+   * when length is 1 to avoid the redundant-with-`criterionId` shape.
+   */
+  readonly criteria: readonly string[];
+  /** Pass-through of {@link ReviewCandidate.couldBeWrongBecause}. */
+  readonly couldBeWrongBecause?: readonly string[];
+}
+
+/**
+ * Materializes a {@link DedupAcc} into the by-reason output shape.
+ * Preserves every per-finder evidence field {@link DedupAcc} carries
+ * (siblingOccurrences, vendorPathHint, vendorContext, predicateConceded,
+ * durationLiteralMs, durationExpression, sourceCount, matchOffset,
+ * matchLength, snippet) plus the new `criteria` union. `confidence`
+ * is the highest across the folded copies (a single "high" hit sizes
+ * the entry honestly), mirroring the per-item rollup used elsewhere.
+ *
+ * Note: handlerFunctionName / dismissalKey / couldBeWrongBecause are
+ * carried on the {@link ReviewCandidate} type but not threaded through
+ * {@link DedupAcc} (the within-finder fold preserves the first-seen
+ * candidate's values and per-criterion siblings under the same
+ * `(file, line, column, reason)` key carry identical values by
+ * construction). The materializer reads them off the first folded
+ * candidate via the `firstCandidate` reference.
+ */
+function materializeReasonDeduped(acc: DedupAcc): ReasonDedupedCandidate {
+  const criteria = [...acc.criteria].sort();
+  const confidence: ReviewConfidence =
+    highestCandidateConfidence(acc.confidences.map((c) => ({ confidence: c }))) ?? "low";
+  return {
+    // Sorted-first canonical: matches the existing
+    // `DedupedReviewCandidate.criteria[0]` ordering on the per-position
+    // surfaces (`scan_file.reviewCandidates[]` /
+    // `scan_project.reviewCandidates[]`) so the same conceptual
+    // candidate's `criterionId` slot reads identically across the
+    // by-row and by-position families. Per AI-first doctrine "Per-tool
+    // review-candidate shape must agree across surfaces" the canonical
+    // pick must be deterministic and uniform; alphabetical first is
+    // both. Agents filtering by membership read `criteria.includes(id)`
+    // — the sorted union always carries every covered criterion.
+    criterionId: criteria[0] ?? "",
+    criteria,
+    location: { filePath: acc.filePath, line: acc.line, column: acc.column },
+    reason: acc.reason,
+    confidence,
+    ...reasonDedupedAdditiveFields(acc),
+  };
+}
+
+/**
+ * Conditional-spreads the present-when-meaningful additive evidence
+ * fields onto a {@link ReasonDedupedCandidate}. Extracted from
+ * {@link materializeReasonDeduped} so the per-field branches don't
+ * push the materializer's cognitive complexity above the lint cap as
+ * new evidence sub-fields accrete on {@link DedupAcc}. Each branch
+ * follows the canonical CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest" pattern: omit entirely when the source value is
+ * undefined / empty so a downstream consumer never has to disambiguate
+ * "absent" from "present-but-empty."
+ */
+function reasonDedupedAdditiveFields(acc: DedupAcc): Partial<ReasonDedupedCandidate> {
+  return {
+    ...(acc.snippet === undefined ? {} : { snippet: acc.snippet }),
+    ...(acc.siblingOccurrences === undefined || acc.siblingOccurrences.length === 0
+      ? {}
+      : { siblingOccurrences: acc.siblingOccurrences }),
+    ...(acc.vendorPathHint ? { vendorPathHint: acc.vendorPathHint } : {}),
+    ...(acc.vendorContext === undefined ? {} : { vendorContext: acc.vendorContext }),
+    ...(acc.predicateConceded === undefined ? {} : { predicateConceded: acc.predicateConceded }),
+    ...(acc.durationLiteralMs === undefined ? {} : { durationLiteralMs: acc.durationLiteralMs }),
+    ...(acc.durationExpression === undefined ? {} : { durationExpression: acc.durationExpression }),
+    ...(acc.sourceCount === undefined ? {} : { sourceCount: acc.sourceCount }),
+    ...(acc.matchOffset === undefined ? {} : { matchOffset: acc.matchOffset }),
+    ...(acc.matchLength === undefined ? {} : { matchLength: acc.matchLength }),
+    ...(acc.handlerFunctionName === undefined
+      ? {}
+      : { handlerFunctionName: acc.handlerFunctionName }),
+    ...(acc.dismissalKey === undefined ? {} : { dismissalKey: acc.dismissalKey }),
+    ...(acc.couldBeWrongBecause === undefined || acc.couldBeWrongBecause.length === 0
+      ? {}
+      : { couldBeWrongBecause: acc.couldBeWrongBecause }),
+  };
+}
 
 /**
  * Pass 1: collect candidates grouped by `(filePath, line, column, reason)`.
@@ -319,6 +505,15 @@ function passOneCollectByReasonKey(candidates: readonly ReviewCandidate[]): Map<
       // standard fold collapsed N per-criterion copies into one.
       matchOffset: c.matchOffset,
       matchLength: c.matchLength,
+      // Pass-through of finder-level fingerprints — preserved on the
+      // first-seen candidate; per-criterion siblings carry identical
+      // values because the finder populates from the AST node / file
+      // path, not the criterion ID. Required by the by-reason surface
+      // (`review_candidates`) so the agent's grep target / dismissal
+      // hash survives the fold.
+      handlerFunctionName: c.handlerFunctionName,
+      dismissalKey: c.dismissalKey,
+      couldBeWrongBecause: c.couldBeWrongBecause,
       // Seed the confidence accumulator so the post-fold
       // materialization can take the highest across the union.
       confidences: [c.confidence],
@@ -413,6 +608,9 @@ function backfillStructuredEvidence(existing: DedupAcc, acc: DedupAcc): void {
     "matchOffset",
     "matchLength",
     "snippet",
+    "handlerFunctionName",
+    "dismissalKey",
+    "couldBeWrongBecause",
   ];
   const e = existing as unknown as Record<string, unknown>;
   const a = acc as unknown as Record<string, unknown>;

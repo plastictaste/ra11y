@@ -27,7 +27,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { dedupeReviewCandidatesForSingleFile } from "../../../src/mcp/review-candidate-dedup.ts";
+import {
+  dedupeReviewCandidatesByReason,
+  dedupeReviewCandidatesForSingleFile,
+} from "../../../src/mcp/review-candidate-dedup.ts";
 import type { ReviewCandidate } from "../../../src/types/review.ts";
 
 const FILE = "/repo/page.html";
@@ -342,5 +345,141 @@ describe("dedupeReviewCandidatesForSingleFile — minified-vendor-no-sourcemap s
     expect(out).toHaveLength(1);
     expect(out[0]?.priority).toBe("high");
     expect(out[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+});
+
+describe("dedupeReviewCandidatesByReason — cross-criterion fold for the by-row surface", () => {
+  // The by-row review-candidates surface uses Pass-1-only semantics:
+  // same finder, same evidence, distinct criteria fold; cross-finder
+  // coincidences at the same `(line, column)` with different reasons
+  // stay distinct so each finder's WCAG-specific framing survives.
+  // The per-position surfaces (`scan_file.reviewCandidates[]` /
+  // `scan_project.reviewCandidates[]`) collapse cross-finder hits via
+  // `dedupeReviewCandidatesForSingleFile`'s Pass 2 because that surface
+  // is a per-position tree rather than a flat by-row list.
+
+  it("folds N per-criterion copies of one finder into one row carrying every covered criterion", () => {
+    const r = "<input> no autocomplete attribute";
+    const out = dedupeReviewCandidatesByReason([
+      candidate("wcag22:1.3.6", r, 5, 4),
+      candidate("wcag21:1.3.6", r, 5, 4),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.criteria).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+    // Sorted-first canonical: matches the per-position surfaces so the
+    // canonical `criterionId` slot reads identically across surface
+    // families.
+    expect(out[0]?.criterionId).toBe("wcag21:1.3.6");
+    expect(out[0]?.reason).toBe(r);
+  });
+
+  it("keeps cross-finder coincidences at the same (line, column) as distinct rows when reasons differ", () => {
+    // Pass-1-only: the by-row surface is a flat list, not a per-
+    // position tree, so each finder's WCAG-specific framing survives
+    // as its own row. (The per-position surface collapses these via
+    // Pass 2 because that surface only carries one entry per byte
+    // position.)
+    const out = dedupeReviewCandidatesByReason([
+      candidate("wcag22:1.3.6", "reason A", 7, 2),
+      candidate("wcag22:3.3.8", "reason B", 7, 2),
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it("operates across multiple files in one call", () => {
+    const fileA = "/repo/a.html";
+    const fileB = "/repo/b.html";
+    const out = dedupeReviewCandidatesByReason([
+      // File A: two per-criterion copies of one finder fold to 1 row.
+      {
+        criterionId: "wcag22:1.3.6",
+        location: { filePath: fileA, line: 5, column: 4 },
+        reason: "<input> no autocomplete attribute",
+        confidence: "medium",
+      },
+      {
+        criterionId: "wcag21:1.3.6",
+        location: { filePath: fileA, line: 5, column: 4 },
+        reason: "<input> no autocomplete attribute",
+        confidence: "medium",
+      },
+      // File B: one row, distinct evidence — survives.
+      {
+        criterionId: "wcag22:3.3.8",
+        location: { filePath: fileB, line: 7, column: 2 },
+        reason: '<input type="password">',
+        confidence: "medium",
+      },
+    ]);
+    expect(out).toHaveLength(2);
+    const a = out.find((c) => c.location.filePath === fileA);
+    const b = out.find((c) => c.location.filePath === fileB);
+    expect(a?.criteria).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+    expect(b?.criteria).toEqual(["wcag22:3.3.8"]);
+  });
+
+  it("does NOT fold candidates at the same (line, column) across different files (multi-file safety)", () => {
+    // Latent-issue guard: the per-position helper folds by (line,
+    // column) without filePath in its key, which would silently merge
+    // two distinct files' rows on the same line/column. The by-row
+    // helper buckets by filePath first so this collision cannot occur.
+    const fileA = "/repo/a.html";
+    const fileB = "/repo/b.html";
+    const out = dedupeReviewCandidatesByReason([
+      {
+        criterionId: "wcag22:1.3.6",
+        location: { filePath: fileA, line: 5, column: 4 },
+        reason: "same reason",
+        confidence: "medium",
+      },
+      {
+        criterionId: "wcag22:1.3.6",
+        location: { filePath: fileB, line: 5, column: 4 },
+        reason: "same reason",
+        confidence: "medium",
+      },
+    ]);
+    expect(out).toHaveLength(2);
+  });
+
+  it("preserves singleton candidates with criteria of length 1", () => {
+    // No fold — `criteria` length-1 still ships, but the wire-shape
+    // mapper at the surface layer omits the field per CLAUDE.md §1.
+    const out = dedupeReviewCandidatesByReason([
+      candidate("wcag22:2.2.1", "setTimeout call", 5, 2),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.criteria).toEqual(["wcag22:2.2.1"]);
+    expect(out[0]?.criterionId).toBe("wcag22:2.2.1");
+  });
+
+  it("passes through finder-level fingerprints (handlerFunctionName, dismissalKey, couldBeWrongBecause)", () => {
+    const r = "<button onClick={navigateToUrl}>";
+    const out = dedupeReviewCandidatesByReason([
+      candidate("wcag22:1.3.6", r, 5, 4, {
+        handlerFunctionName: "navigateToUrl",
+        dismissalKey: "abc12345",
+        couldBeWrongBecause: ["minified_vendor_no_sourcemap"],
+      }),
+      candidate("wcag21:1.3.6", r, 5, 4, {
+        handlerFunctionName: "navigateToUrl",
+        dismissalKey: "abc12345",
+        couldBeWrongBecause: ["minified_vendor_no_sourcemap"],
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.handlerFunctionName).toBe("navigateToUrl");
+    expect(out[0]?.dismissalKey).toBe("abc12345");
+    expect(out[0]?.couldBeWrongBecause).toEqual(["minified_vendor_no_sourcemap"]);
+  });
+
+  it("takes the highest confidence across the folded copies", () => {
+    const r = "<input> no autocomplete attribute";
+    const out = dedupeReviewCandidatesByReason([
+      candidate("wcag22:1.3.6", r, 5, 4, { confidence: "low" }),
+      candidate("wcag21:1.3.6", r, 5, 4, { confidence: "high" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.confidence).toBe("high");
   });
 });
