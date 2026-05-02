@@ -7,11 +7,11 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  CSS_PATTERN_ID_HEX_LENGTH,
   canonicalizePropertyFamily,
   canonicalizeSelectorFamily,
   canonicalizeValueShape,
   computeCssPatternId,
-  CSS_PATTERN_ID_HEX_LENGTH,
   maybeCssPatternId,
 } from "../../../src/utils/css-pattern-id.ts";
 

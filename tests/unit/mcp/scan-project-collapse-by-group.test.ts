@@ -235,15 +235,11 @@ describe("collapseFilesByGroupKey — per-group rollup", () => {
       const out = collapseFilesByGroupKey([
         {
           path: "/repo/a.html",
-          findings: [
-            F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 1, column: 1 }),
-          ],
+          findings: [F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 1, column: 1 })],
         },
         {
           path: "/repo/b.html",
-          findings: [
-            F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 2, column: 1 }),
-          ],
+          findings: [F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 2, column: 1 })],
         },
       ]);
       expect(out.length).toBe(1);

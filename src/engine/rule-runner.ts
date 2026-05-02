@@ -12,8 +12,8 @@
 import type { Ast } from "../types/ast.ts";
 import type { EmittedViolation, FixClass, Language, Rule } from "../types/rule.ts";
 import type { Severity, Violation } from "../types/violation.ts";
-import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { maybeCssPatternId } from "../utils/css-pattern-id.ts";
+import { computeFindingGroupId, computeFindingId } from "../utils/finding-id.ts";
 import { computeGroupKey, UNKNOWN_SHAPE } from "../utils/group-key.ts";
 import { extensionMatches } from "../utils/path.ts";
 import { maybePatternId } from "../utils/pattern-id.ts";
