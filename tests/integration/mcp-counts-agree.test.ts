@@ -102,6 +102,7 @@ interface ChecklistBody {
     };
     readonly untargetedCriteria: number;
   };
+  readonly totalCandidates?: number;
 }
 
 async function gatherCounts(cwd: string): Promise<{
@@ -297,6 +298,10 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  */
 interface FullCoverageEnvelope extends CoverageBody {
   readonly manualWithCandidates?: ReadonlyArray<unknown>;
+  readonly manualCandidatesTotal?: number;
+  readonly summary?: {
+    readonly actionable?: { readonly criteria?: number; readonly candidates?: number };
+  };
   readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
 }
 interface ScanBodyExt extends ScanBody {
@@ -338,6 +343,63 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
     expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
     expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
+  });
+});
+
+// Cross-surface count invariant — candidate-axis sibling to the
+// criteria-axis `actionableManualItems` invariant above. Pre-fix,
+// `checklist.summary.totalCandidates` was the only project-rooted
+// counter that reported the candidate-level tally; an agent asking
+// "how many manual-review items are there" had to read three numbers
+// (`coverage.manualWithCandidates: N` criteria-axis,
+// `checklist.summary.actionable.criteria: M` criteria-axis,
+// `checklist.totalCandidates: K` candidate-axis) and disambiguate by
+// reading field names carefully. `coverage.manualCandidatesTotal`
+// closes the gap so coverage carries both axes — `actionableManualItems`
+// (criteria) and `manualCandidatesTotal` (candidates) — and the
+// candidate-axis number agrees across surfaces. Doctrine:
+// `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+// invariant" + "Sibling fields naming the same concept must use one
+// shape" — the candidate-vs-criteria split is named, not implied.
+describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
+  it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
+    const dir = await makeFiredManualCriterionFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "coverage", { cwd: dir }),
+      toolCall(3, "checklist", { cwd: dir }),
+    ]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
+    const checklistBody = body<ChecklistBody>(responses[2]);
+    const coverageCandidatesTotal = coverageEnvelope.manualCandidatesTotal ?? 0;
+    const checklistUncapped = checklistBody.summary.actionable.candidatesUncapped;
+    const checklistTotal = checklistBody.totalCandidates ?? 0;
+    // Sanity floor — the fixture seeds a fired manual criterion with at
+    // least one grounded candidate; a 0/0/0 result here would mean the
+    // fixture stopped firing and the assertion would pass vacuously.
+    expect(coverageCandidatesTotal).toBeGreaterThan(0);
+    expect(coverageCandidatesTotal).toBe(checklistUncapped);
+    expect(coverageCandidatesTotal).toBe(checklistTotal);
+  });
+
+  it("coverage.summary.actionable.candidates mirrors the same candidate-axis count", async () => {
+    // The candidate-vs-criteria split is exposed twice on the coverage
+    // envelope: once as the top-level `manualCandidatesTotal` scalar
+    // (sibling to `actionableManualItems`), and once nested under
+    // `summary.actionable.candidates` (sibling to
+    // `summary.actionable.criteria`, mirroring `checklist.summary.actionable`).
+    // Both must agree — they read the same underlying tally; a
+    // disagreement would be the dishonest two-sibling-fields-naming-
+    // the-same-concept shape the doctrine warns against.
+    const dir = await makeFiredManualCriterionFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
+    expect(coverageEnvelope.summary?.actionable?.candidates).toBe(
+      coverageEnvelope.manualCandidatesTotal,
+    );
+    expect(coverageEnvelope.summary?.actionable?.criteria).toBe(
+      coverageEnvelope.manualWithCandidates?.length ?? 0,
+    );
   });
 });
 

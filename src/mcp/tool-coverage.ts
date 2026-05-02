@@ -133,6 +133,26 @@ export const coverageTool: McpTool = {
       });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
+    // Per-criterion candidate counts the per-entry
+    // `manualCandidatesTotal` reads off. The map keys on `criterionId`
+    // so a single pass over the candidate stream populates every entry
+    // the per-standard split below needs; the standard-level filter
+    // happens at read time when we sum over `withCandidates` (level-
+    // filtered, in-scope criteria for this entry). Doctrine: candidates
+    // and criteria are categorically different units — sibling counters
+    // must say which is which by name
+    // (`docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+    // naming the same concept must use one shape"). Cross-surface
+    // invariant: the sum agrees with
+    // `checklist.summary.actionable.candidatesUncapped` and
+    // `checklist.totalCandidates` on identical cwd.
+    const candidateCountByCriterion = new Map<string, number>();
+    for (const c of report.candidates ?? []) {
+      candidateCountByCriterion.set(
+        c.criterionId,
+        (candidateCountByCriterion.get(c.criterionId) ?? 0) + 1,
+      );
+    }
     const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
@@ -220,6 +240,21 @@ export const coverageTool: McpTool = {
       const withCandidates = c.criteria
         .map((cc) => cc.criterionId)
         .filter((id) => candidateCriteria.has(id));
+      // Candidate-level total scoped to the same in-scope, level-
+      // filtered criteria `withCandidates` is computed from. Sums per-
+      // criterion candidate counts so the value agrees with
+      // `checklist.totalCandidates` and
+      // `checklist.summary.actionable.candidatesUncapped` on identical
+      // cwd (same scope: level-filtered, in-scope criteria with at
+      // least one shipped candidate). `withCandidates.length` /
+      // `actionableManualItems` is the criteria-axis sibling;
+      // `manualCandidatesTotal` is the candidate-axis sibling. Names
+      // make the kind explicit so an agent reading both does not
+      // silently reconcile two numbers that measure different units.
+      let manualCandidatesTotal = 0;
+      for (const id of withCandidates) {
+        manualCandidatesTotal += candidateCountByCriterion.get(id) ?? 0;
+      }
       const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
       const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
         c.failingCriteria,
@@ -316,6 +351,20 @@ export const coverageTool: McpTool = {
         // `manualWithCandidates.length` here — same name on every
         // surface so the agent can compare without a translation table.
         actionableManualItems: withCandidates.length,
+        // Candidate-axis sibling to `actionableManualItems` (the
+        // criteria-axis count). `actionableManualItems: N` reads as
+        // "N criteria have grounded candidates"; `manualCandidatesTotal: K`
+        // reads as "K total candidates ride under those criteria." The
+        // two sit alongside so an agent asking "how many manual-review
+        // items are there" sees both axes in one read instead of having
+        // to pivot to `checklist` to learn the candidate-level tally.
+        // Cross-surface count invariant
+        // (`docs/kb/architecture/ai-first-consumer.md`): equals
+        // `checklist.totalCandidates` and
+        // `checklist.summary.actionable.candidatesUncapped` on identical
+        // cwd; pinned by the integration test in
+        // `tests/integration/mcp-counts-agree.test.ts`.
+        manualCandidatesTotal,
         // Split the manual-review pile so agents can see at the coverage
         // level (without a second checklist call) how many manual
         // criteria have concrete candidates worth reviewing vs pure
@@ -385,7 +434,20 @@ export const coverageTool: McpTool = {
         // want it (omitted on zero-file scans alongside the
         // top-level field).
         summary: {
-          actionable: { criteria: withCandidates.length },
+          // Two-axis split mirrors `checklist.summary.actionable` —
+          // `criteria` (criteria-axis, matches
+          // `scan_project.plan.actionableManualItems` and the sibling
+          // `actionableManualItems` scalar on this entry) and
+          // `candidates` (candidate-axis, matches
+          // `checklist.summary.actionable.candidatesUncapped`,
+          // `checklist.totalCandidates`, and the sibling
+          // `manualCandidatesTotal` scalar on this entry). Naming
+          // makes the unit explicit so an agent reading the field
+          // does not silently treat one count as the other — per
+          // `docs/kb/architecture/ai-first-consumer.md` "Sibling
+          // fields naming the same concept must use one shape" the
+          // candidate-vs-criteria split is named, not implied.
+          actionable: { criteria: withCandidates.length, candidates: manualCandidatesTotal },
           untargetedCriteria: untargeted.length,
           likelyIrrelevant: likelyIrrelevant.length,
           automatedCoverage: {

@@ -679,7 +679,6 @@ No item here proposes new rule detection logic — Track V is about honesty surf
 
 Response shape / honesty:
 
-- [ ] **V1-COVERAGE-MANUAL-CANDIDATES-TOTAL-CROSS-SURFACE** `checklist.summary.totalCandidates` (pre-paging per-candidate count) has no sibling on `coverage` — an agent asking "how many manual-review items" reads `coverage.manualWithCandidates: N` (criteria count) and `checklist.summary.actionable: M` (same criteria count) and `checklist.totalCandidates: K` (candidate count) — three numbers, one concept, disambiguated only by reading field names carefully. Fix: expose `coverage.manualCandidatesTotal: K` alongside the existing criteria-level counters, with the "candidates vs criteria" split explicit in both `coverage` and `checklist`. Doctrine: composite headline counts are dishonest; labels must make kind explicit.
 Tool-orchestration / bootstrap / suppress / write-gate:
 
 
