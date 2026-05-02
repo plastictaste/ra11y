@@ -283,6 +283,42 @@ interface ChecklistCandidateOut {
    * all three channels."
    */
   readonly couldBeWrongBecause?: readonly string[];
+  /**
+   * Lane classification echoing the corpus-level scope-classifier
+   * verdict. Present-when-meaningful: stamped `"buildArtifact"` only
+   * when the candidate's path is in the scan-time `buildArtifactPaths`
+   * set (the same set fed to {@link priorityFor} and the
+   * {@link partitionVendorCandidatesLast} sort). Authored-source
+   * candidates omit the field entirely per CLAUDE.md §1 "Ambiguous
+   * field shapes are dishonest" — absence reads as "source-lane,"
+   * presence reads as "vendor-lane confirmed by the corpus classifier."
+   *
+   * Sibling — and complementary — to the finder-driven `vendorPathHint`
+   * boolean. `vendorPathHint` is the finder's per-call path-shape
+   * heuristic (`isVendorBundleBasename` / `isMinifiedForEnrichment` on
+   * the candidate's own filename); `scanKind` is the corpus-level
+   * verdict the assembler resolved via {@link
+   * import("./build-artifacts.ts").collectBuildArtifacts}. Both can
+   * fire independently: a finder may set `vendorPathHint: true` on a
+   * file that the corpus classifier didn't promote to
+   * `scannedBuildArtifacts` (signal-mismatch the agent reads as a
+   * "verify the path-shape predicate" cue), and the corpus classifier
+   * may stamp `scanKind: "buildArtifact"` on a file the finder didn't
+   * tag (e.g. the finder's own predicate didn't fire but the file is a
+   * `.min.` paired bundle — sibling-min sourcemap evidence).
+   *
+   * Why this matters: per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+   * warning-set classification must agree," the same file observed by
+   * `scan_project`, `scan_file`, and `checklist` must carry the same
+   * lane label across all three surfaces. Pre-fix, a checklist
+   * candidate cited a path that the same response's
+   * `meta.scannedBuildArtifacts` flagged AND `scanned_minified_file`
+   * reported on — but the candidate itself carried no lane echo, so an
+   * agent reading the candidate alone budgeted against authored work
+   * the response had already classified as vendor.
+   */
+  readonly scanKind?: "buildArtifact";
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -1638,16 +1674,35 @@ function mapOneCandidate(
     reason: c.reason,
     confidence: c.confidence,
     suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
+    ...mapOneCandidateAdditiveFields(c, snippet, couldBeWrongBecause, buildArtifactPaths),
+  };
+}
+
+/**
+ * Conditional-spreads the present-when-meaningful additive evidence
+ * fields onto a {@link ChecklistCandidateOut}. Extracted from
+ * {@link mapOneCandidate} so the per-field branches don't push the
+ * mapper's cognitive complexity above the lint cap as new evidence
+ * sub-fields accrete on the response shape. Each branch follows the
+ * canonical CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+ * pattern: omit entirely when the source value is undefined / empty.
+ */
+function mapOneCandidateAdditiveFields(
+  c: ReviewCandidate,
+  snippet: string | undefined,
+  couldBeWrongBecause: readonly string[] | null,
+  buildArtifactPaths: ReadonlySet<string>,
+): Partial<ChecklistCandidateOut> {
+  return {
     ...(snippet === undefined ? {} : { snippet }),
     // Pass aggregated siblingOccurrences through to the checklist
     // surface so an agent paginating the checklist sees the full
     // per-sibling trail on a consolidated candidate (whether the
     // group came from same-parent aggregation or stem-dedup).
     // Present-when-meaningful per CLAUDE.md §1.
-    ...(c.siblingOccurrences !== undefined &&
-      c.siblingOccurrences.length > 0 && {
-        siblingOccurrences: c.siblingOccurrences,
-      }),
+    ...(c.siblingOccurrences !== undefined && c.siblingOccurrences.length > 0
+      ? { siblingOccurrences: c.siblingOccurrences }
+      : {}),
     // Structured additive evidence — vendor-path-shape boolean
     // and duration literal/non-literal sentinel. Same semantics
     // as on the review-candidates surface; surfaced here so a
@@ -1661,7 +1716,7 @@ function mapOneCandidate(
     // sourceCount carries through for stem-deduped candidates so
     // checklist consumers see the source occurrence count on the
     // consolidated row. Omitted on singletons.
-    ...(c.sourceCount !== undefined && { sourceCount: c.sourceCount }),
+    ...(c.sourceCount === undefined ? {} : { sourceCount: c.sourceCount }),
     // handlerFunctionName carries through for on-input/on-focus
     // candidates whose handler resolves to a named symbol — the
     // agent's next Read targets the binding directly instead of
@@ -1676,6 +1731,17 @@ function mapOneCandidate(
     // Pair with the per-item priority drop on the minified-vendor-no-
     // sourcemap gate; omitted when the gate did not fire.
     ...(couldBeWrongBecause === null ? {} : { couldBeWrongBecause }),
+    // Lane echo from the corpus-level scope classifier — present only
+    // when the candidate's path is in the build-artifact set the
+    // assembler resolved upstream. Authored-source candidates omit
+    // entirely per CLAUDE.md §1 "Ambiguous field shapes are dishonest."
+    // Per AI-first doctrine "Per-tool lane and warning-set
+    // classification must agree": the same file observed by
+    // scan_project, scan_file, and checklist must carry the same
+    // `scanKind` so an agent reading the candidate doesn't budget
+    // against authored work the response has already classified as
+    // vendor on a sibling field.
+    ...(buildArtifactPaths.has(c.location.filePath) ? { scanKind: "buildArtifact" as const } : {}),
   };
 }
 

@@ -426,8 +426,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Reason / severity / priority / confidence channel mismatch
 
-- [ ] **Q14-VENDOR-CONTEXT-NOT-ECHOED-ON-MANUAL-CANDIDATE** Checklist candidate (`wcag22:2.2.1` setTimeout finder) cites a path also flagged in `scannedBuildArtifacts.top` AND emits `scanned_minified_file` in the same response — but the candidate itself carries no vendor-context flag, no `scanKind: "buildArtifact"`, no `vendorPathHint`. Agent reading the candidate sees high-priority-medium-confidence and budgets against a finding the same response classifies as vendor. Closure: review-candidate emission echoes the file's vendor classification (vendorPathHint, scanKind) inline so the candidate carries the context the warning channel already established. Per AI-first doctrine "Cross-surface count invariant" extended to per-candidate vendor-context propagation.
-
 ### Heuristic-mislabeled meta sub-fields
 
 

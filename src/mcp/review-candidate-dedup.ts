@@ -186,6 +186,33 @@ export interface DedupedReviewCandidate {
    * "Ambiguous field shapes are dishonest" — never sentinel-empty).
    */
   readonly couldBeWrongBecause?: readonly string[];
+  /**
+   * Lane classification echoing the corpus-level scope-classifier
+   * verdict. Present-when-meaningful: stamped `"buildArtifact"` only
+   * when the candidate's path is in the scan-time `buildArtifactPaths`
+   * set the assembler resolved upstream via {@link
+   * import("./build-artifacts.ts").collectBuildArtifacts}. Authored-
+   * source candidates omit the field entirely per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest" — absence reads as
+   * "source-lane," presence reads as "vendor-lane confirmed by the
+   * corpus classifier."
+   *
+   * Mirrors the same field on
+   * {@link import("./tool-checklist.ts").ChecklistCandidateOut} so an
+   * agent walking the same conceptual candidate across
+   * `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+   * and `checklist.items[].candidates[]` reads the same lane label
+   * regardless of which surface produced it. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+   * warning-set classification must agree" + "Per-tool review-candidate
+   * shape must agree across surfaces."
+   *
+   * Sibling — and complementary — to the finder-driven `vendorPathHint`
+   * boolean. `vendorPathHint` is the finder's per-call path-shape
+   * heuristic; `scanKind` is the corpus-level verdict. Both can fire
+   * independently.
+   */
+  readonly scanKind?: "buildArtifact";
 }
 
 /** Aggregator entry held during the dedup passes. */
@@ -740,6 +767,27 @@ function materializeDedupedCandidate(
     reason: g.reason,
     priority,
     confidence,
+    ...dedupedCandidateAdditiveFields(g, couldBeWrongBecause, isBuildArtifact),
+  };
+}
+
+/**
+ * Conditional-spreads the present-when-meaningful additive evidence
+ * fields onto a {@link DedupedReviewCandidate}. Extracted from
+ * {@link materializeDedupedCandidate} so the per-field branches don't
+ * push the materializer's cognitive complexity above the lint cap as
+ * new evidence sub-fields accrete on the response shape. Each branch
+ * follows the canonical CLAUDE.md §1 "Ambiguous field shapes are
+ * dishonest" pattern: omit entirely when the source value is undefined
+ * / empty so a downstream consumer never has to disambiguate "absent"
+ * from "present-but-empty."
+ */
+function dedupedCandidateAdditiveFields(
+  g: DedupAcc,
+  couldBeWrongBecause: readonly string[] | null,
+  isBuildArtifact: boolean,
+): Partial<DedupedReviewCandidate> {
+  return {
     ...(g.snippet === undefined ? {} : { snippet: g.snippet }),
     ...(g.siblingOccurrences === undefined || g.siblingOccurrences.length === 0
       ? {}
@@ -751,5 +799,15 @@ function materializeDedupedCandidate(
     ...(g.matchOffset === undefined ? {} : { matchOffset: g.matchOffset }),
     ...(g.matchLength === undefined ? {} : { matchLength: g.matchLength }),
     ...(couldBeWrongBecause === null ? {} : { couldBeWrongBecause }),
+    // Lane echo from the corpus-level scope classifier — mirrors the
+    // same field on `ChecklistCandidateOut` so the cross-surface
+    // candidate-shape contract holds. Per AI-first doctrine "Per-tool
+    // lane and warning-set classification must agree" + "Per-tool
+    // review-candidate shape must agree across surfaces": the same
+    // file observed by scan_file, scan_project, and checklist must
+    // carry the same `scanKind` regardless of which surface produced
+    // the candidate. Authored-source candidates omit per CLAUDE.md §1
+    // "Ambiguous field shapes are dishonest."
+    ...(isBuildArtifact ? { scanKind: "buildArtifact" as const } : {}),
   };
 }
