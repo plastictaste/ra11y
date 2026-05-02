@@ -105,10 +105,7 @@ describe("scan_project — collapseByGroupKey parameter", () => {
     await withScratch(async (dir) => {
       await writeRepeatedTemplateFixture(dir);
       const session = new McpSession();
-      const response = await callScanProject(
-        { cwd: dir, collapseByGroupKey: true },
-        session,
-      );
+      const response = await callScanProject({ cwd: dir, collapseByGroupKey: true }, session);
       expect(response.files).toBeUndefined();
       expect(Array.isArray(response.collapsedGroups)).toBe(true);
       // The three sibling sites share the same `<img>` AST shape, so
@@ -117,9 +114,7 @@ describe("scan_project — collapseByGroupKey parameter", () => {
       // also fire on every HTML envelope and may collapse similarly,
       // so the total group count is bounded by the rule count, not
       // the file count.
-      const altGroup = response.collapsedGroups?.find(
-        (g) => g.ruleId === "media/alt-text-missing",
-      );
+      const altGroup = response.collapsedGroups?.find((g) => g.ruleId === "media/alt-text-missing");
       expect(altGroup).toBeDefined();
       expect(altGroup?.occurrenceCount).toBe(3);
       expect(altGroup?.occurrences.map((o) => o.path).sort()).toEqual([
@@ -137,10 +132,7 @@ describe("scan_project — collapseByGroupKey parameter", () => {
     await withScratch(async (dir) => {
       await writeRepeatedTemplateFixture(dir);
       const session = new McpSession();
-      const collapsed = await callScanProject(
-        { cwd: dir, collapseByGroupKey: true },
-        session,
-      );
+      const collapsed = await callScanProject({ cwd: dir, collapseByGroupKey: true }, session);
       const flat = await callScanProject({ cwd: dir }, session);
       const planCollapsed = collapsed.plan as Record<string, unknown>;
       expect(typeof planCollapsed["collapsedGroupCount"]).toBe("number");

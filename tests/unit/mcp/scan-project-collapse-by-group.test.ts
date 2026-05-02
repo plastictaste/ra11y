@@ -21,27 +21,35 @@ import {
 
 type FindingShape = Parameters<typeof collapseFilesByGroupKey>[0][number]["findings"][number];
 
-const F = (overrides: Partial<FindingShape> & {
+const F = (overrides: {
   ruleId: string;
   groupKey: string;
   line: number;
   column: number;
-}): FindingShape =>
-  ({
-    findingId: `fid-${overrides.ruleId}-${overrides.groupKey}-${overrides.line}`,
+  findingId?: string;
+  message?: string;
+  snippet?: string;
+}): FindingShape => {
+  const base: Record<string, unknown> = {
+    ruleId: overrides.ruleId,
+    groupKey: overrides.groupKey,
+    line: overrides.line,
+    column: overrides.column,
+    findingId:
+      overrides.findingId ?? `fid-${overrides.ruleId}-${overrides.groupKey}-${overrides.line}`,
     findingGroupId: `fgid-${overrides.ruleId}-${overrides.groupKey}`,
     fixClass: "mechanical",
     criteria: ["wcag22:1.1.1"],
     severity: "error",
     confidence: "high",
-    message: "Missing alt",
-    line: overrides.line,
-    column: overrides.column,
+    message: overrides.message ?? "Missing alt",
     effort: "low",
     category: "media",
     suppressWith: "media/alt-text-missing",
-    ...overrides,
-  }) as unknown as FindingShape;
+  };
+  if (overrides.snippet !== undefined) base["snippet"] = overrides.snippet;
+  return base as unknown as FindingShape;
+};
 
 describe("collapseFilesByGroupKey — per-group rollup", () => {
   it("collapses N copies of the same (ruleId, groupKey) into one entry with full occurrences[]", () => {
@@ -82,9 +90,7 @@ describe("collapseFilesByGroupKey — per-group rollup", () => {
       },
       {
         path: "/repo/b.html",
-        findings: [
-          F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 4, column: 1 }),
-        ],
+        findings: [F({ ruleId: "media/alt-text-missing", groupKey: "g1", line: 4, column: 1 })],
       },
     ]);
     expect(out.length).toBe(3);
@@ -142,9 +148,7 @@ describe("collapseFilesByGroupKey — per-group rollup", () => {
 
   it("returns an empty array when there are no findings (pure clean scan)", () => {
     expect(collapseFilesByGroupKey([])).toEqual([]);
-    expect(
-      collapseFilesByGroupKey([{ path: "/repo/a.html", findings: [] }]),
-    ).toEqual([]);
+    expect(collapseFilesByGroupKey([{ path: "/repo/a.html", findings: [] }])).toEqual([]);
   });
 
   it("groups defensively when groupKey is missing or empty (under <no-group>)", () => {
@@ -182,7 +186,7 @@ describe("paginateCollapsedGroups — limit/offset semantics mirror per-file pag
       suppressWith: "r",
       occurrences: [{ path: "/r/a.html", line: 1, column: 1 }],
       occurrenceCount: 1,
-    })) as readonly CollapsedGroup[];
+    })) as unknown as readonly CollapsedGroup[];
 
   it("returns the full list when offset=0 and the page fits", () => {
     const groups = sample(3);

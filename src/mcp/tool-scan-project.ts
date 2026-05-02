@@ -52,13 +52,13 @@ import {
   withTopRules,
   withViolationsByScanKind,
 } from "./scan-assembly.ts";
-import { rewriteResponseToCollapsed } from "./scan-project-collapse-by-group.ts";
 import { GROUP_BY_VALUES, readGroupByParam, withByGroup } from "./scan-group-by.ts";
 import {
   assembleScanProjectResponse,
   buildVendorPredicate,
   pickNonVendorNarrowingDir,
 } from "./scan-project-budget.ts";
+import { rewriteResponseToCollapsed } from "./scan-project-collapse-by-group.ts";
 import {
   buildScanProjectReviewCandidates,
   type ScanProjectReviewCandidate,
@@ -177,7 +177,7 @@ export const scanProjectTool: McpTool = {
         collapseByGroupKey: {
           type: "boolean",
           description:
-            "When true, replace the per-file `files[]` view with a per-group `collapsedGroups[]` view: one entry per unique `(ruleId, groupKey)` carrying the canonical finding's `findingId`/`severity`/`fix`/etc. plus an `occurrences[]: [{path, line, column}]` enumeration of every emission that shared the predicate. Use on bulk-template catalogs (e.g. 174 sub-sites repeating the same Bootstrap navbar) where 40k per-file findings collapse to <500 unique groups — one `scan_project` call answers \"what kinds of problems exist?\" without paging through every file. Pagination/truncation semantics mirror the per-file path (`limit`, `offset`, `truncated`, `nextOffset`); the only shape change is the primary findings array. Headline counts on `plan` (`fixesByClass.*`, `topRules`, etc.) stay un-collapsed so the agent budgets against the real finding count; `plan.collapsedGroupCount` exposes the post-collapse count alongside so the two views reconcile. Default false preserves the existing per-file shape exactly.",
+            'When true, replace the per-file `files[]` view with a per-group `collapsedGroups[]` view: one entry per unique `(ruleId, groupKey)` carrying the canonical finding\'s `findingId`/`severity`/`fix`/etc. plus an `occurrences[]: [{path, line, column}]` enumeration of every emission that shared the predicate. Use on bulk-template catalogs (e.g. 174 sub-sites repeating the same Bootstrap navbar) where 40k per-file findings collapse to <500 unique groups — one `scan_project` call answers "what kinds of problems exist?" without paging through every file. Pagination/truncation semantics mirror the per-file path (`limit`, `offset`, `truncated`, `nextOffset`); the only shape change is the primary findings array. Headline counts on `plan` (`fixesByClass.*`, `topRules`, etc.) stay un-collapsed so the agent budgets against the real finding count; `plan.collapsedGroupCount` exposes the post-collapse count alongside so the two views reconcile. Default false preserves the existing per-file shape exactly.',
         },
       },
     },
@@ -539,107 +539,123 @@ export const scanProjectTool: McpTool = {
       limit: pageParams.limit,
     });
     const assembledResponse = assembleScanProjectResponse({
-        params,
-        session,
-        // pass the scan-kind-enriched
-        // `formatted` (its `plan.violationsByScanKind` sibling lands
-        // on the wire) into the assembler. Identity-stable when no
-        // build artifacts were classified — `withViolationsByScanKind`
-        // returns the input plan unchanged in that case.
-        formatted: formattedWithScanKind,
-        hoisted: hoistedWithLimitations,
-        page,
-        pageOffset: pageParams.offset,
-        fullMeta,
-        nextStep: nextStep.prose,
-        ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
-        ...inlineReviewCandidatesField,
-        ...buildBaseWarningsForScanProject({
-          formatted,
-          parsedFiles: files,
-          rootSource,
-          configSource: projectConfig.sourcePath,
-          root,
-          buildArtifacts,
-          storybookPresetActive,
-          sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
-          additionalPathsRedundant: isAdditionalPathsRedundant({
-            additionalPaths,
-            additionalFilesCount: additionalFiles.length,
-            filesAdded: mergedFiles.length - baseFiles.length,
-          }),
-          // Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: thread the
-          // input-path subset that contributed parseable files
-          // already covered by the discovered base set so the
-          // `warningsDetails.redundant_additional_paths` payload names
-          // which entries were redundant (vs. which were rejected for
-          // a per-path skip reason — those surface separately under
-          // `meta.additionalPathsScanned.skipped[]`). Empty list when
-          // the warning won't fire; the summarizer drops the payload
-          // conservatively in that case.
-          redundantAdditionalPathsList: redundantAdditionalPathsListFor({
-            additionalPaths,
-            root,
-            excludes: session.config.exclude,
-          }),
-          // empty intersection AND a
-          // non-empty pre-restrict set → the restriction is what cleared
-          // the file list (not "no parseable files anywhere"). Helper
-          // returns false when no restriction was supplied OR the
-          // restriction kept ≥1 file.
-          restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
-          configSearchSawProjectMarker,
-          scssUnresolvedVariableFiles,
-          // run the detector at the
-          // assembly seam so the threshold logic stays close to its
-          // inputs (`meta.durationMs`, `meta.filesScanned`, the
-          // build-artifact entries). Returns `undefined` on the
-          // common case (most scans clear neither trigger path) so
-          // the detection threads through the warning channel via
-          // conditional-spread.
-          bulkCatalogDetection: detectBulkCatalog({
-            durationMs: readMetaNumber(formatted.meta, "durationMs"),
-            filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
-            buildArtifacts: buildArtifacts.entries,
-          }),
-          // thread the innerHTML declined count from the parse pass so
-          // the warnings module can fire
-          // `js_innerhtml_template_literal_unparsed` when dynamic
-          // template literals were found but not parsed.
-          jsInnerHtmlDeclinedCount,
-          // thread the per-file pattern detector samples so the warning
-          // payload's `fileSamples[]` carries `{ path, line, pattern }`
-          // for files where the routed parser produced zero findings —
-          // the routing-skip failure mode the AI-first doctrine names.
-          jsInnerHtmlPatternSamples,
-          // pre-computed cross-check
-          // for `coverage_confidence_uniformly_high_with_parse_errors`.
-          // The warnings module pairs this boolean with the parse-error
-          // count from `meta.analysisCoverage.parseErrorFileCount` for
-          // the emission gate.
-          perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
+      params,
+      session,
+      // pass the scan-kind-enriched
+      // `formatted` (its `plan.violationsByScanKind` sibling lands
+      // on the wire) into the assembler. Identity-stable when no
+      // build artifacts were classified — `withViolationsByScanKind`
+      // returns the input plan unchanged in that case.
+      formatted: formattedWithScanKind,
+      hoisted: hoistedWithLimitations,
+      page,
+      pageOffset: pageParams.offset,
+      fullMeta,
+      nextStep: nextStep.prose,
+      ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
+      ...inlineReviewCandidatesField,
+      ...buildBaseWarningsForScanProject({
+        formatted,
+        parsedFiles: files,
+        rootSource,
+        configSource: projectConfig.sourcePath,
+        root,
+        buildArtifacts,
+        storybookPresetActive,
+        sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
+        additionalPathsRedundant: isAdditionalPathsRedundant({
+          additionalPaths,
+          additionalFilesCount: additionalFiles.length,
+          filesAdded: mergedFiles.length - baseFiles.length,
         }),
-      });
-    // V1-GROUPKEY-COLLAPSED-RESPONSE-MODE: opt-in collapsed-by-
-    // groupKey view. When true, swap the per-file `files[]` array
-    // for a per-group `collapsedGroups[]` array on the assembled
-    // response (and re-paginate over groups). Default false preserves
-    // the existing per-file shape exactly. Per the AI-first consumer
-    // doctrine "Cross-surface count invariant," the rewrite stamps
-    // `plan.collapsedGroupCount` so the post-collapse group count
-    // ships alongside the un-collapsed `plan.fixesByClass.*` headlines
-    // — the agent reads both numbers in the same response and never
-    // has to guess which view drove pagination.
-    const collapseByGroupKey = params["collapseByGroupKey"] === true;
-    const finalResponse = collapseByGroupKey
-      ? rewriteResponseToCollapsed(assembledResponse, {
-          fullFiles: formattedWithScanKind.files,
-          pageParams,
-        })
-      : assembledResponse;
-    return textResult(finalResponse);
+        // Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: thread the
+        // input-path subset that contributed parseable files
+        // already covered by the discovered base set so the
+        // `warningsDetails.redundant_additional_paths` payload names
+        // which entries were redundant (vs. which were rejected for
+        // a per-path skip reason — those surface separately under
+        // `meta.additionalPathsScanned.skipped[]`). Empty list when
+        // the warning won't fire; the summarizer drops the payload
+        // conservatively in that case.
+        redundantAdditionalPathsList: redundantAdditionalPathsListFor({
+          additionalPaths,
+          root,
+          excludes: session.config.exclude,
+        }),
+        // empty intersection AND a
+        // non-empty pre-restrict set → the restriction is what cleared
+        // the file list (not "no parseable files anywhere"). Helper
+        // returns false when no restriction was supplied OR the
+        // restriction kept ≥1 file.
+        restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
+        configSearchSawProjectMarker,
+        scssUnresolvedVariableFiles,
+        // run the detector at the
+        // assembly seam so the threshold logic stays close to its
+        // inputs (`meta.durationMs`, `meta.filesScanned`, the
+        // build-artifact entries). Returns `undefined` on the
+        // common case (most scans clear neither trigger path) so
+        // the detection threads through the warning channel via
+        // conditional-spread.
+        bulkCatalogDetection: detectBulkCatalog({
+          durationMs: readMetaNumber(formatted.meta, "durationMs"),
+          filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
+          buildArtifacts: buildArtifacts.entries,
+        }),
+        // thread the innerHTML declined count from the parse pass so
+        // the warnings module can fire
+        // `js_innerhtml_template_literal_unparsed` when dynamic
+        // template literals were found but not parsed.
+        jsInnerHtmlDeclinedCount,
+        // thread the per-file pattern detector samples so the warning
+        // payload's `fileSamples[]` carries `{ path, line, pattern }`
+        // for files where the routed parser produced zero findings —
+        // the routing-skip failure mode the AI-first doctrine names.
+        jsInnerHtmlPatternSamples,
+        // pre-computed cross-check
+        // for `coverage_confidence_uniformly_high_with_parse_errors`.
+        // The warnings module pairs this boolean with the parse-error
+        // count from `meta.analysisCoverage.parseErrorFileCount` for
+        // the emission gate.
+        perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
+      }),
+    });
+    return textResult(
+      maybeApplyCollapsedView({
+        params,
+        assembledResponse,
+        fullFiles: formattedWithScanKind.files,
+        pageParams,
+      }),
+    );
   },
 };
+
+/**
+ * V1-GROUPKEY-COLLAPSED-RESPONSE-MODE entry point. When the caller
+ * passes `collapseByGroupKey: true`, swap the assembled per-file
+ * `files[]` view for a per-group `collapsedGroups[]` view; otherwise
+ * return the assembled response unchanged. Extracted from the handler
+ * so its cognitive-complexity score stays inside the lint budget.
+ *
+ * Per the AI-first consumer doctrine "Cross-surface count invariant,"
+ * the rewrite stamps `plan.collapsedGroupCount` so the post-collapse
+ * group count ships alongside the un-collapsed `plan.fixesByClass.*`
+ * headlines — the agent reads both numbers in the same response and
+ * never has to guess which view drove pagination.
+ */
+function maybeApplyCollapsedView(args: {
+  readonly params: Record<string, unknown>;
+  readonly assembledResponse: Record<string, unknown>;
+  readonly fullFiles: ScanFormatted["files"];
+  readonly pageParams: { readonly limit: number; readonly offset: number };
+}): Record<string, unknown> {
+  if (args.params["collapseByGroupKey"] !== true) return args.assembledResponse;
+  return rewriteResponseToCollapsed(args.assembledResponse, {
+    fullFiles: args.fullFiles,
+    pageParams: args.pageParams,
+  });
+}
 
 /**
  * Defensive number read from `formatted.meta` for the bulk-catalog
