@@ -5440,40 +5440,31 @@ function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown>
  * caller adding a third subset (e.g. document formats) only needs
  * a new predicate.
  */
-function summarizeSkippedSubset(
-  coverage: Record<string, unknown> | undefined,
+
+/** Extract and sort skipped-by-extension entries that pass the predicate. */
+function filteredSkippedEntries(
+  coverage: Record<string, unknown>,
   include: (token: string) => boolean,
-):
-  | {
-      readonly extensions: readonly string[];
-      readonly perExtensionCounts?: Readonly<Record<string, number>>;
-      readonly noExtensionFiles?: readonly string[];
-      readonly topExtension?: string;
-      readonly topCount?: number;
-      readonly totalSkipped: number;
-    }
-  | undefined {
-  if (coverage === undefined) return undefined;
+): Array<[string, number]> {
   const skipped = coverage["skippedByExtension"];
-  if (skipped === null || typeof skipped !== "object") return undefined;
+  if (skipped === null || typeof skipped !== "object") return [];
   const entries: Array<[string, number]> = [];
   for (const [token, count] of Object.entries(skipped as Record<string, unknown>)) {
-    if (
-      typeof count === "number" &&
-      count > 0 &&
-      typeof token === "string" &&
-      token.length > 0 &&
-      include(token)
-    ) {
+    if (typeof count === "number" && count > 0 && token.length > 0 && include(token)) {
       entries.push([token, count]);
     }
   }
   // Descending by count; alphabetical tie-break for determinism.
   entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  if (entries.length === 0) return undefined;
-  // Partition into dotted extensions vs. well-known textual filenames.
-  // Order within each slice preserves the descending-count + alpha
-  // sort already established above.
+  return entries;
+}
+
+/** Partition sorted entries into dotted-extension and no-extension-filename buckets. */
+function partitionSkippedEntries(entries: Array<[string, number]>): {
+  extensions: Array<[string, number]>;
+  noExtensionFiles: string[];
+  totalSkipped: number;
+} {
   const extensions: Array<[string, number]> = [];
   const noExtensionFiles: string[] = [];
   let totalSkipped = 0;
@@ -5488,6 +5479,29 @@ function summarizeSkippedSubset(
     // already excludes it from text/binary summarizers, so this branch
     // is unreachable on the predicate-fired path.
   }
+  return { extensions, noExtensionFiles, totalSkipped };
+}
+
+function summarizeSkippedSubset(
+  coverage: Record<string, unknown> | undefined,
+  include: (token: string) => boolean,
+):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly noExtensionFiles?: readonly string[];
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const entries = filteredSkippedEntries(coverage, include);
+  if (entries.length === 0) return undefined;
+  // Partition into dotted extensions vs. well-known textual filenames.
+  // Order within each slice preserves the descending-count + alpha
+  // sort already established above.
+  const { extensions, noExtensionFiles, totalSkipped } = partitionSkippedEntries(entries);
   // `topExtension` / `topCount` are derived strictly from the dotted-
   // extensions slice — never from `noExtensionFiles`. When the
   // predicate fired purely on no-extension filenames, both fields are
