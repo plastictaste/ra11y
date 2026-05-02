@@ -810,6 +810,16 @@ const FRAGMENT_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
   "document/page-titled",
   "document/lang-attribute",
   "parsing/html-has-lang",
+  // The dangling-fragment rule omits emission entirely on
+  // fragment-classified files because the target id may be supplied
+  // by the composing parent layout or a sibling fragment — the
+  // predicate "no element with this id exists in the rendered DOM"
+  // is structurally unverifiable from one fragment file. Listing it
+  // here downgrades `perRuleCoverage[].coverageConfidence` to
+  // `medium` with reason `fragment-input-no-document-envelope` so
+  // the absence of findings on fragment input is visible as
+  // scan-confidence telemetry rather than a silent zero.
+  "navigation/in-page-link-fragment-missing",
 ]);
 
 /**

@@ -30,10 +30,21 @@
  *   - Fragment files (`_includes/`, `_partials/`, `partials/`,
  *     `components/`, files with `---` front-matter, files with no
  *     `<html>`/`<body>`/`<head>`) — the target id may be supplied by
- *     the composing parent layout. Demoted to `info` rather than
- *     suppressed so the agent can still investigate when it knows the
- *     composition; `couldBeWrongBecause: ["fragment_input_id_supplied_by_parent"]`
- *     names the dismissal pattern.
+ *     the composing parent layout, OR by another fragment composed
+ *     into the same rendered page. The predicate "no element with
+ *     this id exists in the rendered DOM" is structurally
+ *     unverifiable from a single fragment file, so the rule omits
+ *     emission entirely on fragment-classified input. Per the AI-first
+ *     consumer doctrine bullet "Heuristic emission is the symmetric
+ *     twin of heuristic suppression" — emitting on speculation about
+ *     composition (even at `info` severity with a `couldBeWrongBecause`
+ *     hedge) leaks heuristic uncertainty into a slot the agent reads
+ *     as "the scanner saw evidence of this." The honest shape is
+ *     omission; the rule's `coverageConfidence` is downgraded to
+ *     `medium` with reason `fragment-input-no-document-envelope` via
+ *     the `FRAGMENT_DOWNGRADE_RULE_IDS` set in
+ *     `src/mcp/scan-assembly.ts` so the agent sees scan-confidence
+ *     telemetry for the unevaluated branch rather than a silent zero.
  *   - JSX expression-form `href={url}` — opaque at static time, per the
  *     AI-first consumer doctrine surface only deterministic evidence.
  *
@@ -89,7 +100,7 @@ export const rule = defineRule({
     description:
       'Flags <a href="#some-id"> whose fragment id has no matching element in the same document — the link announces as in-page navigation but lands nowhere. The bare `#`, the universal `#top` convention, cross-document links (`/path#id`), and JSX expression-form href={…} are intentionally out of scope.',
     rationale:
-      "An anchor with a fragment href promises the user that activating it will navigate to (and focus) a named region of the same page. When the named region does not exist, the browser silently scrolls to the document top and leaves focus at the link — the user hears 'link', activates it, and either nothing visible happens or focus order breaks. This is the failure mode 2.4.1 (Bypass Blocks) and the surrounding navigable-block criteria assume cannot occur: skip links, table-of-contents anchors, and 'back to top' / 'jump to section' affordances all depend on the fragment resolving. The check is deterministic over the parsed document — id collection is one pass over every element, the lookup is case-sensitive per the HTML spec — so a dangling reference is structural, not a heuristic guess.\n\nLegacy `<a name='X'>` anchors satisfy `href='#X'` per browser fragment-resolution behavior; the lookup includes both `id` and `<a name>` so HTML4 / XHTML 1.0 idioms don't produce false positives. Fragment files (front-matter, fragment-convention paths, no document envelope) get demoted to `info` because the composing parent layout may supply the missing id — the finding still surfaces with a `couldBeWrongBecause` code so the agent can investigate, but at a severity that doesn't crowd the work-budget.",
+      "An anchor with a fragment href promises the user that activating it will navigate to (and focus) a named region of the same page. When the named region does not exist, the browser silently scrolls to the document top and leaves focus at the link — the user hears 'link', activates it, and either nothing visible happens or focus order breaks. This is the failure mode 2.4.1 (Bypass Blocks) and the surrounding navigable-block criteria assume cannot occur: skip links, table-of-contents anchors, and 'back to top' / 'jump to section' affordances all depend on the fragment resolving. The check is deterministic over the parsed document — id collection is one pass over every element, the lookup is case-sensitive per the HTML spec — so a dangling reference is structural, not a heuristic guess.\n\nLegacy `<a name='X'>` anchors satisfy `href='#X'` per browser fragment-resolution behavior; the lookup includes both `id` and `<a name>` so HTML4 / XHTML 1.0 idioms don't produce false positives. Fragment files (front-matter, fragment-convention paths, no document envelope) are omitted from emission entirely because the target id may be supplied by the composing parent layout or a sibling fragment — the predicate 'no element with this id exists in the rendered DOM' is structurally unverifiable from one fragment file. Per the AI-first consumer doctrine bullet 'Heuristic emission is the symmetric twin of heuristic suppression', emitting on speculation about composition (even at `info` with a hedge code) leaks heuristic uncertainty into a slot the agent reads as 'the scanner saw evidence of this.' Scan-confidence is preserved via the `FRAGMENT_DOWNGRADE_RULE_IDS` set in `src/mcp/scan-assembly.ts`, which downgrades `perRuleCoverage[].coverageConfidence` to `medium` with reason `fragment-input-no-document-envelope` for fragment-classified files in the scan.",
     goodExample: `<a href="#main">Skip to main content</a>\n<main id="main"><h1>Page</h1></main>`,
     badExample: `<a href="#main-contnet">Skip to main content</a>\n<main id="main-content"><h1>Page</h1></main>`,
     normativeQuote:
@@ -128,11 +139,10 @@ export const rule = defineRule({
 });
 
 type Emit = (v: {
-  severity: "warning" | "info";
+  severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
-  couldBeWrongBecause?: readonly string[];
 }) => void;
 
 /**
@@ -204,22 +214,32 @@ function containsTemplateDirective(s: string): boolean {
 function checkHtml(doc: HtmlDocument, source: string, filePath: string, emit: Emit): void {
   const anchors = findHtmlElementsByTag(doc, "a");
   if (anchors.length === 0) return;
+  // Fragment-classified files: omit emission entirely. The predicate
+  // ("no element with this id exists in the rendered DOM") is
+  // structurally unverifiable from a single fragment — the target id
+  // may be supplied by the composing parent layout or a sibling
+  // fragment composed into the same rendered page. Per the AI-first
+  // consumer doctrine bullet "Heuristic emission is the symmetric
+  // twin of heuristic suppression", emitting at any severity (even
+  // `info` with a `couldBeWrongBecause` hedge) leaks heuristic
+  // uncertainty into a slot the agent reads as "the scanner saw
+  // evidence of this." Scan-confidence is preserved via the
+  // `FRAGMENT_DOWNGRADE_RULE_IDS` set in `src/mcp/scan-assembly.ts`,
+  // which downgrades this rule's `perRuleCoverage` row to `medium`
+  // with reason `fragment-input-no-document-envelope` so the absence
+  // of findings on fragment-classified files is visible as
+  // scan-confidence telemetry rather than a silent zero.
+  if (isFragmentFile(doc, source, filePath)) return;
   // One pass to collect every fragment-resolvable target. Includes both
   // `id` (modern) and `<a name="…">` (legacy) so HTML4 / XHTML 1.0
   // idioms don't produce false positives.
   const targets = collectHtmlFragmentTargets(doc);
-  // Fragment files demote to `info` because the missing id may be
-  // supplied by the composing parent layout. The finding still
-  // surfaces (per "surface, don't suppress") with a structured
-  // `couldBeWrongBecause` code so the agent can dismiss in one read
-  // when it knows the composition.
-  const fragment = isFragmentFile(doc, source, filePath);
   for (const anchor of anchors) {
     const hrefValue = getHtmlAttribute(anchor, "href");
     const id = classifyFragmentHref(hrefValue);
     if (id === null) continue;
     if (targets.has(id)) continue;
-    emit(buildViolation(anchor.loc.start, id, targets, fragment));
+    emit(buildViolation(anchor.loc.start, id, targets));
   }
 }
 
@@ -250,16 +270,17 @@ function checkJsx(module: TsxModule, emit: Emit): void {
   // No JSX-side fragment-file detection — the layout-partial helper is
   // HTML-AST-shaped. JSX components are typically composed at runtime
   // via React's render tree; "fragment vs full page" is not a
-  // statically-knowable property of a `.tsx` file. We rely on the
-  // suggestion text and `couldBeWrongBecause` codes to frame the
-  // composition uncertainty for the agent.
+  // statically-knowable property of a `.tsx` file. The HTML branch's
+  // omit-on-fragment behavior has no JSX analogue because the static
+  // signal is absent; per "surface, don't suppress" we keep emitting
+  // on JSX where the evidence exists in-file.
   for (const anchor of anchors) {
     const hrefValue = getJsxAttributeString(anchor, "href");
     if (hrefValue === null) continue;
     const id = classifyFragmentHref(hrefValue);
     if (id === null) continue;
     if (targets.has(id)) continue;
-    emit(buildViolation(anchor.loc.start, id, targets, false));
+    emit(buildViolation(anchor.loc.start, id, targets));
   }
 }
 
@@ -284,28 +305,22 @@ function buildViolation(
   loc: { line: number; column: number },
   id: string,
   targets: ReadonlySet<string>,
-  fragment: boolean,
 ): {
-  severity: "warning" | "info";
+  severity: "warning";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
-  couldBeWrongBecause?: readonly string[];
 } {
   const nearest = findNearestId(id, targets);
-  const base = `anchor links to fragment \`#${id}\` but no element with that id exists in this document. Verify the id is added or correct the href.`;
-  const message = fragment
-    ? `${base} The file looks like a fragment / partial; the missing id may be supplied by the composing parent layout.`
-    : base;
+  const message = `anchor links to fragment \`#${id}\` but no element with that id exists in this document. Verify the id is added or correct the href.`;
   const suggestion = nearest
     ? `Did you mean \`href="#${nearest}"\`? Either change the link to \`href="#${nearest}"\` or add \`id="${id}"\` to the element this link should target.`
     : `Add \`id="${id}"\` to the element this link should target, or change the href to a fragment that matches an existing id in this document.`;
   return {
-    severity: fragment ? "info" : "warning",
+    severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message,
     suggestion,
-    ...(fragment ? { couldBeWrongBecause: ["fragment_input_id_supplied_by_parent"] } : {}),
   };
 }
 

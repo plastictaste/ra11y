@@ -366,7 +366,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### Heuristic emission (rule false-positive on speculative composition)
 
-- [ ] **Q13-RULE-NAVIGATION-IN-PAGE-LINK-FRAGMENT-MISSING-ON-FRAGMENT-INPUT** `navigation/in-page-link-fragment-missing` emits at `severity: "info"` on fragment-input files where the rule's own reason concedes "the missing id may be supplied by the composing parent layout" — predicate is unverifiable on fragments. Fix: when input is fragment-classified, the rule must downgrade to a review candidate or omit the emission entirely; alternatively perform the cross-fragment id resolution if the scanner has the AST (composing-layout file present in the same scan). Per AI-first doctrine "Heuristic emission is the symmetric twin of heuristic suppression."
 
 ### Parser routing skips
 

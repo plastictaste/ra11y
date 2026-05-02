@@ -143,24 +143,51 @@ describe("rule navigation/in-page-link-fragment-missing", () => {
     });
   });
 
-  describe("HTML: fragment files demote severity to info", () => {
-    it("file under _includes/ demotes finding to info with couldBeWrongBecause", () => {
-      // The composing parent layout may supply the missing id; the rule
-      // still surfaces (per surface-don't-suppress) but at info severity
-      // so the agent can dismiss in one read when it knows the layout.
+  describe("HTML: fragment files omit emission entirely", () => {
+    // Per the AI-first consumer doctrine bullet "Heuristic emission is
+    // the symmetric twin of heuristic suppression": the predicate
+    // "no element with this id exists in the rendered DOM" is
+    // structurally unverifiable from a single fragment — the target
+    // id may be supplied by the composing parent layout or a sibling
+    // fragment composed into the same rendered page. Emitting at any
+    // severity (even `info` with a hedge) leaks heuristic uncertainty
+    // into a slot the agent reads as "the scanner saw evidence of
+    // this." Honest shape: omit. Scan-confidence is preserved by the
+    // FRAGMENT_DOWNGRADE_RULE_IDS entry in src/mcp/scan-assembly.ts.
+
+    it("file under _includes/ omits emission entirely", () => {
       const source = `<a href="#sidebar">Open sidebar</a><nav>links</nav>`;
       const violations = runRule(rule, source, { filePath: "site/_includes/header.html" });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.severity).toBe("info");
-      expect(violations[0]?.couldBeWrongBecause).toContain("fragment_input_id_supplied_by_parent");
-      expect(violations[0]?.message).toContain("fragment / partial");
+      expect(violations).toHaveLength(0);
     });
 
-    it("bare HTML fragment (no <html>/<body>/<head>) demotes to info", () => {
+    it("bare HTML fragment (no <html>/<body>/<head>) omits emission", () => {
       const source = `<div class="card"><a href="#missing-target">Open</a></div>`;
       const violations = runRule(rule, source, { filePath: "card.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("file under _partials/ omits emission", () => {
+      const source = `<a href="#nope">x</a>`;
+      const violations = runRule(rule, source, { filePath: "site/_partials/footer.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("front-matter-prefixed source (markdown-residue / Jekyll) omits emission", () => {
+      const source = `---\ntitle: Page\n---\n<a href="#missing">x</a>`;
+      const violations = runRule(rule, source, { filePath: "post.html" });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("full HTML document with <html> envelope still emits (composing-page evidence is positive)", () => {
+      // Counter-test: a file that declares itself a complete page
+      // (positive `<html>` opener evidence) is NOT fragment-classified;
+      // the rule emits as before. This pins that the omit-on-fragment
+      // gate doesn't accidentally cover full-page documents.
+      const source = `<!doctype html><html><body><a href="#missing">x</a><h1>Page</h1></body></html>`;
+      const violations = runRule(rule, source, { filePath: "page.html" });
       expect(violations).toHaveLength(1);
-      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.severity).toBe("warning");
     });
   });
 
