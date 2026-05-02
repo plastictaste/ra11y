@@ -39,10 +39,11 @@
  *     scan is operating above the documented 1000-file row of the
  *     perf budget; pairing with vendor-heavy avoids firing on a
  *     legitimate large monorepo with hand-authored content.
- *   - `small_demo_catalog` — ≥ {@link SMALL_DEMO_CATALOG_MIN_SIBLINGS}
- *     sibling subdirs share an identical per-dir file-shape signature
- *     (e.g. each `<sibling>/` carries the same set of basenames such
- *     as `index.html` + `style.css` + `script.js`). Fires independent
+ *   - `small_demo_catalog` — at least
+ *     {@link SMALL_DEMO_CATALOG_MIN_SIBLINGS} sibling subdirs share
+ *     an identical per-dir file-shape signature (e.g. each
+ *     `<sibling>/` carries the same set of basenames such as
+ *     `index.html` + `style.css` + `script.js`). Fires independent
  *     of vendor-heavy because the canonical case is a hand-authored
  *     tutorial / demo catalog where every sub-project is original
  *     source — none of the files vendor-classify, the duration stays
@@ -64,7 +65,7 @@
  * Pure over its inputs — no I/O, no filesystem access, no decisions
  * beyond the threshold gate. Lives next to the other scan_project
  * scan-meta detectors (`build-artifacts.ts`, `catalog-detect.ts`,
- * `analysis-coverage.ts`) so the detector ↔ warning wiring stays
+ * `analysis-coverage.ts`) so the detector to warning wiring stays
  * traceable.
  */
 
@@ -272,7 +273,7 @@ export interface BulkCatalogInputs {
  *
  * Path precedence: vendor-heavy paths win over `small_demo_catalog`
  * because the agent's first lever differs. When a corpus is both
- * vendor-heavy and small-demo-shaped (rare — would require ≥30
+ * vendor-heavy and small-demo-shaped (rare — would require many
  * sibling tutorials each with vendor bundles), the vendor-heavy
  * label fires first so the agent reaches for `propose_config exclude`
  * before scoping with `additionalPaths`.
@@ -333,20 +334,27 @@ export function detectBulkCatalog(inputs: BulkCatalogInputs): BulkCatalogDetecti
  *      form.
  *   2. Bucket relative paths by their first segment (the candidate
  *      sibling subdir name); ignore paths with no segment separator
- *      (top-level files don't contribute).
+ *      (top-level files don't contribute) and dotfile siblings.
  *   3. For each candidate sibling subdir, compute the sorted-distinct
  *      list of immediate-child basenames (the file-shape signature).
  *      A subdir whose first-level descendants are e.g.
  *      `index.html`, `style.css`, `script.js` produces signature
  *      `["index.html", "script.js", "style.css"]`.
  *   4. Group sibling subdirs by signature; the largest group wins.
- *      When ≥ {@link SMALL_DEMO_CATALOG_MIN_SIBLINGS} subdirs share
- *      the same signature, return the {@link SmallDemoCatalogShape}
- *      payload. Otherwise return `undefined`.
+ *      When at least {@link SMALL_DEMO_CATALOG_MIN_SIBLINGS} subdirs
+ *      share the same signature, return the
+ *      {@link SmallDemoCatalogShape} payload. Otherwise return
+ *      `undefined`.
  *
  * Pure data transformation — no filesystem reads. Returns `undefined`
  * when `parsedFilePaths` is missing/empty or no sibling group clears
  * the floor.
+ *
+ * Folded into three helpers so the cognitive complexity stays under
+ * the lint cap: {@link bucketByImmediateSibling} owns the per-path
+ * bucketing, {@link relativeImmediateChild} owns the per-path
+ * predicate, and {@link pickLargestSameShapeSiblingGroup} owns the
+ * signature-grouping pass.
  */
 function detectSmallDemoCatalogShape(
   parsedFilePaths: readonly string[] | undefined,
@@ -354,62 +362,105 @@ function detectSmallDemoCatalogShape(
 ): SmallDemoCatalogShape | undefined {
   if (parsedFilePaths === undefined || parsedFilePaths.length === 0) return undefined;
   const rootPosix = root === undefined ? undefined : normalizeToPosix(root);
-  // siblingDir → set of immediate-child basenames
-  const siblingFiles = new Map<string, Set<string>>();
-  for (const filePath of parsedFilePaths) {
-    const rel = stripRootPrefix(normalizeToPosix(filePath), rootPosix);
-    if (rel.length === 0) continue;
-    const slashIdx = rel.indexOf("/");
-    // Skip top-level files (no sibling subdir to bucket under).
-    if (slashIdx <= 0) continue;
-    const sibling = rel.slice(0, slashIdx);
-    if (sibling.length === 0 || sibling.startsWith(".")) continue;
-    // Only count files immediately inside the sibling subdir — a
-    // nested `a/b/c.html` does NOT contribute basename `c.html` to
-    // sibling `a`'s signature. The same-shape signature is per-dir
-    // file shape, not whole-subtree manifest, so deeply nested
-    // sub-project layouts (e.g. one Next.js app per sibling) don't
-    // match the predicate; they shouldn't.
-    const rest = rel.slice(slashIdx + 1);
-    const innerSlash = rest.indexOf("/");
-    if (innerSlash !== -1) continue;
-    const basename = rest;
-    if (basename.length === 0) continue;
-    const set = siblingFiles.get(sibling);
-    if (set === undefined) siblingFiles.set(sibling, new Set([basename]));
-    else set.add(basename);
-  }
+  const siblingFiles = bucketByImmediateSibling(parsedFilePaths, rootPosix);
   if (siblingFiles.size < SMALL_DEMO_CATALOG_MIN_SIBLINGS) return undefined;
-  // signatureKey (sorted-distinct basenames joined) → list of sibling names
-  const signatureGroups = new Map<string, string[]>();
-  for (const [sibling, basenames] of siblingFiles) {
-    if (basenames.size === 0) continue;
-    const signatureKey = [...basenames].sort().join(" ");
-    const group = signatureGroups.get(signatureKey);
-    if (group === undefined) signatureGroups.set(signatureKey, [sibling]);
-    else group.push(sibling);
-  }
-  let bestSiblings: string[] | undefined;
-  let bestSignature: readonly string[] | undefined;
-  for (const [signatureKey, siblings] of signatureGroups) {
-    if (bestSiblings === undefined || siblings.length > bestSiblings.length) {
-      bestSiblings = siblings;
-      bestSignature = signatureKey.split(" ");
-    }
-  }
-  if (
-    bestSiblings === undefined ||
-    bestSignature === undefined ||
-    bestSiblings.length < SMALL_DEMO_CATALOG_MIN_SIBLINGS
-  ) {
+  const winner = pickLargestSameShapeSiblingGroup(siblingFiles);
+  if (winner === undefined || winner.siblings.length < SMALL_DEMO_CATALOG_MIN_SIBLINGS) {
     return undefined;
   }
-  bestSiblings.sort((a, b) => a.localeCompare(b));
   return {
-    siblingCount: bestSiblings.length,
-    signature: bestSignature,
-    exampleSiblings: bestSiblings.slice(0, SMALL_DEMO_CATALOG_EXAMPLE_CAP),
+    siblingCount: winner.siblings.length,
+    signature: winner.signature,
+    exampleSiblings: winner.siblings.slice(0, SMALL_DEMO_CATALOG_EXAMPLE_CAP),
   };
+}
+
+/**
+ * Bucket each parsed file path into a sibling-subdir to immediate-
+ * child-basenames map. Skips top-level files (no sibling subdir under
+ * root), dotfile siblings (`.github/` etc.), and files that aren't
+ * immediate children of their sibling subdir (deeply-nested sub-
+ * project layouts like `app-N/pages/index.tsx` don't contribute, by
+ * design — the same-shape signature is per-dir file shape, not whole-
+ * subtree manifest).
+ */
+function bucketByImmediateSibling(
+  parsedFilePaths: readonly string[],
+  rootPosix: string | undefined,
+): Map<string, Set<string>> {
+  const siblingFiles = new Map<string, Set<string>>();
+  for (const filePath of parsedFilePaths) {
+    const entry = relativeImmediateChild(filePath, rootPosix);
+    if (entry === undefined) continue;
+    const set = siblingFiles.get(entry.sibling);
+    if (set === undefined) siblingFiles.set(entry.sibling, new Set([entry.basename]));
+    else set.add(entry.basename);
+  }
+  return siblingFiles;
+}
+
+/**
+ * Resolve a single parsed file path to its `(sibling, basename)`
+ * coordinate, or `undefined` if the path doesn't qualify as an
+ * immediate child of a sibling subdir under `rootPosix`. Folded out
+ * of {@link bucketByImmediateSibling} so the per-path predicate
+ * stays one cognitive-unit per branch.
+ */
+function relativeImmediateChild(
+  filePath: string,
+  rootPosix: string | undefined,
+): { sibling: string; basename: string } | undefined {
+  const rel = stripRootPrefix(normalizeToPosix(filePath), rootPosix);
+  if (rel.length === 0) return undefined;
+  const slashIdx = rel.indexOf("/");
+  if (slashIdx <= 0) return undefined; // top-level file
+  const sibling = rel.slice(0, slashIdx);
+  if (sibling.length === 0 || sibling.startsWith(".")) return undefined;
+  const rest = rel.slice(slashIdx + 1);
+  if (rest.length === 0 || rest.includes("/")) return undefined;
+  return { sibling, basename: rest };
+}
+
+/**
+ * Group sibling subdirs by their sorted-distinct immediate-child
+ * basename signature; return the largest group's
+ * `{ siblings, signature }` pair (alphabetically sorted siblings),
+ * or `undefined` if no group exists. The caller checks the size
+ * floor.
+ *
+ * The signature stored alongside each group's key is the original
+ * sorted-distinct basename array (not a re-split string), so the
+ * shape stays string-array-pure regardless of what characters appear
+ * in the basenames.
+ */
+function pickLargestSameShapeSiblingGroup(
+  siblingFiles: ReadonlyMap<string, ReadonlySet<string>>,
+): { siblings: string[]; signature: readonly string[] } | undefined {
+  const signatureGroups = new Map<string, { signature: readonly string[]; siblings: string[] }>();
+  for (const [sibling, basenames] of siblingFiles) {
+    if (basenames.size === 0) continue;
+    const sortedBasenames = [...basenames].sort();
+    // Newline as the join separator: POSIX path components cannot
+    // contain a literal newline, so the key never collides with a
+    // basename character. Group key is internal-only; the canonical
+    // signature is the sorted array we store alongside it.
+    const signatureKey = sortedBasenames.join("\n");
+    const existing = signatureGroups.get(signatureKey);
+    if (existing === undefined) {
+      signatureGroups.set(signatureKey, { signature: sortedBasenames, siblings: [sibling] });
+    } else {
+      existing.siblings.push(sibling);
+    }
+  }
+  let best: { siblings: string[]; signature: readonly string[] } | undefined;
+  for (const [, group] of signatureGroups) {
+    if (best === undefined || group.siblings.length > best.siblings.length) {
+      best = group;
+    }
+  }
+  if (best === undefined) return undefined;
+  best.siblings.sort((a, b) => a.localeCompare(b));
+  return best;
 }
 
 /**
