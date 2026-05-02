@@ -89,8 +89,10 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface ExtensionsSkippedPayload {
   readonly extensions: readonly string[];
-  readonly topExtension: string;
-  readonly topCount: number;
+  // Present-when-meaningful: omitted when `extensions: []` (e.g. a
+  // corpus where only no-extension filenames fired the warning).
+  readonly topExtension?: string;
+  readonly topCount?: number;
   readonly totalSkipped: number;
 }
 

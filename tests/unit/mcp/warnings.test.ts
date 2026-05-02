@@ -2331,6 +2331,66 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     ).toBe(false);
   });
 
+  it("omits `topExtension` / `topCount` when only no-extension filenames fired (filename token never leaks into the dotted-extension slot)", () => {
+    // Per AI-first doctrine "Sibling fields naming the same concept
+    // must use one shape": `topExtension` / `topCount` are derived
+    // strictly from the dotted-extensions slice, never from the
+    // `noExtensionFiles` slice. Pre-fix, an `extensions: []` payload
+    // would still ship `topExtension: "LICENSE"` (a filename token in
+    // a slot named "extension"), forcing the agent to disambiguate
+    // whether the token was a dotted ext or a canonical filename.
+    // Filename-only skips now surface exclusively through
+    // `noExtensionFiles[]`.
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { LICENSE: 1, README: 1 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(details.text_source_skipped).toBeDefined();
+    expect(details.text_source_skipped?.extensions).toEqual([]);
+    expect(details.text_source_skipped?.noExtensionFiles).toEqual(["LICENSE", "README"]);
+    // `totalSkipped` still covers the union (predicate-fired count).
+    expect(details.text_source_skipped?.totalSkipped).toBe(2);
+    // `topExtension` / `topCount` are omitted — present-when-meaningful.
+    // An agent walks `noExtensionFiles[]` for the actionable list
+    // rather than reading a filename out of the dotted-extension slot.
+    expect(
+      Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "topExtension"),
+    ).toBe(false);
+    expect(
+      Object.hasOwn(details.text_source_skipped as Record<string, unknown>, "topCount"),
+    ).toBe(false);
+  });
+
+  it("derives `topExtension` from the dotted-extension slice when the union mixes both shapes (filename never wins even if its count exceeds every dotted ext)", () => {
+    // Stricter version of the previous test: even when a filename
+    // entry would dominate the union by count, `topExtension` still
+    // names the dotted-extension head so the slot's semantics stay
+    // partition-pure. The agent reading `noExtensionFiles[]` already
+    // sees the filename ranking; the dotted slot answers a different
+    // question ("which dialect dominates the parser-routable subset?").
+    const codes = ["text_source_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { LICENSE: 99, ".php": 12, ".coffee": 4 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(details.text_source_skipped?.extensions).toEqual([".php", ".coffee"]);
+    expect(details.text_source_skipped?.noExtensionFiles).toEqual(["LICENSE"]);
+    // Top dotted extension is `.php` (count 12), NOT `LICENSE` (count 99).
+    expect(details.text_source_skipped?.topExtension).toBe(".php");
+    expect(details.text_source_skipped?.topCount).toBe(12);
+  });
+
   it("excludes the residual `(no-ext)` token from both payloads (binary-shaped despite passing the binary-extension filter)", () => {
     // `(no-ext)` is the discovery walker's residual bucket for
     // binary-without-extension files (hash-named blobs, Git LFS

@@ -489,8 +489,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### Empty / dishonest warning payloads
 
-- [ ] **Q15-CHECKLIST-TEXT-SOURCE-SKIPPED-EMPTY-EXTENSIONS-WITH-FILENAME-TOPEXTENSION** `warningsDetails.text_source_skipped: { extensions: [], noExtensionFiles: ["LICENSE"], topExtension: "LICENSE", topCount: 1 }` — `extensions: []` AND `topExtension: "LICENSE"` (a filename, not an extension). Two sibling fields disagree about whether any extensions were skipped. Closure: `topExtension` is null when `extensions` is empty; surface filename-only skips through `noExtensionFiles` channel only. Per AI-first doctrine "Sibling fields naming the same concept must use one shape."
-
 ### Ambiguous / empty-when-meaningful field shapes
 
 - [ ] **Q15-COVERAGE-SIBLING-COUNT-AND-ARRAY-FOUR-WAYS** `coverage` ships `criteriaUntestable: 0` (scalar) alongside `untestableCriteria: []` (array form of same count) alongside `actionableManualItems: 19` (parallel scalar twin) alongside `manualWithCandidates: [...19]` (parallel array form). Two concepts × two shapes each = four sibling fields where one shape per concept would do. Closure: pick array shape per concept; derive scalars at read time (`array.length`); omit empty arrays via conditional spread when meaning is "absent on this corpus." Per AI-first doctrine "Sibling fields naming the same concept must use one shape."

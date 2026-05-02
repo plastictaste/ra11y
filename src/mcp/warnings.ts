@@ -1755,10 +1755,15 @@ export interface ScanWarningDetails {
    * `meta.analysisCoverage.skippedByExtension` for callers that want
    * the entire tail.
    *
-   * `topExtension` / `topCount` describe the dominant entry across
-   * the union of `extensions` + `noExtensionFiles`; on a corpus where
-   * only well-known filenames fired the warning, `topExtension`
-   * names the dominant filename (e.g. `LICENSE`).
+   * `topExtension` / `topCount` describe the dominant entry in the
+   * dotted-extensions slice ONLY (never the `noExtensionFiles` slice).
+   * Present-when-meaningful: omitted entirely when `extensions` is
+   * empty (e.g. a corpus where only well-known filenames fired the
+   * warning) — agents reading filename-only skips walk
+   * `noExtensionFiles[]` directly. Per AI-first "Sibling fields naming
+   * the same concept must use one shape": derivation is strictly
+   * partitioned so a token in `topExtension` is always a dotted
+   * extension, never conflated with the canonical-filename channel.
    *
    * `parserRoutableExtensions` is a deterministic subset of
    * `extensions` naming the entries whose format spec defines an
@@ -1782,8 +1787,8 @@ export interface ScanWarningDetails {
     readonly extensions: readonly string[];
     readonly noExtensionFiles?: readonly string[];
     readonly parserRoutableExtensions?: readonly string[];
-    readonly topExtension: string;
-    readonly topCount: number;
+    readonly topExtension?: string;
+    readonly topCount?: number;
     readonly totalSkipped: number;
   };
   /**
@@ -1805,8 +1810,8 @@ export interface ScanWarningDetails {
   readonly binary_assets_skipped?: {
     readonly extensions: readonly string[];
     readonly noExtensionFiles?: readonly string[];
-    readonly topExtension: string;
-    readonly topCount: number;
+    readonly topExtension?: string;
+    readonly topCount?: number;
     readonly totalSkipped: number;
   };
   /**
@@ -5168,8 +5173,8 @@ function summarizeTextSourceSkipped(coverage: Record<string, unknown> | undefine
       readonly extensions: readonly string[];
       readonly noExtensionFiles?: readonly string[];
       readonly parserRoutableExtensions?: readonly string[];
-      readonly topExtension: string;
-      readonly topCount: number;
+      readonly topExtension?: string;
+      readonly topCount?: number;
       readonly totalSkipped: number;
     }
   | undefined {
@@ -5207,8 +5212,8 @@ function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefi
   | {
       readonly extensions: readonly string[];
       readonly noExtensionFiles?: readonly string[];
-      readonly topExtension: string;
-      readonly topCount: number;
+      readonly topExtension?: string;
+      readonly topCount?: number;
       readonly totalSkipped: number;
     }
   | undefined {
@@ -5392,6 +5397,19 @@ function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown>
  * `extensions: [".php", "LICENSE", "(no-ext)"]` couldn't disambiguate
  * dialect from canonical filename from residual binary bucket.
  *
+ * `topExtension` / `topCount` are derived ONLY from the dotted-
+ * extensions slice (never from `noExtensionFiles`). When the
+ * predicate fires purely on no-extension filenames (e.g. a corpus
+ * carrying only `LICENSE` / `README`), `topExtension` and `topCount`
+ * are omitted entirely — present-when-meaningful per AI-first
+ * "Sibling fields naming the same concept must use one shape." The
+ * earlier behavior populated `topExtension: "LICENSE"` alongside
+ * `extensions: []`, conflating two channels: an agent reading a
+ * filename token in a slot named `topExtension` has no way to tell
+ * whether it's a dotted ext (`.scss`) or a canonical filename
+ * (`LICENSE`). Filename-only skips now surface exclusively through
+ * `noExtensionFiles[]`.
+ *
  * Centralizing the body keeps the text-source and binary-asset
  * summarizers identical except for which subset they describe — so
  * the wire shape stays stable across both warnings and a future
@@ -5405,8 +5423,8 @@ function summarizeSkippedSubset(
   | {
       readonly extensions: readonly string[];
       readonly noExtensionFiles?: readonly string[];
-      readonly topExtension: string;
-      readonly topCount: number;
+      readonly topExtension?: string;
+      readonly topCount?: number;
       readonly totalSkipped: number;
     }
   | undefined {
@@ -5427,18 +5445,17 @@ function summarizeSkippedSubset(
   }
   // Descending by count; alphabetical tie-break for determinism.
   entries.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  const top = entries[0];
-  if (top === undefined) return undefined;
+  if (entries.length === 0) return undefined;
   // Partition into dotted extensions vs. well-known textual filenames.
   // Order within each slice preserves the descending-count + alpha
   // sort already established above.
-  const extensions: string[] = [];
+  const extensions: Array<[string, number]> = [];
   const noExtensionFiles: string[] = [];
   let totalSkipped = 0;
   for (const [token, count] of entries) {
     totalSkipped += count;
     if (token.startsWith(".")) {
-      extensions.push(token);
+      extensions.push([token, count]);
     } else if (isWellKnownTextualNoExtFilename(token)) {
       noExtensionFiles.push(token);
     }
@@ -5446,11 +5463,19 @@ function summarizeSkippedSubset(
     // already excludes it from text/binary summarizers, so this branch
     // is unreachable on the predicate-fired path.
   }
+  // `topExtension` / `topCount` are derived strictly from the dotted-
+  // extensions slice — never from `noExtensionFiles`. When the
+  // predicate fired purely on no-extension filenames, both fields are
+  // omitted (present-when-meaningful) so an agent walks
+  // `noExtensionFiles[]` for the actionable list rather than reading a
+  // filename out of `topExtension`.
+  const topExtensionEntry = extensions[0];
   return {
-    extensions,
+    extensions: extensions.map(([ext]) => ext),
     ...(noExtensionFiles.length > 0 ? { noExtensionFiles } : {}),
-    topExtension: top[0],
-    topCount: top[1],
+    ...(topExtensionEntry !== undefined
+      ? { topExtension: topExtensionEntry[0], topCount: topExtensionEntry[1] }
+      : {}),
     totalSkipped,
   };
 }

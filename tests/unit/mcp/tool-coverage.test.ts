@@ -51,14 +51,15 @@ interface CoverageEnvelope {
     readonly text_source_skipped?: {
       readonly extensions: readonly string[];
       readonly parserRoutableExtensions?: readonly string[];
-      readonly topExtension: string;
-      readonly topCount: number;
+      // Present-when-meaningful: omitted when `extensions: []`.
+      readonly topExtension?: string;
+      readonly topCount?: number;
       readonly totalSkipped: number;
     };
     readonly binary_assets_skipped?: {
       readonly extensions: readonly string[];
-      readonly topExtension: string;
-      readonly topCount: number;
+      readonly topExtension?: string;
+      readonly topCount?: number;
       readonly totalSkipped: number;
     };
     readonly scanned_zero_files?: Record<string, never>;
