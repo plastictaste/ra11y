@@ -320,14 +320,24 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
   const scannedBuildArtifactsAllFiles =
     filesScanned > 0 && buildArtifactEntries.length === filesScanned;
 
-  const bulkCatalogDetection: BulkCatalogDetection | undefined =
-    inputs.durationMs === undefined
-      ? undefined
-      : detectBulkCatalog({
-          durationMs: inputs.durationMs,
-          filesScanned,
-          buildArtifacts: buildArtifactEntries,
-        });
+  // Thread parsed-file paths + root so the detector's
+  // `small_demo_catalog` path can identify the same-shape sibling-
+  // subdir signature. Duration is optional because the slow path
+  // depends on it; the bulk + small-demo paths do not, so the
+  // detector still fires structurally on a corpus the caller has
+  // not measured a duration for.
+  const parsedFilePathsForDetector = inputs.parsedFiles.map((f) => f.filePath);
+  const bulkCatalogDetection: BulkCatalogDetection | undefined = detectBulkCatalog({
+    // `Number.NEGATIVE_INFINITY` reads as "below the slow floor" — the
+    // slow path will not fire, but the bulk + small-demo paths can.
+    // Equivalent to skipping the slow path entirely on tools without
+    // a measured duration.
+    durationMs: inputs.durationMs ?? Number.NEGATIVE_INFINITY,
+    filesScanned,
+    buildArtifacts: buildArtifactEntries,
+    parsedFilePaths: parsedFilePathsForDetector,
+    root: inputs.root,
+  });
 
   const overlapResult = computeTemplateDirectiveOverlap({
     findings: inputs.violations.map((v) => ({

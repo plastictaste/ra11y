@@ -609,14 +609,19 @@ export const scanProjectTool: McpTool = {
         // run the detector at the
         // assembly seam so the threshold logic stays close to its
         // inputs (`meta.durationMs`, `meta.filesScanned`, the
-        // build-artifact entries). Returns `undefined` on the
-        // common case (most scans clear neither trigger path) so
-        // the detection threads through the warning channel via
-        // conditional-spread.
+        // build-artifact entries, parsed-file paths, scan root).
+        // Returns `undefined` on the common case (most scans clear
+        // none of the trigger paths) so the detection threads
+        // through the warning channel via conditional-spread.
         bulkCatalogDetection: detectBulkCatalog({
           durationMs: readMetaNumber(formatted.meta, "durationMs"),
           filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
           buildArtifacts: buildArtifacts.entries,
+          // Thread parsed-file paths + scan root so the
+          // `small_demo_catalog` path can identify the same-shape
+          // sibling-subdir signature without a filesystem probe.
+          parsedFilePaths: files.map((f) => f.filePath),
+          root,
         }),
         // thread the innerHTML declined count from the parse pass so
         // the warnings module can fire

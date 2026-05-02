@@ -24,6 +24,8 @@ import {
   BULK_FILES_SCANNED_FLOOR,
   detectBulkCatalog,
   SLOW_DURATION_MS,
+  SMALL_DEMO_CATALOG_EXAMPLE_CAP,
+  SMALL_DEMO_CATALOG_MIN_SIBLINGS,
   SUGGESTED_EXCLUDES_CAP,
 } from "../../../src/mcp/bulk-catalog.ts";
 
@@ -190,5 +192,181 @@ describe("detectBulkCatalog", () => {
     expect(detection?.suggestedExcludes).toContain("**/animate.css");
     expect(detection?.suggestedExcludes).toContain("**/bootstrap.css");
     expect(detection?.suggestedExcludes).toContain("**/font-awesome.min.css");
+  });
+});
+
+/**
+ * Tests covering the small-N same-shape sibling-subdir trigger path.
+ * Predicate: the detector returns `trigger: "small_demo_catalog"` when
+ * ≥ {@link SMALL_DEMO_CATALOG_MIN_SIBLINGS} sibling subdirs share the
+ * same per-dir basename signature, even when duration / file count /
+ * build-artifact count all stay below the existing slow + bulk floors.
+ * The canonical case is a hand-authored tutorial catalog (e.g. a
+ * vanilla-JS course where each lesson is `index.html` + `style.css` +
+ * `script.js` in its own subdir).
+ */
+describe("detectBulkCatalog small_demo_catalog path", () => {
+  function makeSmallDemoCatalog(
+    siblingCount: number,
+    perDirFiles: readonly string[],
+    siblingPrefix = "lesson",
+  ): { paths: string[]; root: string } {
+    const root = "/repo";
+    const paths: string[] = [];
+    for (let i = 0; i < siblingCount; i++) {
+      const sibling = `${siblingPrefix}-${String(i).padStart(2, "0")}`;
+      for (const fname of perDirFiles) {
+        paths.push(`${root}/${sibling}/${fname}`);
+      }
+    }
+    return { paths, root };
+  }
+
+  it("fires `small_demo_catalog` on ≥30 sibling subdirs each carrying the same `index.html` + `style.css` + `script.js` shape", () => {
+    const { paths, root } = makeSmallDemoCatalog(SMALL_DEMO_CATALOG_MIN_SIBLINGS, [
+      "index.html",
+      "style.css",
+      "script.js",
+    ]);
+    const detection = detectBulkCatalog({
+      durationMs: 1500, // below SLOW_DURATION_MS
+      filesScanned: paths.length, // 30 × 3 = 90, below BULK_FILES_SCANNED_FLOOR
+      buildArtifacts: [], // hand-authored, none vendor-classified
+      parsedFilePaths: paths,
+      root,
+    });
+    expect(detection).toBeDefined();
+    expect(detection?.trigger).toBe("small_demo_catalog");
+    expect(detection?.siblingShape?.siblingCount).toBe(SMALL_DEMO_CATALOG_MIN_SIBLINGS);
+    expect(detection?.siblingShape?.signature).toEqual(["index.html", "script.js", "style.css"]);
+    expect(detection?.siblingShape?.exampleSiblings.length).toBe(SMALL_DEMO_CATALOG_EXAMPLE_CAP);
+    // `suggestedExcludes` is empty on the small-demo path — the lever
+    // is `additionalPaths`, not exclude globs.
+    expect(detection?.suggestedExcludes).toEqual([]);
+  });
+
+  it("returns undefined when sibling-subdir count is below the floor (29 < 30)", () => {
+    const { paths, root } = makeSmallDemoCatalog(SMALL_DEMO_CATALOG_MIN_SIBLINGS - 1, [
+      "index.html",
+      "style.css",
+      "script.js",
+    ]);
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: paths.length,
+      buildArtifacts: [],
+      parsedFilePaths: paths,
+      root,
+    });
+    expect(detection).toBeUndefined();
+  });
+
+  it("returns undefined when sibling subdirs do NOT share an identical per-dir shape (every signature has count < floor)", () => {
+    // 30 siblings, but each one has a distinct signature so no
+    // single-signature group clears the floor.
+    const root = "/repo";
+    const paths: string[] = [];
+    for (let i = 0; i < SMALL_DEMO_CATALOG_MIN_SIBLINGS; i++) {
+      paths.push(`${root}/sibling-${i}/index.html`);
+      paths.push(`${root}/sibling-${i}/file-${i}.css`); // unique per sibling
+    }
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: paths.length,
+      buildArtifacts: [],
+      parsedFilePaths: paths,
+      root,
+    });
+    expect(detection).toBeUndefined();
+  });
+
+  it("vendor-heavy paths win over `small_demo_catalog` when both could qualify (slowness lever fires first)", () => {
+    // Same-shape sibling layout AND a vendor-heavy slow scan; the
+    // vendor-heavy `slow_and_vendor_heavy` label outranks the
+    // structural `small_demo_catalog` because vendor exclude is the
+    // more direct first lever.
+    const { paths, root } = makeSmallDemoCatalog(SMALL_DEMO_CATALOG_MIN_SIBLINGS, [
+      "index.html",
+      "style.css",
+      "script.js",
+    ]);
+    const detection = detectBulkCatalog({
+      durationMs: SLOW_DURATION_MS + 1,
+      filesScanned: paths.length,
+      buildArtifacts: manyVendorEntries(BULK_BUILD_ARTIFACTS_FLOOR + 5, "bootstrap.css"),
+      parsedFilePaths: paths,
+      root,
+    });
+    expect(detection?.trigger).toBe("slow_and_vendor_heavy");
+    expect(detection?.siblingShape).toBeUndefined();
+  });
+
+  it("`exampleSiblings` is alphabetically stable across runs", () => {
+    const { paths, root } = makeSmallDemoCatalog(SMALL_DEMO_CATALOG_MIN_SIBLINGS, [
+      "index.html",
+      "style.css",
+      "script.js",
+    ]);
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: paths.length,
+      buildArtifacts: [],
+      parsedFilePaths: paths,
+      root,
+    });
+    const examples = detection?.siblingShape?.exampleSiblings ?? [];
+    expect(examples).toEqual(["lesson-00", "lesson-01", "lesson-02"]);
+  });
+
+  it("returns undefined when `parsedFilePaths` is missing (no structural evidence to evaluate)", () => {
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: 100,
+      buildArtifacts: [],
+      // parsedFilePaths intentionally omitted
+    });
+    expect(detection).toBeUndefined();
+  });
+
+  it("ignores nested sub-paths so deeply-nested sub-projects (each their own Next.js app) do NOT trip the predicate", () => {
+    // Each sibling carries `pages/index.tsx` + `pages/about.tsx`, so
+    // the immediate-child basename set is empty (every file is one
+    // level below the sibling subdir, not at it). The detector
+    // should not fire because no sibling has a meaningful immediate-
+    // child basename signature.
+    const root = "/repo";
+    const paths: string[] = [];
+    for (let i = 0; i < SMALL_DEMO_CATALOG_MIN_SIBLINGS; i++) {
+      paths.push(`${root}/app-${i}/pages/index.tsx`);
+      paths.push(`${root}/app-${i}/pages/about.tsx`);
+    }
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: paths.length,
+      buildArtifacts: [],
+      parsedFilePaths: paths,
+      root,
+    });
+    expect(detection).toBeUndefined();
+  });
+
+  it("handles paths already relative to root (no leading root prefix)", () => {
+    // Some callers pass relativized paths directly; the detector
+    // should still group correctly without a `root` argument.
+    const { paths } = makeSmallDemoCatalog(SMALL_DEMO_CATALOG_MIN_SIBLINGS, [
+      "index.html",
+      "style.css",
+      "script.js",
+    ]);
+    const relativePaths = paths.map((p) => p.replace(/^\/repo\//, ""));
+    const detection = detectBulkCatalog({
+      durationMs: 1500,
+      filesScanned: relativePaths.length,
+      buildArtifacts: [],
+      parsedFilePaths: relativePaths,
+      // root intentionally omitted — paths are already relative
+    });
+    expect(detection?.trigger).toBe("small_demo_catalog");
+    expect(detection?.siblingShape?.siblingCount).toBe(SMALL_DEMO_CATALOG_MIN_SIBLINGS);
   });
 });

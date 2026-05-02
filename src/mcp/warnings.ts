@@ -2307,32 +2307,51 @@ export interface ScanWarningDetails {
   };
   /**
    * payload for `bulk_catalog_detected`.
-   * Carries the trigger discriminator (`slow_and_vendor_heavy` vs.
-   * `bulk_and_vendor_heavy` — see {@link import("./bulk-catalog.ts").BulkCatalogTrigger})
-   * plus the raw inputs that fired the predicate. `suggestedExcludes`
-   * is built from the actual top vendor-file basenames the scan saw
-   * (not canned `bootstrap*.css` literals) so agents see concrete file
+   * Carries the trigger discriminator (`slow_and_vendor_heavy` /
+   * `bulk_and_vendor_heavy` / `small_demo_catalog` — see
+   * {@link import("./bulk-catalog.ts").BulkCatalogTrigger}) plus the
+   * raw inputs that fired the predicate. `suggestedExcludes` is built
+   * from the actual top vendor-file basenames the scan saw (not
+   * canned `bootstrap*.css` literals) so agents see concrete file
    * shapes that exist in this corpus; each entry is a `**\/<basename>`
    * glob the agent can paste into a `propose_config` `exclude:` entry
    * verbatim, matching the same root-relative POSIX vocabulary as
    * `meta.scannedBuildArtifacts.grouped[].suggestedGlob`. `topVendorFile`
    * is the densest single artifact path so the agent has a
-   * file-by-file pivot before excluding the broader glob.
+   * file-by-file pivot before excluding the broader glob. On the
+   * `small_demo_catalog` trigger `suggestedExcludes` is `[]` (the
+   * scan saw no vendor footprint to exclude); the alternative lever
+   * — `additionalPaths` scoped to one example sub-project — lives on
+   * `siblingShape.exampleSiblings`.
+   *
+   * `siblingShape` ships only on the `small_demo_catalog` trigger
+   * (conditional-spread per CLAUDE.md §1 "Ambiguous field shapes are
+   * dishonest") and carries the discovered same-shape sibling-subdir
+   * evidence: how many siblings share the shape, the shared basename
+   * signature (e.g. `["index.html", "script.js", "style.css"]`), and
+   * a stable alphabetical prefix of qualifying sibling names so the
+   * agent has concrete `additionalPaths` candidates without iterating
+   * the full list.
    *
    * Doctrine surface: every count is raw, not derived. No "severity"
    * token, no English remediation prose. The agent reads the trigger
-   * + raw inputs + suggested globs and decides whether the perf class
-   * warrants scope narrowing — same shape as the
-   * `vendor_css_dominates_findings` payload (additive telemetry, not
-   * a suppression lever).
+   * + raw inputs + suggested globs (or sibling-shape evidence) and
+   * decides whether the perf class warrants scope narrowing — same
+   * shape as the `vendor_css_dominates_findings` payload (additive
+   * telemetry, not a suppression lever).
    */
   readonly bulk_catalog_detected?: {
-    readonly trigger: "slow_and_vendor_heavy" | "bulk_and_vendor_heavy";
+    readonly trigger: "slow_and_vendor_heavy" | "bulk_and_vendor_heavy" | "small_demo_catalog";
     readonly durationMs: number;
     readonly filesScanned: number;
     readonly buildArtifactsCount: number;
     readonly suggestedExcludes: readonly string[];
     readonly topVendorFile?: string;
+    readonly siblingShape?: {
+      readonly siblingCount: number;
+      readonly signature: readonly string[];
+      readonly exampleSiblings: readonly string[];
+    };
   };
   /**
    * payload for
@@ -4717,8 +4736,10 @@ function summarizeTemplateFilesParsedAsLiteral(
  * DETAILS-CROSS-SURFACE-REGRESSION payload-vs-binary contract). Pure
  * shape-builder — every quantity comes from the detector at
  * `./bulk-catalog.ts` directly; no thresholds, no derivation. The
- * `topVendorFile` field is conditional-spread per CLAUDE.md §1
- * "Ambiguous field shapes are dishonest."
+ * `topVendorFile` and `siblingShape` fields are conditional-spread
+ * per CLAUDE.md §1 "Ambiguous field shapes are dishonest." The
+ * `siblingShape` payload only ships on the `small_demo_catalog`
+ * trigger; the vendor-heavy paths leave it absent.
  */
 function summarizeBulkCatalog(
   detection: WarningInputs["bulkCatalogDetection"],
@@ -4731,6 +4752,15 @@ function summarizeBulkCatalog(
     buildArtifactsCount: detection.buildArtifactsCount,
     suggestedExcludes: detection.suggestedExcludes,
     ...(detection.topVendorFile === undefined ? {} : { topVendorFile: detection.topVendorFile }),
+    ...(detection.siblingShape === undefined
+      ? {}
+      : {
+          siblingShape: {
+            siblingCount: detection.siblingShape.siblingCount,
+            signature: detection.siblingShape.signature,
+            exampleSiblings: detection.siblingShape.exampleSiblings,
+          },
+        }),
   };
 }
 
