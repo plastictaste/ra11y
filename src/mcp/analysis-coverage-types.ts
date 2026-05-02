@@ -119,11 +119,7 @@ export interface ParseErrorEntry {
  */
 export interface FragmentFileEntry {
   readonly path: string;
-  readonly kind:
-    | "html_partial"
-    | "markdown_residue"
-    | "markdown_unclassified"
-    | "svg_standalone";
+  readonly kind: "html_partial" | "markdown_residue" | "markdown_unclassified" | "svg_standalone";
   /**
    * Structural signals captured by the shared
    * {@link import("../engine/layout-partial.ts").classifyFragment}

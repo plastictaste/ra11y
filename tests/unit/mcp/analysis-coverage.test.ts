@@ -2193,7 +2193,19 @@ describe("buildAnalysisCoverage — hints", () => {
       const config: ParsedFile = {
         filePath: "gatsby-config.js",
         source: "module.exports = {};",
-        ast: { language: "tsx", root: { type: "Program", body: [], position: { start: 0, end: 0 } }, errors: [] },
+        ast: {
+          language: "tsx",
+          root: {
+            kind: "TsxModule",
+            jsxElements: [],
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+          },
+          errors: [],
+        },
       };
       const { analysisCoverage } = buildAnalysisCoverage([readme, config], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
@@ -2221,10 +2233,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // supporting token. The partial is intentionally NOT under a
       // layouts dir so only the directive evidence fires.
       const readme = parsedHtml("README.md", "# Hello\n\nWorld\n");
-      const layout = parsedHtml(
-        "partials/footer.html",
-        "<footer>{{ content }}</footer>",
-      );
+      const layout = parsedHtml("partials/footer.html", "<footer>{{ content }}</footer>");
       const { analysisCoverage } = buildAnalysisCoverage([readme, layout], [], NO_RULES, false);
       expect(analysisCoverage?.["fragmentFiles"]).toEqual([
         {
@@ -2250,10 +2259,7 @@ describe("buildAnalysisCoverage — hints", () => {
       // so consumers can dispatch on equality without reorder
       // ambiguity.
       const readme = parsedHtml("docs/intro.md", "# Intro\n");
-      const layoutInDir = parsedHtml(
-        "_layouts/base.html",
-        "<header>only</header>",
-      );
+      const layoutInDir = parsedHtml("_layouts/base.html", "<header>only</header>");
       const partialWithDirective = parsedHtml(
         "partials/footer.html",
         "<footer>{{ content }}</footer>",
@@ -2261,7 +2267,19 @@ describe("buildAnalysisCoverage — hints", () => {
       const config: ParsedFile = {
         filePath: "astro.config.ts",
         source: "export default {};",
-        ast: { language: "tsx", root: { type: "Program", body: [], position: { start: 0, end: 0 } }, errors: [] },
+        ast: {
+          language: "tsx",
+          root: {
+            kind: "TsxModule",
+            jsxElements: [],
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+          },
+          errors: [],
+        },
       };
       const { analysisCoverage } = buildAnalysisCoverage(
         [readme, layoutInDir, partialWithDirective, config],

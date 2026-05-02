@@ -17,6 +17,7 @@
  * `analysis-coverage.ts` with byte-identical logic.
  */
 
+import type { FragmentClassificationSignals } from "../engine/layout-partial.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { FragmentFileEntry } from "./analysis-coverage-types.ts";
 
@@ -104,9 +105,63 @@ export interface LayoutCompositionEvidence {
  * read — so cheap to call during the file walk.
  */
 export function isSsgConfigFile(filePath: string): boolean {
+  return SSG_CONFIG_FILENAMES.has(basename(filePath));
+}
+
+function basename(filePath: string): string {
   const slash = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
-  const basename = slash === -1 ? filePath : filePath.slice(slash + 1);
-  return SSG_CONFIG_FILENAMES.has(basename);
+  return slash === -1 ? filePath : filePath.slice(slash + 1);
+}
+
+/**
+ * Mutable per-scan accumulator collecting layout-composition
+ * evidence from the file walk. Owned by `analysis-coverage.ts` for
+ * the duration of one `buildAnalysisCoverage` call; consumed via
+ * `freeze()` to produce the immutable {@link LayoutCompositionEvidence}
+ * threaded into {@link classifyFragmentKind}. Encapsulated here so
+ * both the SSG-config detection AND the sibling-signal predicates
+ * stay co-located with the classifier they feed — extracting the
+ * evidence shape from the parent module keeps `analysis-coverage.ts`
+ * under the limits cap.
+ */
+export class LayoutEvidenceAccumulator {
+  readonly #ssgConfigFilenames: Set<string> = new Set();
+  #hasSiblingLayoutDirective = false;
+  #hasSiblingInLayoutsDir = false;
+
+  /**
+   * Record any in-scope evidence the file contributes. The walker
+   * calls this once per scanned file. Markdown files are filtered
+   * upstream at the sibling-signal call site so they don't
+   * contribute to their own promotion evidence (the evidence
+   * predicate is "some OTHER scanned file declares a layout system
+   * this `.md` could be composed by").
+   */
+  recordSsgConfigCandidate(filePath: string): void {
+    if (isSsgConfigFile(filePath)) this.#ssgConfigFilenames.add(basename(filePath));
+  }
+
+  /**
+   * Aggregate the structural signals from one fragment-classified
+   * file. Markdown files are filtered out — they don't contribute to
+   * their own promotion (a `.md` with positive signals never reaches
+   * `fragmentFiles` anyway; this guard preserves "evidence comes
+   * from elsewhere" semantics on single-file callers).
+   */
+  recordSiblingSignals(filePath: string, signals: FragmentClassificationSignals): void {
+    if (isMarkdownFile(filePath)) return;
+    if (signals.hasLayoutDirective) this.#hasSiblingLayoutDirective = true;
+    if (signals.inLayoutsDir) this.#hasSiblingInLayoutsDir = true;
+  }
+
+  /** Snapshot the accumulator into the immutable wire shape. */
+  freeze(): LayoutCompositionEvidence {
+    return {
+      ssgConfigFilenames: [...this.#ssgConfigFilenames].sort(),
+      hasSiblingLayoutDirective: this.#hasSiblingLayoutDirective,
+      hasSiblingInLayoutsDir: this.#hasSiblingInLayoutsDir,
+    };
+  }
 }
 
 /**
@@ -186,6 +241,31 @@ export function classifyFragmentKind(
     return { kind: "markdown_unclassified" };
   }
   return { kind: "html_partial" };
+}
+
+/**
+ * Convenience wrapper assembling a complete {@link FragmentFileEntry}
+ * from a path + classification signals + per-scan evidence. Single
+ * call site (`assembleFragmentFilesBlock` in `analysis-coverage.ts`)
+ * but extracted here so the conditional-spread on the optional
+ * `ssgEvidence` field stays co-located with its producer (the
+ * "present-when-meaningful" rule for optional fields per AI-first
+ * consumer doctrine).
+ */
+export function buildFragmentFileEntry(
+  path: string,
+  fragmentClassificationSignals: FragmentClassificationSignals,
+  evidence: LayoutCompositionEvidence,
+): FragmentFileEntry {
+  const classification = classifyFragmentKind(path, evidence);
+  return {
+    path,
+    kind: classification.kind,
+    fragmentClassificationSignals,
+    ...(classification.ssgEvidence === undefined
+      ? {}
+      : { ssgEvidence: classification.ssgEvidence }),
+  };
 }
 
 /**

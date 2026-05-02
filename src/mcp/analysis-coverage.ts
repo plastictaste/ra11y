@@ -107,6 +107,7 @@ import type { HtmlDocument } from "../types/ast.ts";
 import type { ConfigPreset } from "../types/config.ts";
 import type { Rule } from "../types/rule.ts";
 import { extensionMatches, isStorybookStoryFile, naturalParserFor } from "../utils/path.ts";
+import { assembleFragmentFilesBlock } from "./analysis-coverage-fragments.ts";
 import { buildCssThinHint, countByCategory } from "./analysis-coverage-hints.ts";
 import { assembleParseErrorBlocks } from "./analysis-coverage-parse-errors.ts";
 import type { FragmentFileEntry, ParseErrorEntry } from "./analysis-coverage-types.ts";
@@ -114,14 +115,12 @@ import { isBuildArtifact } from "./build-artifacts.ts";
 import { hasFrontmatterFence } from "./frontmatter-classifier.ts";
 import type { Hint } from "./hint-codes.ts";
 import {
-  classifyFragmentKind,
   isMarkdownFile,
-  isSsgConfigFile,
-  type LayoutCompositionEvidence,
+  LayoutEvidenceAccumulator,
   parseModeByExtension,
 } from "./markdown-classifier.ts";
 import { stripMarkdownCodeRegions } from "./markdown-code-strip.ts";
-import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
+import type { MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import {
   extractComponentIdentifier,
   filterEmittedComponentNames,
@@ -500,35 +499,12 @@ interface CoverageAccumulator {
    * stripping pass," not "this file had N islands."
    */
   readonly phpIslandsStrippedFiles: string[];
-  /**
-   * Set of recognized SSG config basenames observed in the scanned
-   * `files` collection (`gatsby-config.js`, `astro.config.ts`, etc.
-   * — see {@link import("./markdown-classifier.ts").isSsgConfigFile}).
-   * In-scope evidence that promotes a `.md` / `.markdown` fragment
-   * from `markdown_unclassified` to `markdown_residue` per the
-   * "Heuristic-mislabeled meta sub-fields are dishonest" doctrine:
-   * a uniform `markdown_residue` on negative-default signals would
-   * imply a deterministic SSG read the scanner did not perform; the
-   * recognized config filename IS that read.
-   */
-  readonly ssgConfigFilenames: Set<string>;
-  /**
-   * True when at least one non-markdown file in the scan was
-   * observed by the shared `classifyFragment` predicate with
-   * `hasLayoutDirective: true`. Sibling layout directives are in-
-   * scope evidence of an SSG-style layout system that promotes a
-   * surrounding `.md` / `.markdown` fragment to `markdown_residue`
-   * even when no recognized config filename was detected.
-   */
-  hasSiblingLayoutDirective: boolean;
-  /**
-   * True when at least one non-markdown file in the scan lives in a
-   * known layouts directory segment (per the shared
-   * `classifyFragment` `inLayoutsDir` signal). Same role as
-   * `hasSiblingLayoutDirective`: in-scope evidence of a layout
-   * system the scanner can't traverse to.
-   */
-  hasSiblingInLayoutsDir: boolean;
+  // Per-scan layout-composition evidence accumulated over the file
+  // walk; consumed by `markdown-classifier.classifyFragmentKind` to
+  // promote `.md` / `.markdown` fragments from
+  // `markdown_unclassified` to `markdown_residue` when positive
+  // evidence exists.
+  readonly layoutEvidence: LayoutEvidenceAccumulator;
 }
 
 /**
@@ -628,9 +604,7 @@ export function buildAnalysisCoverage(
     frontmatterFenceFiles: [],
     phpIslandsStripped: false,
     phpIslandsStrippedFiles: [],
-    ssgConfigFilenames: new Set<string>(),
-    hasSiblingLayoutDirective: false,
-    hasSiblingInLayoutsDir: false,
+    layoutEvidence: new LayoutEvidenceAccumulator(),
   };
   const wrapperSet = new Set(wrappers);
   for (const file of files) accumulateCoverageForFile(file, wrapperSet, acc, preset);
@@ -705,11 +679,7 @@ export function buildAnalysisCoverage(
     assembleParseErrorBlocks(acc.parseErrorEntries, findingFilePaths, coverage, verbose);
   }
   if (acc.fragmentFiles.length > 0) {
-    const evidence: LayoutCompositionEvidence = {
-      ssgConfigFilenames: [...acc.ssgConfigFilenames].sort(),
-      hasSiblingLayoutDirective: acc.hasSiblingLayoutDirective,
-      hasSiblingInLayoutsDir: acc.hasSiblingInLayoutsDir,
-    };
+    const evidence = acc.layoutEvidence.freeze();
     if (assembleFragmentFilesBlock(acc.fragmentFiles, coverage, evidence)) {
       metaArrayTruncated = true;
     }
@@ -868,58 +838,6 @@ const PARSE_ERROR_REASON_MAX = 200;
 function truncateParseErrorReason(message: string): string {
   if (message.length <= PARSE_ERROR_REASON_MAX) return message;
   return `${message.slice(0, PARSE_ERROR_REASON_MAX - 1)}…`;
-}
-
-/**
- * Populates the `fragmentFiles` / `fragmentFileCount` /
- * `fragmentFilesTruncated` sub-block. Returns `true` when the cap
- * actually trimmed the list so the caller can OR the signal into
- * the enclosing `metaArrayTruncated` flag. Extracted from
- * {@link buildAnalysisCoverage} so the enclosing function stays
- * under the cognitive-complexity cap.
- *
- * Fragment-file list is scan-confidence telemetry naming the HTML
- * files that parsed as fragments (no `<html>` root, no `<body>`).
- * Page-level rules — `navigation/skip-link`'s primary-nav path,
- * `semantics/landmark-main`, `semantics/section-accessible-name-
- * missing` — skip these files because the premise of those checks
- * is "this document IS the page," which a partial / include target
- * is not. Shipped at every verbosity (no `verboseMeta` gate): the
- * count alone is ambiguous ("which files?") and the path list is
- * the actionable signal — same reasoning as `parseErrorFiles` /
- * `partialParseFiles`. Count + list are always populated together;
- * sorted for deterministic wire output. Capped per
- * Q-SHARED-META-ARRAY-BUDGET-CAP because fragment-heavy static
- * sites (Jekyll `_includes/`, Astro `layouts/`) can produce
- * hundreds of paths; the count stays honest even when the list is
- * head-sliced.
- */
-function assembleFragmentFilesBlock(
-  fragmentFiles: readonly {
-    readonly path: string;
-    readonly signals: FragmentClassificationSignals;
-  }[],
-  coverage: CoverageBlock,
-  evidence: LayoutCompositionEvidence,
-): boolean {
-  coverage.fragmentFileCount = fragmentFiles.length;
-  const sorted = [...fragmentFiles].sort((a, b) => a.path.localeCompare(b.path));
-  const entries: FragmentFileEntry[] = sorted.map(({ path, signals }) => {
-    const classification = classifyFragmentKind(path, evidence);
-    return {
-      path,
-      kind: classification.kind,
-      fragmentClassificationSignals: signals,
-      ...(classification.ssgEvidence !== undefined
-        ? { ssgEvidence: classification.ssgEvidence }
-        : {}),
-    };
-  });
-  const capped = capMetaArray(entries);
-  coverage.fragmentFiles = capped.values;
-  if (capped.truncated === undefined) return false;
-  coverage.fragmentFilesTruncated = capped.truncated;
-  return true;
 }
 
 /**
@@ -1203,19 +1121,7 @@ function accumulateHtmlCoverageForFile(file: ParsedFile, acc: CoverageAccumulato
     file.filePath,
   );
   if (isFragment) acc.fragmentFiles.push({ path: file.filePath, signals });
-  // Sibling-layout evidence for the markdown-classifier promotion
-  // gate. Markdown files must NOT contribute to their own promotion
-  // evidence — the in-scope predicate is "some OTHER scanned file
-  // declares a layout system this `.md` could be composed by." A `.md`
-  // file with `hasLayoutDirective: true` would never appear in
-  // `fragmentFiles` (the predicate vetoes fragment), so excluding the
-  // markdown branch here preserves the "evidence comes from elsewhere"
-  // semantics even when callers populate `files` with a single
-  // markdown entry.
-  if (!isMarkdownFile(file.filePath)) {
-    if (signals.hasLayoutDirective) acc.hasSiblingLayoutDirective = true;
-    if (signals.inLayoutsDir) acc.hasSiblingInLayoutsDir = true;
-  }
+  acc.layoutEvidence.recordSiblingSignals(file.filePath, signals);
 }
 
 /**
@@ -1325,17 +1231,9 @@ function accumulateCoverageForFile(
   preset: ConfigPreset | undefined,
 ): void {
   recordParseErrorEntry(file, acc);
-  // SSG-config detection runs over EVERY file (configs are typically
-  // `.js` / `.ts`, not HTML-family). Records the basename so the
-  // markdown-classifier can promote `.md` / `.markdown` fragments
-  // from `markdown_unclassified` to `markdown_residue` with the
-  // detected config name as additive evidence per AI-first consumer
-  // doctrine "Heuristic-mislabeled meta sub-fields are dishonest."
-  if (isSsgConfigFile(file.filePath)) {
-    const slash = Math.max(file.filePath.lastIndexOf("/"), file.filePath.lastIndexOf("\\"));
-    const basename = slash === -1 ? file.filePath : file.filePath.slice(slash + 1);
-    acc.ssgConfigFilenames.add(basename);
-  }
+  // SSG-config detection over every file (configs are typically
+  // `.js` / `.ts`, not HTML-family).
+  acc.layoutEvidence.recordSsgConfigCandidate(file.filePath);
   if (file.ast.language === "html") {
     accumulateHtmlCoverageForFile(file, acc);
     return;
