@@ -414,9 +414,7 @@ describe("inspectFragmentRole", () => {
 
   describe("hasOnlyInlineContent — AST evidence for leaf_partial", () => {
     it("returns true when every element is from the inline tag set", () => {
-      const doc = parse(
-        '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>',
-      );
+      const doc = parse('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10H0z"/></svg>');
       const role = inspectFragmentRole(doc, "_includes/icon.html");
       expect(role.hasOnlyInlineContent).toBe(true);
     });
