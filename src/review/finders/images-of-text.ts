@@ -109,20 +109,32 @@ function criterionAcceptsLogotypePredicateConceded(criterionId: string): boolean
  * Returns the `predicateConceded` payload when the candidate's own
  * evidence — alt text, class name, or src filename — names a
  * logotype-shaped token. Returns null otherwise. The `evidence` string
- * is the verbatim token-bearing field the finder matched; the agent
- * reads it as the dismissal receipt. Per the AI-first consumer model
- * (`Surface, don't suppress` + `Reason / priority / fix-description
- * must agree across all three channels`), this is the candidate-
- * priority axis: a candidate whose own evidence concedes the
- * predicate may be satisfied cannot honestly ride at `priority: high`.
+ * is the verbatim token-bearing field the finder matched; the same
+ * verbatim text is also baked into the candidate's `reason` (see
+ * {@link renderPerCriterionReason}) so an agent reading the reason
+ * gets the receipt without parsing structured sub-fields. Per the
+ * AI-first consumer model (`Surface, don't suppress` + `Reason /
+ * priority / fix-description must agree across all three channels`),
+ * this is the candidate-priority axis: a candidate whose own evidence
+ * concedes the predicate may be satisfied cannot honestly ride at
+ * `priority: high`.
  *
  * Detection inverts the usual surface-don't-suppress reflex (more
  * surface, more annotate). Here we do not suppress — the candidate
  * still emits at the same confidence, every WCAG criterion stays
- * attached. The signal is additive evidence that lets the checklist
+ * attached. The payload is additive evidence that lets the checklist
  * surface drop the priority from `high` to `medium` when every
  * grounded candidate ships it. The agent investigates and pins the
  * dismissal via a source-level pragma.
+ *
+ * The earlier discriminated `signal: { kind: "logotype-pattern" }`
+ * token was removed per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest" — the kind
+ * was a deterministic-sounding pre-decided label on weaker evidence
+ * (a single attribute token) than the agent has by reading the file.
+ * Returning just `{ evidence }` keeps the verbatim token available
+ * for telemetry / priority-gate audit while preventing the structural
+ * label that pre-decides for the agent.
  */
 function buildPredicateConceded(
   altRaw: string | null,
@@ -130,32 +142,43 @@ function buildPredicateConceded(
   srcValue: string | null,
 ): ReviewCandidatePredicateConceded | null {
   if (altRaw !== null) {
+    // `altRaw` is the already-stripped form (see `shortImageText`),
+    // so the matched token reflects the rendered shape. No template
+    // directive tokens can leak into the verbatim evidence echoed
+    // in the reason text.
     const match = LOGOTYPE_PATTERN_TOKEN.exec(altRaw);
     if (match) {
-      return {
-        signal: { kind: "logotype-pattern" },
-        evidence: `alt="${altRaw}"`,
-      };
+      return { evidence: `alt="${altRaw}"` };
     }
   }
   if (classValue !== null) {
-    const match = LOGOTYPE_PATTERN_TOKEN.exec(classValue);
+    // Strip template directives from class values so a `{{ logo }}`
+    // expression in the class string can't fire the predicate on a
+    // template token rather than the rendered class name.
+    const strippedClass = stripTemplateDirectives(classValue).value;
+    const match = LOGOTYPE_PATTERN_TOKEN.exec(strippedClass);
     if (match) {
-      return {
-        signal: { kind: "logotype-pattern" },
-        evidence: `class token "${match[1] ?? match[0]}"`,
-      };
+      return { evidence: `class token "${match[1] ?? match[0]}"` };
     }
   }
   if (srcValue !== null) {
-    const basename = fileNameFromPath(srcValue);
-    if (basename !== null) {
+    // Strip template directives BEFORE matching the regex — `src`
+    // attributes can carry raw `{{ entry.logo }}` / `<%= ... %>`
+    // tokens, and a hit on the unstripped form would (a) match a
+    // template-directive token rather than the rendered filename
+    // (the predicate-strength shape "Heuristic-mislabeled meta sub-
+    // fields are dishonest" warns against), and (b) leak the raw
+    // template-directive tokens into the candidate's reason text,
+    // tripping `tests/integration/liquid-raw-directive-no-quote-
+    // finders`. The agent reads the rendered shape; the template
+    // expression isn't evidence the predicate-conceded gate can
+    // honestly fire on.
+    const strippedSrc = stripTemplateDirectives(srcValue).value;
+    const basename = fileNameFromPath(strippedSrc);
+    if (basename !== null && basename.length > 0) {
       const match = LOGOTYPE_PATTERN_TOKEN.exec(basename);
       if (match) {
-        return {
-          signal: { kind: "logotype-pattern" },
-          evidence: `src basename "${basename}"`,
-        };
+        return { evidence: `src basename "${basename}"` };
       }
     }
   }
@@ -957,15 +980,28 @@ function renderReason(signals: readonly string[]): string {
  * Build the per-criterion `reason` text by layering the additive
  * dismissal hints on top of the base reason. The order is fixed so
  * the textual signal is stable across emissions: logotype exemption
- * (when applicable) → svg-data-URI text-free hint → sr-only sibling
- * hint. Each hint is the per-criterion one the agent reads as a
- * one-shot dismissal receipt; per AI-first doctrine the candidate
- * still surfaces at the same confidence — only the reason text grows.
+ * (when applicable) → predicateConceded evidence (the verbatim
+ * matched token, when applicable) → svg-data-URI text-free hint →
+ * sr-only sibling hint. Each hint is the per-criterion one the agent
+ * reads as a one-shot dismissal receipt; per AI-first doctrine the
+ * candidate still surfaces at the same confidence — only the reason
+ * text grows.
+ *
+ * The `predicateConceded` evidence is surfaced in the reason text
+ * (rather than only in the structured `predicateConceded.evidence`
+ * field) so an agent reading the reason gets the verbatim attribute
+ * token without parsing structured sub-fields. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest," the structured `signal.kind` token
+ * that previously named the carve-out shape was removed; the agent
+ * reads the token-bearing reason text instead and decides whether
+ * the spec exemption applies after reading the file.
  */
 function renderPerCriterionReason(
   criterionId: string,
   baseReason: string,
   logoLikelyExempt: boolean,
+  predicateConcededEvidence: string | null,
   svgDataUriHint: string | null,
   srOnlySiblingHint: string | null,
 ): string {
@@ -973,7 +1009,11 @@ function renderPerCriterionReason(
     logoLikelyExempt && criterionAllowsLogotypeExemption(criterionId)
       ? `${baseReason} — if this is a logo or brand mark, WCAG 1.4.5 has a logotype exemption (essential presentation); the AAA "no exception" variant (1.4.9) still applies`
       : baseReason;
-  const withSvgHint = svgDataUriHint ? `${withLogoHint} ${svgDataUriHint}` : withLogoHint;
+  const withConcededHint =
+    predicateConcededEvidence !== null && criterionAcceptsLogotypePredicateConceded(criterionId)
+      ? `${withLogoHint} (matched logotype-shaped evidence: ${predicateConcededEvidence} — verify whether this is the textual logotype exempt under SC 1.4.5)`
+      : withLogoHint;
+  const withSvgHint = svgDataUriHint ? `${withConcededHint} ${svgDataUriHint}` : withConcededHint;
   return srOnlySiblingHint ? `${withSvgHint} ${srOnlySiblingHint}` : withSvgHint;
 }
 
@@ -1018,17 +1058,18 @@ function pushForAllCriteria(
     srcBasenamePattern: normalizeSrcBasenamePattern(srcValue),
   });
   for (const criterionId of CRITERION_IDS) {
-    const augmented = renderPerCriterionReason(
-      criterionId,
-      reason,
-      logoLikelyExempt,
-      svgDataUriHint,
-      srOnlySiblingHint,
-    );
     const conceded =
       predicateConceded !== null && criterionAcceptsLogotypePredicateConceded(criterionId)
         ? predicateConceded
         : null;
+    const augmented = renderPerCriterionReason(
+      criterionId,
+      reason,
+      logoLikelyExempt,
+      conceded?.evidence ?? null,
+      svgDataUriHint,
+      srOnlySiblingHint,
+    );
     const candidate: ReviewCandidate = {
       criterionId,
       location: { filePath, line, column },

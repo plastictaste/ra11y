@@ -114,13 +114,20 @@ describe("review/images-of-text", () => {
     // Per docs/kb/architecture/ai-first-consumer.md "Reason / priority /
     // fix-description must agree across all three channels": when the
     // candidate's own static evidence (alt text, class, src filename)
-    // names the WCAG 1.4.5 logotype exemption, the structured
-    // `predicateConceded` payload lets the checklist surface drop the
-    // priority from "high" to "medium" so the budget signal matches
-    // the framing the candidate already concedes. Surface, don't
-    // suppress — the candidate still emits at the same confidence.
+    // names the WCAG 1.4.5 logotype exemption, the `predicateConceded`
+    // payload lets the checklist surface drop the priority from "high"
+    // to "medium" so the budget signal matches the framing the
+    // candidate already concedes. Surface, don't suppress — the
+    // candidate still emits at the same confidence.
+    //
+    // The earlier discriminated `signal: { kind: "logotype-pattern" }`
+    // token was removed per "Heuristic-mislabeled meta sub-fields are
+    // dishonest" — a deterministic-sounding label decided the carve-out
+    // shape from a single attribute token. The verbatim evidence now
+    // surfaces in the candidate's `reason` text and on the
+    // `predicateConceded.evidence` field; no `signal.kind` discriminator.
 
-    it("populates predicateConceded when the alt text contains a logotype token", () => {
+    it("populates predicateConceded.evidence when the alt text contains a logotype token", () => {
       // src filename `/header.png` matches the keyword regex, so the
       // candidate fires; alt text "Acme logo" still feeds the
       // predicateConceded probe.
@@ -129,8 +136,34 @@ describe("review/images-of-text", () => {
       });
       const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
       expect(aa?.predicateConceded).toBeDefined();
-      expect(aa?.predicateConceded?.signal.kind).toBe("logotype-pattern");
       expect(aa?.predicateConceded?.evidence).toContain("Acme logo");
+    });
+
+    it("drops the deterministic signal.kind discriminator from predicateConceded", () => {
+      // Per ai-first-consumer.md "Heuristic-mislabeled meta sub-fields
+      // are dishonest": the structured `signal.kind` token decided the
+      // carve-out from a single attribute token. The remaining payload
+      // carries `evidence` only — no `signal` sub-object.
+      const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
+        filePath: "x.html",
+      });
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.predicateConceded).toBeDefined();
+      expect(Object.hasOwn(aa?.predicateConceded as object, "signal")).toBe(false);
+    });
+
+    it("surfaces the predicateConceded evidence verbatim in the candidate's reason text", () => {
+      // The agent reads the reason and decides; the verbatim attribute
+      // token must appear there so the agent doesn't have to parse the
+      // structured field. The reason text is the dismissal receipt.
+      const out = runFinder(finder, `<img src="/header.png" alt="Acme logo">`, {
+        filePath: "x.html",
+      });
+      const aa = out.find((c) => c.criterionId === "wcag22:1.4.5");
+      expect(aa?.reason).toContain(`alt="Acme logo"`);
+      expect(aa?.reason).toContain(
+        "verify whether this is the textual logotype exempt under SC 1.4.5",
+      );
     });
 
     it("does NOT populate predicateConceded on the AAA 1.4.9 variant — logos still apply at AAA", () => {
@@ -143,6 +176,10 @@ describe("review/images-of-text", () => {
       const aaa = out.find((c) => c.criterionId === "wcag22:1.4.9");
       expect(aaa).toBeDefined();
       expect(aaa?.predicateConceded).toBeUndefined();
+      // The reason text on the AAA criterion also omits the verbatim
+      // evidence hint — both channels agree the exemption is not in
+      // play at AAA.
+      expect(aaa?.reason).not.toContain(`alt="Acme logo"`);
     });
 
     it("omits predicateConceded when the alt text is ambiguous about logotype evidence", () => {

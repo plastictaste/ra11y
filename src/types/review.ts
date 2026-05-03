@@ -127,36 +127,28 @@ export interface ReviewCandidateVendorContext {
 }
 
 /**
- * Discriminated `signal` payload for {@link ReviewCandidatePredicateConceded}.
- * Names the spec-exemption shape the finder's own static evidence
- * concedes — every variant must be deterministic from the (filePath,
- * source) inputs the finder reads, matching the doctrine bar in
- * `docs/kb/architecture/ai-first-consumer.md`
- * "Heuristic-mislabeled meta sub-fields are dishonest."
- *
- *   - `kind: "logotype-pattern"` — the cited `<img>`'s alt text,
- *     class name, or src filename contains `logo` / `logotype` /
- *     `brand` / `trademark`. WCAG 1.4.5 (and the Section 508 / EN
- *     301 549 equivalents) carries a logotype exemption — text
- *     that is part of a logo or brand name is permitted as an
- *     image. The candidate still surfaces; the signal lets the
- *     priority surface match the framing.
- *
- * Future variants (process-page exemption, essential-presentation,
- * etc.) would extend the union.
- */
-export type ReviewCandidatePredicateConcededSignal = {
-  readonly kind: "logotype-pattern";
-};
-
-/**
  * Wire shape for {@link ReviewCandidate#predicateConceded}. Carries a
- * deterministic `signal` plus a short `evidence` string naming the
- * verbatim token the finder matched (`alt="Acme logo"`, class token
- * `brand-mark`, src basename `logotype.svg`). The `evidence` is the
- * agent's one-read receipt: the agent sees the priority downgrade,
- * reads the evidence, and decides whether to confirm the exemption
- * via a source-level `ra11y-disable` pragma.
+ * single `evidence` string naming the verbatim token the finder
+ * matched (`alt="Acme logo"`, class token `brand-mark`, src basename
+ * `logotype.svg`). The same evidence is also surfaced verbatim in the
+ * candidate's `reason` text so an agent reading the reason gets the
+ * dismissal receipt without parsing structured sub-fields.
+ *
+ * Earlier revisions shipped a discriminated `signal: { kind:
+ * "logotype-pattern" }` token alongside the evidence. The token was
+ * removed per `docs/kb/architecture/ai-first-consumer.md`
+ * "Heuristic-mislabeled meta sub-fields are dishonest" — a
+ * deterministic-sounding `kind` decided the spec-exemption framing
+ * from a single attribute token, and an agent reading the structured
+ * label could dismiss the candidate before reading the file. The
+ * agent reads the file and decides; the structured label that
+ * pre-decides for the agent is gone. The remaining
+ * `predicateConceded` field is the priority-honesty marker that lets
+ * the checklist surface drop priority from `"high"` to `"medium"`
+ * when every candidate carries it (matching the framing the reason
+ * already concedes); the `evidence` carries the verbatim attribute
+ * token the gate fired on so an agent auditing the priority drop can
+ * trace the receipt.
  *
  * Strictly additive — never gates suppression, never alters
  * confidence. Per CLAUDE.md §1 "Ambiguous field shapes are
@@ -165,7 +157,6 @@ export type ReviewCandidatePredicateConcededSignal = {
  * field rather than emit a sentinel.
  */
 export interface ReviewCandidatePredicateConceded {
-  readonly signal: ReviewCandidatePredicateConcededSignal;
   readonly evidence: string;
 }
 

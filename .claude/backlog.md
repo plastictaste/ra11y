@@ -694,7 +694,6 @@ Items surfaced during the /continue orchestrator run that landed the tenth-pass 
 
 Items surfaced from a four-corpus blind sweep (CSS-framework docs, SSG fixtures, vanilla-JS demo catalog, bulk-template catalog) covering scan_project / checklist / coverage / scan_file / suggest_fix surfaces. Recurring patterns confirmed across ≥2 corpora.
 
-- [ ] **V1-PREDICATE-CONCEDED-DOWNGRADE-TO-REASON** — `predicateConceded.signal: { kind: "logotype-pattern", evidence: "alt=\"Logo\"" }` ships as a structured deterministic-sounding sub-field on review candidates, but the predicate (image is the textual logotype exempt under wcag22:1.4.5) is decided from a single attribute token — the same predicate-strength shape "heuristic-mislabeled meta sub-fields are dishonest" warns against. An agent reading the structured `predicateConceded.signal.kind` will skip the candidate before reading the file. Closure: drop `predicateConceded.signal.kind` token; surface the underlying evidence as additive `reason` text only ("the image alt is a single brand-suffix word — verify whether this is the textual logotype exempt under SC 1.4.5"). The agent reads + decides; the structured label that pre-decides for the agent is removed.
 ---
 
 

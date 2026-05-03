@@ -6,12 +6,12 @@
  * fix-description must agree across all three channels", a candidate
  * whose own static evidence (alt text, class, src filename) names the
  * WCAG 1.4.5 logotype exemption carries a `predicateConceded:
- * { signal: { kind: "logotype-pattern" }, evidence: ... }` payload.
- * The framing concedes the predicate the criterion checks may already
- * be satisfied by spec exemption — the candidate is still surfaced
- * (per AI-first doctrine "Surface, don't suppress") so the agent can
- * verify the dismissal in one read, but the priority signal must
- * agree with the framing.
+ * { evidence: "alt=\"Acme logo\"" }` payload. The framing concedes
+ * the predicate the criterion checks may already be satisfied by
+ * spec exemption — the candidate is still surfaced (per AI-first
+ * doctrine "Surface, don't suppress") so the agent can verify the
+ * dismissal in one read, but the priority signal must agree with the
+ * framing.
  *
  * 1.4.5 is Level AA, so the un-downgraded priority would be "high";
  * the predicate-conceded-aware downgrade must drop it to "medium".
@@ -20,6 +20,14 @@
  * exemption, so the same image evidence ships with no
  * predicateConceded and the AAA item priority does not downgrade on
  * this signal.
+ *
+ * Earlier revisions of `predicateConceded` shipped a discriminated
+ * `signal: { kind: "logotype-pattern" }` token alongside the
+ * evidence. The token was removed per "Heuristic-mislabeled meta
+ * sub-fields are dishonest" — the deterministic-sounding kind label
+ * decided the carve-out from a single attribute token; the verbatim
+ * evidence now surfaces in the candidate's `reason` text and on
+ * `predicateConceded.evidence` only.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -35,7 +43,6 @@ interface JsonRpcResponse {
 }
 
 interface PredicateConcededPayload {
-  readonly signal: { readonly kind: string };
   readonly evidence: string;
 }
 
@@ -98,7 +105,7 @@ function body<T>(resp: JsonRpcResponse): T {
 }
 
 describe("checklist priority must not contradict predicateConceded on candidates", () => {
-  it("downgrades wcag22:1.4.5 priority when every candidate ships a logotype-pattern predicateConceded", async () => {
+  it("downgrades wcag22:1.4.5 priority when every candidate ships a predicateConceded payload", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ra11y-predicate-conceded-1-4-5-"));
     // Two img elements whose evidence concedes the WCAG 1.4.5 logotype
     // exemption — alt text contains "logo" / "brand". The candidate
@@ -119,8 +126,17 @@ describe("checklist priority must not contradict predicateConceded on candidates
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
     expect(item.candidates.every((c) => c.predicateConceded !== undefined)).toBe(true);
+    // Verbatim evidence is surfaced both in the structured payload and
+    // in the candidate's `reason` text — the agent reads the reason
+    // and decides; no deterministic `signal.kind` discriminator
+    // pre-decides the carve-out shape.
+    expect(item.candidates.every((c) => (c.predicateConceded?.evidence ?? "").length > 0)).toBe(
+      true,
+    );
     expect(
-      item.candidates.every((c) => c.predicateConceded?.signal.kind === "logotype-pattern"),
+      item.candidates.every((c) =>
+        c.reason.includes("verify whether this is the textual logotype exempt under SC 1.4.5"),
+      ),
     ).toBe(true);
     // Priority downgrade kicks in.
     expect(item.priority).not.toBe("high");

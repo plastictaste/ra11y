@@ -32,7 +32,6 @@ const VENDOR_CONTEXT: ReviewCandidateVendorContext = {
 };
 
 const PREDICATE_CONCEDED: ReviewCandidatePredicateConceded = {
-  signal: { kind: "logotype-pattern" },
   evidence: 'alt="Acme logo"',
 };
 
