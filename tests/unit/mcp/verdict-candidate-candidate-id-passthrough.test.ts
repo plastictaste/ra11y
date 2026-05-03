@@ -90,10 +90,7 @@ describe("verdict_candidate: candidateId shortcut — mutual-exclusion shape", (
       content: { type: "text", text: "{}" },
       model: "m",
     });
-    const result = await verdictCandidateTool.handler(
-      { reviewPrompt: "prompt" },
-      session,
-    );
+    const result = await verdictCandidateTool.handler({ reviewPrompt: "prompt" }, session);
     expect(result.isError).toBe(true);
     const err = structuredError(result);
     expect(err.code).toBe("missing-required-param");
@@ -193,10 +190,7 @@ describe("verdict_candidate: candidateId shortcut — unavailable-lookup degrade
         model: "m",
       });
     };
-    await verdictCandidateTool.handler(
-      { candidateId: "abc", reviewPrompt: "prompt" },
-      session,
-    );
+    await verdictCandidateTool.handler({ candidateId: "abc", reviewPrompt: "prompt" }, session);
     expect(sampleCalled).toBe(false);
   });
 });

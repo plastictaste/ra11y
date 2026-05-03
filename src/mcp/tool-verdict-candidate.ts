@@ -226,7 +226,7 @@ function resolveCandidateInput(params: Record<string, unknown>): CandidateResolu
       }),
     };
   }
-  if (!hasCandidate && !hasCandidateId) {
+  if (!(hasCandidate || hasCandidateId)) {
     return {
       ok: false,
       result: errorResult({
