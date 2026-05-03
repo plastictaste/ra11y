@@ -78,7 +78,11 @@
  */
 
 import type { ParseError, TsxModule } from "../../types/ast.ts";
-import { DEFAULT_EXAMPLE_COMPONENT_NAMES, extractMdxExampleCode } from "./mdx-example-extractor.ts";
+import {
+  type CodeDemoPropMatch,
+  DEFAULT_EXAMPLE_COMPONENT_NAMES,
+  extractMdxExampleCode,
+} from "./mdx-example-extractor.ts";
 import { parseTsx, type TsxParseResult } from "./tsx.ts";
 
 /**
@@ -100,7 +104,33 @@ export interface MdxParseOptions {
   readonly exampleComponentNames?: readonly string[];
 }
 
-export function parseMdx(source: string, options: MdxParseOptions = {}): TsxParseResult {
+/**
+ * Extended {@link TsxParseResult} for the MDX adapter. Carries the
+ * verbatim shape `parseTsx` returns plus a present-when-meaningful
+ * `codeDemoPropMatches` side-channel describing every successful
+ * descent into a code-demo prop's template-literal body — see
+ * {@link import("./mdx-example-extractor.ts").CodeDemoPropMatch}.
+ *
+ * Drives the corpus-level `jsx_code_demo_prop_parsed_as_live_dom`
+ * warning + per-finding `couldBeWrongBecause` propagation: agents
+ * reading findings emitted on synthesized elements derived from a
+ * code-demo prop's body need both the warning-channel breadcrumb (the
+ * scan saw at least one descent on this corpus) and the per-finding
+ * triage signal (THIS finding fired inside a descent). The MDX adapter
+ * is the only parser entry point that descends today, so this is the
+ * source of truth for the evidence the downstream aggregator consumes.
+ *
+ * Omitted entirely when the extractor produced no matches — the
+ * present-when-meaningful contract per CLAUDE.md §1 "Ambiguous field
+ * shapes are dishonest." Consumers that ignore the field still see a
+ * structurally-identical `TsxParseResult`; consumers that branch on it
+ * read a definite array when it's there.
+ */
+export interface MdxParseResult extends TsxParseResult {
+  readonly codeDemoPropMatches?: readonly CodeDemoPropMatch[];
+}
+
+export function parseMdx(source: string, options: MdxParseOptions = {}): MdxParseResult {
   const errors: ParseError[] = [];
   // Each pass operates on the character buffer and replaces stripped
   // regions with space/newline so downstream line numbers match the
@@ -143,6 +173,9 @@ export function parseMdx(source: string, options: MdxParseOptions = {}): TsxPars
   return {
     root,
     errors: [...errors, ...tsx.errors, ...extracted.errors],
+    ...(extracted.propMatches.length === 0
+      ? {}
+      : { codeDemoPropMatches: extracted.propMatches }),
   };
 }
 
