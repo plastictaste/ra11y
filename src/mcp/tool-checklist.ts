@@ -16,6 +16,7 @@ import {
 import { buildCoverageReport, type PerStandardCoverage } from "../reports/coverage.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import type {
+  CandidateFinder,
   ReviewCandidate,
   ReviewCandidatePredicateConceded,
   ReviewCandidateVendorContext,
@@ -51,7 +52,10 @@ import {
   candidateHedges,
   couldBeWrongBecauseForVendorBuildArtifact,
 } from "./review-candidate-priority.ts";
-import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
+import {
+  buildReviewCandidatePrompts,
+  indexFindersByCriterion,
+} from "./review-candidate-prompts.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
@@ -383,6 +387,25 @@ interface ChecklistItemOut {
   readonly candidates: readonly ChecklistCandidateOut[];
   readonly likelyRelevant?: false;
   readonly relevanceReason?: string;
+  /**
+   * The pass/fail review prompt for this criterion — the verbatim
+   * `CandidateFinder.docs.reviewPrompt` string the `review_candidates`
+   * tool surfaces under `prompts[criterionId].text` for the same
+   * criterion. Hoisted onto each item so the natural workflow
+   * `checklist → verdict_candidate` is one tool call shorter — agents
+   * no longer need to round-trip through `review_candidates` (or hand-
+   * author the prompt) just to populate `verdict_candidate.reviewPrompt`.
+   *
+   * Present-when-meaningful per CLAUDE.md §1 "Ambiguous field shapes
+   * are dishonest": omitted entirely when no finder declares this
+   * criterion, so absence reads as "no finder prompt is available"
+   * (e.g. an automated-only or untargeted criterion that lacks a
+   * finder backing it). The cross-tool contract holds: the same
+   * criterion ID surfaces the same prompt text on `checklist.items[].
+   * reviewPrompt` and `review_candidates.prompts[criterionId].text` —
+   * both fields are routed through {@link indexFindersByCriterion}.
+   */
+  readonly reviewPrompt?: string;
   /**
    * The most recent durable attestation that speaks to this criterion,
    * when one exists. Surfaced — not suppressive — so the agent sees
@@ -2006,6 +2029,7 @@ function buildChecklistItem(
   attestations: readonly AttestationRecord[],
   stalenessProbe: AttestationStalenessProbe | undefined,
   buildArtifactPaths: ReadonlySet<string>,
+  findersByCriterion: ReadonlyMap<string, CandidateFinder>,
 ): { item: ChecklistItemOut; relevant: boolean } {
   const mappedRaw = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
   const mapped = partitionVendorCandidatesLast(mappedRaw, buildArtifactPaths);
@@ -2041,6 +2065,15 @@ function buildChecklistItem(
   // the stamp; absent when the probe can't answer. See
   // src/reports/attestation-surface.ts for the full contract.
   const attestation = buildAttestationSurface(attestations, stalenessProbe);
+  // Hoist the finder's WCAG `reviewPrompt` for this criterion so the
+  // checklist consumer can pass it straight to `verdict_candidate`
+  // without a separate `review_candidates` round-trip. Same source of
+  // truth (the `CandidateFinder.docs.reviewPrompt` declared once per
+  // finder) the `review_candidates` tool surfaces under
+  // `prompts[criterionId].text`. Present-when-meaningful per CLAUDE.md
+  // §1: omitted when no finder declares this criterion (e.g. a pure
+  // bare-criterion item with no finder backing it).
+  const reviewPrompt = findersByCriterion.get(criterion.id)?.docs.reviewPrompt;
   const base: ChecklistItemOut = {
     criterionId: criterion.id,
     title: criterion.title,
@@ -2050,6 +2083,7 @@ function buildChecklistItem(
     ...(principle === null ? {} : { principle }),
     candidates: candidatesWithPriority,
     ...(attestation === undefined ? {} : { attestation }),
+    ...(reviewPrompt === undefined ? {} : { reviewPrompt }),
   };
   if (!isLikelyIrrelevant(criterion.id, applicability)) return { item: base, relevant: true };
   const reason = irrelevanceReason(criterion.id, applicability);
@@ -2078,6 +2112,14 @@ function bucketChecklistItems(
   // prompt case is load-bearing); the partial-criterion pass only adds
   // criteria that this loop never visited.
   const emittedCriterionIds = new Set<string>();
+  // Resolve the finder index once for the bucket pass — the same
+  // shared helper `review_candidates` uses, so the per-item
+  // `reviewPrompt` field on this surface and the
+  // `prompts[criterionId].text` field on the review-candidates surface
+  // both resolve from one source of truth (per `docs/kb/architecture/
+  // ai-first-consumer.md` "Per-tool review-candidate shape must agree
+  // across surfaces").
+  const findersByCriterion = indexFindersByCriterion(session.registry.finders);
   const builderArgs = {
     candidates,
     applicability,
@@ -2085,6 +2127,7 @@ function bucketChecklistItems(
     attestationsByCriterion,
     stalenessProbe,
     buildArtifactPaths,
+    findersByCriterion,
   } as const;
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
@@ -2127,6 +2170,7 @@ function pushChecklistItem(
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
+    readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2140,6 +2184,7 @@ function pushChecklistItem(
     builderArgs.attestationsByCriterion.get(criterion.id) ?? [],
     builderArgs.stalenessProbe,
     builderArgs.buildArtifactPaths,
+    builderArgs.findersByCriterion,
   );
   emittedCriterionIds.add(criterion.id);
   (relevant ? needsReview : likelyIrrelevant).push(item);
@@ -2180,6 +2225,7 @@ function appendPartialCriterionItems(
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
+    readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2221,6 +2267,7 @@ function appendPartialItemsFromEntry(
     readonly attestationsByCriterion: ReadonlyMap<string, readonly AttestationRecord[]>;
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
+    readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],

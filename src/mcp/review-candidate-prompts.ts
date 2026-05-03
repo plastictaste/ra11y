@@ -66,7 +66,7 @@
  * `reviewCandidatePrompts: {}` sentinel.
  */
 
-import type { ReviewCandidate } from "../types/review.ts";
+import type { CandidateFinder, ReviewCandidate } from "../types/review.ts";
 
 /**
  * Per-criterion entry in the prompts map. The structured object shape
@@ -160,6 +160,32 @@ export function buildReviewCandidatePrompts(args: {
   for (const [criterionId, entry] of byCriterion.entries()) {
     if (entry.varies) continue;
     out[criterionId] = { genericReason: entry.reason };
+  }
+  return out;
+}
+
+/**
+ * Index every loaded {@link CandidateFinder} by every criterion ID it
+ * declares. Used by `review_candidates` and `checklist` to look up the
+ * canonical WCAG `reviewPrompt` text per criterion — the same source of
+ * truth so the two surfaces never drift on the prompt string for the
+ * same criterion (per `docs/kb/architecture/ai-first-consumer.md` "Per-
+ * tool review-candidate shape must agree across surfaces").
+ *
+ * First-finder-wins on collision: when two finders declare the same
+ * criterion ID, the first one indexed by the registry's iteration order
+ * stays. This matches the existing behavior of the per-tool
+ * implementations being collapsed here — preserving identity across
+ * the move.
+ */
+export function indexFindersByCriterion(
+  finders: readonly CandidateFinder[],
+): ReadonlyMap<string, CandidateFinder> {
+  const out = new Map<string, CandidateFinder>();
+  for (const finder of finders) {
+    for (const cid of finder.criterionIds) {
+      if (!out.has(cid)) out.set(cid, finder);
+    }
   }
   return out;
 }

@@ -31,7 +31,10 @@ import {
   dedupeReviewCandidatesByReason,
   type ReasonDedupedCandidate,
 } from "./review-candidate-dedup.ts";
-import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
+import {
+  buildReviewCandidatePrompts,
+  indexFindersByCriterion,
+} from "./review-candidate-prompts.ts";
 import { resolveActiveRules } from "./rules-evaluated.ts";
 import {
   errorResult,
@@ -146,7 +149,7 @@ export const reviewCandidatesTool: McpTool = {
     // identity-shaped entry across both surface families.
     const candidates = dedupeReviewCandidatesByReason(rawCandidates);
 
-    const findersByCriterion = indexFindersByCriterion(session);
+    const findersByCriterion = indexFindersByCriterion(session.registry.finders);
     const standardsById = new Map(session.registry.standards.map((s) => [s.id, s]));
     const sources = sourceIndex(files);
 
@@ -364,18 +367,6 @@ function candidateSnippet(
     reason: c.reason,
     language: entry.language,
   });
-}
-
-function indexFindersByCriterion(
-  session: import("./session.ts").McpSession,
-): Map<string, CandidateFinder> {
-  const out = new Map<string, CandidateFinder>();
-  for (const finder of session.registry.finders) {
-    for (const cid of finder.criterionIds) {
-      if (!out.has(cid)) out.set(cid, finder);
-    }
-  }
-  return out;
 }
 
 function isCriterionInLevel(
