@@ -28,8 +28,7 @@ The old `/continue` walked `## Phase N` sections in order, one item at a time. T
 
 ## Active vs staged tracks
 
-- **Active** (dispatch eligible): tracks flagged in `.claude/backlog.md`'s `Dispatch model` line as active — currently **D, M, R, F**.
-- **Staged** (do not dispatch): **S** (MCP sampling) and **E** (ecosystem) are deferred until after v0.2.0 ships. `/continue` ignores their items unless the Dispatch model line is updated to promote them.
+The `Dispatch model` line in `.claude/backlog.md` is the single source of truth — it names which tracks are dispatch-eligible (Active) and which are deferred (Staged). `/continue` ignores any track not flagged Active on that line. Track letters change as work ships and new tracks open; do not duplicate the list here, read it from the backlog.
 
 ## Pre-dispatch planning (step 0 — replan as needed)
 
