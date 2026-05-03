@@ -86,6 +86,18 @@ export function ownerForFile(file: string): string {
   return "main-session";
 }
 
+/**
+ * `main-session` and `general-purpose` are both catch-all classifiers
+ * the planner can assign for files no V-track specialist owns. The
+ * orchestrator routes `main-session`-classified picks inline and
+ * `general-purpose`-classified picks into a worktree-isolated
+ * Anthropic agent — but for owner-mapping purposes both are equally
+ * valid for any file path.
+ */
+function isCatchAllSpecialist(specialist: string): boolean {
+  return specialist === "main-session" || specialist === "general-purpose";
+}
+
 function checkPicksPerTurnArithmetic(turn: PlanTurn): string[] {
   if (turn.picks.length === turn.picksPerTurn) return [];
   return [
@@ -199,21 +211,21 @@ function checkOwnerMappingForPick(turn: PlanTurn, pick: PlanPick): string[] {
   const owners = new Set<string>(files.map(ownerForFile));
   const nonMain = [...owners].filter((o) => o !== "main-session");
   if (nonMain.length === 0) {
-    if (pick.specialist === "main-session") return [];
+    if (isCatchAllSpecialist(pick.specialist)) return [];
     return [
       `turn ${turn.n}: pick "${pick.item}" specialist="${pick.specialist}" but inferredFiles map only to main-session paths`,
     ];
   }
   if (nonMain.length === 1) {
     const expected = nonMain[0];
-    if (pick.specialist === expected || pick.specialist === "main-session") return [];
+    if (pick.specialist === expected || isCatchAllSpecialist(pick.specialist)) return [];
     return [
       `turn ${turn.n}: pick "${pick.item}" specialist="${pick.specialist}" but inferredFiles imply "${expected}"`,
     ];
   }
   const isTypeSmithCascade =
     pick.specialist === "type-smith" && files.some((f) => f.startsWith("src/types/"));
-  if (pick.specialist === "main-session" || isTypeSmithCascade) return [];
+  if (isCatchAllSpecialist(pick.specialist) || isTypeSmithCascade) return [];
   return [
     `turn ${turn.n}: pick "${pick.item}" specialist="${pick.specialist}" but inferredFiles span multiple specialist groups (${[...owners].join("/")})`,
   ];

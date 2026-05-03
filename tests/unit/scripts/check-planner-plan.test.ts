@@ -190,6 +190,15 @@ describe("validatePlan — owner-mapping misclassification", () => {
     expect(validatePlan(p, EMPTY_CTX)).toEqual([]);
   });
 
+  it("accepts general-purpose as catch-all (worktree-isolated subagent)", () => {
+    const p = plan([
+      turn(1, [
+        pick({ item: "X", specialist: "general-purpose", inferredFiles: ["src/mcp/server.ts"] }),
+      ]),
+    ]);
+    expect(validatePlan(p, EMPTY_CTX)).toEqual([]);
+  });
+
   it("flags multi-group files when specialist is not main-session or type-smith cascade", () => {
     const p = plan([
       turn(1, [
