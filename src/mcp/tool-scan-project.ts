@@ -229,6 +229,7 @@ export const scanProjectTool: McpTool = {
       diagnostics: discoveryDiagnostics,
       jsInnerHtmlDeclinedCount,
       jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
     } = await parseFilesWithDiagnostics(roots, session, root, discoverOptionsFor(projectConfig));
     const additionalPaths = strArrayParam(params, "additionalPaths") ?? [];
     const additionalFiles =
@@ -312,6 +313,13 @@ export const scanProjectTool: McpTool = {
       // + the response-level `text_source_skipped` /
       // `binary_assets_skipped` warnings.
       discoveryDiagnostics,
+      // Per-file MDX code-demo prop matches drive the per-finding
+      // `couldBeWrongBecause: ["template_literal_in_code_demo_prop"]`
+      // propagation onto every finding emitted on a synthesized JSX
+      // element pinned inside a recorded prop body. Companion to the
+      // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
+      // emitted from the same evidence at the warning-channel seam.
+      codeDemoPropMatches,
     );
     logger.debug(
       `scan_project: ${files.length} files, parse ${parseMs}ms + scan ${ms(t1)}ms = ${ms(t0)}ms`,
@@ -642,6 +650,12 @@ export const scanProjectTool: McpTool = {
         // for files where the routed parser produced zero findings —
         // the routing-skip failure mode the AI-first doctrine names.
         jsInnerHtmlPatternSamples,
+        // Thread the per-file MDX code-demo prop matches so the warnings
+        // module can fire `jsx_code_demo_prop_parsed_as_live_dom` and
+        // populate its paired payload. Inverse-shape sibling of
+        // `jsInnerHtmlPatternSamples`: same parse-aggregation seam, two
+        // distinct telemetry codes (drop vs descent).
+        codeDemoPropMatches,
         // pre-computed cross-check
         // for `coverage_confidence_uniformly_high_with_parse_errors`.
         // The warnings module pairs this boolean with the parse-error
@@ -963,6 +977,13 @@ function buildBaseWarningsForScanProject(args: {
     readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
   >;
   /**
+   * Per-file MDX code-demo prop matches. Drives the
+   * `jsx_code_demo_prop_parsed_as_live_dom` warning. See
+   * {@link import("./warnings.ts").WarningInputs.codeDemoPropMatches}
+   * for the contract.
+   */
+  readonly codeDemoPropMatches?: import("./warnings.ts").WarningInputs["codeDemoPropMatches"];
+  /**
    * Pre-computed cross-check for
    * `coverage_confidence_uniformly_high_with_parse_errors` (`true` when
    * every adjusted `perRuleCoverage` row is high confidence with no
@@ -992,6 +1013,7 @@ function buildBaseWarningsForScanProject(args: {
     bulkCatalogDetection,
     jsInnerHtmlDeclinedCount,
     jsInnerHtmlPatternSamples,
+    codeDemoPropMatches,
     perRuleCoverageUniformlyHigh,
   } = args;
   const vendorCssNoise = computeVendorCssNoise(buildArtifacts.entries, formatted.files);
@@ -1136,6 +1158,15 @@ function buildBaseWarningsForScanProject(args: {
     ...(jsInnerHtmlFileSamplesForPayload.length === 0
       ? {}
       : { jsInnerHtmlFileSamples: jsInnerHtmlFileSamplesForPayload }),
+    // Thread the per-file MDX code-demo prop matches so the warnings
+    // module can fire `jsx_code_demo_prop_parsed_as_live_dom` and
+    // populate its paired payload. Inverse-shape sibling of the
+    // inline-HTML cross-reference: that surfaces routing-skip evidence,
+    // this surfaces routing-descent evidence (rhetorical-preview HTML
+    // the docs framework rendered into the MDX AST).
+    ...(codeDemoPropMatches === undefined || codeDemoPropMatches.size === 0
+      ? {}
+      : { codeDemoPropMatches }),
     // detector ran upstream on the
     // parsed-file list; conditional-spread keeps the input absent when
     // no HTML file declared an unresolved `<link rel="stylesheet">`.

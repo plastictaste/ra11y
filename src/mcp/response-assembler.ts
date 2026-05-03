@@ -67,6 +67,7 @@ import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
+import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
@@ -211,6 +212,30 @@ export interface ScanFamilyResponseInput {
    * no-level base.
    */
   readonly criterionLevels?: ReadonlyMap<string, string>;
+  /**
+   * Per-file MDX code-demo prop matches produced by
+   * {@link import("../input/parsers/mdx-example-extractor.ts").detectCodeDemoPropMatches}
+   * over each `.mdx` file's parsed AST + source. Drives the
+   * per-finding `couldBeWrongBecause` propagation
+   * ({@link import("./per-finding-code-demo-prop-confidence.ts").enrichFindingsWithCodeDemoPropMatch})
+   * so a finding emitted on a synthesized JSX element pinned inside a
+   * code-demo prop's body carries the
+   * `template_literal_in_code_demo_prop` reason code. Companion to
+   * the corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
+   * that the per-tool warning channel emits from the same evidence.
+   * Pass `undefined` / empty map on legacy callers that haven't run
+   * the detector — the propagation drops conservatively.
+   */
+  readonly codeDemoPropMatches?: ReadonlyMap<
+    string,
+    readonly {
+      readonly propName: string;
+      readonly tagName: string;
+      readonly propLine: number;
+      readonly bodyStartLine: number;
+      readonly bodyEndLine: number;
+    }[]
+  >;
 }
 
 export interface ScanFamilyResponseOptions {
@@ -793,6 +818,19 @@ export function assembleScanFamilyResponse(
   const buildArtifactEntries = collectBuildArtifacts(parsedFiles);
   const buildArtifactPaths = new Set<string>(buildArtifactEntries.map((e) => e.path));
   fileEntries = enrichFindingsWithBuildArtifactPath(fileEntries, buildArtifactPaths);
+  // Per-finding propagation for the per-LOCATION axis: a finding's
+  // `(filePath, line)` falls inside a recorded MDX code-demo prop's
+  // template-literal body the parser descended into. Companion to the
+  // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning so
+  // the per-finding channel and the warning channel ship consistent
+  // attention-budget signals. The rule still emits at its full severity
+  // (the markup IS structurally what the rule names); the propagation
+  // adds the `template_literal_in_code_demo_prop` reason so the agent
+  // recognizes rhetorical-preview substrate at the per-finding
+  // granularity. No-op fast path when the matches map is empty
+  // (object identity stable on the common case — non-MDX repos pay
+  // no walk).
+  fileEntries = enrichFindingsWithCodeDemoPropMatch(fileEntries, input.codeDemoPropMatches);
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     ...(typeof filesWithAnyRuleEvaluated === "number" ? { filesWithAnyRuleEvaluated } : {}),

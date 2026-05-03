@@ -775,7 +775,48 @@ export type ScanWarningCode =
   // payload: `warningsDetails.astro_islands_unrendered` carries
   // `{ fileCount, fileList, reason }` so the agent has the load-
   // bearing pivot in one read.
-  | "astro_islands_unrendered";
+  | "astro_islands_unrendered"
+  // at least one scanned `.mdx` file
+  // declared a docs-allow-list component (`<Example>` / `<Demo>` /
+  // `<Playground>`) carrying a code-demo prop (`code` / `example` /
+  // `source` / `template`) whose value was a substitution-free template
+  // literal containing HTML — and the MDX adapter's
+  // `extractMdxExampleCode` pass descended into the body and synthesized
+  // JSX elements pinned to the original MDX source positions. Findings
+  // emitted on those synthesized elements (alt-text, label-required,
+  // heading-hierarchy, link-text, …) describe markup that is
+  // structurally what the rules' predicates name, but the markup is
+  // RHETORICAL — the docs site renders the body as a preview, not as
+  // production source the user pastes into their app. Without this
+  // signal, an agent reading per-file findings from an MDX docs tree
+  // cannot tell whether a `forms/labels-required` violation lives in
+  // authored production source or inside a `<Example code={`<form>…`}/>`
+  // body the docs site intentionally surfaces as illustration. The
+  // canonical regression: 1284 false `navigation/href-empty-fragment`
+  // fires across an MDX docs corpus where every `<a href="#">` lived
+  // inside a code-demo prop's template body; the rule was honest at the
+  // markup horizon, but the agent's triage budget vanished into rhetorical
+  // examples. Symmetric to `js_innerhtml_template_literal_unparsed` but
+  // INVERTED: that code names files where the parser silently DROPPED
+  // dynamic-injection HTML; this code names files where the parser
+  // silently DESCENDED into rhetorical-preview HTML. Both predicates
+  // share the doctrine bullet "Routing skips that drop content are the
+  // symmetric twin of suppression" — under-parsing is silent miss; over-
+  // surfacing on rhetorical substrate is silent budget burn — so each
+  // gets a distinct telemetry code so the agent can route on each axis
+  // independently. Per-finding `couldBeWrongBecause:
+  // ["template_literal_in_code_demo_prop"]` propagates onto every
+  // emission whose `(filePath, line)` falls inside a recorded match's
+  // `bodyStartLine..bodyEndLine` range so the agent reads the same signal
+  // at the per-finding granularity. Surface, don't suppress: the rule
+  // still fires (the markup is structurally a violation); the warning
+  // and per-finding code are additive context the agent uses to triage
+  // priority. Paired payload:
+  // `warningsDetails.jsx_code_demo_prop_parsed_as_live_dom` carries
+  // `{ fileCount, files: [{ path, propNames, matchCount }], propNames }`
+  // so an agent has the load-bearing pivot (which docs files, which prop
+  // names appeared) in one read.
+  | "jsx_code_demo_prop_parsed_as_live_dom";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -1194,6 +1235,36 @@ export interface WarningInputs {
     readonly line: number;
     readonly pattern: string;
   }[];
+  /**
+   * Per-file MDX code-demo prop matches — populated from
+   * {@link import("../input/parsers/mdx-example-extractor.ts").detectCodeDemoPropMatches}
+   * over each `.mdx` file's parsed AST + source. Drives the
+   * `jsx_code_demo_prop_parsed_as_live_dom` warning code AND its paired
+   * `warningsDetails.jsx_code_demo_prop_parsed_as_live_dom` payload —
+   * the warning fires when the map carries at least one entry. Inverse-
+   * shape sibling of {@link jsInnerHtmlFileSamples}: the inline-HTML
+   * detector names files the parser silently DROPPED (routing-skip
+   * failure mode); this map names files the parser silently DESCENDED
+   * into (an MDX docs-component code-demo prop's template-literal HTML
+   * body). Both predicates share the doctrine bullet "Routing skips
+   * that drop content are the symmetric twin of suppression" — under-
+   * parsing is silent miss; over-surfacing on rhetorical substrate is
+   * silent budget burn — so each gets a distinct telemetry code so the
+   * agent can route on each axis independently. Pass `undefined` /
+   * empty map when no `.mdx` file in the scan declared a docs-allow-
+   * list component with a pure-template-literal code-demo prop; the
+   * warning code drops conservatively in that case.
+   */
+  readonly codeDemoPropMatches?: ReadonlyMap<
+    string,
+    readonly {
+      readonly propName: string;
+      readonly tagName: string;
+      readonly propLine: number;
+      readonly bodyStartLine: number;
+      readonly bodyEndLine: number;
+    }[]
+  >;
   /**
    * caller-supplied detection from
    * {@link import("./scan-assembly.ts").detectLinkedStylesheetsNotResolvedForContrast}.
@@ -2724,6 +2795,53 @@ export interface ScanWarningDetails {
     }[];
   };
   /**
+   * Payload for `jsx_code_demo_prop_parsed_as_live_dom`. Carries the
+   * per-file evidence the MDX adapter's `extractMdxExampleCode` pass
+   * descended into — file path, the lowercase prop names that matched
+   * (one of `code` / `example` / `source` / `template`), and the count
+   * of successful descents per file. Inverse-shape sibling of
+   * `js_innerhtml_template_literal_unparsed` — that payload names
+   * routing skips; this payload names routing descents.
+   *
+   * - `fileCount` — total `.mdx` files in the scan that contained at
+   *   least one descent. Distinct from `files.length` only when the cap
+   *   below trims (then `fileCount > files.length`).
+   * - `files` — sorted-ascending list of `{ path, propNames, matchCount }`,
+   *   capped at the implementation's top-files limit. `propNames` is
+   *   the de-duplicated lowercase set of code-demo prop names that
+   *   actually matched on this file (sorted-ascending for deterministic
+   *   wire shape); `matchCount` is the total descents on this file
+   *   (one per `<Example|Demo|Playground>` element with a pure-template
+   *   code-demo prop). The agent reads `propNames` to recognize whether
+   *   the docs framework is Bootstrap-blog (`code`), Astro Starlight
+   *   (`code`), Docusaurus / Next-docs (`code`), or a custom convention
+   *   (`example` / `source` / `template`); `matchCount` names how many
+   *   distinct rhetorical previews the file ships.
+   * - `propNames` — flattened, de-duplicated, sorted-ascending list of
+   *   code-demo prop names matched across the entire payload. Lets an
+   *   agent branch on the corpus-level prop-name set without walking
+   *   the per-file array (the canonical case is a one-name corpus
+   *   matching `code` everywhere; the flattened set surfaces multi-
+   *   convention codebases in one read).
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — the predicate gate ensures the payload is populated
+   * whenever the warning fires; the conditional spread at the
+   * summarizer drops the entry when the input is empty so the warning
+   * code itself drops alongside (the warnings module emits the code
+   * only when {@link WarningInputs.codeDemoPropMatches} carries a
+   * non-empty map).
+   */
+  readonly jsx_code_demo_prop_parsed_as_live_dom?: {
+    readonly fileCount: number;
+    readonly files: readonly {
+      readonly path: string;
+      readonly propNames: readonly string[];
+      readonly matchCount: number;
+    }[];
+    readonly propNames: readonly string[];
+  };
+  /**
    * Payload for `linked_stylesheet_local_unresolved`. Carries the
    * relative-path-href subset of the unresolved-link tally — the
    * actionable bucket the agent can pull into scope via
@@ -3046,6 +3164,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "default_excluded_artifact_paths",
   "erb_islands_unrendered",
   "astro_islands_unrendered",
+  "jsx_code_demo_prop_parsed_as_live_dom",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3482,7 +3601,32 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   // `contentDistributionCodes` / `parseErrorCodes` / `scanShapeCodes`);
   // declaration order on `ScanWarningCode` preserved.
   out.push(...routingTelemetryCodes(inputs));
+  // MDX code-demo prop descents (`jsx_code_demo_prop_parsed_as_live_dom`).
+  // Inverse-shape sibling of the inline-HTML code: fires when the MDX
+  // adapter's `extractMdxExampleCode` pass DESCENDED into at least one
+  // `<Example|Demo|Playground>` component's code-demo prop and
+  // synthesized rhetorical-preview JSX elements. Per AI-first doctrine
+  // "Routing skips that drop content are the symmetric twin of
+  // suppression" — over-surfacing on rhetorical substrate is the silent
+  // budget burn the inverse predicate names.
+  if (hasCodeDemoPropMatches(inputs.codeDemoPropMatches)) {
+    out.push("jsx_code_demo_prop_parsed_as_live_dom");
+  }
   return out;
+}
+
+/**
+ * Predicate for `jsx_code_demo_prop_parsed_as_live_dom`. Returns
+ * `true` when the caller-supplied per-file map carries at least one
+ * entry — empty or undefined drops conservatively. Pure over its
+ * input; the cross-reference between `.mdx` files and their parsed
+ * AST lives at the parse-aggregation seam (see
+ * `parseFilesWithDiagnostics` in `tools-helpers.ts`).
+ */
+function hasCodeDemoPropMatches(
+  matches: WarningInputs["codeDemoPropMatches"],
+): boolean {
+  return matches !== undefined && matches.size > 0;
 }
 
 /**
@@ -4263,6 +4407,13 @@ type ScanMetaWarningArgs = {
     readonly pattern: string;
   }[];
   /**
+   * Pass-through for the per-file MDX code-demo prop matches. See
+   * {@link WarningInputs.codeDemoPropMatches} for the cross-reference
+   * contract. Threaded directly so the warnings module stays pure over
+   * its inputs.
+   */
+  readonly codeDemoPropMatches?: WarningInputs["codeDemoPropMatches"];
+  /**
    * Pass-through for the linked-stylesheet detection. See
    * {@link WarningInputs.linkedStylesheetsUnresolvedForContrast} — same
    * shape, threaded directly so the warnings module stays pure over its
@@ -4335,6 +4486,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "totalFindings",
   "jsInnerHtmlDeclinedCount",
   "jsInnerHtmlFileSamples",
+  "codeDemoPropMatches",
   "linkedStylesheetsUnresolvedForContrast",
   "parserBailedJsTsxRouteFiles",
   "perRuleCoverageUniformlyHighWithParseErrors",
@@ -4498,6 +4650,10 @@ function buildScanWarningDetailsDispatch(
           inputs.jsInnerHtmlDeclinedCount,
           inputs.jsInnerHtmlFileSamples,
         ),
+    },
+    {
+      code: "jsx_code_demo_prop_parsed_as_live_dom",
+      summarize: () => summarizeJsxCodeDemoPropParsedAsLiveDom(inputs.codeDemoPropMatches),
     },
     ...linkedStylesheetDispatchRows(inputs),
     {
@@ -5037,6 +5193,71 @@ function summarizeJsInnerHtmlTemplateLiteralUnparsed(
  * so the wire payload stays bounded even when many files contributed.
  */
 const INLINE_HTML_FILE_SAMPLES_CAP = 5;
+
+/**
+ * Hard cap on the number of `{ path, propNames, matchCount }` entries
+ * surfaced on
+ * `warningsDetails.jsx_code_demo_prop_parsed_as_live_dom.files`. The
+ * top-N slice mirrors `js_innerhtml_template_literal_unparsed.fileSamples`'s
+ * cap pattern — bounded wire payload on bulk MDX docs corpora (a typical
+ * Bootstrap-blog or Starlight repo carries 80–200 `.mdx` files with
+ * code-demo props), generous enough that an agent recognizes whether
+ * the descents cluster by component (`Example`-only) or by directory
+ * (`Demo` under `playground/`, `Example` elsewhere).
+ *
+ * `fileCount` carries the authoritative scalar regardless of cap so
+ * the agent can branch on the corpus-level shape; the long tail of
+ * paths is reachable on `meta.scannedBuildArtifacts` / `additionalPaths`
+ * round trips.
+ */
+const CODE_DEMO_PROP_FILES_CAP = 20;
+
+/**
+ * Builds the `jsx_code_demo_prop_parsed_as_live_dom` payload from the
+ * caller-supplied per-file map. Returns `undefined` when the map is
+ * absent or empty so the dispatch table conditional-spreads the entry
+ * away — the warning code's predicate fires off the same map, so the
+ * payload-and-code never disagree (per AI-first doctrine "Empty
+ * `warningsDetails.<code>: {}` is dishonest").
+ *
+ * Per-file `{ path, propNames, matchCount }` entries are sorted-
+ * ascending by path for deterministic wire shape; `propNames` per file
+ * is de-duplicated and sorted-ascending so a multi-prop file's evidence
+ * stays canonical across runs. The corpus-level `propNames` is the
+ * flattened, de-duplicated, sorted-ascending union — surfaced
+ * separately so an agent can branch on the corpus shape without
+ * walking the per-file array. `fileCount` is the unaggregated total
+ * (distinct from `files.length` only when the cap trims).
+ */
+function summarizeJsxCodeDemoPropParsedAsLiveDom(
+  matches: WarningInputs["codeDemoPropMatches"],
+): NonNullable<ScanWarningDetails["jsx_code_demo_prop_parsed_as_live_dom"]> | undefined {
+  if (matches === undefined || matches.size === 0) return undefined;
+  const fileEntries: { path: string; propNames: string[]; matchCount: number }[] = [];
+  const corpusPropNames = new Set<string>();
+  for (const [path, perFile] of matches) {
+    if (perFile.length === 0) continue;
+    const perFilePropNames = new Set<string>();
+    for (const m of perFile) {
+      perFilePropNames.add(m.propName);
+      corpusPropNames.add(m.propName);
+    }
+    fileEntries.push({
+      path,
+      propNames: [...perFilePropNames].sort(),
+      matchCount: perFile.length,
+    });
+  }
+  if (fileEntries.length === 0) return undefined;
+  fileEntries.sort((a, b) => a.path.localeCompare(b.path));
+  const fileCount = fileEntries.length;
+  const trimmed = fileEntries.slice(0, CODE_DEMO_PROP_FILES_CAP);
+  return {
+    fileCount,
+    files: trimmed,
+    propNames: [...corpusPropNames].sort(),
+  };
+}
 
 /**
  * Hard cap on the number of `topFiles` entries surfaced on

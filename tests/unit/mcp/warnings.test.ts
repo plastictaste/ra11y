@@ -3951,6 +3951,165 @@ describe("computeScanWarnings — js_innerhtml_template_literal_unparsed", () =>
 });
 
 // ---------------------------------------------------------------------------
+// jsx_code_demo_prop_parsed_as_live_dom — emission predicate + payload
+// ---------------------------------------------------------------------------
+// Inverse-shape sibling of `js_innerhtml_template_literal_unparsed` —
+// that code names parser DROPS (routing-skip failure mode); this code
+// names parser DESCENDS (the MDX adapter's `extractMdxExampleCode`
+// pass synthesized rhetorical-preview JSX from a docs-component
+// code-demo prop's template body). Both share the doctrine bullet
+// "Routing skips that drop content are the symmetric twin of
+// suppression" — under-parsing is silent miss; over-surfacing on
+// rhetorical substrate is silent budget burn — so each gets a distinct
+// telemetry code so the agent can route on each axis independently.
+
+describe("computeScanWarnings — jsx_code_demo_prop_parsed_as_live_dom", () => {
+  it("fires when codeDemoPropMatches carries at least one entry", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 8,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".mdx": 8 },
+      codeDemoPropMatches: new Map([
+        [
+          "/proj/docs/forms.mdx",
+          [
+            {
+              propName: "code",
+              tagName: "Example",
+              propLine: 12,
+              bodyStartLine: 12,
+              bodyEndLine: 18,
+            },
+          ],
+        ],
+      ]),
+    });
+    expect(codes).toContain("jsx_code_demo_prop_parsed_as_live_dom");
+  });
+
+  it("does NOT fire when codeDemoPropMatches is undefined", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 8,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".mdx": 8 },
+    });
+    expect(codes ?? []).not.toContain("jsx_code_demo_prop_parsed_as_live_dom");
+  });
+
+  it("does NOT fire when codeDemoPropMatches is an empty map", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 8,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".mdx": 8 },
+      codeDemoPropMatches: new Map(),
+    });
+    expect(codes ?? []).not.toContain("jsx_code_demo_prop_parsed_as_live_dom");
+  });
+
+  it("payload carries fileCount, files, and corpus-level propNames union", () => {
+    const out = warningsField({
+      filesScanned: 8,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".mdx": 8 },
+      codeDemoPropMatches: new Map([
+        [
+          "/proj/docs/forms.mdx",
+          [
+            {
+              propName: "code",
+              tagName: "Example",
+              propLine: 12,
+              bodyStartLine: 12,
+              bodyEndLine: 18,
+            },
+            {
+              propName: "code",
+              tagName: "Example",
+              propLine: 30,
+              bodyStartLine: 30,
+              bodyEndLine: 35,
+            },
+          ],
+        ],
+        [
+          "/proj/docs/cards.mdx",
+          [
+            {
+              propName: "template",
+              tagName: "Demo",
+              propLine: 5,
+              bodyStartLine: 5,
+              bodyEndLine: 9,
+            },
+          ],
+        ],
+      ]),
+    });
+    expect(out.warnings).toContain("jsx_code_demo_prop_parsed_as_live_dom");
+    const detail = out.warningsDetails?.jsx_code_demo_prop_parsed_as_live_dom;
+    expect(detail).toBeDefined();
+    expect(detail?.fileCount).toBe(2);
+    expect(detail?.files.length).toBe(2);
+    // Sorted-ascending by path.
+    expect(detail?.files[0]?.path).toBe("/proj/docs/cards.mdx");
+    expect(detail?.files[1]?.path).toBe("/proj/docs/forms.mdx");
+    // Per-file matchCount reflects the descent count.
+    expect(detail?.files[1]?.matchCount).toBe(2);
+    // Per-file propNames is deduped + sorted.
+    expect(detail?.files[1]?.propNames).toEqual(["code"]);
+    // Corpus-level propNames is the union, deduped + sorted.
+    expect(detail?.propNames).toEqual(["code", "template"]);
+  });
+
+  it("payload caps the per-file slice while preserving fileCount", () => {
+    // Force the slice past the cap by submitting > 20 files.
+    const matches = new Map<
+      string,
+      readonly {
+        readonly propName: string;
+        readonly tagName: string;
+        readonly propLine: number;
+        readonly bodyStartLine: number;
+        readonly bodyEndLine: number;
+      }[]
+    >();
+    for (let i = 0; i < 25; i += 1) {
+      matches.set(`/proj/docs/file-${i.toString().padStart(2, "0")}.mdx`, [
+        {
+          propName: "code",
+          tagName: "Example",
+          propLine: 1,
+          bodyStartLine: 1,
+          bodyEndLine: 3,
+        },
+      ]);
+    }
+    const out = warningsField({
+      filesScanned: 25,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".mdx": 25 },
+      codeDemoPropMatches: matches,
+    });
+    const detail = out.warningsDetails?.jsx_code_demo_prop_parsed_as_live_dom;
+    expect(detail).toBeDefined();
+    // fileCount carries the unaggregated total
+    expect(detail?.fileCount).toBe(25);
+    // Per-file array trimmed to the cap.
+    expect(detail?.files.length).toBeLessThanOrEqual(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // linked_stylesheet_local_unresolved — emission predicate + payload
 // ---------------------------------------------------------------------------
 // Scanning HTML files that link to a relative-path stylesheet not in

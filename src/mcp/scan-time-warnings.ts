@@ -124,6 +124,15 @@ export interface ScanTimeWarningInputs {
     readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
   >;
   /**
+   * Per-file MDX code-demo prop matches produced by
+   * {@link import("../input/parsers/mdx-example-extractor.ts").detectCodeDemoPropMatches}.
+   * Drives the `jsx_code_demo_prop_parsed_as_live_dom` warning + paired
+   * payload. Pass `undefined` / empty map when the tool didn't run the
+   * detector or no `.mdx` file in scope declared a docs-allow-list
+   * component with a pure-template-literal code-demo prop.
+   */
+  readonly codeDemoPropMatches?: WarningInputs["codeDemoPropMatches"];
+  /**
    * Per-tool latency. Drives `bulk_catalog_detected`'s slow path; the
    * deterministic bulk path (`filesScanned > BULK_FILES_SCANNED_FLOOR`)
    * stays cross-surface. Pass `undefined` when the tool does not
@@ -645,6 +654,9 @@ function buildWarningsFieldInputs(
       ? {}
       : { animationLibraryGuardCandidates: derived.animationLibraryGuardCandidates }),
     ...inlineHtmlInputs(inputs.jsInnerHtmlDeclinedCount, derived.jsInnerHtmlFileSamples),
+    ...(inputs.codeDemoPropMatches === undefined || inputs.codeDemoPropMatches.size === 0
+      ? {}
+      : { codeDemoPropMatches: inputs.codeDemoPropMatches }),
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
