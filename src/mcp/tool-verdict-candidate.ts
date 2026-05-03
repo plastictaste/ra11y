@@ -31,6 +31,17 @@ import {
   textResult,
 } from "./tools-helpers.ts";
 
+/**
+ * Result of resolving the caller's exactly-one-of input choice
+ * (`candidate` hand-built shape vs. `candidateId` shortcut). Returned
+ * by {@link resolveCandidateInput} so the handler can early-return a
+ * structured `invalid-param` / `candidate-id-lookup-unavailable`
+ * envelope rather than silently coercing one into the other.
+ */
+type CandidateResolution =
+  | { readonly ok: true; readonly candidate: CandidateInput }
+  | { readonly ok: false; readonly result: McpToolResult };
+
 /** Structured verdict emitted when the host answered the sampling call. */
 interface VerdictBody {
   readonly status: "pass" | "fail" | "unclear";
@@ -76,10 +87,15 @@ export const verdictCandidateTool: McpTool = {
   def: {
     name: "verdict_candidate",
     description:
-      "Ask the host's LLM — via MCP sampling — to verdict a single manual-review candidate pass/fail (or honest `unclear`) with reasoning. Input: the candidate (`criterionId`, optional `criteria` cross-criterion union, `location`, `reason`, optional `snippet`) plus the finder's `reviewPrompt` and optional inline `sourceContent`. Output: `{ criterionId, criteria?, status, reasoning, confidence, citations? }` plus `_meta.samplingModelHint` when the host exposes its model id. When the input candidate carries `criteria: [...ids]` (the by-row dedup surface emits this when one finder declares multiple criterion IDs), the response echoes the array so one verdict applies to every listed criterion atomically — same evidence, one agent action.\n\nOn hosts without sampling capability, the response degrades to `status: \"cannot_verdict\"` + `verdictPromptForAgent` — the full prompt the agent can run inline against its own model. Point-query tool: no file walking, no scanning — caller provides the grounding. Pair with `review_candidates` to enumerate candidates first.",
+      "Ask the host's LLM — via MCP sampling — to verdict a single manual-review candidate pass/fail (or honest `unclear`) with reasoning. Two input shapes (exactly one is required): (a) the full hand-built `candidate` (`criterionId`, optional `criteria` cross-criterion union, `location`, `reason`, optional `snippet`); (b) the `candidateId` shortcut — the `findingId` from a prior `checklist` / `review_candidates` / `scan_file` row, back-loading the candidate's location + reason + snippet on the server side so the caller doesn't re-stitch six fields per row. Both forms accept the finder's `reviewPrompt` and optional inline `sourceContent`. Output: `{ criterionId, criteria?, status, reasoning, confidence, citations? }` plus `_meta.samplingModelHint` when the host exposes its model id. When the candidate carries `criteria: [...ids]` (the by-row dedup surface emits this when one finder declares multiple criterion IDs), the response echoes the array so one verdict applies to every listed criterion atomically — same evidence, one agent action.\n\nOn hosts without sampling capability, the response degrades to `status: \"cannot_verdict\"` + `verdictPromptForAgent` — the full prompt the agent can run inline against its own model. Point-query tool: no file walking, no scanning — caller provides the grounding (the `candidateId` shortcut delegates that grounding to the server-side lookup once the cross-tool index is wired). Pair with `review_candidates` to enumerate candidates first. Errors structurally on `{candidate, candidateId}` ambiguity (both supplied) or absence (neither supplied) — silent coercion would risk verdicting against the wrong row.",
     inputSchema: {
       type: "object",
       properties: {
+        candidateId: {
+          type: "string",
+          description:
+            "Server-stable `findingId` returned by `checklist.items[].candidates[].findingId`, `review_candidates.candidates[].findingId`, or `scan_file.reviewCandidates[].findingId`. Pass this to back-load the candidate's `criterionId` / `location` / `reason` / `snippet` from the prior call rather than hand-stitching six fields. Mutually exclusive with `candidate` — supplying both errors structurally with `code: invalid-param`. Note: the cross-tool persistence layer that resolves the id back to a candidate object lands separately (see `notes` on the response when this path is exercised); until then, calls passing `candidateId` return a structured `candidate-id-lookup-unavailable` error pointing the caller at the hand-built `candidate` form. The shape is reserved now so callers can pin against it before the lookup ships.",
+        },
         candidate: {
           type: "object",
           description:
@@ -139,21 +155,16 @@ export const verdictCandidateTool: McpTool = {
             "Optional per-call timeout override for the sampling roundtrip. Defaults to the sampling helper's 60s.",
         },
       },
-      required: ["candidate", "reviewPrompt"],
+      // `reviewPrompt` is always required; `candidate` and `candidateId`
+      // form an exactly-one-of pair enforced inside the handler (a
+      // schema-level `oneOf` would reject silently with no structured
+      // code, so we validate at runtime and emit a typed `invalid-param`
+      // body — same shape as every other handler-side rejection).
+      required: ["reviewPrompt"],
     },
     annotations: { readOnlyHint: true, idempotentHint: false },
   },
   handler(params, session) {
-    const candidateRaw = params["candidate"];
-    const candidate = parseCandidate(candidateRaw);
-    if (candidate === null) {
-      return errorResult({
-        code: "invalid-param",
-        message:
-          "candidate must be an object with `criterionId`, `location: { filePath, line }`, and `reason`.",
-        details: { param: "candidate" },
-      });
-    }
     const reviewPrompt = strParam(params, "reviewPrompt");
     if (!reviewPrompt) {
       return errorResult({
@@ -162,6 +173,9 @@ export const verdictCandidateTool: McpTool = {
         details: { param: "reviewPrompt" },
       });
     }
+    const resolution = resolveCandidateInput(params);
+    if (!resolution.ok) return resolution.result;
+    const candidate = resolution.candidate;
     const sourceContent = strParam(params, "sourceContent");
     const timeoutMsRaw = params["timeoutMs"];
     const timeoutMs = typeof timeoutMsRaw === "number" ? timeoutMsRaw : undefined;
@@ -171,6 +185,105 @@ export const verdictCandidateTool: McpTool = {
     return runVerdict(session, promptText, candidate, timeoutMs);
   },
 };
+
+/**
+ * Resolve the caller's exactly-one-of input choice: either the
+ * hand-built `candidate` object (the original surface) or the
+ * `candidateId` shortcut (back-loads the candidate from a prior
+ * `checklist` / `review_candidates` / `scan_file` row).
+ *
+ * The two forms are mutually exclusive — supplying both is dishonest
+ * (the agent thinks one fed the verdict; the server picks; the
+ * disagreement is silent), so it errors with a structured
+ * `invalid-param` per the AI-first consumer doctrine "Ambiguous field
+ * shapes are dishonest." Supplying neither is the same shape error.
+ *
+ * On the `candidateId` path: the cross-tool persistence layer (the
+ * server-side index that resolves a `findingId` back to its full
+ * candidate object) hasn't been wired yet — see CLAUDE.md §1
+ * "Per-tool review-candidate shape must agree across surfaces" for the
+ * shape contract that index will service. Until that lands, we
+ * accept the param shape (so callers can pin against it) but return a
+ * structured `candidate-id-lookup-unavailable` error pointing at the
+ * hand-built form. Reserving the shape now means the wire format
+ * doesn't shift when the lookup arrives — only the error path turns
+ * into a real resolve.
+ */
+function resolveCandidateInput(params: Record<string, unknown>): CandidateResolution {
+  const hasCandidate = Object.hasOwn(params, "candidate") && params["candidate"] !== undefined;
+  const hasCandidateId =
+    Object.hasOwn(params, "candidateId") && params["candidateId"] !== undefined;
+  if (hasCandidate && hasCandidateId) {
+    return {
+      ok: false,
+      result: errorResult({
+        code: "invalid-param",
+        message:
+          "Pass exactly one of `candidate` (hand-built shape) or `candidateId` (shortcut). Supplying both is ambiguous — the verdict surface cannot tell which one to ground against.",
+        details: { param: "candidate|candidateId", received: "both" },
+        remediation:
+          "Remove one of `candidate` / `candidateId` and retry. Use `candidateId` when threading a `findingId` from a prior `checklist` / `review_candidates` / `scan_file` row; use the hand-built `candidate` when constructing the candidate locally.",
+      }),
+    };
+  }
+  if (!hasCandidate && !hasCandidateId) {
+    return {
+      ok: false,
+      result: errorResult({
+        code: "missing-required-param",
+        message:
+          "One of `candidate` (hand-built shape) or `candidateId` (shortcut from a prior call) is required.",
+        details: { param: "candidate|candidateId", received: "neither" },
+        remediation:
+          "Pass `candidate: { criterionId, location, reason, ... }` for the hand-built form, or `candidateId: <findingId>` to back-load the candidate from a prior `checklist` / `review_candidates` / `scan_file` response.",
+      }),
+    };
+  }
+  if (hasCandidateId) {
+    const candidateIdRaw = params["candidateId"];
+    if (typeof candidateIdRaw !== "string" || candidateIdRaw.length === 0) {
+      return {
+        ok: false,
+        result: errorResult({
+          code: "invalid-param",
+          message: "`candidateId` must be a non-empty string.",
+          details: { param: "candidateId", received: typeof candidateIdRaw },
+        }),
+      };
+    }
+    // Cross-tool persistence layer not yet wired (see jsdoc above).
+    // Per AI-first doctrine, the shape is reserved so callers can pin
+    // the shortcut form before the lookup ships — but the call cannot
+    // be honored on this build. Structured-error rather than silent
+    // fall-through so the agent learns to use the hand-built form
+    // until the lookup index lands.
+    return {
+      ok: false,
+      result: errorResult({
+        code: "candidate-id-lookup-unavailable",
+        message:
+          "`candidateId` shortcut accepted but the server-side lookup index is not yet wired. Pass the full hand-built `candidate` object instead.",
+        details: { param: "candidateId", received: candidateIdRaw },
+        remediation:
+          "Reconstruct the `candidate` shape from the prior `checklist` / `review_candidates` row: `{ criterionId, location: { filePath, line, column? }, reason, snippet?, criteria? }`. The `candidateId` shortcut will start resolving once the cross-tool persistence layer ships; until then the shape is reserved for forward-compat but cannot be serviced.",
+      }),
+    };
+  }
+  // Hand-built path — validate the candidate object and pass through.
+  const candidate = parseCandidate(params["candidate"]);
+  if (candidate === null) {
+    return {
+      ok: false,
+      result: errorResult({
+        code: "invalid-param",
+        message:
+          "candidate must be an object with `criterionId`, `location: { filePath, line }`, and `reason`.",
+        details: { param: "candidate" },
+      }),
+    };
+  }
+  return { ok: true, candidate };
+}
 
 /**
  * Drives the sampling call and shapes the response. Kept separate so

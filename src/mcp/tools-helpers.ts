@@ -143,7 +143,17 @@ export type StructuredErrorCode =
   // audit meta-tool: one of the sub-handlers rejected instead of
   // returning an McpToolResult. Distinct from -unparseable so agents
   // can tell "handler threw" from "handler answered with garbage."
-  | "audit-sub-tool-threw";
+  | "audit-sub-tool-threw"
+  // verdict_candidate: caller supplied `candidateId` to back-load a
+  // candidate from a prior `checklist`/`review_candidates` call, but
+  // the cross-tool persistence layer hasn't been wired yet — the id
+  // shape is accepted for forward-compat (so callers can pin the
+  // shortcut form before the lookup lands) but cannot be resolved.
+  // Distinct from `invalid-param` because the param shape is honest;
+  // the server simply can't service it on this build. Remediation:
+  // pass the full hand-built `candidate` shape until the lookup
+  // index ships.
+  | "candidate-id-lookup-unavailable";
 
 /** Structured-error envelope — emitted via `structuredContent` + `isError: true`. */
 export interface StructuredError {
