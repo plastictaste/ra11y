@@ -52,7 +52,15 @@ import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import { gitRoot } from "../utils/git.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
-import { type McpTool, parseFiles, strArrayParam, strParam, textResult } from "./tools-helpers.ts";
+import { requireStringArrayParam } from "./param-validators.ts";
+import {
+  errorResult,
+  type McpTool,
+  parseFiles,
+  strArrayParam,
+  strParam,
+  textResult,
+} from "./tools-helpers.ts";
 import { type ActiveNativeWrapper, resolveWrapperSources } from "./wrappers-meta.ts";
 
 /**
@@ -97,6 +105,11 @@ export const listSuppressionsTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Up-front type validation: `additionalPaths: "src"` (single string)
+    // used to silently degrade to no-additional-scope, indistinguishable
+    // from "I scoped to root and got these results."
+    const additionalPathsCheck = requireStringArrayParam(params, "additionalPaths");
+    if (!additionalPathsCheck.ok) return errorResult(additionalPathsCheck.error);
     const explicitCwd = strParam(params, "cwd");
     const spawnCwd = process.cwd();
     const hostRoot = explicitCwd === undefined ? session.firstRootPath() : null;

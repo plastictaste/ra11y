@@ -37,6 +37,7 @@ import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
 import type { SnippetLanguage } from "../utils/source-snippet.ts";
+import { requireBooleanParam } from "./param-validators.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
 import { errorResult, type McpToolResult, strParam } from "./tools-helpers.ts";
@@ -102,6 +103,13 @@ export async function preflightValidate(
       }),
     };
   }
+  // Type-validate `dryRun` up front. The previous `!== false` guard
+  // silently coerced wrong-type inputs (`dryRun: "false"`) to true,
+  // leaving the agent's "actually write" intent locked into dry-run
+  // mode. Reject so the caller resends a real boolean. Same closure
+  // pattern as `configure-opts.ts.allowWrite`.
+  const dryRunCheck = requireBooleanParam(params, "dryRun");
+  if (!dryRunCheck.ok) return { error: errorResult(dryRunCheck.error) };
   const filePathParam = strParam(params, "file");
   if (!filePathParam || filePathParam.length === 0) {
     return {

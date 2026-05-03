@@ -94,6 +94,7 @@ import { gitRoot } from "../utils/git.ts";
 import { compileGlobs } from "../utils/glob.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { requireStringArrayParam } from "./param-validators.ts";
 import {
   buildProposedEntries,
   buildProposedNextStep,
@@ -108,6 +109,7 @@ import {
   type McpTool,
   parseFiles,
   resolveStandards,
+  type StructuredError,
   strArrayParam,
   strParam,
   textResult,
@@ -145,6 +147,12 @@ export const proposeBaselineTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Up-front type validation: a wrong-type
+    // `legacyRoutes: "packages/legacy/**"` (single string) used to
+    // silently degrade to no-classification, indistinguishable from "I
+    // passed an empty array."
+    const paramTypeError = validateProposeBaselineParamTypes(params);
+    if (paramTypeError !== undefined) return errorResult(paramTypeError);
     const explicitCwd = strParam(params, "cwd");
     if (explicitCwd !== undefined && !existsSync(explicitCwd)) {
       return errorResult({
@@ -264,3 +272,20 @@ export const proposeBaselineTool: McpTool = {
     });
   },
 };
+
+/**
+ * Up-front type validation for the `propose_baseline` handler. Closes
+ * the silent-drop class for `legacyRoutes` / `designSystemPaths` —
+ * wrong-type inputs (single string instead of array) used to silently
+ * degrade to no-classification, indistinguishable from "I passed an
+ * empty array."
+ */
+function validateProposeBaselineParamTypes(
+  params: Record<string, unknown>,
+): StructuredError | undefined {
+  const legacyRoutes = requireStringArrayParam(params, "legacyRoutes");
+  if (!legacyRoutes.ok) return legacyRoutes.error;
+  const designSystemPaths = requireStringArrayParam(params, "designSystemPaths");
+  if (!designSystemPaths.ok) return designSystemPaths.error;
+  return undefined;
+}

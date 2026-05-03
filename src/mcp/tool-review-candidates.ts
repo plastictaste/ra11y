@@ -26,6 +26,7 @@ import { runScan } from "../engine/scanner.ts";
 import type { CandidateFinder } from "../types/review.ts";
 import type { Standard } from "../types/standard.ts";
 import { buildSnippetForReason, type SourceEntry, sourceIndex } from "../utils/source-snippet.ts";
+import { requireStringArrayParam } from "./param-validators.ts";
 import {
   dedupeReviewCandidatesByReason,
   type ReasonDedupedCandidate,
@@ -74,6 +75,11 @@ export const reviewCandidatesTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Up-front type validation: a wrong-type `paths: "src"` (single
+    // string) used to silently fall through to scanning `cwd`,
+    // indistinguishable from "I asked for the whole tree."
+    const pathsCheck = requireStringArrayParam(params, "paths");
+    if (!pathsCheck.ok) return errorResult(pathsCheck.error);
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 

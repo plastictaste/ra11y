@@ -51,6 +51,7 @@ import { existsSync } from "node:fs";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
 import { gitRoot } from "../utils/git.ts";
 import { detectForeignEcosystem, type ForeignEcosystem } from "./ecosystem-detect.ts";
+import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { baselineTool } from "./tool-baseline.ts";
 import { detectNativeWrappersTool } from "./tool-detect-wrappers.ts";
@@ -60,6 +61,7 @@ import {
   errorResult,
   type McpTool,
   type McpToolResult,
+  type StructuredError,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
@@ -97,6 +99,13 @@ export const bootstrapTool: McpTool = {
     annotations: { idempotentHint: true },
   },
   async handler(params, session) {
+    // Type-check `writeBaseline` and `additionalPaths` up front. A
+    // wrong-type `writeBaseline: "true"` (string) used to silently
+    // leave the baseline un-written, and the agent would see
+    // `baseline_dry_run` in warnings indistinguishable from "I asked
+    // for dry-run." Same shape as `configure-opts.ts.allowWrite`.
+    const paramTypeError = validateBootstrapParamTypes(params);
+    if (paramTypeError !== undefined) return errorResult(paramTypeError);
     const explicitCwd = strParam(params, "cwd");
     if (explicitCwd !== undefined && !existsSync(explicitCwd)) {
       return errorResult({
@@ -248,6 +257,21 @@ export const bootstrapTool: McpTool = {
 interface WrappersSubset {
   readonly candidates: readonly unknown[];
   readonly suggestedConfigSnippet?: string;
+}
+
+/**
+ * Up-front type validation for the `bootstrap` handler. Closes the
+ * silent-drop class for `writeBaseline` and `additionalPaths` —
+ * wrong-type inputs used to silently fall through (writeBaseline:
+ * "true" stayed dry-run; additionalPaths: "dist" stayed empty).
+ * Mirrors `configure-opts.ts.allowWrite`.
+ */
+function validateBootstrapParamTypes(params: Record<string, unknown>): StructuredError | undefined {
+  const writeBaseline = requireBooleanParam(params, "writeBaseline");
+  if (!writeBaseline.ok) return writeBaseline.error;
+  const additionalPaths = requireStringArrayParam(params, "additionalPaths");
+  if (!additionalPaths.ok) return additionalPaths.error;
+  return undefined;
 }
 
 function settledRecord(

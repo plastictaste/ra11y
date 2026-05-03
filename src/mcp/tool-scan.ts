@@ -19,6 +19,7 @@ import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
+import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { pathExists } from "./path-exists.ts";
 import { assembleScanFamilyResponse } from "./response-assembler.ts";
 import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
@@ -31,6 +32,7 @@ import {
   type McpTool,
   parseFiles,
   resolveStandards,
+  type StructuredError,
   strArrayParam,
   strParam,
   textResult,
@@ -85,14 +87,18 @@ export const scanTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
-    const paths = strArrayParam(params, "paths");
-    if (!paths || paths.length === 0) {
-      return errorResult({
-        code: "missing-required-param",
-        message: "paths must be a non-empty array of file or directory paths.",
-        details: { param: "paths" },
-      });
-    }
+    // Up-front type validation. A wrong-type `paths: "src"` (single
+    // string) used to be silently dropped to `undefined` and the
+    // handler reported the missing-required-param error, but a
+    // wrong-type `verboseMeta: 1` slipped through silently and dropped
+    // verbose meta. Closing both paths uniformly via the discriminated
+    // helpers per the AI-first consumer doctrine.
+    const paramError = validateScanParams(params);
+    if (paramError !== undefined) return errorResult(paramError);
+    // `validateScanParams` enforces the type + presence shape; cast
+    // through `strArrayParam` to land the validated value on the typed
+    // local without re-running the check inline.
+    const paths = strArrayParam(params, "paths") as readonly string[];
 
     const cwd = strParam(params, "cwd") ?? process.cwd();
     // Hard-error envelope when every caller-supplied path is missing on
@@ -282,3 +288,28 @@ export const scanTool: McpTool = {
     );
   },
 };
+
+/**
+ * Up-front type + required-param validation for the `scan` handler.
+ * Closes the silent-drop class for `paths` / `verboseMeta` per the
+ * AI-first consumer doctrine — wrong-type inputs used to fall through
+ * to defaults (verboseMeta) or to the missing-required-param error
+ * (paths) without the agent learning what shape the helper actually
+ * expected. Combines the type check with the presence check for
+ * `paths` so the handler keeps a single early-return.
+ */
+function validateScanParams(params: Record<string, unknown>): StructuredError | undefined {
+  const pathsCheck = requireStringArrayParam(params, "paths");
+  if (!pathsCheck.ok) return pathsCheck.error;
+  const paths = pathsCheck.value;
+  if (paths === undefined || paths.length === 0) {
+    return {
+      code: "missing-required-param",
+      message: "paths must be a non-empty array of file or directory paths.",
+      details: { param: "paths" },
+    };
+  }
+  const verboseMetaCheck = requireBooleanParam(params, "verboseMeta");
+  if (!verboseMetaCheck.ok) return verboseMetaCheck.error;
+  return undefined;
+}

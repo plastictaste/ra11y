@@ -39,6 +39,7 @@ import {
 import { logger } from "../utils/logger.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { applyScanDiffTokenBudget } from "./scan-diff-budget.ts";
 import { scannedProject } from "./scanned-envelope.ts";
@@ -52,6 +53,7 @@ import {
   resolveStandards,
   runScanAndFormat,
   type ScanFormatted,
+  type StructuredError,
   strArrayParam,
   strParam,
   textResult,
@@ -128,6 +130,12 @@ export const scanDiffTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   handler(params, session) {
+    // Type-validate boolean / array shape params up front. A wrong-type
+    // `hunksOnly: "true"` (string) used to silently fall through to
+    // baseline mode — the agent asked for hunks-mode and got the
+    // default with no signal. Same shape as `configure-opts.ts`.
+    const paramTypeError = validateScanDiffParamTypes(params);
+    if (paramTypeError !== undefined) return errorResult(paramTypeError);
     const explicitCwd = strParam(params, "cwd");
     const spawnCwd = process.cwd();
     const cwd = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
@@ -136,6 +144,25 @@ export const scanDiffTool: McpTool = {
     return handleBaselineMode(params, session, cwd);
   },
 };
+
+/**
+ * Up-front type validation for the `scan_diff` handler. Closes the
+ * silent-drop class for `hunksOnly` / `verboseMeta` / `changedOnly`
+ * (boolean) and `additionalPaths` (string-array) — wrong-type inputs
+ * used to fall through to defaults, leaving the agent with a response
+ * shaped like the wrong mode.
+ */
+function validateScanDiffParamTypes(params: Record<string, unknown>): StructuredError | undefined {
+  const hunksOnly = requireBooleanParam(params, "hunksOnly");
+  if (!hunksOnly.ok) return hunksOnly.error;
+  const verboseMeta = requireBooleanParam(params, "verboseMeta");
+  if (!verboseMeta.ok) return verboseMeta.error;
+  const changedOnly = requireBooleanParam(params, "changedOnly");
+  if (!changedOnly.ok) return changedOnly.error;
+  const additionalPaths = requireStringArrayParam(params, "additionalPaths");
+  if (!additionalPaths.ok) return additionalPaths.error;
+  return undefined;
+}
 
 /**
  * Baseline mode — the original `scan_diff` behavior, preserved as the

@@ -43,6 +43,7 @@ import {
   type NextStepStructured,
   shouldRerouteToBulkVendorScopeDown,
 } from "./next-step.ts";
+import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
@@ -77,12 +78,14 @@ import {
   collectManualCriteria,
   errorResult,
   type McpTool,
+  type McpToolResult,
   ms,
   parseExplicitPaths,
   parseFilesWithDiagnostics,
   resolveStandards,
   runScanAndFormat,
   type ScanFormatted,
+  type StructuredError,
   type StructuredErrorCode,
   strArrayParam,
   strParam,
@@ -186,9 +189,15 @@ export const scanProjectTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Reject type-mismatched inputs and missing-cwd up front in one
+    // pass. A caller sending `autoDetectWrappers: "true"` (string) or
+    // `additionalPaths: "src"` (single string) under the previous
+    // loose guards got back a successful response that honored none
+    // of the requested settings, indistinguishable from "I never
+    // asked." Closes the silent-drop class for this handler.
     const explicitCwd = strParam(params, "cwd");
-    const cwdError = checkCwdExists(explicitCwd);
-    if (cwdError) return cwdError;
+    const earlyError = scanProjectEarlyValidation(params, explicitCwd);
+    if (earlyError !== undefined) return earlyError;
     // When cwd isn't passed, prefer a host-declared root (MCP
     // `roots` capability) over the spawn directory's git root. The
     // host is the best arbiter of "what project is active right now"
@@ -1522,6 +1531,54 @@ type ScanScope =
  *       - any result            → scan those paths as `since:<ref>`.
  *   - neither flag              → full scan of `root`.
  */
+/**
+ * Up-front type validation for `scan_project` boolean / string-array
+ * params. Closes the silent-drop class for this handler: a caller that
+ * sends `autoDetectWrappers: "true"` (string), `additionalPaths: "src"`
+ * (single string instead of array), or `verboseMeta: 1` (number) used
+ * to slip past the loose `=== true` / `Array.isArray` guards and the
+ * response shape echoed defaults — indistinguishable from "I never
+ * asked." Mirrors the closure pattern `configure-opts.ts.allowWrite`
+ * shipped for `sessionConfigure`. Range checks (`limit`, `offset`)
+ * stay at their existing call sites; this helper enforces type honesty
+ * only.
+ */
+function validateScanProjectParamTypes(
+  params: Record<string, unknown>,
+): StructuredError | undefined {
+  const autoDetect = requireBooleanParam(params, "autoDetectWrappers");
+  if (!autoDetect.ok) return autoDetect.error;
+  const verboseMeta = requireBooleanParam(params, "verboseMeta");
+  if (!verboseMeta.ok) return verboseMeta.error;
+  const collapseByGroup = requireBooleanParam(params, "collapseByGroupKey");
+  if (!collapseByGroup.ok) return collapseByGroup.error;
+  const changedOnly = requireBooleanParam(params, "changedOnly");
+  if (!changedOnly.ok) return changedOnly.error;
+  const additionalPaths = requireStringArrayParam(params, "additionalPaths");
+  if (!additionalPaths.ok) return additionalPaths.error;
+  const restrictToPaths = requireStringArrayParam(params, "restrictToPaths");
+  if (!restrictToPaths.ok) return restrictToPaths.error;
+  const skipCriterion = requireStringArrayParam(params, "skipCriterion");
+  if (!skipCriterion.ok) return skipCriterion.error;
+  return undefined;
+}
+
+/**
+ * Compose the up-front validation channels into one call site so the
+ * handler keeps a single early-return. Combines the param-type check
+ * with the existing `checkCwdExists` envelope; either branch produces
+ * a {@link McpToolResult} the handler returns directly.
+ */
+function scanProjectEarlyValidation(
+  params: Record<string, unknown>,
+  explicitCwd: string | undefined,
+): McpToolResult | undefined {
+  const paramTypeError = validateScanProjectParamTypes(params);
+  if (paramTypeError !== undefined) return errorResult(paramTypeError);
+  const cwdError = checkCwdExists(explicitCwd);
+  return cwdError === null ? undefined : cwdError;
+}
+
 function resolveScanScope(params: Record<string, unknown>, root: string): ScanScope {
   const changedOnly = (params as { changedOnly?: unknown }).changedOnly === true;
   const since = strParam(params, "since");

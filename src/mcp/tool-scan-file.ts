@@ -30,6 +30,7 @@ import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
+import { requireBooleanParam } from "./param-validators.ts";
 import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
@@ -117,6 +118,12 @@ export const scanFileTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Up-front type check: a wrong-type `verboseMeta` (e.g. `1`,
+    // `"true"`) used to be silently treated as `false` and the
+    // expanded meta block never shipped. Closes the silent-drop class
+    // for this handler.
+    const verboseMetaCheck = requireBooleanParam(params, "verboseMeta");
+    if (!verboseMetaCheck.ok) return errorResult(verboseMetaCheck.error);
     const filePath = strParam(params, "path");
     if (!filePath || filePath.length === 0) {
       return errorResult({

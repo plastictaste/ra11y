@@ -20,6 +20,7 @@
 
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { relative } from "node:path";
+import { requireBooleanParam } from "./param-validators.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -261,6 +262,13 @@ async function preflight(
       }),
     };
   }
+  // Type-validate `dryRun` early so a wrong-type input is rejected
+  // before any file I/O. The previous `!== false` guard silently
+  // coerced `dryRun: "false"` (string) to true, leaving the caller's
+  // "actually suppress" intent locked in dry-run mode. Same closure
+  // pattern as `configure-opts.ts.allowWrite`.
+  const dryRunCheck = requireBooleanParam(params, "dryRun");
+  if (!dryRunCheck.ok) return { error: errorResult(dryRunCheck.error) };
   const paramGuard = readRequiredStringParams(params);
   if ("error" in paramGuard) return paramGuard;
   const { file, ruleId, reason } = paramGuard;
@@ -321,8 +329,10 @@ async function preflight(
   }
   // `dryRun: true` is the safe default so a mis-pasted line or
   // ruleId can be caught without touching disk — mirrors apply_fix.
-  // Strict check: the parameter must be explicit `false` to write.
-  const dryRun = params["dryRun"] !== false;
+  // Type validation of `dryRun` happened up front (see above); here we
+  // just normalize the validated value: explicit `false` writes,
+  // anything else (`undefined` / `true`) is dry-run.
+  const dryRun = dryRunCheck.value !== false;
   return { resolved, cwd, line: lineRaw, ruleId, reason, shape, source, dryRun };
 }
 

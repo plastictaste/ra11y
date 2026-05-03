@@ -18,6 +18,7 @@ import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import {
   buildSharedPerRuleCoverageMeta,
   type SharedPerRuleCoverageMetaResult,
@@ -36,6 +37,7 @@ import {
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
+  type StructuredError,
   strArrayParam,
   strParam,
   textResult,
@@ -78,6 +80,12 @@ export const coverageTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Type-check `paths` / `showUntargeted` / `verboseMeta` up front so
+    // wrong-type inputs surface as `invalid-param` rather than silently
+    // falling back to defaults. Mirrors `configure-opts.ts.allowWrite`'s
+    // closure of the same silent-drop class.
+    const paramTypeError = validateCoverageParamTypes(params);
+    if (paramTypeError !== undefined) return errorResult(paramTypeError);
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
@@ -722,6 +730,24 @@ export const coverageTool: McpTool = {
  * envelope is an object); the multi-standard array shape stays
  * unchanged until a concrete consumer needs opt-in there.
  */
+
+/**
+ * Up-front type validation for the `coverage` handler. Closes the
+ * silent-drop class for `paths` / `showUntargeted` / `verboseMeta` —
+ * wrong-type inputs used to fall through to defaults, leaving the
+ * agent's intent unhonored without any surface signal. Mirrors the
+ * closure pattern in `configure-opts.ts.allowWrite`.
+ */
+function validateCoverageParamTypes(params: Record<string, unknown>): StructuredError | undefined {
+  const showUntargeted = requireBooleanParam(params, "showUntargeted");
+  if (!showUntargeted.ok) return showUntargeted.error;
+  const verboseMeta = requireBooleanParam(params, "verboseMeta");
+  if (!verboseMeta.ok) return verboseMeta.error;
+  const paths = requireStringArrayParam(params, "paths");
+  if (!paths.ok) return paths.error;
+  return undefined;
+}
+
 function buildCoverageMetaField(args: {
   readonly params: Record<string, unknown>;
   readonly session: McpSession;

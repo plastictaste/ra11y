@@ -180,6 +180,11 @@ export function strArrayParam(params: Record<string, unknown>, key: string): str
   return Array.isArray(v) ? (v as string[]) : undefined;
 }
 
+// Strict type-validating helpers (`requireBooleanParam`,
+// `requireNumberParam`, `requireStringArrayParam`) live in
+// `param-validators.ts` to keep this file under its 500-effective-line
+// cap. Import them directly from that module.
+
 // ─── Result builders ────────────────────────────────────────────────────────
 
 export function textResult(data: unknown): McpToolResult {

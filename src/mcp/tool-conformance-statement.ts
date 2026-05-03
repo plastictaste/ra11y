@@ -37,6 +37,11 @@ import type { AttestationRecord } from "../types/evidence.ts";
 import { headSha } from "../utils/git.ts";
 import { VERSION } from "../version.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
+import {
+  requireBooleanParam,
+  requireNumberParam,
+  requireStringArrayParam,
+} from "./param-validators.ts";
 import { buildDerivativeScanWarnings } from "./response-assembler.ts";
 import {
   applyRuleSettings,
@@ -48,6 +53,7 @@ import {
   parseFiles,
   resolveLevel,
   resolveStandards,
+  type StructuredError,
   satisfyingRulesForCriterion,
   strArrayParam,
   strParam,
@@ -130,6 +136,12 @@ export const conformanceStatementTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
+    // Up-front type validation: a wrong-type `verboseMeta: 1` used to
+    // silently default to false (full file manifest never expanded);
+    // a wrong-type `scopeFilesCap: "100"` silently fell back to the
+    // 50-entry default. Mirrors `configure-opts.ts.allowWrite`.
+    const paramTypeError = validateConformanceStatementParamTypes(params);
+    if (paramTypeError !== undefined) return errorResult(paramTypeError);
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
@@ -231,6 +243,23 @@ export const conformanceStatementTool: McpTool = {
     });
   },
 };
+
+/**
+ * Up-front type validation for the `conformance_statement` handler.
+ * Closes the silent-drop class for `verboseMeta` / `scopeFilesCap` /
+ * `paths` per `configure-opts.ts.allowWrite`.
+ */
+function validateConformanceStatementParamTypes(
+  params: Record<string, unknown>,
+): StructuredError | undefined {
+  const verboseMeta = requireBooleanParam(params, "verboseMeta");
+  if (!verboseMeta.ok) return verboseMeta.error;
+  const scopeFilesCap = requireNumberParam(params, "scopeFilesCap");
+  if (!scopeFilesCap.ok) return scopeFilesCap.error;
+  const paths = requireStringArrayParam(params, "paths");
+  if (!paths.ok) return paths.error;
+  return undefined;
+}
 
 /**
  * Builds the `nextStep` hint for the agent. Splits the hard "not

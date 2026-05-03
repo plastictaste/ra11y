@@ -43,6 +43,11 @@ import {
 import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import {
+  requireBooleanParam,
+  requireNumberParam,
+  requireStringArrayParam,
+} from "./param-validators.ts";
+import {
   candidateHedges,
   couldBeWrongBecauseForVendorBuildArtifact,
 } from "./review-candidate-priority.ts";
@@ -61,6 +66,7 @@ import {
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
+  type StructuredError,
   strArrayParam,
   strParam,
   textResult,
@@ -680,6 +686,46 @@ function validateChecklistBounds(
 }
 
 /**
+ * Up-front type + range validation for the `checklist` handler. Type
+ * checks close the silent-drop class for boolean / number / array
+ * params (per `configure-opts.ts.allowWrite`'s pattern); the range
+ * rail then catches `< 1` on `limit` / `maxCandidatesPerCriterion`.
+ * Returns `undefined` when every check passes.
+ */
+function validateChecklistParams(params: Record<string, unknown>): StructuredError | undefined {
+  const numLimit = requireNumberParam(params, "limit");
+  if (!numLimit.ok) return numLimit.error;
+  const numOffset = requireNumberParam(params, "offset");
+  if (!numOffset.ok) return numOffset.error;
+  const numPerCriterion = requireNumberParam(params, "maxCandidatesPerCriterion");
+  if (!numPerCriterion.ok) return numPerCriterion.error;
+  const boolShowUntargeted = requireBooleanParam(params, "showUntargeted");
+  if (!boolShowUntargeted.ok) return boolShowUntargeted.error;
+  const boolVerboseMeta = requireBooleanParam(params, "verboseMeta");
+  if (!boolVerboseMeta.ok) return boolVerboseMeta.error;
+  const arrPaths = requireStringArrayParam(params, "paths");
+  if (!arrPaths.ok) return arrPaths.error;
+  const arrSkipCriterion = requireStringArrayParam(params, "skipCriterion");
+  if (!arrSkipCriterion.ok) return arrSkipCriterion.error;
+  // Range rail: validateChecklistBounds rejects `< 1` for limit /
+  // maxCandidatesPerCriterion. Returns shape with field / value, so
+  // wrap it into the structured-error envelope in one place.
+  const boundsError = validateChecklistBounds(params);
+  if (boundsError !== undefined) {
+    return {
+      code: boundsError.code,
+      message: `\`${boundsError.field}\` must be >= 1, got ${boundsError.value}.`,
+      details: { field: boundsError.field, value: boundsError.value },
+      remediation:
+        boundsError.field === "limit"
+          ? "limit must be in [1, 2000]."
+          : "maxCandidatesPerCriterion must be in [1, 100].",
+    };
+  }
+  return undefined;
+}
+
+/**
  * detects whether
  * the caller-supplied `maxCandidatesPerCriterion` was clamped by the
  * [1, 100] bounds so the handler can narrate it via a structured
@@ -878,18 +924,12 @@ export const checklistTool: McpTool = {
     // See `validateChecklistBounds` above for the rationale; upper-
     // bound clamps stay silent (limit) / warning-narrated
     // (maxCandidatesPerCriterion) per the existing pattern.
-    const boundsError = validateChecklistBounds(params);
-    if (boundsError !== undefined) {
-      return errorResult({
-        code: boundsError.code,
-        message: `\`${boundsError.field}\` must be >= 1, got ${boundsError.value}.`,
-        details: { field: boundsError.field, value: boundsError.value },
-        remediation:
-          boundsError.field === "limit"
-            ? "limit must be in [1, 2000]."
-            : "maxCandidatesPerCriterion must be in [1, 100].",
-      });
-    }
+    // Type + range validation. Type checks come first (silent-drop
+    // closure) so wrong-type inputs surface as `invalid-param` rather
+    // than falling through to the default; the range rail (`< 1`)
+    // follows.
+    const validationError = validateChecklistParams(params);
+    if (validationError !== undefined) return errorResult(validationError);
     const cwd = strParam(params, "cwd") ?? process.cwd();
     const paths = strArrayParam(params, "paths") ?? [cwd];
 
