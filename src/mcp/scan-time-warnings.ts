@@ -654,9 +654,7 @@ function buildWarningsFieldInputs(
       ? {}
       : { animationLibraryGuardCandidates: derived.animationLibraryGuardCandidates }),
     ...inlineHtmlInputs(inputs.jsInnerHtmlDeclinedCount, derived.jsInnerHtmlFileSamples),
-    ...(inputs.codeDemoPropMatches === undefined || inputs.codeDemoPropMatches.size === 0
-      ? {}
-      : { codeDemoPropMatches: inputs.codeDemoPropMatches }),
+    ...codeDemoPropMatchesInput(inputs.codeDemoPropMatches),
     ...(inputs.nearestConfigAncestor === undefined
       ? {}
       : { nearestConfigAncestor: inputs.nearestConfigAncestor }),
@@ -682,6 +680,22 @@ function scanFileParserBailInput(
   payload: WarningInputs["scanFileParserBailNoFindings"],
 ): Partial<WarningInputs> {
   return payload === undefined ? {} : { scanFileParserBailNoFindings: payload };
+}
+
+/**
+ * Builds the spreadable MDX code-demo prop matches subset of
+ * {@link WarningInputs}. Conditional-spread per the present-when-
+ * meaningful contract: an empty / undefined map drops the field so
+ * the warnings module's `jsx_code_demo_prop_parsed_as_live_dom`
+ * predicate falls through. Extracted from
+ * {@link buildWarningsFieldInputs} so the orchestrator stays under the
+ * cognitive-complexity cap.
+ */
+function codeDemoPropMatchesInput(
+  matches: WarningInputs["codeDemoPropMatches"],
+): Partial<WarningInputs> {
+  if (matches === undefined || matches.size === 0) return {};
+  return { codeDemoPropMatches: matches };
 }
 
 /**

@@ -44,6 +44,7 @@ import {
   shouldRerouteToBulkVendorScopeDown,
 } from "./next-step.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
+import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
@@ -283,12 +284,7 @@ export const scanProjectTool: McpTool = {
     const classified = classifyIfAutoDetect(autoDetect, files, detectedNames);
     const t1 = performance.now();
     const skipCriterion = strArrayParam(params, "skipCriterion");
-    const {
-      formatted,
-      reviewCandidates: rawReviewCandidates,
-      scssUnresolvedVariableFiles,
-      adjustedPerRuleCoverage,
-    } = await runScanAndFormat(
+    const scanRunResult = await runScanAndFormat(
       files,
       session,
       standards,
@@ -313,14 +309,25 @@ export const scanProjectTool: McpTool = {
       // + the response-level `text_source_skipped` /
       // `binary_assets_skipped` warnings.
       discoveryDiagnostics,
-      // Per-file MDX code-demo prop matches drive the per-finding
-      // `couldBeWrongBecause: ["template_literal_in_code_demo_prop"]`
-      // propagation onto every finding emitted on a synthesized JSX
-      // element pinned inside a recorded prop body. Companion to the
-      // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
-      // emitted from the same evidence at the warning-channel seam.
+    );
+    // Per-finding propagation for the MDX code-demo prop axis. When a
+    // finding's `(filePath, line)` falls inside a recorded
+    // `<Example|Demo|Playground>` code-demo prop body the parser
+    // descended into, append `template_literal_in_code_demo_prop` to
+    // `couldBeWrongBecause` so the per-finding channel and the
+    // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
+    // ship consistent attention-budget signals. Surface, don't
+    // suppress — severity stays the rule's choice. No-op fast path
+    // when the matches map is empty (object identity stable on the
+    // common case — non-MDX repos pay no walk).
+    const enrichedFiles = enrichFindingsWithCodeDemoPropMatch(
+      scanRunResult.formatted.files,
       codeDemoPropMatches,
     );
+    const formatted: ScanFormatted = { ...scanRunResult.formatted, files: enrichedFiles };
+    const rawReviewCandidates = scanRunResult.reviewCandidates;
+    const scssUnresolvedVariableFiles = scanRunResult.scssUnresolvedVariableFiles;
+    const adjustedPerRuleCoverage = scanRunResult.adjustedPerRuleCoverage;
     logger.debug(
       `scan_project: ${files.length} files, parse ${parseMs}ms + scan ${ms(t1)}ms = ${ms(t0)}ms`,
     );
@@ -1158,15 +1165,7 @@ function buildBaseWarningsForScanProject(args: {
     ...(jsInnerHtmlFileSamplesForPayload.length === 0
       ? {}
       : { jsInnerHtmlFileSamples: jsInnerHtmlFileSamplesForPayload }),
-    // Thread the per-file MDX code-demo prop matches so the warnings
-    // module can fire `jsx_code_demo_prop_parsed_as_live_dom` and
-    // populate its paired payload. Inverse-shape sibling of the
-    // inline-HTML cross-reference: that surfaces routing-skip evidence,
-    // this surfaces routing-descent evidence (rhetorical-preview HTML
-    // the docs framework rendered into the MDX AST).
-    ...(codeDemoPropMatches === undefined || codeDemoPropMatches.size === 0
-      ? {}
-      : { codeDemoPropMatches }),
+    ...codeDemoPropMatchesField(codeDemoPropMatches),
     // detector ran upstream on the
     // parsed-file list; conditional-spread keeps the input absent when
     // no HTML file declared an unresolved `<link rel="stylesheet">`.
@@ -1222,6 +1221,23 @@ function templateLiteralFilesField(files: readonly string[]): {
   templateLiteralFiles?: readonly string[];
 } {
   return files.length === 0 ? {} : { templateLiteralFiles: files };
+}
+
+/**
+ * Builds the spreadable `codeDemoPropMatches` subset for the
+ * `warningsFieldFromScanMeta` call. Conditional-spread per the
+ * present-when-meaningful contract: empty / undefined map omits the
+ * field; non-empty threads the matches map through unchanged.
+ * Extracted from {@link buildBaseWarningsForScanProject} so the
+ * orchestrator's cognitive complexity stays under the lint cap.
+ */
+function codeDemoPropMatchesField(
+  matches: import("./warnings.ts").WarningInputs["codeDemoPropMatches"],
+): {
+  codeDemoPropMatches?: import("./warnings.ts").WarningInputs["codeDemoPropMatches"];
+} {
+  if (matches === undefined || matches.size === 0) return {};
+  return { codeDemoPropMatches: matches };
 }
 
 function warningsFieldsForAssembler(warningsFromMeta: {

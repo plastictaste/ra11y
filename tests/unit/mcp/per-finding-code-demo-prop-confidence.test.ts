@@ -20,9 +20,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import type { AgentFinding } from "../../../src/output/agent-response/types.ts";
 import { CODE_DEMO_PROP_REASON_CODE } from "../../../src/input/parsers/mdx-example-extractor.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "../../../src/mcp/per-finding-code-demo-prop-confidence.ts";
+import type { AgentFinding } from "../../../src/output/agent-response/types.ts";
 
 function fakeFinding(line: number, extra: Partial<AgentFinding> = {}): AgentFinding {
   return {

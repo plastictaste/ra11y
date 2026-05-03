@@ -34,12 +34,7 @@ import {
 
 describe("CODE_DEMO_PROP_NAMES", () => {
   it("lists the four canonical docs-framework prop names (lowercase)", () => {
-    expect([...CODE_DEMO_PROP_NAMES].sort()).toEqual([
-      "code",
-      "example",
-      "source",
-      "template",
-    ]);
+    expect([...CODE_DEMO_PROP_NAMES].sort()).toEqual(["code", "example", "source", "template"]);
   });
 
   it("CODE_DEMO_PROP_REASON_CODE is the snake_case identifier the agent matches", () => {
@@ -89,11 +84,7 @@ describe("extractMdxExampleCode — propMatches evidence", () => {
     ];
     for (const { propName, source } of cases) {
       const tsx = parseMdx(source);
-      const result = extractMdxExampleCode(source, tsx.root, [
-        "Example",
-        "Demo",
-        "Playground",
-      ]);
+      const result = extractMdxExampleCode(source, tsx.root, ["Example", "Demo", "Playground"]);
       expect(result.propMatches.length).toBeGreaterThan(0);
       expect(result.propMatches[0]?.propName).toBe(propName);
     }
@@ -103,22 +94,15 @@ describe("extractMdxExampleCode — propMatches evidence", () => {
     // `<Snippet>` is not in the default allow-list.
     const source = `<Snippet code={\`<form/>\`} />`;
     const tsx = parseMdx(source);
-    const result = extractMdxExampleCode(source, tsx.root, [
-      "Example",
-      "Demo",
-      "Playground",
-    ]);
+    const result = extractMdxExampleCode(source, tsx.root, ["Example", "Demo", "Playground"]);
     expect(result.propMatches.length).toBe(0);
   });
 
   it("does NOT record a propMatch when the template literal contains substitutions", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${...}` token under test
     const source = "<Example code={`<form>${dynamic}</form>`} />";
     const tsx = parseMdx(source);
-    const result = extractMdxExampleCode(source, tsx.root, [
-      "Example",
-      "Demo",
-      "Playground",
-    ]);
+    const result = extractMdxExampleCode(source, tsx.root, ["Example", "Demo", "Playground"]);
     expect(result.propMatches.length).toBe(0);
   });
 
@@ -126,11 +110,7 @@ describe("extractMdxExampleCode — propMatches evidence", () => {
     // `data` and `props` are not in CODE_DEMO_PROP_NAMES.
     const source = `<Example data={\`<form/>\`} props={\`<button/>\`} />`;
     const tsx = parseMdx(source);
-    const result = extractMdxExampleCode(source, tsx.root, [
-      "Example",
-      "Demo",
-      "Playground",
-    ]);
+    const result = extractMdxExampleCode(source, tsx.root, ["Example", "Demo", "Playground"]);
     expect(result.propMatches.length).toBe(0);
   });
 
@@ -146,11 +126,7 @@ Some prose.
 <Demo template={\`<button>Submit</button>\`} />
 `;
     const tsx = parseMdx(source);
-    const result = extractMdxExampleCode(source, tsx.root, [
-      "Example",
-      "Demo",
-      "Playground",
-    ]);
+    const result = extractMdxExampleCode(source, tsx.root, ["Example", "Demo", "Playground"]);
     expect(result.propMatches.length).toBe(2);
     const propNames = result.propMatches.map((m) => m.propName).sort();
     expect(propNames).toEqual(["code", "template"]);

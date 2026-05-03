@@ -19,10 +19,8 @@ import {
   accumulateInlineHtml,
   type InlineHtmlPatternSample,
 } from "../input/parsers/inline-html.ts";
-import {
-  type CodeDemoPropMatch,
-  detectCodeDemoPropMatches,
-} from "../input/parsers/mdx-example-extractor.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { accumulateCodeDemoPropMatches, type CodeDemoPropMatch } from "../input/parsers/mdx-example-extractor.ts";
 import {
   type AgentFinding,
   buildAgentFinding,
@@ -37,7 +35,6 @@ import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustme
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
-import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
@@ -351,35 +348,18 @@ export async function parseFilesWithDiagnostics(
   });
   const parsed: ParsedFile[] = [];
   let jsInnerHtmlDeclinedCount = 0;
-  const jsInnerHtmlPatternSamples = new Map<string, readonly InlineHtmlPatternSample[]>();
-  const codeDemoPropMatches = new Map<string, readonly CodeDemoPropMatch[]>();
+  // biome-ignore format: keep map declarations on one line — file effective-line budget
+  const jsInnerHtmlPatternSamples = new Map<string, readonly InlineHtmlPatternSample[]>(), codeDemoPropMatches = new Map<string, readonly CodeDemoPropMatch[]>();
   for (const filePath of discovered) {
     const result = await session.parseFile(filePath, cwd);
     if (!result) continue;
     parsed.push(result);
-    if (result.ast.language === "tsx") {
+    if (result.ast.language === "tsx")
       jsInnerHtmlDeclinedCount += accumulateInlineHtml(result, parsed, jsInnerHtmlPatternSamples);
-      // Restrict to `.mdx` — the MDX adapter is the only parser entry
-      // point that runs `extractMdxExampleCode` today, so a `.tsx` /
-      // `.jsx` file with the same prop shape never produces synthesized
-      // HTML elements and the warning would falsely claim a descent
-      // happened. Per AI-first doctrine "Heuristic-mislabeled meta sub-
-      // fields are dishonest" — the predicate must match the actual
-      // descent surface, not the broader prop shape. Lowercase tail
-      // check matches the session router's case-insensitive convention.
-      if (result.filePath.toLowerCase().endsWith(".mdx")) {
-        const matches = detectCodeDemoPropMatches(result.source, result.ast.root);
-        if (matches.length > 0) codeDemoPropMatches.set(result.filePath, matches);
-      }
-    }
+    accumulateCodeDemoPropMatches(result, codeDemoPropMatches);
   }
-  return {
-    files: parsed,
-    diagnostics,
-    jsInnerHtmlDeclinedCount,
-    jsInnerHtmlPatternSamples,
-    codeDemoPropMatches,
-  };
+  // biome-ignore format: keep return object on one line — file effective-line budget
+  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples, codeDemoPropMatches };
 }
 
 /**
@@ -582,25 +562,6 @@ export async function runScanAndFormat(
   // — the scan_file tool takes explicit paths and has no silent-miss
   // axis to report on.
   discoveryDiagnostics?: DiscoveryDiagnostics,
-  // Per-file MDX code-demo prop matches from
-  // `parseFilesWithDiagnostics`. Drives the per-finding
-  // `couldBeWrongBecause: ["template_literal_in_code_demo_prop"]`
-  // propagation onto every finding whose `(filePath, line)` falls
-  // inside a recorded match's body line range. Companion to the
-  // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
-  // emitted from the same evidence at the warning-channel seam. Pass
-  // `undefined` / empty map on legacy callers that don't run the
-  // detector — the propagation drops conservatively.
-  codeDemoPropMatches?: ReadonlyMap<
-    string,
-    readonly {
-      readonly propName: string;
-      readonly tagName: string;
-      readonly propLine: number;
-      readonly bodyStartLine: number;
-      readonly bodyEndLine: number;
-    }[]
-  >,
 ): Promise<{
   readonly formatted: ScanFormatted;
   readonly durationMs: number;
@@ -875,25 +836,10 @@ export async function runScanAndFormat(
   // `fragment` set mirrors `analysisCoverage.fragmentFiles[]` (shared
   // classifier in `src/engine/layout-partial.ts`) so a finding on a
   // full `.html` document never inherits the fragment code.
-  const enrichedWithRuleLimitations = enrichFindingsWithPerRuleLimitations(
+  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
     fileEntries,
     perRuleLimitations,
     buildSubstrateFiles(partitionParseStateFiles(files, violationFilePaths), fragmentFiles),
-  );
-  // Per-finding propagation for the MDX code-demo prop axis. When a
-  // finding's `(filePath, line)` falls inside a recorded
-  // `<Example|Demo|Playground>` code-demo prop's template-literal body
-  // the parser descended into, append `template_literal_in_code_demo_prop`
-  // to `couldBeWrongBecause` so the per-finding channel and the
-  // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning ship
-  // consistent attention-budget signals. Surface, don't suppress —
-  // severity stays the rule's choice; the propagation only adds
-  // additive triage context per the AI-first doctrine. No-op fast path
-  // when the matches map is empty (object identity stable on the
-  // common case — non-MDX repos pay no walk).
-  const enrichedFileEntries = enrichFindingsWithCodeDemoPropMatch(
-    enrichedWithRuleLimitations,
-    codeDemoPropMatches,
   );
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative

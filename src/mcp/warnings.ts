@@ -3623,9 +3623,7 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  * AST lives at the parse-aggregation seam (see
  * `parseFilesWithDiagnostics` in `tools-helpers.ts`).
  */
-function hasCodeDemoPropMatches(
-  matches: WarningInputs["codeDemoPropMatches"],
-): boolean {
+function hasCodeDemoPropMatches(matches: WarningInputs["codeDemoPropMatches"]): boolean {
   return matches !== undefined && matches.size > 0;
 }
 

@@ -173,9 +173,7 @@ export function parseMdx(source: string, options: MdxParseOptions = {}): MdxPars
   return {
     root,
     errors: [...errors, ...tsx.errors, ...extracted.errors],
-    ...(extracted.propMatches.length === 0
-      ? {}
-      : { codeDemoPropMatches: extracted.propMatches }),
+    ...(extracted.propMatches.length === 0 ? {} : { codeDemoPropMatches: extracted.propMatches }),
   };
 }
 

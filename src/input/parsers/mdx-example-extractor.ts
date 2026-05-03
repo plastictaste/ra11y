@@ -63,6 +63,7 @@
  */
 
 import { walkJsxElements } from "../../engine/ast-helpers.ts";
+import type { ParsedFile } from "../../engine/scanner.ts";
 import type {
   HtmlAttribute,
   HtmlElement,
@@ -100,12 +101,7 @@ export const DEFAULT_EXAMPLE_COMPONENT_NAMES: readonly string[] = ["Example", "D
  * docs page is text the agent should triage by reading the surrounding
  * MDX, not by editing the source file's authored markup).
  */
-export const CODE_DEMO_PROP_NAMES: readonly string[] = [
-  "code",
-  "example",
-  "source",
-  "template",
-];
+export const CODE_DEMO_PROP_NAMES: readonly string[] = ["code", "example", "source", "template"];
 
 const CODE_DEMO_PROP_NAME_SET: ReadonlySet<string> = new Set<string>(CODE_DEMO_PROP_NAMES);
 
@@ -695,4 +691,30 @@ function convertHtmlText(
     },
     value: text.value,
   };
+}
+
+/**
+ * Per-file accumulator that records MDX code-demo prop descents on
+ * the per-path map. Restricted to `.mdx` files because the MDX
+ * adapter is the only parser entry point that runs
+ * {@link extractMdxExampleCode} today; a `.tsx` / `.jsx` file with the
+ * same prop shape never produces synthesized HTML elements and
+ * surfacing the warning on it would falsely claim a descent happened.
+ * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+ * dishonest" — the predicate must match the actual descent surface.
+ *
+ * Mirrors `accumulateInlineHtml` (`./inline-html.ts`) — same per-file
+ * write-through shape, different evidence axis. Lives here alongside
+ * its sibling extractor / detector so the per-file aggregation seam
+ * (`tools-helpers.ts::parseFilesWithDiagnostics`) stays a one-line
+ * call without leaking the predicate.
+ */
+export function accumulateCodeDemoPropMatches(
+  result: ParsedFile,
+  matchesByPath: Map<string, readonly CodeDemoPropMatch[]>,
+): void {
+  if (!result.filePath.toLowerCase().endsWith(".mdx")) return;
+  if (result.ast.language !== "tsx") return;
+  const matches = detectCodeDemoPropMatches(result.source, result.ast.root);
+  if (matches.length > 0) matchesByPath.set(result.filePath, matches);
 }

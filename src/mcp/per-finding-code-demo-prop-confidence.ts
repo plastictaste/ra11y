@@ -36,8 +36,8 @@
  * not whether the rule's predicate observed full evidence).
  */
 
-import type { AgentFinding } from "../output/agent-response/types.ts";
 import { CODE_DEMO_PROP_REASON_CODE } from "../input/parsers/mdx-example-extractor.ts";
+import type { AgentFinding } from "../output/agent-response/types.ts";
 import type { FindingBucket } from "./per-finding-confidence-parity.ts";
 import type { WarningInputs } from "./warnings.ts";
 
