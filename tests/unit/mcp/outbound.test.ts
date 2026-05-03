@@ -35,11 +35,11 @@ const noopUnknownId = (_id: string | number): void => {
 
 describe("createOutbound", () => {
   describe("sendRequest", () => {
-    it("writes a JSON-RPC request with a monotonically increasing numeric id", () => {
+    it("writes a JSON-RPC request with a monotonically increasing numeric id", async () => {
       const written: string[] = [];
       const rail = createOutbound((line) => written.push(line), noopUnknownId);
-      void rail.sendRequest("sampling/createMessage", { a: 1 }, 10_000);
-      void rail.sendRequest("roots/list", null, 10_000);
+      const p1 = rail.sendRequest("sampling/createMessage", { a: 1 }, 10_000);
+      const p2 = rail.sendRequest("roots/list", null, 10_000);
       expect(written).toHaveLength(2);
       expect(parseLine(written[0] ?? "")).toMatchObject({
         jsonrpc: "2.0",
@@ -47,6 +47,14 @@ describe("createOutbound", () => {
         method: "sampling/createMessage",
       });
       expect(parseLine(written[1] ?? "").id).toBe(2);
+      // Discarding pending sendRequest promises leaks a setTimeout into the
+      // bun-test process; 10_000 ms later the timer fires, the rejected
+      // promise has no .catch attached, and the unhandledRejection lands on
+      // whichever test happens to be running. ADR 0029 has the full
+      // diagnosis. Clear both timers via synthetic responses.
+      rail.tryRouteResponse({ jsonrpc: "2.0", id: 1, result: null });
+      rail.tryRouteResponse({ jsonrpc: "2.0", id: 2, result: null });
+      await Promise.all([p1, p2]);
     });
 
     it("resolves with the `result` field when a matching response is routed", async () => {
