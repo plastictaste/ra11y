@@ -37,7 +37,7 @@ Before the turn loop, dispatch the `planner` subagent:
 - Pass `{ maxTurns: <$1 or 10>, picksPerTurn: 3, lookaheadTurns: 3 }`.
 - It reads `.claude/backlog.md` + `git log --oneline -30`, audits sequencing constraints, pre-classifies each pick to a specialist, and annotates cross-turn file collisions.
 - It returns a structured plan with `activeTracks`, `stagedTracks`, `more_available?`, `turns[]` (each turn: up to 3 `picks` with `item`, `track`, `specialist`, `backlogLine`, `inferredFiles`, `collisionWith`), `deferred[]` (capped at 5 entries), and `blocked[]`.
-- Cache the plan in main-session memory. **Do not re-read `.claude/backlog.md` during the turn loop** — the plan is authoritative. The only time the backlog file is touched during the loop is by the `integrator` subagent (backlog tickoff at end of each turn), and that happens in a separate context.
+- Cache the plan in main-session memory. **Do not re-read `.claude/backlog.md` during the turn loop** — the plan is authoritative. The only time the backlog file is touched during the loop is by the `integrator` subagent (backlog closure tidy at end of each turn, when needed), and that happens in a separate context.
 - **Replan when the cached slice is exhausted.** When you've consumed all of `plan.turns[]` and `plan.more_available === true` and the invocation still has turn budget, re-invoke the planner with `lookaheadTurns: 3`. The fresh slice picks up where the prior one ended (the planner re-grep on `- [ ]` lines naturally excludes items closed by Closes-trailer commits earlier this run). Replanning is cheap; over-planning a 10-turn slice that the run never reaches is not.
 
 If the planner returns zero `turns`, stop and report — all active tracks are either empty, sequencing-blocked, or `[!]`-blocked.
@@ -169,7 +169,7 @@ Recognition cues are deliberately manual — the orchestrator reads each returne
 
 ### 4. Integrate via the `integrator` subagent
 
-Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog tickoff all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~6–10 line structured summary (tight shape; with-note and error shapes stay under ~20 lines).
+Worktree-isolated agents return `{ path, branch }` (per the Agent tool contract — "if the agent makes no changes the worktree is cleaned up; otherwise path and branch are returned"). The main session is the only party allowed to mutate `main`, but **the orchestrator does not do the integration inline**. Cherry-pick + `bun run verify` + worktree cleanup + backlog closure tidy (when needed) all go through the `integrator` subagent, which swallows 30–50k tokens of tsc/biome/test output per turn and returns a ~6–10 line structured summary (tight shape; with-note and error shapes stay under ~20 lines).
 
 **Dispatch rules for the integrator:**
 
@@ -226,7 +226,7 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
   "ts_start": "<ISO timestamp at turn start>",
   "ts_end":   "<ISO timestamp now>",
   "main_sha_before": "<sha at turn start>",
-  "main_sha_after":  "<sha after integrator's tickoff commit>",
+  "main_sha_after":  "<sha after integrator's closure tidy commit (or last cherry-pick if no tidy was needed)>",
   "harness_sha": "<sha of HEAD at turn start — same as main_sha_before in the common case>",
   "planner_picks": <plan.turns[N-1].picks verbatim>,
   "specialist_returns": [
@@ -241,7 +241,7 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
 }
 ```
 
-`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's backlog tickoff commit. The agent uses the range to detect cherry-pick drops and coverage-regen misses. `harness_sha` is `main_sha_before` in the common case (every harness file is committed); the meta-reviewer persists it on each ledger entry so `scripts/ab-compare-harness.ts` can group runs by harness state for token-cost A/B comparison.
+`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's last commit on this turn (the closure tidy commit if one was needed, else the final cherry-pick). The agent uses the range to detect cherry-pick drops and coverage-regen misses. `harness_sha` is `main_sha_before` in the common case (every harness file is committed); the meta-reviewer persists it on each ledger entry so `scripts/ab-compare-harness.ts` can group runs by harness state for token-cost A/B comparison.
 
 `total_tokens` per specialist and `turn_cost` are **present-when-meaningful**: forward them when the agent harness reported `total_tokens` in the return envelope (Bun harness does — look for `<usage>total_tokens: ...</usage>` or the equivalent structured field on each Agent return). Omit the keys entirely when unavailable — the meta-reviewer's cost-aware signals (`high_cost_uneventful_turn`, `slow_specialist`) skip cleanly when fields are absent.
 

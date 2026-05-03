@@ -27,7 +27,7 @@ The orchestrator passes a turn artifact:
   "ts_start": "2026-04-26T20:00:00Z",
   "ts_end":   "2026-04-26T20:04:30Z",
   "main_sha_before": "<sha at turn start>",
-  "main_sha_after":  "<sha after integrator's tickoff commit>",
+  "main_sha_after":  "<sha after integrator's closure tidy commit (or last cherry-pick if no tidy was needed)>",
   "harness_sha": "<sha of HEAD at turn start — used to bucket A/B comparison windows>",
   "planner_picks": [ /* the slice of plan.turns[n].picks the orchestrator dispatched */ ],
   "specialist_returns": [
@@ -303,7 +303,7 @@ Memory consolidation is **opt-in by recurrence, not eager**: only run when §8 c
 When the routing tree calls for re-opening:
 
 1. Read `.claude/backlog.md` (it is the canonical work tracker).
-2. Find the `Closes: <ID>` trailer in the integrator's tickoff commit (`git log -1 --format=%B <backlog_commit_sha>`).
+2. Find the `Closes: <ID>` trailer in the work commit (specialist's commit, or the integrator's closure tidy commit if the specialist forgot the deletion). Use `git log -1 --format=%B <backlog_commit_sha>`.
 3. If the corresponding `- [ ]` line was deleted in that commit (per the project's "backlog closure is a git trailer" convention — see `CLAUDE.md` §9.7), restore it by editing `.claude/backlog.md` to re-insert the line at the original location. Get the original text from `git show <backlog_commit_sha> -- .claude/backlog.md`.
 4. Commit with: `chore(backlog): re-open <item> after meta-reviewer detected <signal_code>`.
 

@@ -6,8 +6,7 @@
  *
  * Wraps `git log --grep "Closes: <ID>"` (and `Drops:`) so the lookup
  * is a one-liner. Prints the commit hash, subject, and body — the
- * rationale that used to live inline in `.claude/backlog.md` as the
- * `[x]` body now lives here.
+ * rationale for closing the item lives in the closing commit body.
  *
  * Exits 0 when at least one commit matches, 1 when the ID was never
  * closed (it may still be open in `.claude/backlog.md`, or it may

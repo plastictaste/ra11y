@@ -25,8 +25,9 @@
  *   - backlog closure: when the staged diff removes a `- [ ] **<ID>**`
  *     line from `.claude/backlog.md`, the commit message must carry a
  *     matching `Closes: <ID>` (shipped) or `Drops: <ID>` (rejected /
- *     superseded) trailer. Adding a `- [x]` line is rejected outright;
- *     the `[x]` state no longer exists. See CLAUDE.md §9.
+ *     superseded) trailer. The only valid backlog states are `[ ]`,
+ *     `[~]`, `[!]` (see backlog header legend); adding any other
+ *     state — including `[x]` — is rejected outright. See CLAUDE.md §9.
  *
  * Exits 0 on success, 1 on violation.
  */
@@ -206,7 +207,7 @@ function parseClosesTrailers(message: string): Set<string> {
 function reportXAdditions(xAdded: ReadonlySet<string>): string {
   const ids = [...xAdded];
   return [
-    `✗ commit adds [x] backlog item(s) — that state no longer exists:`,
+    `✗ commit adds [x] backlog item(s) — not a valid state ([ ], [~], [!] only):`,
     ...ids.map((id) => `  - ${id}`),
     ``,
     `  to close an item, delete its line and add 'Closes: ${ids[0]}'`,
