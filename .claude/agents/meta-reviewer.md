@@ -48,6 +48,10 @@ If a field is missing, treat it as a single observation worth logging — don't 
 
 ## 1. Extract signals
 
+**Run the deterministic detector first.** Pipe the turn artifact through `bun scripts/detect-turn-failure-modes.ts` (or `--file <path>`); it emits `{ signals: [...] }` covering every rule in this section that is purely mechanical — `blocked` token split, branch drift, cherry-pick drop, stall heuristic, slow specialist, integrator `errors[]` prefix split, signals[] passthrough, coverage-regen miss, high-cost uneventful turn. Merge that output into your signal list before doing any NLP-flavored work. The integrator `note` classification is *not* in the script — that one is yours. The deterministic-half coverage exists so a future regression in this prompt cannot silently stop catching the canonical observable failure modes; the unit tests pin the behavior.
+
+The detection rules below remain authoritative — the script is the deterministic *implementation* of these bullets, not a replacement. When you add a new rule here, add the detector to the script and a test pinning the rule.
+
 Walk the artifact and emit a normalized list of observed signals. Sources:
 
 - **Specialist `blocked` strings** — split on the first `:` to separate code from evidence. The code half is the signal code (per `agent-return-envelope.md` §2 vocabulary). Examples: `verify-red`, `cherry_pick_conflict`, `scope_drift`, `classification_mismatch`, `dirty_worktree_on_boot`, `suspected_worktree_escape`.
