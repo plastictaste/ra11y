@@ -101,6 +101,53 @@ const TOP_RULES_COUNT = 3;
  */
 const EXCLUDE_GLOB_COLLAPSE_THRESHOLD = 3;
 
+/**
+ * Closed set of reason tokens that may appear in the per-entry
+ * `meta.excludesRationale[].reason` slot. Bootstrap-output-paste-safe
+ * doctrine (`docs/kb/architecture/ai-first-consumer.md`): the live
+ * `exclude: [...]` array is paste-bearing — the agent can't re-derive
+ * each glob's provenance from the snippet alone — so every emitted
+ * glob carries a token from this enum that names the predicate the
+ * generator applied.
+ *
+ *   - `labelled_build_artifact_by_scanner` — the path was labelled
+ *     by `collectBuildArtifacts` with a `definite-*` classification
+ *     (definite-min-infix, definite-sourcemap-paired,
+ *     definite-vendor-distribution). Path-anchored evidence; the only
+ *     value currently emitted by `propose_config`.
+ *   - `definitional` — reserved for future emissions of universal
+ *     ignore patterns (e.g. `node_modules/`, `.git/`). Currently
+ *     unused — those patterns ride at the discovery layer
+ *     (`src/input/discover.ts`'s `EXPLICIT_PATH_IGNORED_DIRS`) and
+ *     never reach the live `exclude` array. The token is reserved so
+ *     a future definitional emission has a stable home before its
+ *     first use, not after.
+ *   - `heuristic` — reserved for any `likely-*` opt-in path. Currently
+ *     unused — `likely-*` classifications ride in the commented
+ *     `// likelyBuildPaths` hint block, not the live exclude.
+ *
+ * Reserved-but-unused tokens are intentional: an enum that grows
+ * incrementally as new emissions land is more debuggable than one
+ * that ships only the active value and forces the agent to guess
+ * whether an unfamiliar token means "new lane" or "typo." See
+ * CLAUDE.md §1 "Surface, don't suppress" — naming the closed set up
+ * front so the agent can reason about future expansion.
+ */
+type ExcludeRationaleReason = "labelled_build_artifact_by_scanner" | "definitional" | "heuristic";
+
+/**
+ * Single entry in the parallel `meta.excludesRationale` array. Pairs
+ * each glob string in the live `exclude: [...]` array (as emitted in
+ * `suggestedConfig`) with the reason token that named its predicate.
+ * Cardinality invariant: `excludesRationale.length` equals
+ * `meta.buildArtifactsIncluded`, and each `glob` string appears in
+ * the live exclude array exactly once.
+ */
+interface ExcludeRationaleEntry {
+  readonly glob: string;
+  readonly reason: ExcludeRationaleReason;
+}
+
 export const proposeConfigTool: McpTool = {
   def: {
     name: "propose_config",
@@ -194,6 +241,45 @@ export const proposeConfigTool: McpTool = {
       excludeGate,
     );
     const likelyBuildPaths = normalizeLikelyHints(likelyArtifactPaths, root);
+    // Per-entry rationale for the live `exclude: [...]` array — paste-
+    // bearing output must let the agent audit each glob before
+    // committing it. The `excludes` array carries the strings, but
+    // strings alone don't tell the agent whether a given entry came
+    // from the scanner's build-artifact labeller or from a definitional
+    // exclude (`node_modules/`-style — the project doesn't currently
+    // emit these into `exclude` because they're handled at the
+    // discovery layer, but the closed set is reserved for future use).
+    // Heuristic (`likely-*`) classifications never reach the live
+    // exclude — they're routed to the commented `// likelyBuildPaths`
+    // hint block — so the `heuristic` slot in the closed set is also
+    // reserved.
+    //
+    // Closed reason set (`docs/kb/architecture/ai-first-consumer.md`
+    // "Bootstrap output must be paste-safe"):
+    //
+    //   - `labelled_build_artifact_by_scanner` — the entry derives
+    //     from a `definite-*` classification (definite-min-infix,
+    //     definite-sourcemap-paired, definite-vendor-distribution).
+    //     Path-anchored evidence; paste-safe.
+    //   - `definitional` — reserved for future emissions of universal
+    //     ignore patterns (e.g. `node_modules/`). Currently unused;
+    //     definitional excludes ride at the discovery layer.
+    //   - `heuristic` — reserved for any `likely-*` opt-in path. The
+    //     live exclude array does NOT currently emit these; they ride
+    //     in the commented hint block.
+    //
+    // Every entry in `buildArtifacts` originates from the
+    // `definiteArtifactPaths` set (the live exclude lane), so every
+    // emitted rationale tags as `labelled_build_artifact_by_scanner`.
+    // The shape is a parallel array — keyed by `glob` — rather than
+    // an object-form `exclude: [{ glob, reason }]` array so the
+    // emitted TypeScript snippet stays valid (a paste-safe `string[]`,
+    // not a non-trivial object literal that would shift the runtime
+    // contract of `defineConfig.exclude`).
+    const excludesRationale: readonly ExcludeRationaleEntry[] = buildArtifacts.map((glob) => ({
+      glob,
+      reason: "labelled_build_artifact_by_scanner" as const,
+    }));
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a
     // Node toolchain alongside their Ruby / Python / Go / Rust
@@ -269,6 +355,16 @@ export const proposeConfigTool: McpTool = {
         buildArtifactsIncluded: buildArtifacts.length,
         likelyBuildPathsIncluded: likelyBuildPaths.length,
         topRulesIncluded: topRules.length,
+        // Parallel rationale array: every entry in the live
+        // `exclude: [...]` array (the `buildArtifacts` strings) gets
+        // a corresponding `{ glob, reason }` record so the agent can
+        // audit each glob's provenance before pasting. See the
+        // `excludesRationale` rationale at the handler call site for
+        // the closed reason set.
+        // Conditional-spread: omitted when the live exclude is empty,
+        // per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+        // (never emit `excludesRationale: []`).
+        ...(excludesRationale.length > 0 ? { excludesRationale } : {}),
         // `excludesGatedByFindings` surfaces the candidate exclude
         // entries the gate dropped because their directory tree
         // contained files with grounded findings — see the

@@ -657,8 +657,6 @@ Review-finder noise / dedup:
 
 Response shape / cross-surface drift / honesty:
 
-- [ ] **V1-PROPOSE-CONFIG-EXCLUDES-RATIONALE** `propose_config` ships an exclude list with no per-entry rationale. Agent cannot tell which entries came from `scannedBuildArtifacts` mis-classification vs. `node_modules`-style definitional vs. ad-hoc heuristic. Add `excludesReason: [{glob, reason: "labelled minified by scan_project" | "definitional" | "heuristic"}]` per entry so the agent can audit before pasting. Pairs with V1-PROPOSE-CONFIG-EXCLUDES-DOWNSTREAM-AMPLIFICATION (the gate).
-
 Tool-orchestration / new tool surfaces:
 
 - [ ] **V1-TOOL-SCAN-PROJECT-SUMMARY-MODE** Add `scan_project({summaryOnly: true})` that returns `plan + meta + topRules: [{ruleId, count}] + topFiles: [{path, count}] + filesByExtension + plan.summary` and *omits* per-file `files` array entirely. Fits under 20 KB. First-call ergonomics on bulk catalogs (templates 4043 files / 40k findings). Pairs with V1-RESPONSE-SIZE-PRE-ESTIMATOR.

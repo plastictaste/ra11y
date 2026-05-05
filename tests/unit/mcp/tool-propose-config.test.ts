@@ -36,6 +36,10 @@ interface ProposeConfigResponse {
     readonly likelyBuildPathsIncluded: number;
     readonly topRulesIncluded: number;
     readonly excludesGatedByFindings?: readonly string[];
+    readonly excludesRationale?: readonly {
+      readonly glob: string;
+      readonly reason: "labelled_build_artifact_by_scanner" | "definitional" | "heuristic";
+    }[];
   };
   readonly nextStep: string;
   readonly warnings?: readonly string[];
@@ -719,6 +723,140 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
       // and no individual file was gated (neither fires a finding).
       // Field is omitted.
       expect(body.meta.excludesGatedByFindings).toBeUndefined();
+    });
+  });
+});
+
+describe("propose_config: per-entry excludesRationale", () => {
+  // Guards the doctrine bullet "Bootstrap output must be paste-safe"
+  // (`docs/kb/architecture/ai-first-consumer.md`) one axis past the
+  // exclude gate: the live `exclude: [...]` array is paste-bearing
+  // and the agent cannot re-derive each glob's provenance from the
+  // snippet alone. `meta.excludesRationale[]` ships a parallel
+  // record per glob so the agent can audit before pasting.
+  //
+  // Closed reason set:
+  //   - `labelled_build_artifact_by_scanner` (scanner labelled it)
+  //   - `definitional` (reserved — node_modules/ etc. ride at the
+  //     discovery layer, not the live exclude)
+  //   - `heuristic` (reserved — `likely-*` paths ride in the
+  //     commented hint block, not the live exclude)
+
+  it("ships one rationale entry per glob in the live exclude array", async () => {
+    await withScratch(async (dir) => {
+      // Three `.min.`-infix files in `assets/` collapse to the
+      // single glob `assets/**`. The collapsed glob takes one slot
+      // in the live exclude array and one corresponding rationale
+      // entry — the cardinality is per-emitted-glob, not per-input-
+      // path.
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "assets"), { recursive: true });
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      const body = await callTool(dir);
+      expect(body.suggestedConfig).toContain('"assets/**"');
+      expect(body.meta.excludesRationale).toBeDefined();
+      // Cardinality invariant: rationale length matches
+      // `buildArtifactsIncluded`. Each emitted glob has exactly one
+      // rationale record.
+      expect(body.meta.excludesRationale?.length).toBe(body.meta.buildArtifactsIncluded);
+      // Single emitted glob → single rationale entry.
+      expect(body.meta.excludesRationale).toEqual([
+        { glob: "assets/**", reason: "labelled_build_artifact_by_scanner" },
+      ]);
+    });
+  });
+
+  it("every itemized exclude entry below the collapse threshold has a rationale", async () => {
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(dir, "assets"), { recursive: true });
+      // Two files — below the collapse threshold, so both ride
+      // itemized. Both must have rationale entries.
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      const body = await callTool(dir);
+      expect(body.meta.excludesRationale).toBeDefined();
+      expect(body.meta.excludesRationale?.length).toBe(2);
+      const globs = (body.meta.excludesRationale ?? []).map((e) => e.glob);
+      expect(globs).toContain("assets/a.min.js");
+      expect(globs).toContain("assets/b.min.js");
+      for (const entry of body.meta.excludesRationale ?? []) {
+        expect(entry.reason).toBe("labelled_build_artifact_by_scanner");
+      }
+    });
+  });
+
+  it("invariant: every glob in the live exclude array is named in excludesRationale", async () => {
+    // Pin the cross-field invariant: parsing the emitted live
+    // `exclude: [...]` block from `suggestedConfig` and enumerating
+    // its members must match the rationale globs exactly. Drift
+    // here would break the audit contract — a glob in the snippet
+    // without a corresponding rationale is the silent miss the
+    // doctrine bullet warns against.
+    await withScratch(async (dir) => {
+      const { mkdir } = await import("node:fs/promises");
+      // Mixed corpus: collapsed topdir + itemized root-level file.
+      await mkdir(join(dir, "assets"), { recursive: true });
+      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await writeFile(join(dir, "lib.min.js"), "// min\n");
+      const body = await callTool(dir);
+      const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
+      expect(excludeBlockMatch).not.toBeNull();
+      // Extract every quoted string in the exclude block — these
+      // are the actual paste-bearing globs.
+      const blockBody = excludeBlockMatch?.[1] ?? "";
+      const globsInSnippet = [...blockBody.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+      expect(globsInSnippet.length).toBeGreaterThan(0);
+      const rationaleGlobs = (body.meta.excludesRationale ?? []).map((e) => e.glob);
+      // Bidirectional containment: each rationale glob appears in
+      // the snippet, and each snippet glob has a rationale entry.
+      // Sets equal.
+      expect([...globsInSnippet].sort()).toEqual([...rationaleGlobs].sort());
+    });
+  });
+
+  it("uses only reason tokens from the closed set", async () => {
+    // Defensive guard: any new emission lane added later must
+    // either reuse an existing token or extend the closed set
+    // intentionally. A free-form string would silently dilute the
+    // audit contract.
+    const allowed = new Set<string>([
+      "labelled_build_artifact_by_scanner",
+      "definitional",
+      "heuristic",
+    ]);
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "vendor.min.js"), "// min\n");
+      const body = await callTool(dir);
+      expect(body.meta.excludesRationale).toBeDefined();
+      for (const entry of body.meta.excludesRationale ?? []) {
+        expect(allowed.has(entry.reason)).toBe(true);
+      }
+    });
+  });
+
+  it("omits excludesRationale entirely when the live exclude array is empty", async () => {
+    // Conditional-spread shape per CLAUDE.md §1 "Ambiguous field
+    // shapes are dishonest" — never emit `excludesRationale: []`
+    // alongside an empty exclude array. The agent reads "field
+    // absent" and "field empty" as different signals; aligning the
+    // two presences is the discipline.
+    await withScratch(async (dir) => {
+      // A clean, compliant page that produces zero findings AND
+      // zero build-artifact classifications. The live exclude is
+      // absent; the rationale must be too.
+      await writeFile(
+        join(dir, "index.html"),
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hi</title></head><body><p>x</p></body></html>\n',
+      );
+      const body = await callTool(dir);
+      expect(body.meta.buildArtifactsIncluded).toBe(0);
+      expect(body.suggestedConfig).not.toContain("exclude: [");
+      expect(body.meta.excludesRationale).toBeUndefined();
     });
   });
 });
