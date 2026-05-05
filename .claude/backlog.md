@@ -17,7 +17,7 @@ Closing an item = deleting its `- [ ] **<ID>**` line in the same commit that lan
 
 Tracks below are independent. `/continue` picks the next open item from each of up to 3 active tracks per turn and dispatches them in parallel (details in `.claude/skills/continue/SKILL.md`). Within a track, items run in order — some tracks have sequencing; cross-track work is always parallelizable.
 
-Active tracks: **Q7** (multi-repo OSS field test) · **Q8c** (agent-consumer round, 2026-04-25 third pass) · **Q9** (multi-corpus AI-first sweep 2026-04-25 evening) · **Q10** (multi-corpus AI-first sweep 2026-04-26) · **Q11** (multi-corpus AI-first sweep 2026-04-26 round 2) · **Q12** (multi-corpus AI-first sweep 2026-04-26 round 3) · **V** (v1.0.0 readiness). Tracks **D**/**M**/**R**/**F**/**S**/**E** retired 2026-04-26. Tracks Q (rounds 1-2), Q2, Q3, Q4, Q5, Q6, Q8 (a/b) closed.
+Active tracks: **Q14** (multi-corpus AI-first sweep) · **Q15** (multi-corpus AI-first sweep) · **V** (v1.0.0 readiness). Tracks **D**/**M**/**R**/**F**/**S**/**E** retired 2026-04-26. Tracks Q (rounds 1-2), Q2-Q6, Q7, Q8 (a/b/c), Q9, Q10, Q11, Q12, Q13 drained.
 
 Staged tracks: **C** (conformance-claim gaps — v0.3.0 foundation + v1.0.0 capstone). Tracks S and E were promoted on 2026-04-17 after the user directed "go all the way without releasing until finalized" — M/R/F are complete, so the remaining pre-release work spans S and E. ADR 0005 §Follow-up work still applies to the speculative tool choices inside S; foundation items (sampling.ts, capability, prompt library, KB docs) are safe to build.
 
