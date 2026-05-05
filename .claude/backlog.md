@@ -539,7 +539,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### Fixture-todo follow-ups
 
-- [ ] **Q15-FIXTURE-PARSER-BAIL-CONFIDENCE-NOT-DOWNGRADED** Real-world fixture for Q15-PARSER-BAIL-ROWS-STILL-CONFIDENCE-HIGH. Existing harness predicates do not assert on `meta.perRuleCoverage[*].coverageConfidence` against parser-bail warnings. Closure: extend `runner.ts` with a `per-rule-coverage-confidence` predicate accepting `(ruleId, expected: "low" | "medium" | "high", reasonIncludes?)`, then scaffold `tests/fixtures/real-world/parser-bail-confidence-not-downgraded/` with a sanitized plain-JS file that triggers `scan_file_parser_bail_no_findings` (`parserAttempted: tsx`, `naturalParser: js`, `evidence: non_jsx_in_tsx_route`) and assertions that pin every `perRuleCoverage` row at non-`high` confidence on the bail. Sequencing: harness predicate ships first; fixture RED-then-fix per CLAUDE.md §7.
 
 ### 2026-05-02 round recurrences (folded onto existing Q9-Q14 rows)
 
