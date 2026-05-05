@@ -176,7 +176,7 @@ Apply this decision tree:
      "rule_patch_sha": "<sha of the prior rule-file patch that earned no_effect>" }
    ```
 
-   The orchestrator surfaces every `skill_patch_proposal` in `/continue`'s final report, verbatim, with a one-line "user approval needed" framing. The user reviews and decides whether to apply. **Do not write to SKILL.md or dispatch-template.md from this agent — ever.** The proposal channel is the safety boundary; auto-applying skill changes is explicitly out of allowlist (§6).
+   The orchestrator surfaces every `skill_patch_proposal` in `/continue`'s final report, verbatim, with a one-line "user approval needed" framing. The user reviews and decides whether to apply. **The agent must NEVER write to `SKILL.md` or `dispatch-template.md` — those files are off the allowlist (§6) precisely because skill-level edits change orchestration behavior and a wrong edit can deadlock `/continue`.** The proposal channel is the only path; the allowlist enforces it.
 
    Also add a self-finding `{ code: "skill_patch_proposed", evidence: "<signal>: rule patch <sha> earned no_effect, proposing skill-level change" }` for next-turn occurrence counts.
 
@@ -199,19 +199,20 @@ The test is conservative on purpose: a generic-sounding lesson that happens to e
 
 ## 6. Write allowlist
 
-The ONLY harness files this agent may edit:
+The ONLY harness files this agent may edit autonomously:
 
 - `.claude/agents/integrator.md`
 - `.claude/agents/planner.md`
-- `.claude/skills/continue/dispatch-template.md`
-- `.claude/skills/continue/SKILL.md`
 - `.claude/rules/worktree-discipline.md`
 - `.claude/rules/agent-return-envelope.md`
 - `.claude/meta/patch-effects.tsv` (APPEND-ONLY — `>>` only, never overwrite, never edit existing lines; format documented in §3b step 7)
-- `~/.claude/projects/-Users-van-dev-ra11y/memory/feedback_*.md` (DELETE-ONLY — for §8a memory consolidation; only `rm` of files matching the `feedback_*.md` glob; never write or edit files in this directory)
-- `~/.claude/projects/-Users-van-dev-ra11y/memory/MEMORY.md` (EDIT — only to remove pointer lines for retired memory files; never edit other lines, never delete `MEMORY.md` itself)
+- `.claude/meta/memory-retirements.tsv` (APPEND-ONLY — for §8a memory retirement proposals; format documented in §8a step 5)
 
-Anything outside this list — including `CLAUDE.md`, `docs/kb/`, `src/`, `tests/`, other agent files (`rule-implementer.md`, `code-reviewer.md`, etc.), and crucially `~/.claude/projects/-Users-van-dev-ra11y/memory/project_*.md` — is forbidden. Lessons targeting those routes to memory or to a `findings[].kind: "structural_flag"`.
+`.claude/skills/continue/SKILL.md` and `.claude/skills/continue/dispatch-template.md` are **propose-only** via `findings[].kind: "skill_patch_proposal"` (§2a) — the orchestrator is the only consumer that may apply skill-level changes, and only after the user explicitly approves. The agent NEVER writes to these files directly. A wrong skill edit can deadlock `/continue` or break integrator routing; the proposal channel is the safety boundary that prevents an autonomous critic from compromising the orchestration plane.
+
+User-local memory at `~/.claude/projects/-Users-van-dev-ra11y/memory/` is **read-only** for this agent. Memory writes (new lessons) happen via §7's instructions but those instructions describe what the agent *requests* the orchestrator to do — they are NOT files this agent edits directly. Memory retirement (§8a) is propose-only via `findings[].kind: "memory_retirement_proposed"`.
+
+Anything outside this allowlist — including `CLAUDE.md`, `docs/kb/`, `src/`, `tests/`, other agent files (`rule-implementer.md`, `code-reviewer.md`, etc.), `~/.claude/projects/-Users-van-dev-ra11y/memory/**/*` — is forbidden. Lessons targeting those routes to memory (via §7 request shape) or to a `findings[].kind: "structural_flag"`.
 
 `CLAUDE.md` is explicitly off-limits even for clearly-generic lessons. CLAUDE.md is human-curated doctrine; structural changes belong on a structural-flag path that the user reviews.
 
@@ -384,7 +385,7 @@ Always append to the ledger even on a no-signal turn — the absence of signals 
 
 # Hard constraints
 
-- **Never edit `src/`, `tests/`, `docs/kb/`, `CLAUDE.md`, or any agent file outside the §6 allowlist.** No exceptions.
+- **Never edit `src/`, `tests/`, `docs/kb/`, `CLAUDE.md`, `.claude/skills/**`, `~/.claude/projects/-Users-van-dev-ra11y/memory/**`, or any agent file outside the §6 allowlist.** No exceptions. Skill-level changes route through `findings[].kind: "skill_patch_proposal"` (§2a). Memory retirement routes through `findings[].kind: "memory_retirement_proposed"` (§8a).
 - **Never `--amend`** any commit, ever. Auto-patches must be discrete `chore(meta):` commits the user can revert one at a time.
 - **Never `--no-verify`.** If a harness patch fails verify, abort it and log the failure as a self-finding.
 - **Never push.** Local-only, like the rest of `/continue`.
