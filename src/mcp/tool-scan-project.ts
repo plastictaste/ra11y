@@ -149,7 +149,7 @@ export const scanProjectTool: McpTool = {
         autoDetectWrappers: {
           type: "boolean",
           description:
-            "When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detector outcome is surfaced as `meta.autoDetectedWrappers: { ran: true, candidates: [...] }` — the object form distinguishes \"ran and found nothing\" (empty `candidates`) from \"detector did not run\" (field omitted). Copy the confirmed names to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.",
+            'When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detector outcome is surfaced as `meta.autoDetectedWrappers: { ran: true, candidates: [...] }` — the object form distinguishes "ran and found nothing" (empty `candidates`) from "detector did not run" (field omitted). Copy the confirmed names to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.',
         },
         additionalPaths: {
           type: "array",

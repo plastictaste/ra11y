@@ -1036,9 +1036,7 @@ describe("MCP tool: scan_project", () => {
 
       // The two states must be structurally distinguishable from the
       // response alone (the whole point of the object-form shape).
-      expect(ranData.meta.autoDetectedWrappers).not.toEqual(
-        notRanData.meta.autoDetectedWrappers,
-      );
+      expect(ranData.meta.autoDetectedWrappers).not.toEqual(notRanData.meta.autoDetectedWrappers);
     });
 
     it("detects input-shaped wrappers (value + onChange) alongside button-shaped ones", async () => {
