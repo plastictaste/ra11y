@@ -1,7 +1,9 @@
 /**
  * Single source of truth for the manual-review tally that
  * `scan_project.plan.{actionableManualItems,untargetedCriteria}`,
- * `coverage[].{actionableManualItems,untargetedCriteria}`, and
+ * `coverage[].{manualWithCandidates,untargetedCriteria}` (criteria-axis
+ * count derived from the `manualWithCandidates` array length per
+ * "Sibling fields naming the same concept must use one shape"), and
  * `checklist.summary.{actionable,untargetedCriteria}` all report.
  *
  * Cross-surface drift on these counts is the canonical failure mode the
@@ -96,15 +98,19 @@ export interface ManualCriteriaTally {
    * grounded review candidate on this scan, modulo any caller-supplied
    * `skipCriteria`. Matches `scan_project.plan.actionableManualItems`,
    * `checklist.summary.actionable.criteria`, and
-   * `coverage[].manualWithCandidates.length` so the "criteria with
-   * shipped candidates" count agrees across every project-rooted MCP
-   * surface. Counts criteria for ANY candidate the scanner emitted —
-   * including candidates for `automatable === "partial"` criteria like
-   * `wcag22:2.4.3` (focus-order) or `wcag22:1.1.1` (redundant-alt-text).
-   * Pre-fix, the count was filtered down to `applicableManualIds ∩
-   * candidates`, dropping every partial-criterion candidate from the
-   * headline; the agent budgeted against 0 while the response shipped
-   * 16 grounded items per Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE.
+   * `coverage[].manualWithCandidates.length` (the array shape the
+   * coverage entry now ships exclusively per "Sibling fields naming the
+   * same concept must use one shape"; the redundant
+   * `actionableManualItems` scalar twin was deleted under Q15) so the
+   * "criteria with shipped candidates" count agrees across every
+   * project-rooted MCP surface. Counts criteria for ANY candidate the
+   * scanner emitted — including candidates for
+   * `automatable === "partial"` criteria like `wcag22:2.4.3`
+   * (focus-order) or `wcag22:1.1.1` (redundant-alt-text). Pre-fix, the
+   * count was filtered down to `applicableManualIds ∩ candidates`,
+   * dropping every partial-criterion candidate from the headline; the
+   * agent budgeted against 0 while the response shipped 16 grounded
+   * items per Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE.
    */
   readonly actionable: number;
   /**

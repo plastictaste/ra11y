@@ -84,13 +84,17 @@ interface ScanBody {
 }
 interface CoverageBody {
   // The legacy composite `criteriaManualReviewRequired` was deleted
-  // (mirroring the precedent on `plan.totalFindings`). Coverage now
-  // ships the same two top-level counters `scan_project.plan` and
-  // `checklist.summary` already split into — `actionableManualItems`
-  // (criteria with grounded candidates) and `untargetedCriteria`
-  // (applicable manual-only with no candidate). Callers that want the
-  // former composite total sum the two on read.
-  readonly actionableManualItems: number;
+  // (mirroring the precedent on `plan.totalFindings`). Coverage ships
+  // the same split that `scan_project.plan` and `checklist.summary`
+  // surface — criteria with grounded candidates (the `manualWithCandidates`
+  // array; count is `manualWithCandidates.length`, mirrored at
+  // `summary.actionable.criteria`) and `untargetedCriteria`
+  // (applicable manual-only with no candidate). Per Q15 ("Sibling
+  // fields naming the same concept must use one shape") the redundant
+  // top-level `actionableManualItems` scalar twin was deleted; agents
+  // derive the criteria-axis count from `manualWithCandidates.length`.
+  // Callers that want the former composite total sum the two on read.
+  readonly manualWithCandidates: readonly { readonly criterionId: string }[];
   readonly untargetedCriteria: number;
 }
 interface ChecklistBody {
@@ -126,17 +130,20 @@ async function gatherCounts(cwd: string): Promise<{
   const coverageBody = body<CoverageBody>(responses[2]);
   const checklistBody = body<ChecklistBody>(responses[3]);
   return {
-    // Re-derive the cross-tool total from the split top-level fields
-    // on every surface. The composite `manualReviewRequired` was
-    // dropped from scan_project's plan, checklist's summary, AND
-    // coverage (Q13) — the dishonest-headline pattern is the same on
-    // every surface. The invariant is still "all surfaces agree on the
-    // total", just computed from the honest parts everywhere.
+    // Re-derive the cross-tool total from the split surfaces on every
+    // tool. The composite `manualReviewRequired` was dropped from
+    // scan_project's plan, checklist's summary, AND coverage (Q13) —
+    // the dishonest-headline pattern is the same on every surface. The
+    // invariant is still "all surfaces agree on the total", just
+    // computed from the honest parts everywhere. Per Q15, the
+    // criteria-axis count on coverage now reads off
+    // `manualWithCandidates.length` (the canonical array shape — the
+    // redundant `actionableManualItems` scalar twin was deleted).
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
-    coverage: coverageBody.actionableManualItems + coverageBody.untargetedCriteria,
+    coverage: coverageBody.manualWithCandidates.length + coverageBody.untargetedCriteria,
     checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
-    coverageActionable: coverageBody.actionableManualItems,
+    coverageActionable: coverageBody.manualWithCandidates.length,
     checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteria,
     coverageUntargeted: coverageBody.untargetedCriteria,
@@ -186,7 +193,7 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.actionableManualItems", async () => {
+  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.manualWithCandidates.length", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
@@ -194,10 +201,11 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     // saves the round trip.
     //
     // The same counter also rides on `coverage` as
-    // `actionableManualItems` — same name on every project-rooted
-    // surface so the agent can compare without a translation table.
-    // The legacy composite `criteriaManualReviewRequired` was deleted;
-    // only the structured per-lane siblings carry the count now.
+    // `manualWithCandidates.length` (the canonical array shape; the
+    // redundant `actionableManualItems` scalar twin was deleted under
+    // Q15 per "Sibling fields naming the same concept must use one
+    // shape"). The legacy composite `criteriaManualReviewRequired` was
+    // deleted; only the structured per-lane siblings carry the count now.
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     expect(mediaFree.scanActionable).toBe(mediaFree.checklistActionable);
     expect(mediaFree.scanActionable).toBe(mediaFree.coverageActionable);
@@ -297,7 +305,6 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  * to the top level alongside `analysisCoverage`.
  */
 interface FullCoverageEnvelope extends CoverageBody {
-  readonly manualWithCandidates?: ReadonlyArray<unknown>;
   readonly manualCandidatesTotal?: number;
   readonly summary?: {
     readonly actionable?: { readonly criteria?: number; readonly candidates?: number };
@@ -340,14 +347,14 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const scanBody = body<ScanBody>(responses[1]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
     const checklistBody = body<ChecklistBody>(responses[3]);
-    const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
+    const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates.length;
     expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
     expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
   });
 });
 
 // Cross-surface count invariant — candidate-axis sibling to the
-// criteria-axis `actionableManualItems` invariant above. Pre-fix,
+// criteria-axis `manualWithCandidates.length` invariant above. Pre-fix,
 // `checklist.summary.totalCandidates` was the only project-rooted
 // counter that reported the candidate-level tally; an agent asking
 // "how many manual-review items are there" had to read three numbers
@@ -355,12 +362,12 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
 // `checklist.summary.actionable.criteria: M` criteria-axis,
 // `checklist.totalCandidates: K` candidate-axis) and disambiguate by
 // reading field names carefully. `coverage.manualCandidatesTotal`
-// closes the gap so coverage carries both axes — `actionableManualItems`
-// (criteria) and `manualCandidatesTotal` (candidates) — and the
-// candidate-axis number agrees across surfaces. Doctrine:
-// `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
-// invariant" + "Sibling fields naming the same concept must use one
-// shape" — the candidate-vs-criteria split is named, not implied.
+// closes the gap so coverage carries both axes —
+// `manualWithCandidates.length` (criteria) and `manualCandidatesTotal`
+// (candidates) — and the candidate-axis number agrees across surfaces.
+// Doctrine: `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+// count invariant" + "Sibling fields naming the same concept must use
+// one shape" — the candidate-vs-criteria split is named, not implied.
 describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
   it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
     // Media-present fixture seeds grounded candidates via the

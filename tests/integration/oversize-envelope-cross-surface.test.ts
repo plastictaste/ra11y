@@ -76,7 +76,6 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    actionableManualItems: 1,
     untargetedCriteria: 0,
     // Structured `summary` dict mirrors `checklist.summary`'s shape.
     // The slim envelope spreads `original` first, so the dict rides

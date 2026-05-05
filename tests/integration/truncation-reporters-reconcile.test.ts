@@ -85,7 +85,6 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    actionableManualItems: 1,
     untargetedCriteria: 0,
     summary: {
       actionable: { criteria: 1 },

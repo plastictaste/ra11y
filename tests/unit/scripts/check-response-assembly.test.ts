@@ -203,8 +203,8 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
   test("does NOT flag the sibling `coverage` tool's per-standard `automatedCriteriaPassRate`", () => {
     // The `coverage` tool surfaces `automatedCriteriaPassRate` at the
     // top level of each per-standard entry alongside the structured
-    // four-counter split. That shape is out of scope because the
-    // value never sits under an `automatedCoverage:` key.
+    // counter split. That shape is out of scope because the value
+    // never sits under an `automatedCoverage:` key.
     const src = `
       import { textResult } from "./helpers";
       export function handler() {
@@ -214,7 +214,6 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
           criteriaEvaluated: 30,
           criteriaClean: 22,
           criteriaWithFindings: 8,
-          criteriaUntestable: 5,
         });
       }
     `;

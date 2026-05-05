@@ -222,7 +222,10 @@ export const coverageTool: McpTool = {
       // cross-surface count invariant
       // (`scan.plan.actionableManualItems ===
       // coverage.entries[0].manualWithCandidates.length`) requires
-      // this surface use the same definition. `untargeted` keeps
+      // this surface use the same definition — and ships ONLY the
+      // array shape (per "Sibling fields naming the same concept must
+      // use one shape"); the scalar is derived at read time.
+      // `untargeted` keeps
       // the narrow metadata-manual-without-candidate scope — see
       // the `tallyManualCriteriaFromCoverage` doctrine note for why
       // the bare-prompt surface only makes sense for metadata-manual
@@ -238,11 +241,11 @@ export const coverageTool: McpTool = {
         .filter((id) => candidateCriteria.has(id));
       // Candidate-level total scoped to the same in-scope, level-
       // filtered criteria `withCandidates` is computed from.
-      // `withCandidates.length` / `actionableManualItems` is the
-      // criteria-axis sibling; `manualCandidatesTotal` is the
-      // candidate-axis sibling — names make the kind explicit so an
-      // agent reading both does not silently reconcile two numbers
-      // that measure different units (per
+      // `withCandidates.length` (the criteria-axis count, derived
+      // from the `manualWithCandidates` array at read time) and
+      // `manualCandidatesTotal` (the candidate-axis count) name the
+      // kinds explicitly so an agent reading both does not silently
+      // reconcile two numbers that measure different units (per
       // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
       // naming the same concept must use one shape"). Cross-surface
       // invariant: agrees with `checklist.totalCandidates` and
@@ -301,7 +304,7 @@ export const coverageTool: McpTool = {
         // value. Closes Q9-COVERAGE-CRITERIA-AUTOMATABLE-DRIFTS-NARROW-VS-BULK.
         criteriaAutomatable: registryAutomatable,
         criteriaAutomatablePassing: c.passing,
-        // Four-counter split for the corpus-derived evaluation of the
+        // Three corpus-derived counters for the evaluation of the
         // criteria the rule library can statically address. Each counts
         // one kind of thing (per CLAUDE.md §1 "Composite headline counts
         // are dishonest"):
@@ -309,52 +312,67 @@ export const coverageTool: McpTool = {
         //     withFindings).
         //   - `criteriaClean`: ran, zero violations.
         //   - `criteriaWithFindings`: ran, ≥1 violation.
-        //   - `criteriaUntestable`: rule declared extension eligibility
-        //     but saw zero applicable input in this scan — the canonical
-        //     Tailwind-pre-build / reveal-slide vendor-bundle shape. The
-        //     list rides under `untestableCriteria` (with titles) so the
-        //     agent can call out what it couldn't verify.
+        // The "rule declared extension eligibility but saw zero
+        // applicable input in this scan" lane (canonical
+        // Tailwind-pre-build / reveal-slide vendor-bundle shape) ships
+        // exclusively as the `untestableCriteria` array (with titles) so
+        // the agent can call out what it couldn't verify; the count is
+        // `untestableCriteria.length`. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+        // naming the same concept must use one shape" — keep one shape
+        // (the array) and derive the scalar at read time. The earlier
+        // `criteriaUntestable: number` scalar twin sat alongside the
+        // array as a redundant second shape; deleted in favor of
+        // `untestableCriteria.length`. Inside `summary.automatedCoverage`
+        // the same count rides under `criteriaWithoutEligibleInputs`
+        // because that block mirrors `checklist.summary` keys exactly.
         // Invariant on the corpus-derived lane:
         // `criteriaEvaluated === criteriaClean + criteriaWithFindings`.
         // `criteriaAutomatable` is registry-derived (see comment above)
         // and is not necessarily equal to `criteriaEvaluated +
-        // criteriaUntestable` — a metadata-manual criterion satisfied by
-        // a registered rule that didn't fire counts in
+        // untestableCriteria.length` — a metadata-manual criterion
+        // satisfied by a registered rule that didn't fire counts in
         // `criteriaAutomatable` but stays in the manual lane (`manualCriteria`).
         criteriaEvaluated: c.evaluated,
         criteriaClean: c.clean,
         criteriaWithFindings: c.withFindings,
-        criteriaUntestable: c.untestable,
         untestableCriteria: withTitles(c.untestableCriteria, session),
-        // Split the manual-review pile across two top-level counters
-        // exactly as `scan_project.plan` and `checklist.summary` ship —
-        // `actionableManualItems` (criteria with shipped grounded
+        // Manual-review pile splits across two structured surfaces:
+        // `manualWithCandidates` (criteria with shipped grounded
         // candidates, file:line addressable) and `untargetedCriteria`
         // (applicable manual-only criteria with no candidate, bare WCAG
         // prompts). The legacy composite `criteriaManualReviewRequired`
-        // summed the two categorically different sub-buckets under one
-        // headline, repeating the dishonest-composite shape
-        // `plan.totalFindings` had been deleted for; agents budgeting
-        // against the composite mis-sized the work because grounded
-        // candidates and bare prompts are not interchangeable. Per
-        // `docs/kb/architecture/ai-first-consumer.md` "Composite
-        // headline counts are dishonest" the durable answer is deletion
-        // (not rename to `criteriaManualReviewRequiredComposite`) — the
-        // structured per-lane siblings already carry the honest signal,
-        // and callers that want the legacy total sum the two on read.
-        // Cross-surface count invariant: this `actionableManualItems`
-        // equals `scan_project.plan.actionableManualItems`,
-        // `checklist.summary.actionable.criteria`, and
-        // `manualWithCandidates.length` here — same name on every
-        // surface so the agent can compare without a translation table.
-        actionableManualItems: withCandidates.length,
-        // Candidate-axis sibling to `actionableManualItems` (the
-        // criteria-axis count). `actionableManualItems: N` reads as
-        // "N criteria have grounded candidates"; `manualCandidatesTotal: K`
-        // reads as "K total candidates ride under those criteria." The
-        // two sit alongside so an agent asking "how many manual-review
-        // items are there" sees both axes in one read instead of having
-        // to pivot to `checklist` to learn the candidate-level tally.
+        // was deleted alongside `plan.totalFindings` for the same
+        // dishonest-headline reason — agents budgeting against the
+        // composite mis-sized the work because grounded candidates and
+        // bare prompts are not interchangeable.
+        //
+        // Per `docs/kb/architecture/ai-first-consumer.md` "Sibling
+        // fields naming the same concept must use one shape," the
+        // criteria-axis count for actionable manual review ships once,
+        // as the `manualWithCandidates` array — agents derive the count
+        // via `.length`. The earlier `actionableManualItems: number`
+        // scalar twin sat alongside the array as a redundant second
+        // shape (and was the head of the four-field redundancy under
+        // Q15 — `criteriaUntestable`/`untestableCriteria` +
+        // `actionableManualItems`/`manualWithCandidates`). Cross-surface
+        // count invariant still holds via the canonical array shape:
+        // `coverage.manualWithCandidates.length` equals
+        // `scan_project.plan.actionableManualItems` and
+        // `checklist.summary.actionable.criteria`. Inside `summary` the
+        // value also rides under `summary.actionable.criteria` because
+        // that block mirrors `checklist.summary` keys exactly.
+        //
+        // Candidate-axis sibling to the criteria-axis count.
+        // `manualWithCandidates.length: N` reads as "N criteria have
+        // grounded candidates"; `manualCandidatesTotal: K` reads as
+        // "K total candidates ride under those criteria." The two
+        // sit alongside so an agent asking "how many manual-review
+        // items are there" sees both axes in one read instead of
+        // having to pivot to `checklist` to learn the candidate-level
+        // tally. The candidate-axis is unique here (no parallel array
+        // ships per-candidate at this surface), so the scalar is the
+        // honest single shape — not a sibling-redundancy case.
         // Cross-surface count invariant
         // (`docs/kb/architecture/ai-first-consumer.md`): equals
         // `checklist.totalCandidates` and
@@ -362,10 +380,6 @@ export const coverageTool: McpTool = {
         // cwd; pinned by the integration test in
         // `tests/integration/mcp-counts-agree.test.ts`.
         manualCandidatesTotal,
-        // Split the manual-review pile so agents can see at the coverage
-        // level (without a second checklist call) how many manual
-        // criteria have concrete candidates worth reviewing vs pure
-        // WCAG prompts the finders couldn't ground in code.
         manualWithCandidates: withTitles(withCandidates, session),
         // Count is always informative ("how big is the untargeted tail");
         // the list is gated behind showUntargeted so the default response
@@ -403,10 +417,7 @@ export const coverageTool: McpTool = {
         // `checklist.summary` shipped as a dict — same field name on
         // sibling tools, two shapes — the canonical "Sibling fields
         // naming the same concept must use one shape" failure mode in
-        // `docs/kb/architecture/ai-first-consumer.md`. An agent
-        // reading `coverage.summary.actionableManualItems` got
-        // `undefined` while the same path on checklist returned the
-        // populated count.
+        // `docs/kb/architecture/ai-first-consumer.md`.
         //
         // The prose previously carried under `summary` is demoted to
         // `summary.headline` so human-readable output isn't lost; the
@@ -417,10 +428,16 @@ export const coverageTool: McpTool = {
         // headline and the structured field agree; the
         // `scanned_zero_files` warning code still carries the reason.
         //
-        // `actionable.criteria` is the cross-tool canonical count
-        // (matches `scan_project.plan.actionableManualItems`,
-        // `checklist.summary.actionable.criteria`, and the sibling
-        // `actionableManualItems` scalar on this same coverage entry).
+        // `actionable.criteria` is the cross-tool canonical scalar —
+        // matches `scan_project.plan.actionableManualItems`,
+        // `checklist.summary.actionable.criteria`, and equals
+        // `manualWithCandidates.length` on this entry (the array shape
+        // for the same concept). The redundant top-level
+        // `actionableManualItems` scalar twin was deleted under Q15;
+        // agents reading the criteria-axis count off this surface now
+        // resolve to either the structured `summary.actionable.criteria`
+        // (mirrors checklist) or `manualWithCandidates.length` (the
+        // canonical array shape).
         // `automatedCoverage` mirrors checklist's split — two
         // non-overlapping counters (`criteriaWithRulesAllClean` /
         // `criteriaWithoutEligibleInputs`), never summed into a
@@ -433,8 +450,8 @@ export const coverageTool: McpTool = {
         summary: {
           // Two-axis split mirrors `checklist.summary.actionable` —
           // `criteria` (criteria-axis, matches
-          // `scan_project.plan.actionableManualItems` and the sibling
-          // `actionableManualItems` scalar on this entry) and
+          // `scan_project.plan.actionableManualItems` and equals
+          // `manualWithCandidates.length` on this entry) and
           // `candidates` (candidate-axis, matches
           // `checklist.summary.actionable.candidatesUncapped`,
           // `checklist.totalCandidates`, and the sibling

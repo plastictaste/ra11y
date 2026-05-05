@@ -136,9 +136,13 @@ interface NextStepStructured {
 interface CoverageBody {
   readonly standardId: string;
   // The legacy composite `criteriaManualReviewRequired` was deleted
-  // in favor of the same two-counter split scan_project and checklist
-  // already ship.
-  readonly actionableManualItems: number;
+  // in favor of the same split scan_project and checklist already
+  // ship. Per Q15 ("Sibling fields naming the same concept must use
+  // one shape") the criteria-axis count rides exclusively as the
+  // `manualWithCandidates` array — the redundant top-level
+  // `actionableManualItems` scalar twin was deleted; agents derive
+  // the count via `manualWithCandidates.length` or read it off
+  // `summary.actionable.criteria` (mirrors `checklist.summary`).
   readonly untargetedCriteria: number;
   // Structured `summary` dict — mirrors `checklist.summary`'s key
   // shape so an agent reading `summary.actionable.criteria` /
@@ -232,10 +236,16 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // `actionable.criteria` is the cross-tool canonical count — must
     // resolve identically by both name AND value on either tool.
     expect(coverage.summary.actionable.criteria).toBe(checklist.summary.actionable.criteria);
-    // The structured count must also equal the sibling top-level
-    // scalar on coverage (no internal disagreement within the same
-    // response).
-    expect(coverage.summary.actionable.criteria).toBe(coverage.actionableManualItems);
+    // The structured count must also equal the sibling
+    // `manualWithCandidates.length` on coverage (no internal
+    // disagreement within the same response). Per Q15 the redundant
+    // `actionableManualItems` scalar twin was deleted; agents resolve
+    // the count via the canonical array shape.
+    expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates.length);
+    // Q15 deletion guard — the scalar twin must not reappear on the
+    // populated coverage envelope.
+    expect((coverage as Record<string, unknown>).actionableManualItems).toBeUndefined();
+    expect((coverage as Record<string, unknown>).criteriaUntestable).toBeUndefined();
 
     // `summary.untargetedCriteria` mirrors across tools.
     expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);

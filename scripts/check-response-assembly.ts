@@ -82,11 +82,15 @@
  * `automatedCoverage: [{ … }, …]` array (multi-standard path) inside a
  * `textResult(...)` / `errorResult(...)` call regresses the deletion.
  * Note: the sibling `coverage` tool still emits `automatedCriteriaPassRate`
- * at the per-standard report top level alongside the four-counter split
- * (`criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`,
- * `criteriaUntestable`); that surface is out of scope here because the
- * pattern is gated on the `automatedCoverage:` key (not present on the
- * coverage tool's flat per-standard shape).
+ * at the per-standard report top level alongside the three-counter split
+ * (`criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`); the
+ * untestable lane ships exclusively as the `untestableCriteria` array
+ * (per Q15 "Sibling fields naming the same concept must use one shape" —
+ * the `criteriaUntestable` scalar twin was deleted in favor of
+ * `untestableCriteria.length` and the `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+ * mirror). That surface is out of scope here because the pattern is
+ * gated on the `automatedCoverage:` key (not present on the coverage
+ * tool's flat per-standard shape).
  *
  * ## Scope
  *
@@ -385,8 +389,9 @@ function analyzePlanViolationsCompositePattern(
  * from the sibling `coverage` tool's per-standard shape (where
  * `automatedCriteriaPassRate` is legitimately surfaced at the top level
  * of each entry alongside the structured `criteriaEvaluated /
- * criteriaClean / criteriaWithFindings / criteriaUntestable` split, not
- * inside an `automatedCoverage:` envelope).
+ * criteriaClean / criteriaWithFindings` split — the untestable lane
+ * ships exclusively as the `untestableCriteria` array, not as a sibling
+ * scalar — not inside an `automatedCoverage:` envelope).
  *
  * The pass-rate composite was removed from the checklist surface; the
  * honest shape is the two non-overlapping counters

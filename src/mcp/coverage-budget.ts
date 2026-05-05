@@ -44,8 +44,14 @@
  *   - `untargetedCriteriaList`, `manualWithCandidates`, `untestableCriteria`,
  *     `likelyIrrelevantCriteria`, `failingAutomatedCriteria`,
  *     `warningAutomatedCriteria` dropped (the canonical-criterion lists
- *     the agent gets back via `checklist` on a narrower scope).
- *   - Counter scalars retained (`actionableManualItems`, `untargetedCriteria`,
+ *     the agent gets back via `checklist` on a narrower scope). When
+ *     these arrays drop, the agent reads the counts off the structured
+ *     `summary` block which the slim path keeps verbatim
+ *     (`summary.actionable.criteria` for the criteria-axis count;
+ *     `summary.automatedCoverage.criteriaWithoutEligibleInputs` for the
+ *     untestable count) — same scalar values the dropped arrays would
+ *     have surfaced via `.length`.
+ *   - Counter scalars retained (`untargetedCriteria`,
  *     `criteriaAutomatable`, `criteriaEvaluated`, `criteriaClean`,
  *     `criteriaWithFindings`, `criteriaTotalForProfile`, `criteriaByLevel`,
  *     `automatedCriteriaPassRate`, `summary`) — the load-bearing routing
@@ -94,10 +100,11 @@ export const SLIM_COVERAGE_META_KEYS: readonly string[] = [
  * the corpus. Listed explicitly so the slim builder's discard set is
  * inspectable and the contract stays stable across refactors.
  *
- * The corresponding scalar counters (`actionableManualItems`,
- * `untargetedCriteria`, `criteriaUntestable`, etc.) ride alongside in
- * the un-dropped fields — the agent still sees how many criteria are in
- * each bucket, just not the per-criterion identifier list.
+ * The corresponding scalar counts (`untargetedCriteria`,
+ * `summary.actionable.criteria`, `summary.automatedCoverage.criteriaWithoutEligibleInputs`,
+ * etc.) ride alongside in the un-dropped fields — the agent still sees
+ * how many criteria are in each bucket, just not the per-criterion
+ * identifier list.
  */
 export const SLIM_COVERAGE_DROPPED_TOP_KEYS: readonly string[] = [
   "untargetedCriteriaList",
@@ -182,9 +189,11 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
  * to re-call with narrower scope — the per-criterion / per-rule detail
  * comes back on that call.
  *
- * Retains every scalar counter (`actionableManualItems`,
- * `untargetedCriteria`, `criteriaEvaluated` …), the `summary` prose,
- * `nextStep`, the slimmed `meta` block, and the warnings channel.
+ * Retains every scalar counter (`untargetedCriteria`,
+ * `criteriaEvaluated` …), the `summary` block (which carries
+ * `actionable.criteria` and `automatedCoverage.criteriaWithoutEligibleInputs`
+ * on the un-dropped axis), `nextStep`, the slimmed `meta` block, and
+ * the warnings channel.
  */
 function buildSlimCoverageEnvelope(args: {
   readonly original: Record<string, unknown>;
