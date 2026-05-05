@@ -98,12 +98,7 @@ import type {
 } from "../../types/ast.ts";
 import type { ReviewCandidate } from "../../types/review.ts";
 
-const CRITERION_IDS = [
-  "wcag22:2.4.6",
-  "wcag21:2.4.6",
-  "wcag22:4.1.2",
-  "wcag21:4.1.2",
-] as const;
+const CRITERION_IDS = ["wcag22:2.4.6", "wcag21:2.4.6", "wcag22:4.1.2", "wcag21:4.1.2"] as const;
 
 /**
  * Class tokens that mark an element as visually-hidden. Mirrors the
