@@ -649,7 +649,6 @@ Response shape / cross-surface drift / honesty:
 
 Tool-orchestration / new tool surfaces:
 
-- [ ] **V1-TOOL-FINDING-BY-ID** No tool retrieves a finding by `findingId` after the scan. `suggest_fix` requires `ruleId + file + line` — but `scan_project` returns `findingId: "b0d1b34c01d1"` opaque IDs. Add `get_finding({findingId})`.
 - [ ] **V1-TOOL-FINDINGS-BY-RULE** `scan_project` paginates by file; an agent triaging "all 169 `aria/expanded-on-disclosure` findings" must page 110 files. Add `findings_by_rule({ruleId, cwd})` that returns just the findings for one rule across the project. Replaces 22 paginated calls with one. Pairs with V1-CROSS-FILE-ROLLUP-PRIMITIVE.
 - [ ] **V1-TOOL-SESSION-INSPECT** No read-only tool to retrieve current session state. After `sessionConfigure`, agents have no way to verify rule overrides, native wrappers, or excludes without making a no-op `scan` call. Add `sessionInspect()` returning the same shape `sessionConfigure.active` returns plus `rules`, `nativeWrappers`, `cwd`. Pairs with V1-SESSION-CONFIGURE-ECHO-STATE.
 - [ ] **V1-TOOL-LIST-FINDERS** Manual-review finders (`review/multiple-ways`, `review/pointer-input`, etc. — visible in `review_candidates.prompts[*].finderId`) are NOT enumerated by any tool. Agents discover them only by accident through `review_candidates` results. Per the rules-silently-defer / finders-silently-fire pattern, having a `list_finders` tool would expose the manual-review surface area for audit.
