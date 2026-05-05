@@ -1233,6 +1233,8 @@ function selectScanTimeWireFields(scanTime: {
 } {
   return {
     ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
-    ...(scanTime.warningsDetails === undefined ? {} : { warningsDetails: scanTime.warningsDetails }),
+    ...(scanTime.warningsDetails === undefined
+      ? {}
+      : { warningsDetails: scanTime.warningsDetails }),
   };
 }
