@@ -513,7 +513,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 ### Parser routing skips
 
 - [ ] **Q15-TEMPLATE-INTERPOLATION-NO-PER-STYLE-CLASSIFIER** `meta.templateInterpolationFound` reports `{{x}}: 3396, {%x%}: 704, <%x%>: 9` — three template engines mixed (Liquid + ERB + Mustache-shape). No per-style classifier (e.g. `liquid_directives_unparsed` / `erb_directives_unparsed`) is emitted; the agent cannot scope around a specific engine. Closure: split `template_files_parsed_as_literal` into per-token-style codes (`liquid_directives_unparsed`, `erb_directives_unparsed`, `mustache_directives_unparsed`); each ships its own file list and count. Per AI-first doctrine "Routing skips that drop content are the symmetric twin of suppression" — split-by-predicate closure path.
-- [ ] **Q15-FOCUS-OUTLINE-VISIBLE-MISSES-OUTLINE-ZERO-IN-FOCUS** `scan_file` on a small `style.css` containing `.btn:focus { outline: 0 }` reports `rulesEvaluated.fired: 0`. The CSS-only path of `focus/outline-visible` should fire on `outline: 0` (and `outline: none`) inside a `:focus` selector — the canonical predicate the rule names. Zero firings on this exact shape is a false negative. Closure: verify `focus/outline-visible`'s CSS-only evaluator catches `outline: 0` / `outline: none` declarations inside `:focus` / `:focus-visible` selectors; integration test pinning the predicate on a minimal CSS fixture. Per AI-first doctrine "Surface, don't suppress."
 
 ### NextStep / nextStepStructured routing
 
