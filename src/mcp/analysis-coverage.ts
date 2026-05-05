@@ -415,27 +415,14 @@ interface CoverageBlock {
   hints?: readonly Hint[];
   skippedByExtension?: Readonly<Record<string, number>>;
   /**
-   * Per-extension counts of files that have a parseable extension but
-   * were filtered by `.gitignore`, user-supplied `exclude` globs, or
-   * the lone `DEFAULT_EXCLUDED_PATTERNS` entry (`__mocks__`). Closes
-   * the per-extension accounting axis when `meta.filesByExtension`
-   * undercounts ground-truth file totals — a real-world design-system
-   * docs corpus shipped 47 `.css` / 116 `.js` / 122 `.scss` / 17 `.md`
-   * source files but `meta.filesByExtension` reported
-   * 31 / 56 / 114 / 13. The deltas correspond to gitignore matches
-   * (Tailwind compiled CSS in a `dist/`-gitignored subtree, the
-   * design system's own JS bundle output, etc.) the agent had no way
-   * to see without re-walking the tree. Per AI-first "Verbose meta
-   * is signal, not clutter": surfacing the deliberately-suppressed
-   * count separates pattern-driven exclusion (visible) from
-   * parser-routing bugs (invisible). Together with `filesByExtension`
-   * (parsed) and `skippedByExtension` (unparseable) plus
-   * `sourcemapFiles.length`, this field closes the per-extension
-   * accounting invariant for files reachable under the dir-ignore
-   * set: parsed + skipped + excludedByPattern + sourcemap = the raw
-   * walker count. Map keys are ext-with-dot (`.scss`); counters are
-   * raw file counts. Present-when-meaningful (omitted when the map
-   * is empty or the caller didn't run discovery).
+   * Per-extension counts of parseable files filtered by `.gitignore`,
+   * user-supplied `exclude` globs, or `DEFAULT_EXCLUDED_PATTERNS`. See
+   * {@link import("../input/discover.ts").DiscoveryDiagnostics.excludedByPatternByExtension}
+   * for the full doctrine link. Together with `filesByExtension`
+   * (parsed) + `skippedByExtension` (unparseable) + `sourcemapFiles`
+   * (sourcemap), closes the per-extension accounting invariant for
+   * files reachable under the dir-ignore set. Map keys are ext-with-
+   * dot; counters are raw file counts. Present-when-meaningful.
    */
   excludedByPatternByExtension?: Readonly<Record<string, number>>;
   /**
@@ -911,51 +898,38 @@ function populateCoverageTail(
   if (Object.keys(parseMode).length > 0) coverage.parseModeByExtension = parseMode;
   const hints = buildHints(files, acc);
   if (hints.length > 0) coverage.hints = hints;
-  // surface per-extension counts for files the
-  // walker considered but rejected purely on the parseable-extension
-  // check. Present-when-meaningful: omitted when the map is empty or
-  // the caller didn't run discovery (`scan_file` takes explicit paths).
-  if (
-    discoveryDiagnostics !== undefined &&
-    Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
-  ) {
-    coverage.skippedByExtension = discoveryDiagnostics.skippedByExtension;
+  populateDiscoveryDiagnostics(coverage, discoveryDiagnostics);
+}
+
+/**
+ * Mirrors the four discovery-diagnostic channels onto the coverage
+ * block, present-when-meaningful: `skippedByExtension`
+ * (parser-routing gaps), `excludedByPatternByExtension` (gitignore /
+ * user-excludes / `DEFAULT_EXCLUDED_PATTERNS`), `sourcemapFiles`
+ * (the `.map` exclusion drives `sourcemap_files_excluded`), and
+ * `defaultExcludedArtifactPaths` (build-artifact dirs the walker
+ * silently skipped — drives `default_excluded_artifact_paths`).
+ * Together with `filesByExtension` these close the per-extension
+ * accounting invariant: parsed + skipped + excludedByPattern +
+ * sourcemap = the raw walker count for files reachable under the
+ * dir-ignore set.
+ */
+function populateDiscoveryDiagnostics(
+  coverage: CoverageBlock,
+  d: import("../input/discover.ts").DiscoveryDiagnostics | undefined,
+): void {
+  if (d === undefined) return;
+  if (Object.keys(d.skippedByExtension).length > 0) {
+    coverage.skippedByExtension = d.skippedByExtension;
   }
-  // Per-extension counts of files filtered by `.gitignore` /
-  // user excludes / `DEFAULT_EXCLUDED_PATTERNS`. Closes the
-  // per-extension accounting axis when `filesByExtension` undercounts
-  // raw file totals because parseable-extension files were silently
-  // dropped through the pattern matchers. Present-when-meaningful per
-  // AI-first "Verbose meta is signal, not clutter": surfaced only when
-  // the discovery layer recorded at least one such file so the field's
-  // presence is itself the agent-actionable signal.
-  if (
-    discoveryDiagnostics !== undefined &&
-    Object.keys(discoveryDiagnostics.excludedByPatternByExtension).length > 0
-  ) {
-    coverage.excludedByPatternByExtension = discoveryDiagnostics.excludedByPatternByExtension;
+  if (Object.keys(d.excludedByPatternByExtension).length > 0) {
+    coverage.excludedByPatternByExtension = d.excludedByPatternByExtension;
   }
-  // Sourcemap files: separate field rather than a `skippedByExtension`
-  // entry so the conventional `.map` exclusion is declared explicitly
-  // (drives the `sourcemap_files_excluded` warning). Present-when-
-  // meaningful — omitted when the walk encountered none.
-  if (discoveryDiagnostics !== undefined && discoveryDiagnostics.sourcemapFiles.length > 0) {
-    coverage.sourcemapFiles = discoveryDiagnostics.sourcemapFiles;
+  if (d.sourcemapFiles.length > 0) {
+    coverage.sourcemapFiles = d.sourcemapFiles;
   }
-  // Default-excluded build-artifact directories the walker silently
-  // dropped (per the AI-first "Default-exclude globs are suppression
-  // too" doctrine). The discovery layer shallow-walks each match to
-  // count parseable files + capture sample paths so the warning
-  // payload names the silent miss without forcing the agent into a
-  // separate Read pass against `dist/` / `.next/` / etc. Drives the
-  // `default_excluded_artifact_paths` warning code. Present-when-
-  // meaningful — omitted when no matched directory contained
-  // parseable content.
-  if (
-    discoveryDiagnostics !== undefined &&
-    discoveryDiagnostics.defaultExcludedArtifactPaths.length > 0
-  ) {
-    coverage.defaultExcludedArtifactPaths = discoveryDiagnostics.defaultExcludedArtifactPaths;
+  if (d.defaultExcludedArtifactPaths.length > 0) {
+    coverage.defaultExcludedArtifactPaths = d.defaultExcludedArtifactPaths;
   }
 }
 
