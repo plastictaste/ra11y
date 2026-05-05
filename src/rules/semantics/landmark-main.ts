@@ -204,11 +204,7 @@ function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
  * branch genuinely has no body to describe, and the partial-suffix
  * already names the dismissal hatch (the composition directive).
  */
-function emitBodylessPartial(
-  ctx: FileContext,
-  doc: HtmlDocument,
-  markdownResidue: boolean,
-): void {
+function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument, markdownResidue: boolean): void {
   const htmlElements = findHtmlElementsByTag(doc, "html");
   const anchor = htmlElements[0];
   ctx.emit(
