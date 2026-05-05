@@ -72,7 +72,9 @@ export function suggestFixRerouteSpread(ctx: SuggestFixContext): {
   readonly markdownHeadingCollision?: MarkdownHeadingIdCollision;
 } {
   return {
-    ...(ctx.inheritedFromWrapper === null ? {} : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
+    ...(ctx.inheritedFromWrapper === null
+      ? {}
+      : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
     ...(ctx.templateDirectiveContext === null
       ? {}
       : { templateDirectiveContext: ctx.templateDirectiveContext }),
