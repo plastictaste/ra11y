@@ -84,18 +84,24 @@ interface ScanBody {
 }
 interface CoverageBody {
   // The legacy composite `criteriaManualReviewRequired` was deleted
-  // (mirroring the precedent on `plan.totalFindings`). Coverage ships
-  // the same split that `scan_project.plan` and `checklist.summary`
-  // surface — criteria with grounded candidates (the `manualWithCandidates`
-  // array; count is `manualWithCandidates.length`, mirrored at
-  // `summary.actionable.criteria`) and `untargetedCriteria`
-  // (applicable manual-only with no candidate). Per Q15 ("Sibling
-  // fields naming the same concept must use one shape") the redundant
-  // top-level `actionableManualItems` scalar twin was deleted; agents
-  // derive the criteria-axis count from `manualWithCandidates.length`.
-  // Callers that want the former composite total sum the two on read.
-  readonly manualWithCandidates: readonly { readonly criterionId: string }[];
+  // (mirroring the precedent on `plan.totalFindings`). Coverage's
+  // criteria-axis manual-review count now rides on the structured
+  // `summary.actionable.criteria` path that mirrors
+  // `checklist.summary.actionable.criteria`. The redundant top-level
+  // `actionableManualItems` scalar that previously duplicated
+  // `manualWithCandidates.length` was deleted alongside the parallel
+  // `criteriaUntestable` / `untestableCriteria` pair per AI-first
+  // doctrine "Sibling fields naming the same concept must use one
+  // shape." `untargetedCriteria` stays as the bare-prompt count (the
+  // array form rides under `untargetedCriteriaList` only when
+  // `showUntargeted: true`).
+  readonly summary: {
+    readonly actionable: { readonly criteria: number };
+  };
   readonly untargetedCriteria: number;
+  // Optional — present-when-meaningful: omitted when no manual
+  // criteria carried grounded candidates on this corpus.
+  readonly manualWithCandidates?: ReadonlyArray<unknown>;
 }
 interface ChecklistBody {
   readonly summary: {
@@ -130,20 +136,24 @@ async function gatherCounts(cwd: string): Promise<{
   const coverageBody = body<CoverageBody>(responses[2]);
   const checklistBody = body<ChecklistBody>(responses[3]);
   return {
-    // Re-derive the cross-tool total from the split surfaces on every
-    // tool. The composite `manualReviewRequired` was dropped from
-    // scan_project's plan, checklist's summary, AND coverage (Q13) —
-    // the dishonest-headline pattern is the same on every surface. The
-    // invariant is still "all surfaces agree on the total", just
-    // computed from the honest parts everywhere. Per Q15, the
-    // criteria-axis count on coverage now reads off
-    // `manualWithCandidates.length` (the canonical array shape — the
-    // redundant `actionableManualItems` scalar twin was deleted).
+    // Re-derive the cross-tool total from the split top-level fields
+    // on every surface. The composite `manualReviewRequired` was
+    // dropped from scan_project's plan, checklist's summary, AND
+    // coverage (Q13) — the dishonest-headline pattern is the same on
+    // every surface. The invariant is still "all surfaces agree on the
+    // total", just computed from the honest parts everywhere.
     scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
-    coverage: coverageBody.manualWithCandidates.length + coverageBody.untargetedCriteria,
+    coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteria,
     checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
     scanActionable: scanBody.plan.actionableManualItems,
-    coverageActionable: coverageBody.manualWithCandidates.length,
+    // Coverage exposes the criteria-axis manual-review count through
+    // the structured `summary.actionable.criteria` path now (the
+    // top-level `actionableManualItems` scalar twin was deleted —
+    // it duplicated `manualWithCandidates.length`, the canonical
+    // "Sibling fields naming the same concept must use one shape"
+    // failure mode). The `manualWithCandidates.length` array form
+    // would also work — both equal the same count on identical input.
+    coverageActionable: coverageBody.summary.actionable.criteria,
     checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteria,
     coverageUntargeted: coverageBody.untargetedCriteria,
@@ -193,19 +203,22 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.manualWithCandidates.length", async () => {
+  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.summary.actionable.criteria", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
     // file:line candidates. Exposing the actionable count inline
     // saves the round trip.
     //
-    // The same counter also rides on `coverage` as
-    // `manualWithCandidates.length` (the canonical array shape; the
-    // redundant `actionableManualItems` scalar twin was deleted under
-    // Q15 per "Sibling fields naming the same concept must use one
-    // shape"). The legacy composite `criteriaManualReviewRequired` was
-    // deleted; only the structured per-lane siblings carry the count now.
+    // The same counter rides on `coverage` through the structured
+    // `summary.actionable.criteria` path (mirrors checklist's path),
+    // so an agent can compare without a translation table. The legacy
+    // composite `criteriaManualReviewRequired` was deleted, and the
+    // top-level `actionableManualItems` scalar twin on coverage was
+    // dropped because it duplicated `manualWithCandidates.length`
+    // ("Sibling fields naming the same concept must use one shape");
+    // only the structured per-lane siblings and the
+    // `manualWithCandidates` array carry the count now.
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     expect(mediaFree.scanActionable).toBe(mediaFree.checklistActionable);
     expect(mediaFree.scanActionable).toBe(mediaFree.coverageActionable);
@@ -306,8 +319,8 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  */
 interface FullCoverageEnvelope extends CoverageBody {
   readonly manualCandidatesTotal?: number;
-  readonly summary?: {
-    readonly actionable?: { readonly criteria?: number; readonly candidates?: number };
+  readonly summary: {
+    readonly actionable: { readonly criteria: number; readonly candidates?: number };
   };
   readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
 }
@@ -347,7 +360,7 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const scanBody = body<ScanBody>(responses[1]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
     const checklistBody = body<ChecklistBody>(responses[3]);
-    const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates.length;
+    const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
     expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
     expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
   });
@@ -362,12 +375,13 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
 // `checklist.summary.actionable.criteria: M` criteria-axis,
 // `checklist.totalCandidates: K` candidate-axis) and disambiguate by
 // reading field names carefully. `coverage.manualCandidatesTotal`
-// closes the gap so coverage carries both axes —
-// `manualWithCandidates.length` (criteria) and `manualCandidatesTotal`
-// (candidates) — and the candidate-axis number agrees across surfaces.
-// Doctrine: `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
-// count invariant" + "Sibling fields naming the same concept must use
-// one shape" — the candidate-vs-criteria split is named, not implied.
+// closes the gap so coverage carries both axes — the criteria-axis
+// (via `manualWithCandidates.length` / `summary.actionable.criteria`)
+// and the candidate-axis (`manualCandidatesTotal`) — and the
+// candidate-axis number agrees across surfaces. Doctrine:
+// `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+// invariant" + "Sibling fields naming the same concept must use one
+// shape" — the candidate-vs-criteria split is named, not implied.
 describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
   it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
     // Media-present fixture seeds grounded candidates via the
@@ -398,7 +412,8 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
   it("coverage.summary.actionable.candidates mirrors the same candidate-axis count", async () => {
     // The candidate-vs-criteria split is exposed twice on the coverage
     // envelope: once as the top-level `manualCandidatesTotal` scalar
-    // (sibling to `actionableManualItems`), and once nested under
+    // (paired with the `manualWithCandidates` array's length on the
+    // criteria axis), and once nested under
     // `summary.actionable.candidates` (sibling to
     // `summary.actionable.criteria`, mirroring `checklist.summary.actionable`).
     // Both must agree — they read the same underlying tally; a
@@ -413,6 +428,104 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
     expect(coverageEnvelope.summary?.actionable?.criteria).toBe(
       coverageEnvelope.manualWithCandidates?.length ?? 0,
     );
+  });
+});
+
+// Sibling fields naming the same concept must use one shape:
+// the coverage response must name each of the two manual-review-and-
+// untestable concepts exactly once. Earlier the entry shipped the
+// same concept four ways:
+//
+//   - `criteriaUntestable: 0` (scalar) alongside `untestableCriteria: []`
+//     (array of same count)
+//   - `actionableManualItems: N` (parallel scalar twin) alongside
+//     `manualWithCandidates: [...N items]` (parallel array form)
+//
+// Per AI-first doctrine "Sibling fields naming the same concept must
+// use one shape," the closure picks the array shape per concept and
+// derives scalars from `array.length` at read time. Empty arrays
+// drop entirely (present-when-meaningful — "absent on this corpus"
+// is signaled by absence, not by an empty-array sentinel).
+//
+// This block pins:
+//   1. Neither dropped scalar (`actionableManualItems`,
+//      `criteriaUntestable`) appears on the coverage entry under any
+//      input shape.
+//   2. The array forms (`manualWithCandidates`, `untestableCriteria`)
+//      are absent when the corpus has nothing to populate them with
+//      (omit-empty conditional spread).
+//   3. Future refactors that re-introduce a scalar twin lights up
+//      here, not in the next field-test sweep.
+describe("MCP invariant: coverage entry names each concept once", () => {
+  it("never ships the dropped scalar twins (actionableManualItems, criteriaUntestable)", async () => {
+    // Three distinct corpus shapes — empty (zero-file), media-free
+    // (manual queue populated), and media-present (manual queue
+    // populated AND grounded candidates) — exercise the full state
+    // matrix the coverage response can land in. Pre-fix every shape
+    // shipped both scalars; post-fix every shape ships neither.
+    const fixtures = [
+      { name: "empty", make: async () => mkdtemp(join(tmpdir(), "ra11y-cov-empty-")) },
+      { name: "media-free", make: makeMediaFreeFixture },
+      { name: "media-present", make: makeMediaPresentFixture },
+      { name: "fired-manual", make: makeFiredManualCriterionFixture },
+    ];
+    for (const fixture of fixtures) {
+      const dir = await fixture.make();
+      const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+      const coverage = body<Record<string, unknown>>(responses[1]);
+      // Both dropped scalars must be entirely absent — not 0, not
+      // null, not undefined-via-presence; the field name itself must
+      // not be in the response.
+      expect(coverage).not.toHaveProperty("actionableManualItems");
+      expect(coverage).not.toHaveProperty("criteriaUntestable");
+    }
+  });
+
+  it("omits manualWithCandidates and untestableCriteria when empty (present-when-meaningful)", async () => {
+    // The media-free fixture emits no grounded manual candidates and
+    // no untestable criteria on this rule library, so both arrays
+    // are "absent on this corpus." Omit-empty via conditional spread
+    // — the field name is gone entirely, not shipped as `[]`. An
+    // empty-array sentinel would be the dishonest shape the AI-first
+    // doctrine warns against.
+    const dir = await makeMediaFreeFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverage = body<Record<string, unknown>>(responses[1]);
+    // When the corpus has nothing to populate either array, the
+    // whole field must not ship.
+    if (coverage["manualWithCandidates"] === undefined) {
+      expect(coverage).not.toHaveProperty("manualWithCandidates");
+    }
+    if (coverage["untestableCriteria"] === undefined) {
+      expect(coverage).not.toHaveProperty("untestableCriteria");
+    }
+    // Sanity floor — at least one of the two omit-empty paths
+    // exercised. If a future rule library makes both arrays
+    // routinely populated, this test relaxes; for now the
+    // media-free fixture exercises the omit branch on at least one.
+    const omittedAtLeastOne = !(
+      "manualWithCandidates" in coverage && "untestableCriteria" in coverage
+    );
+    expect(omittedAtLeastOne).toBe(true);
+  });
+
+  it("ships manualWithCandidates as a populated array when grounded candidates exist", async () => {
+    // The media-present fixture seeds grounded candidates via the
+    // `review/media-variants` finder. With at least one candidate,
+    // `manualWithCandidates` must ship populated — the omit-empty
+    // rule applies only when the array would be empty.
+    const dir = await makeMediaPresentFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverage = body<{
+      readonly manualWithCandidates?: ReadonlyArray<unknown>;
+      readonly summary: { readonly actionable: { readonly criteria: number } };
+    }>(responses[1]);
+    expect(coverage.manualWithCandidates).toBeDefined();
+    expect(Array.isArray(coverage.manualWithCandidates)).toBe(true);
+    expect((coverage.manualWithCandidates ?? []).length).toBeGreaterThan(0);
+    // The array length must equal the structured criteria-axis
+    // count — the canonical access path for the scalar value.
+    expect(coverage.summary.actionable.criteria).toBe((coverage.manualWithCandidates ?? []).length);
   });
 });
 

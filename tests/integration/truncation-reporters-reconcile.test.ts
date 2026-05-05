@@ -85,6 +85,13 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
+    // `actionableManualItems` and `criteriaUntestable` scalars were
+    // dropped from the coverage entry (each duplicated its array-
+    // form sibling) — the criteria-axis count rides via
+    // `summary.actionable.criteria` and the array form
+    // `manualWithCandidates`. Keep the synthetic fixture aligned
+    // with the live shape so the reconciler test exercises the wire
+    // shape that actually ships.
     untargetedCriteria: 0,
     summary: {
       actionable: { criteria: 1 },

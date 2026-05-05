@@ -76,6 +76,11 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
+    // `actionableManualItems` and `criteriaUntestable` scalars were
+    // dropped from the coverage entry (each duplicated its array-
+    // form sibling) — the criteria-axis count rides via
+    // `summary.actionable.criteria` and the array form
+    // `manualWithCandidates`.
     untargetedCriteria: 0,
     // Structured `summary` dict mirrors `checklist.summary`'s shape.
     // The slim envelope spreads `original` first, so the dict rides

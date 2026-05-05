@@ -203,8 +203,14 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
   test("does NOT flag the sibling `coverage` tool's per-standard `automatedCriteriaPassRate`", () => {
     // The `coverage` tool surfaces `automatedCriteriaPassRate` at the
     // top level of each per-standard entry alongside the structured
-    // counter split. That shape is out of scope because the value
-    // never sits under an `automatedCoverage:` key.
+    // three-counter split (criteriaEvaluated / criteriaClean /
+    // criteriaWithFindings). That shape is out of scope because the
+    // value never sits under an `automatedCoverage:` key. Note: the
+    // historical `criteriaUntestable` scalar twin was dropped from
+    // the live envelope (it duplicated `untestableCriteria.length` —
+    // the "Sibling fields naming the same concept must use one
+    // shape" failure mode) — but its presence here is incidental to
+    // what the lint rule actually checks.
     const src = `
       import { textResult } from "./helpers";
       export function handler() {
@@ -214,6 +220,7 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
           criteriaEvaluated: 30,
           criteriaClean: 22,
           criteriaWithFindings: 8,
+          untestableCriteria: [],
         });
       }
     `;

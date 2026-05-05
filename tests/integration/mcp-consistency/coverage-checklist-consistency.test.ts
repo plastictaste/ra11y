@@ -136,13 +136,15 @@ interface NextStepStructured {
 interface CoverageBody {
   readonly standardId: string;
   // The legacy composite `criteriaManualReviewRequired` was deleted
-  // in favor of the same split scan_project and checklist already
-  // ship. Per Q15 ("Sibling fields naming the same concept must use
-  // one shape") the criteria-axis count rides exclusively as the
-  // `manualWithCandidates` array — the redundant top-level
-  // `actionableManualItems` scalar twin was deleted; agents derive
-  // the count via `manualWithCandidates.length` or read it off
-  // `summary.actionable.criteria` (mirrors `checklist.summary`).
+  // in favor of the same two-counter split scan_project and checklist
+  // already ship. The redundant top-level `actionableManualItems`
+  // scalar (and its sibling `criteriaUntestable`) were then deleted
+  // per AI-first doctrine "Sibling fields naming the same concept
+  // must use one shape" — the criteria-axis count rides through the
+  // structured `summary.actionable.criteria` path that mirrors
+  // `checklist.summary.actionable.criteria`, and
+  // `manualWithCandidates.length` exposes the same count via the
+  // array form.
   readonly untargetedCriteria: number;
   // Structured `summary` dict — mirrors `checklist.summary`'s key
   // shape so an agent reading `summary.actionable.criteria` /
@@ -169,8 +171,11 @@ interface CoverageBody {
   // Canonical field name is `criterionId` — matches
   // `checklist.items[].criterionId` and the namespaced-id convention
   // (`wcag22:1.4.3`) used elsewhere. The legacy `id` alias was dropped;
-  // entries carry `criterionId` only.
-  readonly manualWithCandidates: readonly { readonly criterionId: string }[];
+  // entries carry `criterionId` only. Present-when-meaningful:
+  // omitted from the response entirely when no manual criterion
+  // grounded a candidate on this corpus (the array's length, not a
+  // sentinel-empty list, is the canonical signal).
+  readonly manualWithCandidates?: readonly { readonly criterionId: string }[];
   readonly likelyIrrelevantCriteria: readonly {
     readonly criterionId: string;
   }[];
@@ -236,17 +241,13 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // `actionable.criteria` is the cross-tool canonical count — must
     // resolve identically by both name AND value on either tool.
     expect(coverage.summary.actionable.criteria).toBe(checklist.summary.actionable.criteria);
-    // The structured count must also equal the sibling
-    // `manualWithCandidates.length` on coverage (no internal
-    // disagreement within the same response). Per Q15 the redundant
-    // `actionableManualItems` scalar twin was deleted; agents resolve
-    // the count via the canonical array shape.
-    expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates.length);
-    // Q15 deletion guard — the scalar twin must not reappear on the
-    // populated coverage envelope.
-    const coverageRecord = coverage as unknown as Record<string, unknown>;
-    expect(coverageRecord["actionableManualItems"]).toBeUndefined();
-    expect(coverageRecord["criteriaUntestable"]).toBeUndefined();
+    // The structured count must also equal the array-length sibling
+    // on coverage (no internal disagreement within the same
+    // response). The legacy top-level `actionableManualItems` scalar
+    // twin was deleted (it duplicated `manualWithCandidates.length`)
+    // — the array form is the canonical sibling now, present-when-
+    // meaningful (omitted when empty).
+    expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates?.length ?? 0);
 
     // `summary.untargetedCriteria` mirrors across tools.
     expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
@@ -296,8 +297,13 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverageIrrelevantIds).toEqual(checklistIrrelevantIds);
 
     // Actionable (checklist items with candidates) lines up with
-    // coverage's `manualWithCandidates`.
-    const coverageActionableIds = new Set(coverage.manualWithCandidates.map((c) => c.criterionId));
+    // coverage's `manualWithCandidates`. The array is
+    // present-when-meaningful — when the corpus has no grounded
+    // manual candidates, the field is omitted entirely (treat
+    // absent as the empty set, never an empty-array sentinel).
+    const coverageActionableIds = new Set(
+      (coverage.manualWithCandidates ?? []).map((c) => c.criterionId),
+    );
     const checklistActionableIds = new Set(checklist.items.map((i) => i.criterionId));
     expect(checklistActionableIds).toEqual(coverageActionableIds);
   });
@@ -523,7 +529,10 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     >(responses[1]);
 
     const arrays = [
-      coverage.manualWithCandidates,
+      // `manualWithCandidates` is present-when-meaningful — when
+      // the corpus has no grounded manual candidates, the field is
+      // omitted entirely. Treat absent as the empty set.
+      coverage.manualWithCandidates ?? [],
       coverage.likelyIrrelevantCriteria,
       coverage.failingAutomatedCriteria,
       coverage.warningAutomatedCriteria,

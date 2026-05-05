@@ -44,18 +44,21 @@
  *   - `untargetedCriteriaList`, `manualWithCandidates`, `untestableCriteria`,
  *     `likelyIrrelevantCriteria`, `failingAutomatedCriteria`,
  *     `warningAutomatedCriteria` dropped (the canonical-criterion lists
- *     the agent gets back via `checklist` on a narrower scope). When
- *     these arrays drop, the agent reads the counts off the structured
- *     `summary` block which the slim path keeps verbatim
- *     (`summary.actionable.criteria` for the criteria-axis count;
- *     `summary.automatedCoverage.criteriaWithoutEligibleInputs` for the
- *     untestable count) — same scalar values the dropped arrays would
- *     have surfaced via `.length`.
+ *     the agent gets back via `checklist` on a narrower scope).
  *   - Counter scalars retained (`untargetedCriteria`,
  *     `criteriaAutomatable`, `criteriaEvaluated`, `criteriaClean`,
  *     `criteriaWithFindings`, `criteriaTotalForProfile`, `criteriaByLevel`,
  *     `automatedCriteriaPassRate`, `summary`) — the load-bearing routing
- *     channel the agent budgets against.
+ *     channel the agent budgets against. The criteria-axis count for
+ *     manual-review items rides under `summary.actionable.criteria`;
+ *     the untestable count rides under
+ *     `summary.automatedCoverage.criteriaWithoutEligibleInputs`. The
+ *     legacy top-level `actionableManualItems` and `criteriaUntestable`
+ *     scalars were deleted in the full envelope per
+ *     "Sibling fields naming the same concept must use one shape" —
+ *     agents derive them from the structured `summary` block here,
+ *     identical to how `checklist.summary.actionable.criteria` already
+ *     exposes the same count.
  *   - `nextStep` rewritten to recommend narrower scope.
  *   - `warnings[]` extends with `response_dropped_files_oversize`;
  *     `warningsDetails.response_dropped_files_oversize` carries the
@@ -100,11 +103,17 @@ export const SLIM_COVERAGE_META_KEYS: readonly string[] = [
  * the corpus. Listed explicitly so the slim builder's discard set is
  * inspectable and the contract stays stable across refactors.
  *
- * The corresponding scalar counts (`untargetedCriteria`,
- * `summary.actionable.criteria`, `summary.automatedCoverage.criteriaWithoutEligibleInputs`,
- * etc.) ride alongside in the un-dropped fields — the agent still sees
- * how many criteria are in each bucket, just not the per-criterion
- * identifier list.
+ * The corresponding scalar counters (`untargetedCriteria`,
+ * `criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`, etc.)
+ * ride alongside in the un-dropped fields — the agent still sees how
+ * many criteria are in each bucket, just not the per-criterion
+ * identifier list. The criteria-axis manual-review count and the
+ * untestable count come back through the structured `summary` block
+ * (`summary.actionable.criteria` /
+ * `summary.automatedCoverage.criteriaWithoutEligibleInputs`); the
+ * standalone top-level `actionableManualItems` and `criteriaUntestable`
+ * scalars no longer ship on the full envelope and therefore can't be
+ * "retained" here.
  */
 export const SLIM_COVERAGE_DROPPED_TOP_KEYS: readonly string[] = [
   "untargetedCriteriaList",
@@ -189,11 +198,9 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
  * to re-call with narrower scope — the per-criterion / per-rule detail
  * comes back on that call.
  *
- * Retains every scalar counter (`untargetedCriteria`,
- * `criteriaEvaluated` …), the `summary` block (which carries
- * `actionable.criteria` and `automatedCoverage.criteriaWithoutEligibleInputs`
- * on the un-dropped axis), `nextStep`, the slimmed `meta` block, and
- * the warnings channel.
+ * Retains every scalar counter (`actionableManualItems`,
+ * `untargetedCriteria`, `criteriaEvaluated` …), the `summary` prose,
+ * `nextStep`, the slimmed `meta` block, and the warnings channel.
  */
 function buildSlimCoverageEnvelope(args: {
   readonly original: Record<string, unknown>;

@@ -2856,9 +2856,17 @@ describe("MCP tool: coverage", () => {
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       criteriaAutomatable: number;
+      // The redundant top-level `actionableManualItems` /
+      // `criteriaUntestable` scalars were dropped from the coverage
+      // entry per AI-first doctrine "Sibling fields naming the same
+      // concept must use one shape" — agents read the criteria-axis
+      // count from `summary.actionable.criteria` (or
+      // `manualWithCandidates.length` when the array ships) and the
+      // untestable count from
+      // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+      // (or `untestableCriteria.length` when the array ships).
+      manualWithCandidates?: ReadonlyArray<{ criterionId: string }>;
       untargetedCriteria: number;
-      manualWithCandidates: readonly { readonly criterionId: string }[];
-      untestableCriteria: readonly { readonly criterionId: string }[];
       // Structured `summary` dict — mirrors `checklist.summary` so an
       // agent reading `summary.actionable.criteria` /
       // `summary.untargetedCriteria` / `summary.likelyIrrelevant` on
@@ -2890,42 +2898,29 @@ describe("MCP tool: coverage", () => {
     // A and AA criteria).
     const levelSum = Object.values(data.criteriaByLevel).reduce((a, b) => a + b, 0);
     expect(levelSum).toBe(data.criteriaTotalForProfile);
-    // Manual-review pile splits across two structured surfaces, never
-    // summed into a composite headline per AI-first doctrine
-    // "Composite headline counts are dishonest." The legacy
-    // `criteriaManualReviewRequired` composite was deleted; agents that
-    // want the legacy total sum the criteria-axis array length and the
-    // bare-prompt scalar themselves. Per Q15 ("Sibling fields naming
-    // the same concept must use one shape") the criteria-axis ships
-    // exclusively as the `manualWithCandidates` array — the redundant
-    // top-level `actionableManualItems` scalar twin was deleted in
-    // favor of `manualWithCandidates.length` (and its mirror at
-    // `summary.actionable.criteria`).
-    expect(Array.isArray(data.manualWithCandidates)).toBe(true);
+    // The criteria-axis count rides on `summary.actionable.criteria`
+    // (canonical structured access path mirroring
+    // `checklist.summary.actionable.criteria`) and on the
+    // `manualWithCandidates` array's length when the array ships.
+    // The untargeted count rides on `untargetedCriteria` (no array
+    // twin alongside it on the default envelope). Per AI-first
+    // doctrine "Composite headline counts are dishonest" the legacy
+    // composite `criteriaManualReviewRequired` was deleted; per
+    // "Sibling fields naming the same concept must use one shape"
+    // the redundant top-level scalars were dropped — agents read
+    // through the structured surfaces.
     expect(typeof data.untargetedCriteria).toBe("number");
-    expect(data.manualWithCandidates.length + data.untargetedCriteria).toBeGreaterThan(0);
+    expect(data.summary.actionable.criteria + data.untargetedCriteria).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
-    // Q15 deletion guard — neither scalar twin reappears even on a
-    // long-tail extension to this fixture.
     expect((data as Record<string, unknown>).actionableManualItems).toBeUndefined();
     expect((data as Record<string, unknown>).criteriaUntestable).toBeUndefined();
     // Structured summary dict — every leg the agent reads matches
     // checklist's keys exactly. `actionable.criteria` is the canonical
-    // cross-tool count (matches `manualWithCandidates.length` on this
-    // entry and `checklist.summary.actionable.criteria` on identical cwd).
+    // cross-tool count (matches `manualWithCandidates.length` and
+    // `checklist.summary.actionable.criteria` on identical cwd).
     expect(typeof data.summary).toBe("object");
-    expect(data.summary.actionable.criteria).toBe(data.manualWithCandidates.length);
+    expect(data.summary.actionable.criteria).toBe(data.manualWithCandidates?.length ?? 0);
     expect(data.summary.untargetedCriteria).toBe(data.untargetedCriteria);
-    // The untestable count shipped exclusively as
-    // `untestableCriteria.length` (no scalar twin) plus mirrored under
-    // `summary.automatedCoverage.criteriaWithoutEligibleInputs` —
-    // the structured-block mirror that lets agents read the count via
-    // `checklist.summary.automatedCoverage.criteriaWithoutEligibleInputs`
-    // on identical cwd.
-    expect(Array.isArray(data.untestableCriteria)).toBe(true);
-    expect(data.summary.automatedCoverage.criteriaWithoutEligibleInputs).toBe(
-      data.untestableCriteria.length,
-    );
     expect(typeof data.summary.likelyIrrelevant).toBe("number");
     expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
     expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");

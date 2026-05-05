@@ -41,6 +41,13 @@ function buildSyntheticCoverageResponse(
     criteriaEvaluated: 40,
     criteriaClean: 40,
     criteriaWithFindings: 0,
+    // The `criteriaUntestable` and `actionableManualItems` scalar
+    // twins were dropped from the live coverage entry — the
+    // criteria-axis count rides via `summary.actionable.criteria`
+    // and `manualWithCandidates.length`; the untestable count rides
+    // via `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+    // and `untestableCriteria.length`. Synthetic fixture stays
+    // aligned with the live wire shape.
     untargetedCriteria: 5,
     untargetedCriteriaList: [{ criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" }],
     manualWithCandidates: [
@@ -113,24 +120,19 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     const slim = result.response as Record<string, unknown>;
     // The slim shape keeps scalar counters + `summary` + slimmed `meta`
     // + `nextStep` + the warnings channel. Per-criterion fans drop.
-    // The criteria-axis count for actionable manual review now rides
-    // exclusively under `summary.actionable.criteria` per Q15
-    // ("Sibling fields naming the same concept must use one shape" —
-    // the redundant top-level `actionableManualItems` scalar twin was
-    // deleted alongside `criteriaUntestable`); agents reading the slim
-    // envelope resolve the count there.
+    // The `actionableManualItems` and `criteriaUntestable` scalar
+    // twins are no longer shipped on the live envelope, so the slim
+    // path no longer retains them either — the criteria-axis count
+    // is read off `summary.actionable.criteria`.
+    expect(slim.actionableManualItems).toBeUndefined();
+    expect(slim.criteriaUntestable).toBeUndefined();
+    expect((slim.summary as { actionable: { criteria: number } }).actionable.criteria).toBe(5);
     expect(slim.untargetedCriteria).toBe(5);
     expect(slim.criteriaAutomatable).toBe(40);
     expect(slim.criteriaEvaluated).toBe(40);
     expect(slim.criteriaClean).toBe(40);
     expect(slim.summary).toBeDefined();
-    expect((slim.summary as { actionable: { criteria: number } }).actionable.criteria).toBe(5);
     expect(slim.truncated).toBe(true);
-    // The redundant scalar twins deleted under Q15 must not reappear
-    // even on the slim path (the slim builder spreads the original
-    // first; if either field surfaced upstream it would propagate).
-    expect(slim.actionableManualItems).toBeUndefined();
-    expect(slim.criteriaUntestable).toBeUndefined();
     // Per `docs/kb/architecture/ai-first-consumer.md` "Truncation
     // reporters must reconcile across warnings": no third top-level
     // scalar reporter — the canonical meta-drop detail rides on
