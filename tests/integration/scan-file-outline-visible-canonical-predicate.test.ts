@@ -89,10 +89,7 @@ async function scanFileWithCss(css: string): Promise<ScanFileBody> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-q15-"));
   const cssPath = join(dir, "style.css");
   await writeFile(cssPath, css);
-  const responses = await mcpSession([
-    initMsg(1),
-    toolCall(2, "scan_file", { path: cssPath }),
-  ]);
+  const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: cssPath })]);
   return parseBody(responses.find((r) => r.id === 2));
 }
 
