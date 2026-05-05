@@ -70,8 +70,8 @@ import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
-import { scannedProject } from "./scanned-envelope.ts";
 import { computeTopRules } from "./scan-assembly.ts";
+import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
   errorResult,
