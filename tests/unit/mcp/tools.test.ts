@@ -697,11 +697,14 @@ describe("MCP tool: scan_project", () => {
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
         meta: {
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           autoDetectedWrappersNote?: string;
         };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual(["ActionButton", "Card"]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["ActionButton", "Card"],
+      });
       // Note spells out the concrete defineConfig shape so the agent
       // can compose the ra11y.config.ts edit in one Read+Edit pass.
       expect(data.meta.autoDetectedWrappersNote).toContain("defineConfig");
@@ -751,7 +754,7 @@ describe("MCP tool: scan_project", () => {
       const data = JSON.parse(result.content[0].text) as {
         meta: {
           configSource: string | null;
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           suggestedNativeWrappers?: string[];
           suggestedNativeWrappersNote?: string;
         };
@@ -808,12 +811,15 @@ describe("MCP tool: scan_project", () => {
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
         meta: {
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           activeNativeWrappers?: Array<{ name: string; source: string; confirmed?: boolean }>;
           sessionOverridesNote?: string;
         };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual(["DesignSystemButton", "DesignSystemCard"]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["DesignSystemButton", "DesignSystemCard"],
+      });
       const sessionTagged = (data.meta.activeNativeWrappers ?? []).filter(
         (e) => e.source === "session",
       );
@@ -976,22 +982,63 @@ describe("MCP tool: scan_project", () => {
       ]);
     });
 
-    it("reports zero-detection plainly when no candidates are found", async () => {
+    it("distinguishes ran-empty from did-not-run via the object-form shape", async () => {
+      // Per AI-first doctrine "Ambiguous field shapes are dishonest":
+      // an empty `autoDetectedWrappers: []` array used to read identically
+      // whether the detector ran and found nothing or whether the
+      // detector did not run at all (since the not-run case omits the
+      // field entirely, an agent reading `data.meta.autoDetectedWrappers
+      // ?? []` would coerce both to the same value). The object form
+      // `{ ran: true, candidates: [...] }` makes the two states
+      // structurally distinct: presence-with-`ran:true` means "ran";
+      // absence means "did not run."
       const { mkdtemp, writeFile } = await import("node:fs/promises");
       const { tmpdir } = await import("node:os");
       const { join: joinPath } = await import("node:path");
 
       const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-auto-detect-empty-"));
       await writeFile(joinPath(dir, "app.ts"), "export const x = 1;");
+      // The handler's "configMissing" branch suggests wrappers via a
+      // separate `suggestedNativeWrappers` field, so to isolate the
+      // ran-empty case we add a stub config so configMissing is false.
+      await writeFile(
+        joinPath(dir, "ra11y.config.ts"),
+        'import { defineConfig } from "@ra11y/core";\nexport default defineConfig({});\n',
+      );
 
       const tool = findTool("scan_project");
       const session = new McpSession();
-      const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
-      const data = JSON.parse(result.content[0].text) as {
-        meta: { autoDetectedWrappers?: string[]; autoDetectedWrappersNote?: string };
+
+      // Case 1: detector RAN (autoDetectWrappers: true) and found nothing.
+      const ran = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
+      const ranData = JSON.parse(ran.content[0].text) as {
+        meta: {
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
+          autoDetectedWrappersNote?: string;
+        };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual([]);
-      expect(data.meta.autoDetectedWrappersNote).toContain("found no");
+      expect(ranData.meta.autoDetectedWrappers).toEqual({ ran: true, candidates: [] });
+      expect(ranData.meta.autoDetectedWrappersNote).toContain("found no");
+
+      // Case 2: detector did NOT run (flag omitted, config present so
+      // the configMissing onboarding hint also stays silent).
+      const notRan = await tool.handler({ cwd: dir }, session);
+      const notRanData = JSON.parse(notRan.content[0].text) as {
+        meta: {
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
+          autoDetectedWrappersNote?: string;
+          suggestedNativeWrappers?: string[];
+        };
+      };
+      expect(notRanData.meta.autoDetectedWrappers).toBeUndefined();
+      expect(notRanData.meta.autoDetectedWrappersNote).toBeUndefined();
+      expect(notRanData.meta.suggestedNativeWrappers).toBeUndefined();
+
+      // The two states must be structurally distinguishable from the
+      // response alone (the whole point of the object-form shape).
+      expect(ranData.meta.autoDetectedWrappers).not.toEqual(
+        notRanData.meta.autoDetectedWrappers,
+      );
     });
 
     it("detects input-shaped wrappers (value + onChange) alongside button-shaped ones", async () => {
@@ -1023,14 +1070,12 @@ describe("MCP tool: scan_project", () => {
       const session = new McpSession();
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
-        meta: { autoDetectedWrappers?: string[] };
+        meta: { autoDetectedWrappers?: { ran: boolean; candidates: string[] } };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual([
-        "Checkbox",
-        "Input",
-        "SubmitButton",
-        "Textarea",
-      ]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["Checkbox", "Input", "SubmitButton", "Textarea"],
+      });
     });
   });
 
@@ -2987,9 +3032,15 @@ describe("MCP tool: audit", () => {
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
-      scan: { meta: { autoDetectedWrappers?: unknown } };
+      scan: { meta: { autoDetectedWrappers?: { ran: boolean; candidates: string[] } } };
     };
-    expect(Array.isArray(data.scan.meta.autoDetectedWrappers)).toBe(true);
+    // Shape contract: object-form `{ ran, candidates }` regardless of
+    // whether the detector found anything (per AI-first doctrine
+    // "Ambiguous field shapes are dishonest" — empty-array sentinel
+    // can't double as "did not run").
+    expect(data.scan.meta.autoDetectedWrappers).toBeDefined();
+    expect(data.scan.meta.autoDetectedWrappers?.ran).toBe(true);
+    expect(Array.isArray(data.scan.meta.autoDetectedWrappers?.candidates)).toBe(true);
   });
 });
 

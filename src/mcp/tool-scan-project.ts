@@ -149,7 +149,7 @@ export const scanProjectTool: McpTool = {
         autoDetectWrappers: {
           type: "boolean",
           description:
-            "When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detected list is surfaced in `meta.autoDetectedWrappers` — copy the names you confirm to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.",
+            "When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detector outcome is surfaced as `meta.autoDetectedWrappers: { ran: true, candidates: [...] }` — the object form distinguishes \"ran and found nothing\" (empty `candidates`) from \"detector did not run\" (field omitted). Copy the confirmed names to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.",
         },
         additionalPaths: {
           type: "array",
@@ -1469,7 +1469,13 @@ function buildRootsOverlapMeta(args: RootsOverlapArgs): Record<string, unknown> 
 
 /**
  * Builds the wrapper-related meta fields. Two distinct shapes:
- *   - `autoDetectedWrappers` + note: registered for this scan (flag on).
+ *   - `autoDetectedWrappers: { ran: true, candidates: [...] }` + note:
+ *     registered for this scan (flag on). The object form is honest
+ *     under "Ambiguous field shapes are dishonest" — `ran: true` carries
+ *     the "detector executed" signal independent of how many candidates
+ *     it found, so an empty `candidates: []` is unambiguous ("ran and
+ *     found nothing"), distinguishable from the field's complete absence
+ *     ("detector did not run").
  *   - `suggestedNativeWrappers` + note: onboarding hint only (config
  *     missing, flag off) — NOT registered. The agent retries with
  *     `autoDetectWrappers: true` or writes a config.
@@ -1483,7 +1489,7 @@ function buildWrapperMeta(args: {
   const { autoDetect, configMissing, detectedNames } = args;
   if (autoDetect) {
     return {
-      autoDetectedWrappers: detectedNames,
+      autoDetectedWrappers: { ran: true, candidates: detectedNames },
       autoDetectedWrappersNote:
         detectedNames.length === 0
           ? "autoDetectWrappers ran but found no PascalCase components with onClick to register."
