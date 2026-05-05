@@ -601,7 +601,7 @@ export const coverageTool: McpTool = {
     if (sharedPerRuleCoverage.fragment.perRuleCoverageTruncated !== undefined) {
       metaTruncatedFields.push("perRuleCoverage");
     }
-    const baseWarnings = buildScanTimeWarnings({
+    const scanTime = buildScanTimeWarnings({
       parsedFiles: files,
       violations: result.violations,
       root: cwd,
@@ -625,7 +625,6 @@ export const coverageTool: McpTool = {
       // re-fetch under `verboseMeta: true` or scope down on.
       ...(metaTruncatedFields.length > 0 ? { metaArrayTruncatedFields: metaTruncatedFields } : {}),
     });
-    const warnings = baseWarnings;
     // every tool that runs the scanner
     // ships a `meta` block carrying load-bearing scan-confidence
     // telemetry — `filesScanned`, `configSource`, `rootSource`,
@@ -653,6 +652,19 @@ export const coverageTool: McpTool = {
         perRuleCoverage: sharedPerRuleCoverage.adjustedPerRuleCoverage,
       }),
       perRuleCoverageFragment: sharedPerRuleCoverage.fragment,
+      // Lifted onto `meta` here per
+      // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+      // the same concept must use one shape" — `buildArtifactsMetaField`
+      // is the canonical grouped/decorated shape of the per-file build-
+      // artifact classification. The `meta.scannedBuildArtifacts` slot
+      // mirrors the shape `scan_project` and `scan_file` already lift
+      // from the same helper, closing the cross-surface lane drift on
+      // identical cwd. Pre-fix, this tool spread the entire helper-
+      // result object at the top level of the response, leaking three
+      // sibling empty containers (`buildArtifactEntries: []`,
+      // `buildArtifactsMetaField: {}`, `scssUnresolvedVariableFiles: []`)
+      // for the same conceptual "absent on this corpus" state.
+      buildArtifactsMetaField: scanTime.buildArtifactsMetaField,
       enabledStandards: standards,
       level,
       cwd,
@@ -720,7 +732,28 @@ export const coverageTool: McpTool = {
         scanned: scannedProject(cwd),
         ...analysisCoverageField,
         ...metaField,
-        ...warnings,
+        // Explicitly destructure the warnings channel from the helper
+        // result instead of `...scanTime`. The helper returns four
+        // fields (`warnings`, `warningsDetails`, `buildArtifactEntries`,
+        // `buildArtifactsMetaField`, `scssUnresolvedVariableFiles`); the
+        // last three are internal helpers used by predicate evaluation
+        // and to feed the canonical `meta.scannedBuildArtifacts` slot,
+        // not wire surfaces. Pre-fix, `...warnings` (the misnamed local
+        // bound to the entire helper result) leaked all internal fields
+        // at the top level — three sibling empty containers
+        // (`buildArtifactEntries: []`, `buildArtifactsMetaField: {}`,
+        // `scssUnresolvedVariableFiles: []`) for the same conceptual
+        // "absent on this corpus" state, the canonical "Sibling fields
+        // naming the same concept must use one shape" failure mode in
+        // `docs/kb/architecture/ai-first-consumer.md`. The build-artifact
+        // shape now rides on `meta.scannedBuildArtifacts` (canonical,
+        // matches `scan_project` / `scan_file`); SCSS unresolved-
+        // variable file paths ride on
+        // `warningsDetails.scss_unresolved_variables.files[]` already.
+        ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
+        ...(scanTime.warningsDetails === undefined
+          ? {}
+          : { warningsDetails: scanTime.warningsDetails }),
       };
       // last-resort
       // hard-ceiling guard. After every other clip pass settled
@@ -812,6 +845,23 @@ function buildCoverageMetaField(args: {
    * same input shipped ~95 rows.
    */
   readonly perRuleCoverageFragment: import("./scan-assembly.ts").PerRuleCoverageMetaFragment;
+  /**
+   * Grouped build-artifact classification fragment threaded from
+   * {@link buildScanTimeWarnings} so the canonical
+   * `meta.scannedBuildArtifacts` slot ships on `coverage` the same
+   * shape `scan_project` and `scan_file` already surface. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+   * the same concept must use one shape" — one canonical surface for
+   * per-file build-artifact classification, consumed by every project-
+   * rooted tool through this single channel. The fragment itself is
+   * `{ scannedBuildArtifacts?: BuildArtifactsGrouped }`, present-when-
+   * meaningful — empty when the corpus has zero classified artifacts,
+   * collapsing the field name out of the response (no empty-object
+   * sentinel).
+   */
+  readonly buildArtifactsMetaField: {
+    readonly scannedBuildArtifacts?: import("./build-artifacts.ts").BuildArtifactsGrouped;
+  };
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;
@@ -847,6 +897,14 @@ function buildCoverageMetaField(args: {
     // scan-confidence telemetry the agent reads to triage which
     // extensions the scan never saw.
     ...args.perRuleCoverageFragment,
+    // Canonical surface for the per-file build-artifact classification
+    // — `meta.scannedBuildArtifacts: { grouped, classified }` matches
+    // the shape `scan_project` / `scan_file` already lift from the same
+    // helper. Conditional-spread per the helper's present-when-
+    // meaningful contract (the fragment is `{}` when the corpus has
+    // zero classified artifacts, so the field name disappears entirely
+    // from the response — no empty-object sentinel).
+    ...args.buildArtifactsMetaField,
   };
   return {
     meta: applyMetaCacheMode({

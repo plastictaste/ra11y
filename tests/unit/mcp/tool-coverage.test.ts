@@ -393,4 +393,33 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
       scanCoverage?.["fragmentFileCount"] as number,
     );
   });
+
+  it("does not leak internal scan-time-warning helper fields onto the coverage envelope", async () => {
+    // Pre-fix, `tool-coverage.ts` spread the entire
+    // `buildScanTimeWarnings` return at the top level of the response,
+    // leaking three internal helper fields that NEVER belonged on the
+    // wire: `buildArtifactEntries: []`, `buildArtifactsMetaField: {}`,
+    // `scssUnresolvedVariableFiles: []`. On a typical scan all three
+    // shipped as empty containers — three different sibling shapes
+    // (array, object, array) for the same conceptual "absent on this
+    // corpus" state, the canonical "Sibling fields naming the same
+    // concept must use one shape" failure mode in
+    // `docs/kb/architecture/ai-first-consumer.md`. The build-artifact
+    // classification is now lifted onto `meta.scannedBuildArtifacts`
+    // (matching `scan_project` / `scan_file`); the SCSS unresolved-
+    // variables list rides on
+    // `warningsDetails.scss_unresolved_variables.files[]` already; the
+    // raw entries list is internal-only and never reaches the wire.
+    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+
+    const tool = findTool("coverage");
+    const session = new McpSession();
+    const result = await tool.handler({ cwd: dir }, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as Record<string, unknown>;
+    expect(data["buildArtifactEntries"]).toBeUndefined();
+    expect(data["buildArtifactsMetaField"]).toBeUndefined();
+    expect(data["scssUnresolvedVariableFiles"]).toBeUndefined();
+  });
 });
