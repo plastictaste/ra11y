@@ -41,6 +41,11 @@ export { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLi
 // stamping `plan.findingsByFile` next to `withTopRules` on one import.
 // biome-ignore format: kept on one line for the file-line budget
 export { computeFindingsByFile, FINDINGS_BY_FILE_DEFAULT_LIMIT, type FindingsByFileEntry, withFindingsByFile } from "./findings-by-file.ts";
+// Re-export from `./findings-by-rule.ts` — same file-size-budget split
+// rationale. Keeps callers stamping the full per-rule count map
+// `plan.findingsByRule` next to the rank-ordered `withTopRules` head.
+// biome-ignore format: kept on one line for the file-line budget
+export { computeFindingsByRule, withFindingsByRule } from "./findings-by-rule.ts";
 // Re-export the linked-stylesheet detector + its result shape so call
 // sites that already import from `scan-assembly.ts` (response-assembler,
 // scan-time-warnings, tool-scan-project) keep one canonical entry

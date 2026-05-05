@@ -12,8 +12,8 @@
  *
  * The summary-only flag is the agent-facing first-call shortcut: skip
  * the per-file `files[]` array entirely, ship the headline structured
- * counters (`plan` with `topRules`, `findingsByFile`, `fixesByClass`,
- * `summary`), the scan-confidence telemetry the agent reads to decide
+ * counters (`plan` with `topRules`, `findingsByFile`, `findingsByRule`,
+ * `fixesByClass`, `summary`), the scan-confidence telemetry the agent reads to decide
  * whether the scan had teeth (`meta.filesByExtension`, `configSource`,
  * `rulesEvaluated`, `analysisCoverage`), and `nextStep` so the second
  * call can route at a narrower scope (or drop `summaryOnly` once the
@@ -186,8 +186,8 @@ export function buildSummaryNextStepStructured(
  *
  * Output shape:
  *   - `plan` — unchanged from the caller's `formatted.plan`. Carries
- *     `topRules`, `findingsByFile`, `fixesByClass`, `summary`,
- *     `actionableManualItems`, `untargetedCriteria`, etc.
+ *     `topRules`, `findingsByFile`, `findingsByRule`, `fixesByClass`,
+ *     `summary`, `actionableManualItems`, `untargetedCriteria`, etc.
  *   - `meta` — slimmed to {@link SUMMARY_META_KEYS}.
  *   - `summaryOnly: true` — discriminator flag. Lets the agent (and
  *     downstream snapshot tests) distinguish summary mode from a

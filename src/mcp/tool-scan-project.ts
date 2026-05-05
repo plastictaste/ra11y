@@ -53,6 +53,7 @@ import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
   withFindingsByFile,
+  withFindingsByRule,
   withTopDirectories,
   withTopRules,
   withViolationsByScanKind,
@@ -190,7 +191,7 @@ export const scanProjectTool: McpTool = {
         summaryOnly: {
           type: "boolean",
           description:
-            "When true, omit the per-file `files[]` array entirely and ship only the headline rollups: `plan` (with `topRules`, `findingsByFile`, `fixesByClass`, `summary`, manual-review counters), `meta` slimmed to scan-confidence telemetry (including `filesByExtension` and `analysisCoverage`), `nextStep`/`nextStepStructured`, and `warnings`/`warningsDetails`. Designed as the bulk-corpus first-call ergonomic — on catalogs with 4000+ files producing 40k+ findings, the standard envelope cannot fit per-file findings under the host token cap and falls back to the slim envelope after a full assembly pass; `summaryOnly: true` is the explicit opt-in shortcut. The response carries `summaryOnly: true` and `filesArrayDropped: true` discriminators so the caller distinguishes summary mode from a clean scan of zero files. Recommended workflow: first call `scan_project({ cwd, summaryOnly: true })` to learn which rules and files dominate, then re-call with `restrictToPaths: [<dominant path>]` (without `summaryOnly`) to get per-file findings on a narrower scope. Default false preserves the existing per-file shape exactly.",
+            "When true, omit the per-file `files[]` array entirely and ship only the headline rollups: `plan` (with `topRules`, `findingsByFile`, `findingsByRule`, `fixesByClass`, `summary`, manual-review counters), `meta` slimmed to scan-confidence telemetry (including `filesByExtension` and `analysisCoverage`), `nextStep`/`nextStepStructured`, and `warnings`/`warningsDetails`. Designed as the bulk-corpus first-call ergonomic — on catalogs with 4000+ files producing 40k+ findings, the standard envelope cannot fit per-file findings under the host token cap and falls back to the slim envelope after a full assembly pass; `summaryOnly: true` is the explicit opt-in shortcut. The response carries `summaryOnly: true` and `filesArrayDropped: true` discriminators so the caller distinguishes summary mode from a clean scan of zero files. Recommended workflow: first call `scan_project({ cwd, summaryOnly: true })` to learn which rules and files dominate (`findingsByRule` gives the full per-rule distribution; `findingsByFile` ranks the densest files), then re-call with `restrictToPaths: [<dominant path>]` (without `summaryOnly`) to get per-file findings on a narrower scope. Default false preserves the existing per-file shape exactly.",
         },
       },
     },
@@ -406,10 +407,22 @@ export const scanProjectTool: McpTool = {
         // stable when no error/warning findings emerged or when every
         // finding falls in one bucket — the no-rank-to-expose case the
         // helper short-circuits to keep the wire shape honest.
+        // `withFindingsByRule` adds the FULL per-rule count map next
+        // to the rank-ordered `withTopRules` head — same severity
+        // filter so the per-rule numbers agree on every overlapping
+        // ruleId. Lets an agent paginating by rule (per-rule
+        // `scan_file({ruleId})` round-trips, per-rule fix batches)
+        // budget the round-trip cost without paging through `files[]`
+        // — `topRules` only carries the dominant ten, while bulk
+        // catalogs routinely have a long tail of rules with single-
+        // digit counts that still matter for budgeting.
         withTopDirectories(
-          withFindingsByFile(
-            withTopRules(
-              withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+          withFindingsByRule(
+            withFindingsByFile(
+              withTopRules(
+                withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+                formatted.files,
+              ),
               formatted.files,
             ),
             formatted.files,
