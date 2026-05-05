@@ -25,6 +25,7 @@ import { coverageTool } from "./tool-coverage.ts";
 import { detectNativeWrappersTool } from "./tool-detect-wrappers.ts";
 import { draftVpatNarrativeTool } from "./tool-draft-vpat-narrative.ts";
 import { explainStandardTool } from "./tool-explain-standard.ts";
+import { getFindingTool } from "./tool-get-finding.ts";
 import { listAttestationsTool } from "./tool-list-attestations.ts";
 import { listSuppressionsTool } from "./tool-list-suppressions.ts";
 import { proposeBaselineTool } from "./tool-propose-baseline.ts";
@@ -443,6 +444,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   explainStandardTool,
   suggestFixTool,
   applyFixTool,
+  getFindingTool,
   coverageTool,
   checklistTool,
   conformanceStatementTool,
