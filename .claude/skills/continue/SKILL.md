@@ -270,6 +270,14 @@ The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory
 
 **Skip the meta-reviewer on uneventful turns to control invocation token cost.** Skip when ALL of these hold: `integrator.verifyOk === true`, `integrator.skipped` and `integrator.blocked` are both empty, every specialist's `signals[]` array is either empty OR contains only codes from the **lock-out set** (defined below), no specialist returned `branch_returned !== branch_assigned`, no agent stalled (per §3a), and the turn count since the last meta-review is `< 5`. **Force a meta-review every 5th turn regardless** so slow-burn correlated patterns still surface in the ledger. This early-out only suppresses the call when the turn carried no observation worth correlating — the value of the agent is its cross-turn pattern detection, and clean turns in a row carry exactly zero new evidence per turn. Track the "turns since last meta-review" counter in main-session memory alongside the dispatched-picks set.
 
+**When skipping, the orchestrator MUST still append a no-signal ledger entry** to `.claude/turn-history.jsonl` so the meta-reviewer's denominator stays honest when it runs next. Without this, the recurrence math (N≥2 in last 20 turns, pre/post patch-effect rates) treats absent turns as "did not occur" — biasing rates upward and triggering spurious harness patches. The append is cheap (one JSONL line, no agent invocation) and unconditional on skip:
+
+```bash
+echo '{"ts":"<ts_end>","invocation_id":"<uuid>","turn_n":<N>,"harness_sha":"<sha at turn start>","cost":{"total_tokens":<sum>,"wall_seconds":<diff>},"signals":[],"main_sha_after":"<sha>","writes":{"memory":[],"harness":[],"memory_retirement_proposed":[],"backlog_reopens":[]},"skipped_reason":"uneventful_turn"}' >> .claude/turn-history.jsonl
+```
+
+Use the same field names the meta-reviewer emits in §10 of `.claude/agents/meta-reviewer.md`. The added `skipped_reason` field marks the entry as orchestrator-authored (not agent-authored) so future occurrence-count logic can distinguish "agent ran, observed nothing" from "orchestrator skipped agent." The meta-reviewer reads both kinds equally for denominator purposes — both are valid 0-signal observations.
+
 **Lock-out set** (signals whose harness patches have already earned `no_effect` and where re-running the meta-reviewer cannot produce a new patch): currently empty. When the only signals on a turn are from this set, the meta-reviewer would re-issue the same structural flag with no new action — its overhead (~80–100k tokens) is wasted. Removal from the lock-out set requires either (a) the meta-reviewer's own log marking the structural flag resolved, or (b) a successful source-level fix (e.g. ADR-driven test deflake) that returns the signal's recurrence rate to baseline. Until then, treat the lock-out as authoritative — the lesson is durable in the ledger; the agent is paged only when something new is observable.
 
 ### 5. Loop
