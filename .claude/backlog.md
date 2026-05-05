@@ -657,7 +657,6 @@ Catalog-scale perf / scoping:
 
 Items surfaced during the /continue orchestrator run that landed the tenth-pass batch. Not user-surfaced drift — engineering follow-ups.
 
-- [ ] **V1-CORPUS-REFRESH-POST-DIST-FRESHNESS-GATE** — V1-MCP-DIST-STALE-CI-GATE (shipped 2026-04-25 in commit effb2645) caught a stale `dist/cli.js` on `main` itself. The 2026-04-25 multi-repo corpus probe that generated the Q8 + much of the V1 backlog ran against the pre-gate stale subprocess, so 4 of ~30 picks in the same /continue run returned `classification_mismatch: already_landed` (Q7-RULE-ANIMATION-ITERATION-COUNT-GATE, Q7-RULE-TABLE-TH-SCOPE-IMPLICIT-COL-NARROWING, V1-SCANNED-BUILD-ARTIFACTS-ENVELOPE-DRIFT, V1-RESPONSE-SIZE-PRE-ESTIMATOR). Re-run the multi-repo probe now that dist is gated and tick off any other already-landed items still sitting open in Q8 + V1. Per `feedback_regression_audit_stale_subprocess` memory: grep + verify rather than blind-re-implement.
 
 ### v1.0.0 — multi-corpus sweep follow-ups
 
