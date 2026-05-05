@@ -63,7 +63,6 @@
 import { existsSync } from "node:fs";
 import { relative } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
-import { runScan } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
 import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
@@ -72,15 +71,18 @@ import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wr
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { computeTopRules } from "./scan-assembly.ts";
 import {
   applyRuleSettings,
   errorResult,
   type McpTool,
   parseFiles,
   resolveStandards,
+  runScanAndFormat,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import type { NativeWrapperSources } from "./wrappers-meta.ts";
 
 /** Indent width for the emitted config body. Matches project Biome style. */
 const INDENT = "  ";
@@ -216,10 +218,14 @@ export const proposeConfigTool: McpTool = {
     }
     // Single scan: derive top-fired rules AND the set of finding-
     // bearing paths in one pass so the exclude-emission gate below
-    // can consult both. The shared scan replaces an earlier
-    // `deriveTopRules` call that scanned the same parsed-file set
-    // twice.
-    const scanReport = scanForProposalSignals(files, session);
+    // can consult both. Routes through `runScanAndFormat` so the per-
+    // rule counts that land on the emitted `suggestedConfig` comment
+    // block agree with `scan_project.plan.topRules` on identical
+    // input — same severity filter (info-severity excluded), same
+    // wrapper-noise drop, same vendor-CSS dedup. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant."
+    const scanReport = await scanForProposalSignals(files, session, projectConfig, root);
     const topRules = scanReport.topRules;
     // Bootstrap-output-paste-safe doctrine, second-axis gate
     // (`docs/kb/architecture/ai-first-consumer.md`): even a
@@ -801,46 +807,82 @@ interface TopRuleEntry {
  * only directory with content because three minified files lived
  * under it.
  *
- * Runs the scanner directly rather than relying on an outer scan
- * result so this tool is self-contained — callers don't need to pipe
- * in findings they'd otherwise throw away. The scanner is pure over
- * the parsed files; folding both derivations into a single pass
- * replaces an earlier shape that scanned twice (once for top-rule
- * frequencies, once implicitly for the unused finding paths).
+ * Routes through {@link runScanAndFormat} (the same pipeline
+ * `scan_project` uses) and then `computeTopRules` from
+ * `scan-assembly.ts` so the per-rule counts on this tool's
+ * `suggestedConfig` comment block agree with `scan_project.plan.topRules`
+ * on identical input. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" — both surfaces share the same severity filter
+ * (info-severity findings excluded), the same wrapper-noise drop,
+ * the same vendor-CSS dedup, and the same project-config-driven
+ * `nativeWrapperElements` / `processes` plumbing. Without this
+ * routing, `propose_config` previously called `runScan` directly and
+ * counted info-severity findings + wrapper-noise emissions that
+ * `scan_project`'s post-pipeline `formatted.files` had already
+ * filtered out — agents reading the bootstrap response saw a
+ * 30-finding drift on a real-world ~1000-file corpus and a 5×
+ * disagreement on bulk-template catalogs.
+ *
+ * `findingPaths` is the same set, derived from `formatted.files[].path`
+ * (which carries the absolute path the build-artifact gate's
+ * predicate matches against).
  */
 interface ProposalScanReport {
   readonly topRules: readonly TopRuleEntry[];
   readonly findingPaths: ReadonlySet<string>;
 }
 
-function scanForProposalSignals(
+async function scanForProposalSignals(
   files: readonly ParsedFile[],
   session: import("./session.ts").McpSession,
-): ProposalScanReport {
+  projectConfig: import("../types/config.ts").LoadedConfig,
+  root: string,
+): Promise<ProposalScanReport> {
   if (files.length === 0) return { topRules: [], findingPaths: new Set() };
-  const { result } = runScan({
-    standards: session.registry.standards,
-    rules: session.registry.rules,
-    enabled: resolveStandards(undefined, session),
+  // Mirror `scan_project`'s `buildWrapperSources` for the no-autoDetect
+  // case: thread the file-config and session wrappers through so
+  // `dropWrapperNoise` (inside `runScanAndFormat`) treats the same
+  // names as transparent on both surfaces. `propose_config` runs its
+  // own confirmation probe via `deriveConfirmedWrappers` for the
+  // `nativeWrappers: [...]` field of the emitted config; that probe is
+  // independent of the scan filter the rule pipeline applies, which
+  // operates on the configured wrapper set the user has already
+  // committed to.
+  const fileElements = projectConfig.nativeWrapperElements;
+  const sessionElements = session.config.nativeWrapperElements;
+  const wrapperSources: NativeWrapperSources = {
+    fromFile: projectConfig.nativeWrappers,
+    ...(Object.keys(fileElements).length > 0 ? { fromFileElements: fileElements } : {}),
+    fromSession: session.config.nativeWrappers,
+    ...(Object.keys(sessionElements).length > 0 ? { fromSessionElements: sessionElements } : {}),
+  };
+  const { formatted } = await runScanAndFormat(
     files,
-    level: session.config.level,
-  });
-  const counts = new Map<string, number>();
-  const findingPaths = new Set<string>();
-  for (const v of result.violations) {
-    counts.set(v.ruleId, (counts.get(v.ruleId) ?? 0) + 1);
-    findingPaths.add(v.location.filePath);
-  }
-  const ranked = [...counts.entries()].sort(([aId, aCount], [bId, bCount]) => {
-    if (bCount !== aCount) return bCount - aCount;
-    return aId.localeCompare(bId);
-  });
+    session,
+    resolveStandards(undefined, session),
+    undefined,
+    session.effectiveRules(projectConfig),
+    wrapperSources,
+    root,
+    false,
+    undefined,
+    projectConfig.preset,
+    projectConfig.processes,
+  );
+  // `computeTopRules` carries the same severity filter (info-severity
+  // excluded) `scan_project.plan.topRules` ships, so the per-rule
+  // count comments emitted into `suggestedConfig` agree on every
+  // overlapping ruleId.
+  const ranked = computeTopRules(formatted.files, TOP_RULES_COUNT);
   const topRules: TopRuleEntry[] = [];
-  for (const [ruleId, count] of ranked.slice(0, TOP_RULES_COUNT)) {
-    const rule = session.registry.findRule(ruleId);
+  for (const entry of ranked) {
+    const rule = session.registry.findRule(entry.ruleId);
     if (!rule) continue;
-    topRules.push({ ruleId, severity: rule.severity, count });
+    topRules.push({ ruleId: entry.ruleId, severity: rule.severity, count: entry.count });
   }
+  const findingPaths = new Set<string>();
+  for (const file of formatted.files) findingPaths.add(file.path);
   return { topRules, findingPaths };
 }
 
