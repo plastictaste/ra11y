@@ -38,6 +38,41 @@ import { classifyHtmlFile, looksLikeFullPage } from "../../engine/layout-partial
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 import type { ViolationEvidence } from "../../types/violation.ts";
+import { extension } from "../../utils/path.ts";
+
+/**
+ * True when `filePath` is a Markdown source file routed through
+ * `parseMarkdown` (`.md`, `.markdown`, `.mkdn`). Mirrors the
+ * `isMarkdownSourceFile` predicate in `semantics/heading-hierarchy.ts`
+ * and `semantics/table-caption-missing.ts` — every document-shape rule
+ * needs the same predicate because the markdown adapter strips ATX
+ * headings, frontmatter, and the document envelope before this rule
+ * runs, so the rule's view of the file is systematically partial. Kept
+ * local (not factored to a shared helper) so a change to the predicate
+ * shape in one rule doesn't silently couple to the others.
+ */
+function isMarkdownSourceFile(filePath: string): boolean {
+  const ext = extension(filePath);
+  return ext === ".md" || ext === ".markdown" || ext === ".mkdn";
+}
+
+/**
+ * Structured `couldBeWrongBecause` code surfaced when the missing-
+ * `<main>` emission rests on a markdown source file (`.md` /
+ * `.markdown` / `.mkdn`). The markdown adapter strips frontmatter,
+ * fenced code blocks, ATX headings, and the document envelope before
+ * this rule runs, so the rule's view of the page is the embedded-HTML
+ * residue only — the rendered page assembled by the static-site
+ * generator's parent layout almost certainly supplies `<main>` from a
+ * sibling layout file the static scanner cannot see in one pass. Pairs
+ * with the `info` severity downgrade on the same branch so the
+ * attention-budgeting signal matches the reason text per
+ * `docs/kb/architecture/ai-first-consumer.md` "Reason text and severity
+ * must agree" (conceded-uncertainty extension). The agent reads the
+ * markdown source, follows `layout:` frontmatter to the parent layout,
+ * and dismisses with a source-level pragma when confirmed.
+ */
+const MARKDOWN_RESIDUE_NO_MAIN_VISIBLE = "markdown_residue_no_main_visible";
 
 export const rule = defineRule({
   id: "semantics/landmark-main",
@@ -119,10 +154,11 @@ export const rule = defineRule({
     // partials get the enriched emit, unless the file is also classified
     // as a fragment (front-matter, fragment-path) in which case the
     // gate above suppresses the emit outright.
+    const markdownResidue = isMarkdownSourceFile(ctx.filePath);
     if (bodies.length === 0) {
       if (fragment) return;
       if (!layoutOrPartial) return;
-      emitBodylessPartial(ctx, doc);
+      emitBodylessPartial(ctx, doc, markdownResidue);
       return;
     }
     // Only flag on documents that look like real pages — skip
@@ -137,7 +173,7 @@ export const rule = defineRule({
       // Fragment-file gate: suppress the missing-<main> emit on files
       // whose composed parent supplies the landmark.
       if (fragment) return;
-      emitMissingMain(ctx, bodies[0], doc, layoutOrPartial);
+      emitMissingMain(ctx, bodies[0], doc, layoutOrPartial, markdownResidue);
       return;
     }
     // Multiple-<main> emits fire even on fragment-classified files —
@@ -168,7 +204,11 @@ function collectMainLandmarks(doc: HtmlDocument): readonly HtmlElement[] {
  * branch genuinely has no body to describe, and the partial-suffix
  * already names the dismissal hatch (the composition directive).
  */
-function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
+function emitBodylessPartial(
+  ctx: FileContext,
+  doc: HtmlDocument,
+  markdownResidue: boolean,
+): void {
   const htmlElements = findHtmlElementsByTag(doc, "html");
   const anchor = htmlElements[0];
   ctx.emit(
@@ -177,6 +217,7 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument): void {
       anchor?.loc.start.column ?? 1,
       "",
       undefined,
+      markdownResidue,
     ),
   );
 }
@@ -238,6 +279,7 @@ function emitMissingMain(
   body: HtmlElement | undefined,
   doc: HtmlDocument,
   layoutOrPartial: boolean,
+  markdownResidue: boolean,
 ): void {
   const line = body?.loc.start.line ?? 1;
   const column = body?.loc.start.column ?? 1;
@@ -245,7 +287,7 @@ function emitMissingMain(
   const probable = body ? findProbableMainCandidate(body) : undefined;
   const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
   if (layoutOrPartial) {
-    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable));
+    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable, markdownResidue));
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
@@ -426,18 +468,37 @@ const PARTIAL_OR_LAYOUT_SUFFIX =
  * trigger it: a bodyless partial
  * (e.g. Jekyll `_includes/top.html`) and a body-carrying layout file
  * whose `{{ content }}` holds the main landmark in a sibling page
- * (e.g. Jekyll `_layouts/default.html`). Severity stays at `warning`
- * — same as the full-confidence emit — because the downgrade is
- * signalled by `couldBeWrongBecause` + the message suffix, not by
- * severity (per CLAUDE.md §14 "Don't downgrade priority to hide things").
+ * (e.g. Jekyll `_layouts/default.html`).
+ *
+ * On HTML inputs, severity stays at `warning` — same as the full-
+ * confidence emit — because the layout-partial concession is signalled
+ * by `couldBeWrongBecause` + the message suffix, not severity (per
+ * CLAUDE.md §14 "Don't downgrade priority to hide things").
+ *
+ * On Markdown inputs (`.md` / `.markdown` / `.mkdn`), severity
+ * downgrades to `info` and the {@link MARKDOWN_RESIDUE_NO_MAIN_VISIBLE}
+ * code is added alongside {@link PARTIAL_OR_LAYOUT_CODE}. The markdown
+ * adapter strips frontmatter, ATX headings, and the document envelope
+ * before this rule runs — so when a Jekyll post (`---\nlayout: post\n
+ * ---\n# Title\n…`) reaches us, the residue is the embedded-HTML body
+ * only and the rendered page assembled by `_layouts/post.html` almost
+ * certainly supplies `<main>` from a sibling layout file. The reason
+ * text already concedes this ("the composed page may carry <main> from
+ * a sibling file"); per `docs/kb/architecture/ai-first-consumer.md`
+ * "Reason text and severity must agree" (conceded-uncertainty
+ * extension), the severity must agree with the conceded reason — so we
+ * step the attention-budget axis down (warning → info) on the markdown
+ * branch only. Mirrors the `residueAdjustedSeverity` helper in
+ * `src/rules/semantics/heading-hierarchy.ts`.
  */
 function buildLayoutPartialEmit(
   line: number,
   column: number,
   bodyShape: string,
   probable: ProbableMainCandidate | undefined,
+  markdownResidue: boolean,
 ): {
-  severity: "warning";
+  severity: "warning" | "info";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
@@ -446,16 +507,31 @@ function buildLayoutPartialEmit(
 } {
   const shapeSuffix = bodyShape ? ` ${bodyShape}` : "";
   const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
+  const residueSuffix = markdownResidue ? MARKDOWN_RESIDUE_SUFFIX : "";
+  const codes = markdownResidue
+    ? [PARTIAL_OR_LAYOUT_CODE, MARKDOWN_RESIDUE_NO_MAIN_VISIBLE]
+    : [PARTIAL_OR_LAYOUT_CODE];
   return {
-    severity: "warning",
+    severity: markdownResidue ? "info" : "warning",
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${shapeSuffix}${candidateSuffix}`,
+    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${residueSuffix}${shapeSuffix}${candidateSuffix}`,
     suggestion:
       "Document has no <main> in this file, but it looks like a layout wrapper or template partial — the <main> may be authored in the included/yielded file. Verify against the parent layout or partial chain; if this file is the root layout, add <main> around the composition point (typically surrounding the {{ content }} / <%= yield %> / @RenderBody site). Use a <!-- ra11y-disable semantics/landmark-main --> pragma if the composition is deliberate and the <main> lives in sibling files.",
-    couldBeWrongBecause: [PARTIAL_OR_LAYOUT_CODE],
+    couldBeWrongBecause: codes,
     ...(probable ? { evidence: probableCandidateEvidence(probable) } : {}),
   };
 }
+
+/**
+ * Suffix appended to the layout-partial message when the host file is
+ * markdown source. Pairs with the severity downgrade and the
+ * {@link MARKDOWN_RESIDUE_NO_MAIN_VISIBLE} code so the agent reads in
+ * one pass why the emit is at `info` rather than `warning`. Mirrors the
+ * `MARKDOWN_RESIDUE_NOTE_SUFFIX` shape in
+ * `src/rules/semantics/heading-hierarchy.ts`.
+ */
+const MARKDOWN_RESIDUE_SUFFIX =
+  " Note: this file is markdown source (.md/.markdown/.mkdn). The markdown adapter stripped frontmatter and the document envelope before this rule ran, so the rule sees only the embedded-HTML residue — the rendered page assembled by the SSG's parent layout (e.g. `_layouts/post.html`) almost certainly supplies <main> from a sibling layout file the static scanner cannot see in one pass. Read the markdown source's `layout:` frontmatter to find the parent layout, or add a source-level disable pragma if the composition is intentional.";
 
 /**
  * Build a disambiguating suggestion for multiple main landmarks.
