@@ -38,6 +38,9 @@
 import { runFindersForFile } from "../engine/candidate-runner.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { CandidateFinder, ReviewCandidate } from "../types/review.ts";
+import type { Rule } from "../types/rule.ts";
+import type { Violation } from "../types/violation.ts";
+import type { McpSession } from "./session.ts";
 
 /**
  * Inputs to {@link findCandidateAtLine}. The caller (the suggest_fix
@@ -87,4 +90,32 @@ export function findCandidateAtLine(args: FindCandidateAtLineArgs): ReviewCandid
     return c;
   }
   return null;
+}
+
+/**
+ * Conditional wrapper around {@link findCandidateAtLine} for the
+ * `suggest_fix` handler: returns null when the rule lookup matched
+ * (so we never run finders we don't need to), otherwise routes the
+ * lookup to the criterion the caller asked about (criterion-ID
+ * input) or the rule's full `satisfies[]` list (rule-ID input). Lives
+ * here so the MCP handler stays under the 150-effective-line cap
+ * enforced by `scripts/check-limits.ts`.
+ */
+export function lookupCandidateBridge(args: {
+  readonly match: Violation | undefined;
+  readonly parsed: ParsedFile;
+  readonly session: McpSession;
+  readonly rule: Rule;
+  readonly inputCriterionId: string | undefined;
+  readonly standards: readonly string[];
+  readonly line: number;
+}): ReviewCandidate | null {
+  if (args.match !== undefined) return null;
+  return findCandidateAtLine({
+    parsed: args.parsed,
+    finders: args.session.registry.finders,
+    criteria: args.inputCriterionId ? [args.inputCriterionId] : args.rule.satisfies,
+    enabledStandards: new Set(args.standards),
+    line: args.line,
+  });
 }

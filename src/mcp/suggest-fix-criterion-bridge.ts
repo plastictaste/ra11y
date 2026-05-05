@@ -24,7 +24,7 @@ import type { Rule } from "../types/rule.ts";
 import type { McpSession } from "./session.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import type { McpToolResult } from "./tools-helpers.ts";
-import { errorResult } from "./tools-helpers.ts";
+import { errorResult, findRule } from "./tools-helpers.ts";
 
 /**
  * Criterion IDs are namespaced `<standard>:<number>` (e.g.
@@ -136,6 +136,41 @@ export function applyCriterionBridge(
   }
   const base = { ruleId: resolution.ruleId, inputCriterionId: inputRuleId } as const;
   return resolution.note === undefined ? base : { ...base, disambiguationNote: resolution.note };
+}
+
+/**
+ * Combines {@link applyCriterionBridge} with the rule-existence check
+ * the handler ran inline pre-Q14, returning either an error envelope
+ * OR the resolved `{ rule, ruleId, disambiguationNote?,
+ * inputCriterionId? }` quadruple. Extracted so the suggest_fix
+ * handler stays under the 150-effective-line cap enforced by
+ * `scripts/check-limits.ts`.
+ */
+export function resolveSuggestFixRule(
+  inputRuleId: string,
+  session: McpSession,
+):
+  | { readonly error: McpToolResult }
+  | {
+      readonly rule: Rule;
+      readonly ruleId: string;
+      readonly disambiguationNote?: string;
+      readonly inputCriterionId?: string;
+    } {
+  const bridge = applyCriterionBridge(inputRuleId, session);
+  if ("error" in bridge) return bridge;
+  const rule = findRule(bridge.ruleId, session);
+  if (!rule) {
+    return {
+      error: errorResult({
+        code: "rule-not-found",
+        message: `Rule '${bridge.ruleId}' not found.`,
+        details: { requested: bridge.ruleId },
+        remediation: "Call `list_rules` to discover valid rule IDs.",
+      }),
+    };
+  }
+  return { rule, ...bridge };
 }
 
 /**
