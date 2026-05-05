@@ -9,6 +9,7 @@
  * Pure type module — no runtime exports.
  */
 
+import type { ReviewCandidate } from "../types/review.ts";
 import type { Violation } from "../types/violation.ts";
 import type {
   MarkdownHeadingIdCollision,
@@ -147,4 +148,22 @@ export interface BuildSuggestFixPayloadArgs {
    * `alternatives[0]`. Conditional-spread per CLAUDE.md §1.
    */
   readonly markdownHeadingCollision?: MarkdownHeadingIdCollision;
+  /**
+   * Set on the `kind: "none"` branch when the rule lookup missed but a
+   * candidate finder for one of the rule's `satisfies` criteria (or for
+   * the criterion the caller passed via the criterion-bridge) emitted a
+   * candidate at the requested line. Drives the
+   * candidate-bridge `kind: "guidance"` reroute in
+   * `tool-suggest-fix-internals.ts`: the candidate's `reason` becomes
+   * the primary explanation so an agent following a checklist row
+   * doesn't dead-end on `kind: "none"` for low-confidence candidates the
+   * narrower rule predicate would skip.
+   *
+   * Doctrine: ai-first-consumer.md "Per-call shape must agree with
+   * per-class plan tally" extended to "checklist candidate →
+   * suggest_fix lane parity." Conditional-spread per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest" — undefined leaves behavior
+   * identical to today.
+   */
+  readonly candidateMatch?: ReviewCandidate;
 }

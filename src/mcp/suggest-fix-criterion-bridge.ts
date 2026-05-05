@@ -99,18 +99,28 @@ export function compareRuleSpecificity(a: Rule, b: Rule): number {
 /**
  * Three-way resolution of the `suggest_fix` `ruleId` param: either an
  * immediate error envelope (criterion ID with no satisfying rule), or
- * a `{ ruleId, disambiguationNote? }` pair the rest of the handler
- * proceeds with. Centralizes the criterion-id bridge so the
- * `tool-suggest-fix.ts` handler body stays under the
+ * a `{ ruleId, disambiguationNote?, inputCriterionId? }` triple the
+ * rest of the handler proceeds with. Centralizes the criterion-id
+ * bridge so the `tool-suggest-fix.ts` handler body stays under the
  * 150-effective-line cap. See {@link resolveCriterionInput} for the
  * underlying resolution rules.
+ *
+ * `inputCriterionId` is set ONLY when the caller passed a criterion ID
+ * — not on a rule-ID input. The candidate-bridge in
+ * `suggest-fix-candidate-bridge.ts` reads it to scope finder lookup to
+ * the criterion the agent actually asked about; rule-ID inputs fall
+ * back to the rule's full `satisfies[]` list.
  */
 export function applyCriterionBridge(
   inputRuleId: string,
   session: McpSession,
 ):
   | { readonly error: McpToolResult }
-  | { readonly ruleId: string; readonly disambiguationNote?: string } {
+  | {
+      readonly ruleId: string;
+      readonly disambiguationNote?: string;
+      readonly inputCriterionId?: string;
+    } {
   const resolution = resolveCriterionInput(inputRuleId, session);
   if (resolution === null) return { ruleId: inputRuleId };
   if (resolution.kind === "unknown") {
@@ -124,9 +134,8 @@ export function applyCriterionBridge(
       }),
     };
   }
-  return resolution.note === undefined
-    ? { ruleId: resolution.ruleId }
-    : { ruleId: resolution.ruleId, disambiguationNote: resolution.note };
+  const base = { ruleId: resolution.ruleId, inputCriterionId: inputRuleId } as const;
+  return resolution.note === undefined ? base : { ...base, disambiguationNote: resolution.note };
 }
 
 /**

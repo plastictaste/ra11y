@@ -6,6 +6,7 @@
 
 import { runScan } from "../engine/scanner.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
+import { findCandidateAtLine } from "./suggest-fix-candidate-bridge.ts";
 import { collectSuggestFixContext } from "./suggest-fix-context.ts";
 import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
@@ -114,9 +115,10 @@ export const suggestFixTool: McpTool = {
     // should answer 'what next?'" + "Surface, don't suppress."
     const bridge = applyCriterionBridge(inputRuleId, session);
     if ("error" in bridge) return bridge.error;
-    const { ruleId, disambiguationNote } = bridge;
+    const { ruleId, disambiguationNote, inputCriterionId } = bridge;
 
-    if (!findRule(ruleId, session)) {
+    const rule = findRule(ruleId, session);
+    if (!rule) {
       return errorResult({
         code: "rule-not-found",
         message: `Rule '${ruleId}' not found.`,
@@ -154,6 +156,25 @@ export const suggestFixTool: McpTool = {
     });
 
     const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
+    // Candidate-bridge lookup — only fires when the rule lookup missed.
+    // Scope to the criterion the caller asked about (when criterion-ID
+    // input) or the rule's full `satisfies[]` list (when rule-ID
+    // input). The bridge runs `runFindersForFile` against the same
+    // parsed source the rule scan used, so disable-pragma filtering
+    // and `appliesTo` gating stay consistent. See
+    // `src/mcp/suggest-fix-candidate-bridge.ts` for the doctrine
+    // rationale (checklist→suggest_fix lane parity, ai-first-consumer
+    // "Per-call shape must agree with per-class plan tally").
+    const candidateMatch =
+      match === undefined
+        ? findCandidateAtLine({
+            parsed,
+            finders: session.registry.finders,
+            criteria: inputCriterionId ? [inputCriterionId] : rule.satisfies,
+            enabledStandards: new Set(standards),
+            line,
+          })
+        : null;
     const ctx = await collectSuggestFixContext({
       session,
       parsed,
@@ -179,6 +200,7 @@ export const suggestFixTool: McpTool = {
       // suggest_fix scan is single-file, so `result.violations` IS the
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
+      ...(candidateMatch === null ? {} : { candidateMatch }),
       ...(ctx.inheritedFromWrapper === null
         ? {}
         : { inheritedFromWrapper: ctx.inheritedFromWrapper }),

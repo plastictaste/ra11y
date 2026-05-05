@@ -430,9 +430,6 @@ Field-test follow-ups from a 4-corpus probe (4 corpora × 5 angles). Each item b
 
 ### suggest_fix shape contradictions
 
-- [ ] **Q14-SUGGEST-FIX-RETURNS-NONE-ON-CHECKLIST-CITED-CANDIDATE** `checklist.items[wcag22:3.2.2].candidates[0]` cites `forms/select-onchange-context-change` at `_includes/<file>.html:2`; calling `suggest_fix(forms/select-onchange-context-change, file, line:2)` returns `kind: "none"` with `explanation: "No violation for ... at line 2."` Per-call surface unable to address the manual-review candidate the cross-surface tool just pointed to. Closure: per-call `suggest_fix` resolution shares the same emission-locator the checklist uses; integration test that every checklist candidate's `(ruleId, file, line)` tuple resolves to a non-`none` kind on `suggest_fix`. Per AI-first doctrine "Per-call shape must agree with per-class plan tally" — extended to checklist→suggest_fix lane parity.
-
-### Bootstrap response shape
 
 - [ ] **Q14-BOOTSTRAP-SUGGESTED-CONFIG-INVALID-TS-AND-EXCLUDES-AUTHORED** `bootstrap.suggestedConfig.exclude` ships 100+ top-level subdirectory globs (`<dir>/**`) covering every authored source tree on a bulk-template corpus AND terminates with a trailing comma in the TS array — pasting the suggested config yields a TS syntax error AND excludes the entire authored source. Worst-case regression: the tool's own bootstrap output is unusable. Closure: exclude generation gates on vendor classification (only `scannedBuildArtifacts`-classified subtrees, never authored-source paths); TS array serialization elides trailing comma; integration test that the suggested config parses as valid TS. Per AI-first doctrine "Default-exclude globs are suppression too" + "Don't duplicate capability the agent already has."
 

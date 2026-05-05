@@ -57,7 +57,12 @@
  * directly.
  */
 
-import type { VerifyCommandStructured } from "./suggest-fix-guidance-shape.ts";
+import type { ReviewCandidate } from "../types/review.ts";
+import {
+  buildPerCallEnrichmentAlternatives,
+  deriveApproachFromProse,
+  type VerifyCommandStructured,
+} from "./suggest-fix-guidance-shape.ts";
 import { buildInheritedHintExplanation } from "./suggest-fix-inherited-hint.ts";
 import { nearestFindingSpread } from "./suggest-fix-nearest-finding.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
@@ -162,6 +167,29 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     vendorContextField,
   };
   if (!match) {
+    // Candidate-bridge guidance: when the rule lookup missed but a
+    // candidate finder for one of the rule's `satisfies` criteria
+    // emitted at the same line, route to `kind: "guidance"` carrying
+    // the candidate's `reason` as the primary explanation. This closes
+    // the checklist→suggest_fix lane parity gap — finders are
+    // intentionally broader than the single rule that satisfies the
+    // criterion (see `src/mcp/suggest-fix-candidate-bridge.ts` for the
+    // doctrine rationale). Routed BEFORE the dead-end `kind: "none"`
+    // shape because the candidate is the agent's actual entry point
+    // when working a checklist row.
+    if (args.candidateMatch !== undefined) {
+      return buildCandidateBridgeOutcome({
+        ruleId,
+        candidate: args.candidateMatch,
+        sourceContext: args.sourceContext,
+        filePath,
+        line,
+        verify,
+        warningsField,
+        disambiguationNoteField,
+        vendorContextField,
+      });
+    }
     // omit the verify pair on
     // `kind: "none"`. A populated `verifyCommand` next to "no
     // violation found at this line" reads as "you already fixed it
@@ -220,4 +248,59 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     };
   }
   return routeMatchedPayload({ args, match, shared });
+}
+
+/**
+ * Shape the `kind: "guidance"` outcome the candidate-bridge produces
+ * when the rule lookup misses but a candidate finder emitted at the
+ * requested line. The candidate's `reason` is the agent's actionable
+ * starting point — finders frame manual-review questions ("verify the
+ * handler doesn't navigate / submit") in a form the agent can verify
+ * with a single Read at the cited line.
+ *
+ * Confidence on this branch reflects the candidate's tier (high /
+ * medium / low) — the finder's predicate is the only static evidence
+ * available, and surfacing it honestly preserves the agent's attention
+ * budget. The `verifyCommandStructured` pair is included because the
+ * agent CAN re-check after acting on the guidance (the candidate is a
+ * real review prompt, not a "we know nothing" admission).
+ *
+ * Lives on the candidate-bridge outcome lane to keep the per-call
+ * shape consistent with `buildPerCallEnrichmentAlternatives` (the same
+ * verify-by-reading + suppression-pragma fallbacks the no-fixPaths
+ * guidance branch surfaces). See
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally" extended to the
+ * checklist→suggest_fix lane parity case.
+ */
+function buildCandidateBridgeOutcome(args: {
+  readonly ruleId: string;
+  readonly candidate: ReviewCandidate;
+  readonly sourceContext: string;
+  readonly filePath: string;
+  readonly line: number;
+  readonly verify: { readonly verifyCommandStructured: VerifyCommandStructured };
+  readonly warningsField: { readonly warnings?: readonly string[] };
+  readonly disambiguationNoteField: { readonly disambiguationNote?: string };
+  readonly vendorContextField: { readonly vendorContext?: VendorContext };
+}): Record<string, unknown> {
+  const { candidate } = args;
+  const explanation = candidate.reason;
+  const enrichments = buildPerCallEnrichmentAlternatives(args.filePath, args.line, [
+    candidate.criterionId,
+  ]);
+  return {
+    kind: "guidance",
+    primary: {
+      approach: deriveApproachFromProse(explanation),
+      explanation,
+      sourceContext: args.sourceContext,
+      confidence: candidate.confidence,
+    },
+    ...(enrichments ? { alternatives: enrichments } : {}),
+    ...args.verify,
+    ...args.warningsField,
+    ...args.disambiguationNoteField,
+    ...args.vendorContextField,
+  };
 }
