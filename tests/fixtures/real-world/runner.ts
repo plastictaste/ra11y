@@ -87,6 +87,25 @@ export type FixtureExpectation =
       readonly inFile?: string;
     }
   | { readonly kind: "no-violation"; readonly ruleId: string }
+  /**
+   * Assert that at least one violation EXISTS for the rule, but that
+   * NONE of the matching violations have a message containing the
+   * given substring. Use this when a rule must still surface (to avoid
+   * silent suppression) but the message must NOT carry a forbidden
+   * fragment — e.g. comment-body text bleeding into a selector slice
+   * after a parser regression. Mirrors `candidate-present-without` on
+   * the violation axis.
+   *
+   * Failure messages distinguish the two failure modes:
+   *   - "no violation" → the rule emitted nothing (silent miss)
+   *   - "message contains forbidden text" → the regression leaked into
+   *     the violation message
+   */
+  | {
+      readonly kind: "violation-present-without";
+      readonly ruleId: string;
+      readonly reasonExcludes: string;
+    }
   | {
       readonly kind: "candidate-present";
       readonly criterionId: string;
@@ -625,6 +644,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalViolationPresent(fixtureId, exp, ctx.result.violations);
     case "no-violation":
       return evalNoViolation(fixtureId, exp, ctx.result.violations);
+    case "violation-present-without":
+      return evalViolationPresentWithout(fixtureId, exp, ctx.result.violations);
     case "candidate-present":
       return evalCandidatePresent(fixtureId, exp, ctx.report.candidates ?? []);
     case "no-candidate":
@@ -787,6 +808,50 @@ function evalNoViolation(
     expectation: exp,
     pass: false,
     message: `real-world/${fixtureId}: expected no violation of '${exp.ruleId}', got ${matching.length}`,
+  };
+}
+
+// ─── violation-present-without ──────────────────────────────────────────────
+
+/**
+ * Asserts that at least one violation exists for the rule AND that
+ * none of those violations' message strings contain the forbidden
+ * substring. The violation-axis mirror of
+ * {@link evalCandidatePresentWithout}: surfacing must continue, but
+ * the message must not carry a fragment that would only appear under
+ * a regression (e.g. SCSS `//` comment-body text bleeding into a
+ * selector slice).
+ *
+ * Failure modes:
+ *   - "no violation" → rule emitted nothing (silent miss)
+ *   - "message contains forbidden text" → regression leaked into the
+ *     violation message
+ */
+function evalViolationPresentWithout(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "violation-present-without" },
+  violations: readonly Violation[],
+): ExpectationResult {
+  const matching = violations.filter((v) => v.ruleId === exp.ruleId);
+  if (matching.length === 0) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected a violation of '${exp.ruleId}' (violation-present-without), got ${summariseRuleIds(violations)}`,
+    };
+  }
+  const offender = matching.find((v) => v.message.includes(exp.reasonExcludes));
+  if (offender) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: violation '${exp.ruleId}' has a message containing forbidden substring '${exp.reasonExcludes}'. Message: ${JSON.stringify(offender.message)}`,
+    };
+  }
+  return {
+    expectation: exp,
+    pass: true,
+    message: `real-world/${fixtureId}: violation '${exp.ruleId}' present (${matching.length} match${matching.length === 1 ? "" : "es"}) and none contain '${exp.reasonExcludes}'`,
   };
 }
 
