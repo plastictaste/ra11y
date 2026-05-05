@@ -244,8 +244,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates.length);
     // Q15 deletion guard — the scalar twin must not reappear on the
     // populated coverage envelope.
-    expect((coverage as Record<string, unknown>).actionableManualItems).toBeUndefined();
-    expect((coverage as Record<string, unknown>).criteriaUntestable).toBeUndefined();
+    const coverageRecord = coverage as unknown as Record<string, unknown>;
+    expect(coverageRecord["actionableManualItems"]).toBeUndefined();
+    expect(coverageRecord["criteriaUntestable"]).toBeUndefined();
 
     // `summary.untargetedCriteria` mirrors across tools.
     expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
