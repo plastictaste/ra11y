@@ -28,6 +28,7 @@ import {
 } from "./reference-guide.ts";
 import { buildScanProjectReviewFields } from "./review-candidate-prompts.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
+import { applyPagingHintToNextStep } from "./scan-project-paging-hint.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import {
   buildSlimNextStepStructured,
@@ -311,6 +312,15 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
         session,
       }),
   });
+  // when the assembled response ships
+  // `truncated: true` + `nextOffset`, prepend a paging hint to the
+  // prose AND surface the paging call as the primary structured next-
+  // step (moving the prior triage call into
+  // `nextStepStructuredAlternatives`). Without this overlay an agent
+  // following the structured shape proceeds to single-finding triage
+  // and silently never pages the rest. Slim envelope (`files: []`, no
+  // `nextOffset`) is filtered by the helper; ships its own prose.
+  const withPaging = applyPagingHintToNextStep({ response: guarded.response, params });
   // dangling-pointer
   // invariant guard: every `fix.descriptionRef.hash` emitted in the
   // response must resolve in `referenceGuide.fixDescriptions[ruleId]`
@@ -326,7 +336,7 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
   // for any future truncation site that drops `referenceGuide` (or
   // trims its entries) without rewriting surviving findings. Identity-
   // preserving on the common case where every ref resolves cleanly.
-  return repairResponseDangling(guarded.response, hoisted.originalFixDescriptions);
+  return repairResponseDangling(withPaging, hoisted.originalFixDescriptions);
 }
 
 /**
