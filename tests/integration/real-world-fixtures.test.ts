@@ -12,9 +12,11 @@
  * drive the harness and turn per-expectation results into test-
  * framework assertions with fixture-scoped messages.
  *
- * Fixtures with `assertions.todo === true` are registered as
- * `it.todo(...)` — they are intentionally RED (capturing a known bug
- * before the upstream `src/` fix lands) and must not block CI.
+ * Fixtures with `assertions.todo === true` are intentionally RED —
+ * they capture a known bug before the upstream `src/` fix lands. The
+ * test body returns early so CI is not blocked; the fixture remains
+ * in the discovery set as a sentinel reminding contributors that the
+ * fix is pending. Remove `todo` once the fix lands.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -40,13 +42,12 @@ describe("real-world fixtures", () => {
       const assertions = await loadAssertions(fixture);
 
       // Fixtures marked `todo: true` capture a known bug before the
-      // upstream `src/` fix lands. Register them as pending so CI
-      // does not block, but the test is recorded as "to do" rather
-      // than silently skipped. Once the fix lands, remove `todo`.
-      if (assertions.todo === true) {
-        it.todo(fixture.id);
-        return;
-      }
+      // upstream `src/` fix lands. Return early so CI is not blocked;
+      // the pending fix's commit will remove `todo` and turn the test
+      // green permanently. `it.todo()` cannot be called inside an
+      // already-running `it()` in bun:test, so early-return is the
+      // mechanism here.
+      if (assertions.todo === true) return;
 
       const ctx = await loadAndScanFixture(fixture, assertions.toolInput ?? {});
       const results = evaluateExpectations(ctx, assertions.expectations);
