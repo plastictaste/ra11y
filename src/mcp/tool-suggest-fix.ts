@@ -5,10 +5,9 @@
  */
 
 import { runScan } from "../engine/scanner.ts";
-import { indexFindersByCriterion } from "./review-candidate-prompts.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
-import { findCandidateMatch } from "./suggest-fix-candidate-match.ts";
-import { collectSuggestFixContext } from "./suggest-fix-context.ts";
+import { resolveCandidateMatchForHandler } from "./suggest-fix-candidate-match.ts";
+import { collectSuggestFixContext, suggestFixRerouteSpread } from "./suggest-fix-context.ts";
 import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
@@ -156,28 +155,17 @@ export const suggestFixTool: McpTool = {
     });
 
     const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
-    // Review-candidate match resolver — closes the
-    // checklist→suggest_fix lane parity gap. When the rule did not
-    // fire at the queried line BUT a manual-review candidate at the
-    // same coordinate carries a criterion the rule satisfies, the
-    // payload builder routes to `kind: "guidance"` derived from the
-    // candidate's prose instead of dead-ending at `kind: "none"`. The
-    // resolver runs only when the rule lookup missed (mutually
-    // exclusive with `match`) and only consults `report.candidates`,
-    // which the suggest_fix single-file scan already produced.
-    // See `src/mcp/suggest-fix-candidate-match.ts` for the doctrine
-    // rationale.
-    const rule = findRule(ruleId, session);
-    const candidateMatch =
-      match !== undefined || rule === undefined
-        ? null
-        : findCandidateMatch({
-            rule,
-            filePath,
-            line,
-            candidates: report.candidates ?? [],
-            findersByCriterion: indexFindersByCriterion(session.registry.finders),
-          });
+    // Review-candidate fallback resolver — closes checklist→suggest_fix
+    // lane parity. Mutually exclusive with `match`. See
+    // `src/mcp/suggest-fix-candidate-match.ts` for doctrine.
+    const candidateMatch = resolveCandidateMatchForHandler({
+      match,
+      ruleId,
+      filePath,
+      line,
+      session,
+      candidates: report.candidates ?? [],
+    });
     const ctx = await collectSuggestFixContext({
       session,
       parsed,
@@ -204,15 +192,7 @@ export const suggestFixTool: McpTool = {
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
       ...(candidateMatch === null ? {} : { candidateMatch }),
-      ...(ctx.inheritedFromWrapper === null
-        ? {}
-        : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
-      ...(ctx.templateDirectiveContext === null
-        ? {}
-        : { templateDirectiveContext: ctx.templateDirectiveContext }),
-      ...(ctx.markdownHeadingCollision === null
-        ? {}
-        : { markdownHeadingCollision: ctx.markdownHeadingCollision }),
+      ...suggestFixRerouteSpread(ctx),
       ...optionalSuggestFixFields(ctx.scanWarnings, ctx.vendorContext, disambiguationNote),
     });
     return textResult(payload as Record<string, unknown>);

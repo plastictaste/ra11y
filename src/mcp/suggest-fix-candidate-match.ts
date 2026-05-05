@@ -33,6 +33,9 @@
 
 import type { CandidateFinder, ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
+import { indexFindersByCriterion } from "./review-candidate-prompts.ts";
+import type { McpSession } from "./session.ts";
+import { findRule } from "./tools-helpers.ts";
 
 /**
  * Compact shape threaded onto `BuildSuggestFixPayloadArgs.candidateMatch`
@@ -101,4 +104,42 @@ export function findCandidateMatch(args: {
     };
   }
   return null;
+}
+
+/**
+ * Handler-side glue around {@link findCandidateMatch}. Resolves the
+ * rule on the registry, indexes the finder map, and returns the
+ * candidate match — null when:
+ *
+ *   - the rule lookup already matched a violation
+ *     (`match !== undefined`); the existing routing lanes own that
+ *     case;
+ *   - the rule does not resolve on the session registry (the handler
+ *     emits `rule-not-found` upstream of this resolver, so this guard
+ *     covers the defensive race only);
+ *   - no candidate at the queried coordinate is associated with one
+ *     of the rule's criteria.
+ *
+ * Lives here (rather than inlined in `tool-suggest-fix.ts`) so the
+ * MCP handler stays under the file budget enforced by
+ * `scripts/check-limits.ts`. Pure function over the inputs.
+ */
+export function resolveCandidateMatchForHandler(args: {
+  readonly match: unknown;
+  readonly ruleId: string;
+  readonly filePath: string;
+  readonly line: number;
+  readonly session: McpSession;
+  readonly candidates: readonly ReviewCandidate[];
+}): CandidateMatch | null {
+  if (args.match !== undefined) return null;
+  const rule = findRule(args.ruleId, args.session);
+  if (rule === undefined) return null;
+  return findCandidateMatch({
+    rule,
+    filePath: args.filePath,
+    line: args.line,
+    candidates: args.candidates,
+    findersByCriterion: indexFindersByCriterion(args.session.registry.finders),
+  });
 }

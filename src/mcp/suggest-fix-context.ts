@@ -58,6 +58,30 @@ export interface SuggestFixContext {
   readonly markdownHeadingCollision: MarkdownHeadingIdCollision | null;
 }
 
+/**
+ * Conditional-spread the three `null | T` reroute fields the
+ * `SuggestFixContext` exposes onto a `BuildSuggestFixPayloadArgs`
+ * spread. Centralized here so the handler in `tool-suggest-fix.ts`
+ * stays under the MCP-handler line budget; the spread shape is
+ * present-when-meaningful per CLAUDE.md §1 — `null` means absent,
+ * never sentinel-empty.
+ */
+export function suggestFixRerouteSpread(ctx: SuggestFixContext): {
+  readonly inheritedFromWrapper?: { readonly wrapperName: string };
+  readonly templateDirectiveContext?: TemplateDirectiveContext;
+  readonly markdownHeadingCollision?: MarkdownHeadingIdCollision;
+} {
+  return {
+    ...(ctx.inheritedFromWrapper === null ? {} : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
+    ...(ctx.templateDirectiveContext === null
+      ? {}
+      : { templateDirectiveContext: ctx.templateDirectiveContext }),
+    ...(ctx.markdownHeadingCollision === null
+      ? {}
+      : { markdownHeadingCollision: ctx.markdownHeadingCollision }),
+  };
+}
+
 export interface CollectSuggestFixContextArgs {
   readonly session: McpSession;
   readonly parsed: ParsedFile;
