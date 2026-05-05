@@ -136,6 +136,21 @@ export function collapseRepeatedAcrossFiles<T extends CollapseCandidateInput>(
   candidates: readonly T[],
 ): CollapseCandidateOutput<T>[] {
   if (candidates.length === 0) return [];
+  const cohortKeyToIndex = bucketByFingerprint(candidates);
+  const { collapsedIndices, swallowedIndices } = resolveCohorts(candidates, cohortKeyToIndex);
+  return materializeOutput(candidates, collapsedIndices, swallowedIndices);
+}
+
+/**
+ * Pass 1 — buckets every candidate index by its fingerprint key. Returns
+ * a map keyed on the `(line, reason, snippet)` fingerprint pointing at
+ * the array of input indices that share the key. Encounter order is
+ * preserved within each bucket so the canonical entry (later collapse
+ * stage) is the lexicographically-earliest path.
+ */
+function bucketByFingerprint<T extends CollapseCandidateInput>(
+  candidates: readonly T[],
+): Map<string, number[]> {
   const cohortKeyToIndex = new Map<string, number[]>();
   for (let i = 0; i < candidates.length; i += 1) {
     const c = candidates[i];
@@ -148,6 +163,25 @@ export function collapseRepeatedAcrossFiles<T extends CollapseCandidateInput>(
       arr.push(i);
     }
   }
+  return cohortKeyToIndex;
+}
+
+/**
+ * Pass 2 — examines each bucket and decides whether it qualifies for
+ * collapse. The qualification gate is a conjunction:
+ *   (a) cohort size > {@link MIN_OCCURRENCES_TO_COLLAPSE} (5), AND
+ *   (b) at least 2 distinct paths in the cohort.
+ *
+ * Buckets that pass produce a `(canonical-index → cohort-meta)` entry
+ * and tag every non-canonical sibling for elision.
+ */
+function resolveCohorts<T extends CollapseCandidateInput>(
+  candidates: readonly T[],
+  cohortKeyToIndex: ReadonlyMap<string, readonly number[]>,
+): {
+  collapsedIndices: Map<number, { count: number; samplePaths: string[] }>;
+  swallowedIndices: Set<number>;
+} {
   const collapsedIndices = new Map<number, { count: number; samplePaths: string[] }>();
   const swallowedIndices = new Set<number>();
   for (const indices of cohortKeyToIndex.values()) {
@@ -163,6 +197,19 @@ export function collapseRepeatedAcrossFiles<T extends CollapseCandidateInput>(
       if (swallowed !== undefined) swallowedIndices.add(swallowed);
     }
   }
+  return { collapsedIndices, swallowedIndices };
+}
+
+/**
+ * Pass 3 — materializes the output array in input order. Skips swallowed
+ * indices entirely; emits canonical entries with the cohort meta spread
+ * onto them; passes through non-cohort entries verbatim.
+ */
+function materializeOutput<T extends CollapseCandidateInput>(
+  candidates: readonly T[],
+  collapsedIndices: ReadonlyMap<number, { count: number; samplePaths: string[] }>,
+  swallowedIndices: ReadonlySet<number>,
+): CollapseCandidateOutput<T>[] {
   const out: CollapseCandidateOutput<T>[] = [];
   for (let i = 0; i < candidates.length; i += 1) {
     if (swallowedIndices.has(i)) continue;
