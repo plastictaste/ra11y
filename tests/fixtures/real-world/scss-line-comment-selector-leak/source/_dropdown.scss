@@ -1,10 +1,11 @@
 // Sanitized excerpt of a Bootstrap-style dropdown SCSS partial.
 // Captures the parser bug where SCSS `//` line-comment bodies that
-// contain `*/` (commonly used in SCSS as JSDoc-ish prose referencing
-// CSS code, e.g. "For <button>*/.dropdown-item:active") leaked into
-// the selector text of the next ruleset. Rewriting `//` to a block
-// comment in-place left the embedded `*/` intact, prematurely closing
-// the synthetic block comment and exposing the rest of the comment
+// contain a block-comment terminator sequence (commonly used in SCSS
+// as JSDoc-ish prose referencing CSS code, e.g. "For <button>" then
+// the terminator then ".item:active") leaked into the selector text
+// of the next ruleset. Rewriting `//` to a block comment in place
+// left the embedded terminator intact, prematurely closing the
+// synthetic block comment and exposing the rest of the comment
 // body — plus everything between it and the next `{` — to the CSS
 // parser as selector text.
 
@@ -13,10 +14,10 @@
   color: black;
 }
 
-// For <button>*/.dropdown-item:active and <a>*/.dropdown-item.active —
+// For <button>*/.dropdown-item.active and <a>*/.dropdown-item.active —
 // the active-item style. Don't confuse with the `.active` modifier on
 // the menu itself.
-.dropdown-item:active {
+.dropdown-item.active {
   color: white;
   background-color: blue;
 }

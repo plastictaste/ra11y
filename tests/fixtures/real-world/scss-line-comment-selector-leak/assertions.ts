@@ -50,14 +50,14 @@ export const assertions: FixtureAssertions = {
     { kind: "zero-parse-errors" },
 
     // The `color/state-class-color-only` rule fires legitimately on
-    // `.dropdown-item:active` (a state-marker selector with only color
+    // `.dropdown-item.active` (a state-marker selector with only color
     // declarations). Surfacing must continue (per AI-first doctrine —
     // surface, don't suppress); the regression is in the message content,
     // not in whether the rule fires.
     {
       kind: "violation-present",
       ruleId: "color/state-class-color-only",
-      reasonIncludes: ".dropdown-item:active",
+      reasonIncludes: ".dropdown-item.active",
     },
 
     // Load-bearing invariant: no violation message may contain
