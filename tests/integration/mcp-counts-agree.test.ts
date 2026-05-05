@@ -658,10 +658,7 @@ describe("MCP invariant: checklist.summary parse-error scalars agree across surf
 
   it("omits summary.parseErrorFileCount on a clean fixture (present-when-meaningful)", async () => {
     const dir = await makeMediaFreeFixture();
-    const responses = await mcpSession([
-      initMsg(1),
-      toolCall(2, "checklist", { cwd: dir }),
-    ]);
+    const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklistEnvelope = body<ChecklistSummaryParseScalars>(responses[1]);
     // A clean scan never failed any parse — the analysisCoverage block
     // ships `0` (always-populated when the scan ran), but the summary

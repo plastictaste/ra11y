@@ -882,6 +882,44 @@ function buildChecklistSummaryActionable(
 }
 
 /**
+ * Builds the conditional-spread parse-error scalars fragment for the
+ * checklist `summary` block. Lifts `parseErrorFileCount` /
+ * `partialParseFileCount` off the `analysisCoverageField` record so
+ * the headline `summary` mirrors the cross-surface scan-confidence
+ * telemetry `coverage.analysisCoverage` and `scan_project.meta.
+ * analysisCoverage` already lift — pinned by the integration test in
+ * `tests/integration/mcp-counts-agree.test.ts`.
+ *
+ * Present-when-meaningful: each scalar is omitted from `summary`
+ * when the scan recorded zero parse errors of that kind, so a clean
+ * scan keeps the summary terse and a scan with ≥1 parse failure
+ * surfaces the count alongside `actionable.criteria`. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field shapes
+ * are dishonest": the analysisCoverage block ships `0` (always-
+ * populated when the scan ran), and the summary copy mirrors that
+ * semantics by only including the field when ≥1 entry exists — the
+ * agent reading the headline gets a non-zero counter or no field at
+ * all, never a zero counter that competes with the warning channel
+ * for attention.
+ *
+ * Extracted from the handler so the parent function stays under the
+ * lint's cognitive-complexity cap.
+ */
+function buildSummaryParseErrorScalars(
+  analysisCoverageField: ReturnType<typeof buildAnalysisCoverage>,
+): { readonly parseErrorFileCount?: number; readonly partialParseFileCount?: number } {
+  const ac = analysisCoverageField.analysisCoverage as
+    | { parseErrorFileCount?: number; partialParseFileCount?: number }
+    | undefined;
+  const parseErrorFileCount = ac?.parseErrorFileCount ?? 0;
+  const partialParseFileCount = ac?.partialParseFileCount ?? 0;
+  return {
+    ...(parseErrorFileCount > 0 ? { parseErrorFileCount } : {}),
+    ...(partialParseFileCount > 0 ? { partialParseFileCount } : {}),
+  };
+}
+
+/**
  * Builds the conditional-spread `reviewCandidatePrompts` fragment for
  * the checklist response. Computed off `reportCandidates` (the raw
  * `ReviewCandidate[]` the same loop builds checklist items from)
@@ -1348,34 +1386,7 @@ export const checklistTool: McpTool = {
       // input — not just the totals.
       outputFilePaths,
     );
-    // Parse-error scalars surfaced on `summary` itself (not just the
-    // top-level `analysisCoverage` block) so an agent reading the
-    // checklist summary as the headline observes the same scan-
-    // confidence telemetry `coverage` and `scan_project` lift via
-    // `analysisCoverage.parseErrorFileCount` / `partialParseFileCount`.
-    // Per `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
-    // count invariant": the same conceptual counter shipping from
-    // multiple project-rooted tools must agree on identical cwd —
-    // pinned by the integration test in
-    // `tests/integration/mcp-counts-agree.test.ts`. Present-when-
-    // meaningful: omitted when the scan recorded zero parse errors of
-    // that kind, matching the analysisCoverage block's own zero-omission
-    // rule for these scalars (the scan-ran-but-clean case still ships
-    // 0 on `analysisCoverage`, and the conditional spread here mirrors
-    // that semantics by only including the field when ≥1 entry exists,
-    // so a clean scan stays terse but a scan with parse failures
-    // surfaces the count alongside `actionable.criteria`).
-    const ac = analysisCoverageField.analysisCoverage as
-      | { parseErrorFileCount?: number; partialParseFileCount?: number }
-      | undefined;
-    const parseErrorScalars = {
-      ...(ac?.parseErrorFileCount && ac.parseErrorFileCount > 0
-        ? { parseErrorFileCount: ac.parseErrorFileCount }
-        : {}),
-      ...(ac?.partialParseFileCount && ac.partialParseFileCount > 0
-        ? { partialParseFileCount: ac.partialParseFileCount }
-        : {}),
-    };
+    const parseErrorScalars = buildSummaryParseErrorScalars(analysisCoverageField);
     const summary = {
       actionable: summaryActionable,
       untargetedCriteria: summaryTally.untargeted,
