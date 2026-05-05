@@ -27,6 +27,7 @@ import { draftVpatNarrativeTool } from "./tool-draft-vpat-narrative.ts";
 import { explainStandardTool } from "./tool-explain-standard.ts";
 import { getFindingTool } from "./tool-get-finding.ts";
 import { listAttestationsTool } from "./tool-list-attestations.ts";
+import { listFindersTool } from "./tool-list-finders.ts";
 import { listSuppressionsTool } from "./tool-list-suppressions.ts";
 import { proposeBaselineTool } from "./tool-propose-baseline.ts";
 import { proposeConfigTool } from "./tool-propose-config.ts";
@@ -456,6 +457,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   baselineTool,
   bootstrapTool,
   listRulesTool,
+  listFindersTool,
   listSuppressionsTool,
   suppressTool,
   attestTool,

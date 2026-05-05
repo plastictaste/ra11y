@@ -256,6 +256,156 @@ describe("MCP tool: list_rules", () => {
   });
 });
 
+describe("MCP tool: list_finders", () => {
+  it("returns every built-in candidate finder", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      finders: Array<Record<string, unknown>>;
+      matchedOf: { total: number; matched: number };
+    };
+    expect(data.finders.length).toBeGreaterThan(0);
+    // Built-in finder count is the registry length — same SSOT
+    // `BUILTIN_CANDIDATE_FINDERS` exposes; matchedOf.total mirrors it.
+    expect(data.matchedOf.total).toBe(data.finders.length);
+    expect(data.matchedOf.matched).toBe(data.finders.length);
+
+    const first = data.finders[0] as Record<string, unknown>;
+    expect(typeof first.finderId).toBe("string");
+    expect(Array.isArray(first.criterionIds)).toBe(true);
+    expect(typeof first.scope).toBe("string");
+    expect(typeof first.description).toBe("string");
+    expect(typeof first.reviewPrompt).toBe("string");
+    expect(Array.isArray(first.references)).toBe(true);
+    // finderId is a namespaced identifier (`review/<slug>` for
+    // candidate-surfacing finders, `suppression/<slug>` for the
+    // pragma-quality finder) — same shape surfaced by
+    // review_candidates.prompts[*].finderId so an agent that records
+    // a finderId from one surface can look it up here verbatim.
+    expect(first.finderId as string).toContain("/");
+  });
+
+  it("filters by standard via the equivalentTo-resolved set", async () => {
+    // Same equivalence-closure resolver list_rules uses: a finder
+    // declared against `wcag22:2.4.5` must surface under the
+    // `section508` filter because `section508:2.4.5` is reachable
+    // via the reciprocal index.
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const all = await tool.handler({}, session);
+    const section508 = await tool.handler({ standard: "section508" }, session);
+
+    const allFinders = JSON.parse(all.content[0].text) as { finders: unknown[] };
+    const filtered = JSON.parse(section508.content[0].text) as {
+      finders: Array<{ finderId: string; criterionIds: string[] }>;
+    };
+
+    expect(filtered.finders.length).toBeLessThanOrEqual(allFinders.finders.length);
+    expect(filtered.finders.length).toBeGreaterThan(0);
+    // Every entry under the section508 filter must surface at least
+    // one section508 criterion — direct or via equivalence.
+    for (const f of filtered.finders) {
+      expect(f.criterionIds.some((c) => c.startsWith("section508:"))).toBe(true);
+    }
+  });
+
+  it("returns structured error on unknown standard with the loaded list", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "fictional-standard" }, session);
+
+    expect(result.isError).toBe(true);
+    const err = (result.structuredContent as Record<string, unknown>) ?? {};
+    expect(err.code).toBe("standard-not-found");
+    expect((err.details as { loaded: string[] }).loaded.length).toBeGreaterThan(0);
+  });
+
+  it("omits filter field when no filter applied; populates matchedOf as a no-op", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter?: unknown;
+      matchedOf: { total: number; matched: number };
+      finders: unknown[];
+    };
+    expect("filter" in data).toBe(false);
+    expect(data.matchedOf.matched).toBe(data.matchedOf.total);
+    expect(data.matchedOf.matched).toBe(data.finders.length);
+  });
+
+  it("echoes filter and emits matched < total when filter narrows", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter: { standard: string };
+      matchedOf: { total: number; matched: number };
+      finders: unknown[];
+    };
+    expect(data.filter).toEqual({ standard: "wcag21" });
+    expect(data.matchedOf.matched).toBeLessThanOrEqual(data.matchedOf.total);
+    expect(data.finders.length).toBe(data.matchedOf.matched);
+  });
+
+  it("carries meta with scan-confidence telemetry (finders + standards)", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      finders: unknown[];
+      matchedOf: { total: number; matched: number };
+      meta: {
+        findersTotal: number;
+        findersMatched: number;
+        standardsLoaded: number;
+        standards: string[];
+      };
+    };
+    expect(data.meta).toBeDefined();
+    expect(data.meta.findersTotal).toBe(data.matchedOf.total);
+    expect(data.meta.findersMatched).toBe(data.matchedOf.matched);
+    expect(data.meta.findersMatched).toBe(data.finders.length);
+    expect(data.meta.standards).toContain("wcag22");
+    expect(data.meta.standards).toContain("wcag21");
+  });
+
+  it("emits nextStep + nextStepStructured routing to review_candidates (no filter)", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+    expect(typeof data.nextStep).toBe("string");
+    expect(data.nextStep).toContain("review_candidates");
+    expect(data.nextStepStructured.tool).toBe("review_candidates");
+    expect(data.nextStepStructured.args).toEqual({});
+  });
+
+  it("nextStep reflects the filter when one is applied", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+    expect(data.nextStep).toContain("wcag21");
+    expect(data.nextStepStructured.tool).toBe("review_candidates");
+    expect(data.nextStepStructured.args).toEqual({ standard: "wcag21" });
+  });
+});
+
 describe("MCP tool: explain_rule", () => {
   it("returns full rule metadata", async () => {
     const tool = findTool("explain_rule");
