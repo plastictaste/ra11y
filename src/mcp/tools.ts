@@ -17,6 +17,7 @@ import type { McpSession } from "./session.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
+import { auditRuleCoverageTool } from "./tool-audit-rule-coverage.ts";
 import { baselineTool } from "./tool-baseline.ts";
 import { bootstrapTool } from "./tool-bootstrap.ts";
 import { checklistTool } from "./tool-checklist.ts";
@@ -456,6 +457,7 @@ export const MCP_TOOLS: readonly McpTool[] = [
   verdictCandidateTool,
   draftVpatNarrativeTool,
   auditTool,
+  auditRuleCoverageTool,
   baselineTool,
   bootstrapTool,
   listRulesTool,

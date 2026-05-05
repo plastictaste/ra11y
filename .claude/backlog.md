@@ -636,8 +636,6 @@ Response shape / cross-surface drift / honesty:
 
 Tool-orchestration / new tool surfaces:
 
-- [ ] **V1-TOOL-AUDIT-RULE-COVERAGE** No tool surfaces "rule X did not fire on file Y, but heuristic predicates suggest it should have." The only way to discover an FN is to manually inspect `perRuleCoverage` and reason about it. Add `audit_rule_coverage({ruleId, file})` returning `{fired: false, eligibleByExtension: true, predicateMissed: true, hint: "trigger requires static-text child; file contains Liquid expression"}`.
-
 Catalog-scale perf / scoping:
 
 - [ ] **V1-FINDER-ACCESSIBLE-NAME-SR-ONLY-IMG-ALT-REDUNDANT** Canonical logo-link shape `<a href="/"><span class="sr-only">Brand</span><img src="logo.png" alt="Brand Logo"></a>` concatenates to accessible name "Brand Brand Logo" — duplicate token + redundant "Logo" suffix (AT announces the role automatically). On `docs/_includes/header.html:4-9` this shape ships unflagged; no rule or finder surfaces the sr-only + alt redundancy pattern. Fix: new review finder `review/accessible-name-redundant-composition` — compute accessible name for anchors / buttons whose children mix visually-hidden text (`.sr-only`, `.visually-hidden`, `[aria-hidden]`) with `<img alt="…">`; when the concatenated name contains case-insensitive duplicate tokens OR role-suffix redundancy (`logo|image|icon|button|link`), emit a 2.4.6 / 4.1.2 review candidate. Satisfies wcag22:2.4.6 + 4.1.2.
