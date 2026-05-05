@@ -246,15 +246,16 @@ describe("scan_project: violations split by scan kind", () => {
     }
   });
 
-  it("omits plan.violationsByScanKind on a scan with no build artifacts (present-when-meaningful)", async () => {
+  it("ships plan.violationsByScanKind deterministically on a scan with no build artifacts (buildArtifact reads 0)", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-violations-by-scan-kind-clean-"));
     try {
       // Authored HTML with one violation, no build artifacts in the
-      // tree. The classifier produces an empty path set; the helper
-      // omits the field per CLAUDE.md §1 "Ambiguous field shapes are
-      // dishonest" — emitting `{ source: N, buildArtifact: 0 }` would
-      // duplicate the signal already carried by the absence of
-      // `meta.scannedBuildArtifacts`.
+      // tree. Per the deterministic-headline doctrine — a missing
+      // headline forces silent recomputation from `plan.fixesByClass`
+      // arithmetic — `violationsByScanKind` ships on every
+      // scan_project response, including no-vendor scans where
+      // `buildArtifact` reads 0. The honest signal is "axis tallied,
+      // found zero artifact-side findings," not "field clipped."
       writeFileSync(join(root, "page.html"), '<html><body><img src="x.png"></body></html>\n');
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
@@ -282,11 +283,17 @@ describe("scan_project: violations split by scan kind", () => {
           laneSum(lanes.verifyInSource)
         : 0;
       expect(totalViolations).toBeGreaterThan(0);
-      // Field is absent on the no-artifacts common case.
-      expect(plan["violationsByScanKind"]).toBeUndefined();
-      // And the existing absence signal (`meta.scannedBuildArtifacts`)
-      // confirms the classifier ran and produced nothing — so the
-      // omission is honest, not a wiring miss.
+      // Field is present on the no-artifacts case with `buildArtifact: 0`.
+      const split = plan["violationsByScanKind"] as
+        | { source: number; buildArtifact: number }
+        | undefined;
+      expect(split).toBeDefined();
+      expect(split?.buildArtifact).toBe(0);
+      expect(split?.source).toBe(totalViolations);
+      // The classifier ran and produced no artifacts — the absence
+      // of `meta.scannedBuildArtifacts` confirms it; the per-kind
+      // headline ships regardless so the agent reads one stable
+      // shape across vendor and no-vendor scans alike.
       const meta = body.meta as Record<string, unknown>;
       expect(meta["scannedBuildArtifacts"]).toBeUndefined();
     } finally {

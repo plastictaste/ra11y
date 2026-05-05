@@ -163,7 +163,7 @@ describe("scan_project: fixesByClass per-scan-kind cross-surface invariant", () 
     }
   });
 
-  it("on a no-vendor scan, every lane's buildArtifact half is zero and violationsByScanKind is omitted", async () => {
+  it("on a no-vendor scan, every lane's buildArtifact half is zero and violationsByScanKind ships deterministically", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-fixes-by-class-no-vendor-"));
     try {
       // One authored file, no vendor / build-artifact paths.
@@ -185,16 +185,22 @@ describe("scan_project: fixesByClass per-scan-kind cross-surface invariant", () 
       expect(fixesByClass.runtimeOnly.buildArtifact).toBe(0);
       expect(fixesByClass.verifyInSource.buildArtifact).toBe(0);
 
-      // The aggregate `violationsByScanKind` is omitted on a
-      // no-artifacts scan per CLAUDE.md §1 "Ambiguous field shapes
-      // are dishonest" — the per-lane sub-tally already conveys
-      // "every finding routed to source," so the redundant aggregate
-      // adds no signal.
-      expect(plan["violationsByScanKind"]).toBeUndefined();
+      // Per the deterministic-headline doctrine — a missing headline
+      // forces silent recomputation from `plan.fixesByClass`
+      // arithmetic — `plan.violationsByScanKind` ships on every
+      // scan_project response, including no-vendor scans where the
+      // `buildArtifact` half reads 0. Honest signal: axis was tallied
+      // and found zero.
+      const violationsByScanKind = plan["violationsByScanKind"] as Lane | undefined;
+      expect(violationsByScanKind).toBeDefined();
+      if (!violationsByScanKind) throw new Error("violationsByScanKind missing");
+      expect(violationsByScanKind.buildArtifact).toBe(0);
 
-      // The `source`-half sum is positive (one finding emitted).
+      // The `source`-half sum is positive (one finding emitted) and
+      // matches the aggregate.
       const sourceSum = sumLane(fixesByClass, "source");
       expect(sourceSum).toBeGreaterThan(0);
+      expect(sourceSum).toBe(violationsByScanKind.source);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

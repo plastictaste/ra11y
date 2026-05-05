@@ -1606,12 +1606,15 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     });
   });
 
-  it("returns the input plan by identity (no shallow copy) when no artifacts were classified", () => {
-    // Common-case fast path: the no-artifacts scan pays nothing for
-    // the helper; the conditional-spread doctrine keeps the field off
-    // the wire entirely AND leaves `fixesByClass` untouched (the
-    // upstream `countFixesByClass` already produced the per-kind
-    // shape with `buildArtifact: 0` everywhere).
+  it("stamps `plan.violationsByScanKind` with `buildArtifact: 0` even when no artifacts were classified", () => {
+    // Deterministic-headline doctrine: the aggregate ships on every
+    // scan response, including no-vendor scans, so the agent reads
+    // one stable headline rather than disambiguating "field absent
+    // because no artifacts" from "field absent because wiring missed
+    // a path." `fixesByClass` stays untouched on the no-artifacts
+    // path — the upstream `countFixesByClass` already produced the
+    // per-kind shape with `buildArtifact: 0` everywhere, so the
+    // helper's `fixesByClass` rewrite would be a no-op by value.
     const plan = {
       notes: 1,
       fixesByClass: {
@@ -1622,8 +1625,12 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
       },
     } satisfies Record<string, unknown>;
     const out = withViolationsByScanKind(plan, [{ path: "x", findings: [E] }], new Set());
-    expect(out).toBe(plan);
-    expect(out["violationsByScanKind"]).toBeUndefined();
+    expect(out["violationsByScanKind"]).toEqual({ source: 1, buildArtifact: 0 });
+    // `fixesByClass` is identity-stable on the no-artifacts path —
+    // no rewrite needed when every lane already reads `buildArtifact:
+    // 0` from the upstream `countFixesByClass` call.
+    expect(out["fixesByClass"]).toBe(plan.fixesByClass);
+    expect(out["notes"]).toBe(1);
   });
 
   it("preserves the input plan's other fields verbatim — additive only", () => {

@@ -513,13 +513,16 @@ export interface AgentReviewCandidate {
  * `buildArtifact: 0` is honest signal — the scope tallied the axis
  * and found zero artifact-side findings on this lane. Distinct from
  * "the scope didn't classify build artifacts at all," which is
- * conveyed by `meta.scannedBuildArtifacts` absence and the omission
- * of `plan.violationsByScanKind` itself. On scopes that don't run
- * the build-artifact classifier (CLI agent format, scan, scan_file,
- * scan_diff), every lane reads `{ source: N, buildArtifact: 0 }`
- * because the default classification routes every file to the
- * `source` lane, matching `splitViolationsByScanKind`'s
- * empty-vendorPaths behavior.
+ * conveyed by `meta.scannedBuildArtifacts` absence (the
+ * `plan.violationsByScanKind` aggregate itself ships deterministically,
+ * including on no-artifacts scans where it reads
+ * `{ source: N, buildArtifact: 0 }` so an agent reads one stable
+ * headline rather than recomputing from `plan.fixesByClass`
+ * arithmetic). On scopes that don't run the build-artifact
+ * classifier (CLI agent format, scan, scan_diff), every lane reads
+ * `{ source: N, buildArtifact: 0 }` because the default classification
+ * routes every file to the `source` lane, matching
+ * `splitViolationsByScanKind`'s empty-vendorPaths behavior.
  */
 export interface FixesByClassLane {
   readonly source: number;

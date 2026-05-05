@@ -369,14 +369,18 @@ export const scanProjectTool: McpTool = {
     // tell at a glance how many error+warning findings sit in vendor /
     // build-artifact files (often un-editable; the productive triage
     // is `propose_config` exclude or source-level disable, not a fix
-    // attempt) vs. authored source. Conditional-spread on `vendorPaths`
-    // emptiness — the no-artifacts common case omits the field per
-    // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Each
-    // per-kind lane (`source`, `buildArtifact`) names exactly one
-    // kind of thing, so the split itself is honest. Per
-    // the flat `plan.violations`
-    // headline was deleted — the per-kind sibling sums to the
-    // structured `plan.fixesByClass` total instead.
+    // attempt) vs. authored source. The headline ships
+    // deterministically (no conditional spread) so the agent reads
+    // one stable shape across vendor and no-vendor scans alike — on
+    // a no-artifacts scan, `buildArtifact` reads 0 as honest "axis
+    // tallied, found zero" signal rather than being silently absent.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Composite
+    // headline counts are dishonest" inverse: a missing headline
+    // forces silent recomputation from `plan.fixesByClass`
+    // arithmetic. Each per-kind lane (`source`, `buildArtifact`)
+    // names exactly one kind of thing, so the split itself is honest.
+    // The flat `plan.violations` counter was deleted — the per-kind
+    // sibling sums to the structured `plan.fixesByClass` total instead.
     // The shared `formatted.plan` reference is reused below in
     // `assembleScanProjectResponse`; rebinding here propagates the
     // enriched plan through the rest of the assembly chain without

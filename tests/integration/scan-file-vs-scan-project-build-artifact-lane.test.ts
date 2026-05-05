@@ -152,16 +152,16 @@ describe("scan_file vs scan_project: build-artifact lane parity", () => {
     }
   });
 
-  it("omits plan.violationsByScanKind on scan_file when the file is not a build artifact (present-when-meaningful)", async () => {
+  it("ships plan.violationsByScanKind deterministically on scan_file when the file is not a build artifact (buildArtifact reads 0)", async () => {
     const root = mkdtempSync(join(tmpdir(), "ra11y-scan-file-lane-clean-"));
     try {
       // Authored CSS with a contrast violation — no build-artifact
-      // signal in the path or content, so the classifier produces an
-      // empty path set and the per-kind stamp is omitted per
-      // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Mirrors
-      // the `scan_project` no-artifacts assertion in
+      // signal in the path or content. Per the deterministic-headline
+      // doctrine, the per-kind stamp ships on every response; the
+      // `buildArtifact` half reads 0, the `source` half carries the
+      // tally. Mirrors the `scan_project` no-artifacts assertion in
       // `mcp-scan-project-violations-by-scan-kind.test.ts` so both
-      // surfaces share the present-when-meaningful contract.
+      // surfaces share the deterministic-headline contract.
       const sourcePath = join(root, "site.css");
       writeFileSync(sourcePath, ".muted { color: #555555; background-color: #4a4a4a; }\n");
       const responses = await mcpSession([
@@ -173,13 +173,18 @@ describe("scan_file vs scan_project: build-artifact lane parity", () => {
       const body = bodyOf(scanFile as JsonRpcResponse);
       const plan = body["plan"] as Record<string, unknown> | undefined;
       const meta = body["meta"] as Record<string, unknown> | undefined;
-      // The classifier ran (the absence of `meta.scannedBuildArtifacts`
-      // confirms it produced nothing) — the omission is honest, not a
-      // wiring miss.
+      // The classifier ran and produced nothing — the absence of
+      // `meta.scannedBuildArtifacts` confirms it; the per-kind
+      // headline ships regardless so both surfaces emit one stable
+      // shape across vendor and no-vendor inputs.
       expect(meta?.["scannedBuildArtifacts"]).toBeUndefined();
-      // Field is absent on the no-artifacts common case, matching
-      // `scan_project`'s behavior on the same shape.
-      expect(plan?.["violationsByScanKind"]).toBeUndefined();
+      const split = plan?.["violationsByScanKind"] as
+        | { source: number; buildArtifact: number }
+        | undefined;
+      expect(split).toBeDefined();
+      expect(split?.buildArtifact).toBe(0);
+      // The contrast violation lands in the `source` lane.
+      expect(split?.source).toBeGreaterThan(0);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

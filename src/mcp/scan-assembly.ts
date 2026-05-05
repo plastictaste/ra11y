@@ -1043,6 +1043,12 @@ export function isPerRuleCoverageUniformlyHigh(rows: readonly PerRuleCoverage[])
  * default-honest behavior is "the file you wrote." This avoids the
  * silent-miss failure mode where a misclassified vendor file silently
  * routes a real authored-code finding into the dismissable bucket.
+ *
+ * Stamped deterministically on every scan response — on a no-vendor
+ * scan the field reads `{ source: N, buildArtifact: 0 }` rather than
+ * being omitted, so the agent reads one stable headline instead of
+ * having to disambiguate "field absent because no artifacts" from
+ * "field absent because the wiring missed a path."
  */
 export interface ViolationsByScanKind {
   readonly source: number;
@@ -1105,22 +1111,29 @@ export function splitViolationsByScanKind(
  * `vendorPaths` and the per-file finding buckets — the seam where
  * both are in scope is the post-classifier point in
  * `tool-scan-project.ts` (between the build-artifact pass and
- * `assembleScanProjectResponse`). Conditional-spread per CLAUDE.md §1
- * "Ambiguous field shapes are dishonest": the
- * `violationsByScanKind` aggregate sibling is omitted when no
- * artifacts were classified (the existing `meta.scannedBuildArtifacts`
- * absence already conveys "no artifacts"). The per-lane
- * `fixesByClass` rewrite ALWAYS runs — every lane already ships the
+ * `assembleScanProjectResponse`). The aggregate
+ * `violationsByScanKind` is stamped UNCONDITIONALLY: the headline
+ * is the deterministic per-lane error+warning total an agent reads
+ * to budget triage without round-tripping through `plan.fixesByClass`
+ * arithmetic or the per-file array. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest" — the inverse failure mode applies too:
+ * a missing headline forces silent recomputation. On a no-artifacts
+ * scan the field reads `{ source: N, buildArtifact: 0 }` — honest
+ * signal that the axis was tallied and found zero, not that the
+ * field was clipped. The earlier conditional-spread (omit when
+ * `vendorPaths.size === 0`) was tightened so the wire shape is
+ * stable across no-vendor and vendor scans alike.
+ *
+ * The per-lane `fixesByClass` rewrite still only runs when artifacts
+ * were classified — every lane already ships the
  * `{ source: N, buildArtifact: 0 }` shape upstream from
  * `response-assembler` (which calls `countFixesByClass` with an empty
- * vendor path set), so on a no-artifacts scan the rewrite is a no-op
- * by value. When artifacts ARE classified, the upstream's
+ * vendor path set), so on a no-artifacts scan the rewrite would be
+ * a no-op by value and we keep the helper identity-stable on the
+ * `fixesByClass` axis. When artifacts ARE classified, the upstream's
  * empty-vendor-path tally is wrong (every finding routed to `source`)
  * and the rewrite restores the honest split.
- *
- * Identity-stable when the rewrite is a no-op (no artifacts), so
- * callers can route through this helper unconditionally without
- * paying for a shallow copy on the common case.
  *
  * Cross-surface invariant: for each scan-kind X,
  * `sum(plan.fixesByClass[*].X) === plan.violationsByScanKind[X]`.
@@ -1140,7 +1153,14 @@ export function withViolationsByScanKind(
   }[],
   vendorPaths: ReadonlySet<string>,
 ): Record<string, unknown> {
-  if (vendorPaths.size === 0) return plan;
+  // Always compute the aggregate split — on no-vendor scans every
+  // finding routes to `source` and `buildArtifact` reads 0, which is
+  // honest signal (axis tallied, found zero) rather than the silent
+  // omission the agent would have to derive around.
+  const split = splitViolationsByScanKind(files, vendorPaths);
+  if (vendorPaths.size === 0) {
+    return { ...plan, violationsByScanKind: split };
+  }
   // Re-derive `fixesByClass` per-scan-kind from the per-file findings.
   // The upstream `response-assembler` call to `countFixesByClass` ran
   // with an empty vendor-path set (the classifier hadn't run yet), so
@@ -1148,10 +1168,10 @@ export function withViolationsByScanKind(
   // `vendorPaths` now resolved, we redo the split honestly so each
   // lane carries the same `{ source, buildArtifact }` axis the
   // cross-lane `violationsByScanKind` aggregate carries. The rewrite
-  // only runs when artifacts WERE classified (the `vendorPaths.size
-  // === 0` short-circuit above) — the no-artifacts common case keeps
-  // the upstream tally and the helper stays identity-stable on it.
-  const split = splitViolationsByScanKind(files, vendorPaths);
+  // only runs when artifacts WERE classified — the no-artifacts
+  // common case keeps the upstream tally (already
+  // `{ source: N, buildArtifact: 0 }` everywhere) and the helper
+  // stays identity-stable on the `fixesByClass` axis.
   const fixesByClassRewritten = splitFixesByClassByScanKind(files, vendorPaths);
   const planWithFixesByClass =
     plan["fixesByClass"] === undefined ? plan : { ...plan, fixesByClass: fixesByClassRewritten };
