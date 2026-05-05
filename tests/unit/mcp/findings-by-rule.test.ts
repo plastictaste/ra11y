@@ -13,10 +13,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import {
-  computeFindingsByRule,
-  withFindingsByRule,
-} from "../../../src/mcp/findings-by-rule.ts";
+import { computeFindingsByRule, withFindingsByRule } from "../../../src/mcp/findings-by-rule.ts";
 
 const E = (ruleId: string) => ({ ruleId, severity: "error" });
 const W = (ruleId: string) => ({ ruleId, severity: "warning" });

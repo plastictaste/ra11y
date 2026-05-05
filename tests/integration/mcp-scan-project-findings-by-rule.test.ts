@@ -135,10 +135,7 @@ describe("scan_project: plan.findingsByRule full per-rule count map", () => {
         join(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"></body></html>\n',
       );
-      writeFileSync(
-        join(root, "b.html"),
-        '<html><body><a href="/x"></a></body></html>\n',
-      );
+      writeFileSync(join(root, "b.html"), '<html><body><a href="/x"></a></body></html>\n');
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
@@ -214,10 +211,7 @@ describe("scan_project: plan.findingsByRule full per-rule count map", () => {
         join(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"></body></html>\n',
       );
-      writeFileSync(
-        join(root, "b.html"),
-        '<html><body><img src="x.png"></body></html>\n',
-      );
+      writeFileSync(join(root, "b.html"), '<html><body><img src="x.png"></body></html>\n');
 
       const responses = await mcpSession([
         initMsg(1),
