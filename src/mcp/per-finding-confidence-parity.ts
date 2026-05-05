@@ -97,10 +97,19 @@ export function buildPerRuleLimitationMap(
     }
     // Aggregate stays high — but the rule may carry per-file
     // degradation in `byFile` that still needs propagating. Use the
-    // most-severe per-file reason: file-parse-error > partial-parse.
+    // most-severe per-file reason: file-parse-error > partial-parse >
+    // parse-bailed-non-jsx-in-tsx-route. Parse-error is the strongest
+    // signal (file invisible to rules); partial-parse next (recovered
+    // AST but degraded); route-bail last (file routed through suspect
+    // parser, no recorded errors).
     if (row.byFile === undefined || row.byFile.length === 0) continue;
     const hasParseError = row.byFile.some((e) => e.reason === "file-parse-error");
-    const code = hasParseError ? "file_parse_error" : "partial_parse";
+    const hasPartialParse = row.byFile.some((e) => e.reason === "partial-parse");
+    const code = hasParseError
+      ? "file_parse_error"
+      : hasPartialParse
+        ? "partial_parse"
+        : "parse_bailed_non_jsx_in_tsx_route";
     out.set(row.ruleId, code);
   }
   return out;
@@ -157,7 +166,7 @@ function snakeCase(code: string): string {
  * gate against. Each entry in {@link FILE_SCOPED_SUBSTRATE_CODES}
  * names one of these so the helper looks up the right file set.
  */
-type FileScopedSubstrateSet = "parseError" | "partialParse" | "fragment";
+type FileScopedSubstrateSet = "parseError" | "partialParse" | "fragment" | "parserBailRoute";
 
 /**
  * File-scoped substrate codes whose propagation must gate on the
@@ -199,6 +208,7 @@ const FILE_SCOPED_SUBSTRATE_CODES: ReadonlyMap<string, FileScopedSubstrateSet> =
   ["file_parse_error", "parseError"],
   ["partial_parse", "partialParse"],
   ["fragment_input_no_document_envelope", "fragment"],
+  ["parse_bailed_non_jsx_in_tsx_route", "parserBailRoute"],
 ]);
 
 /**
@@ -229,20 +239,44 @@ export interface ParseStateFiles {
   readonly parseError: ReadonlySet<string>;
   readonly partialParse: ReadonlySet<string>;
   readonly fragment?: ReadonlySet<string>;
+  /**
+   * Optional file-path set the propagation helper consults to gate the
+   * `parse_bailed_non_jsx_in_tsx_route` substrate code on file
+   * membership. Populated by
+   * {@link import("./parser-bail-route-adjustment.ts").collectParserBailedRouteFiles}
+   * — the same evidence the per-rule adjuster used to populate
+   * `byFile[]` entries with `reason: "parse-bailed-non-jsx-in-tsx-route"`.
+   * When omitted, the gate denies attaching the code (safer half of
+   * the asymmetric failure modes — no false attribution of a substrate
+   * code to a file the predicate didn't fire on).
+   */
+  readonly parserBailRoute?: ReadonlySet<string>;
 }
 
 /**
  * Convenience constructor: combines a `partitionParseStateFiles`
  * result with a fragment file list (typically from
- * `detectFragmentFiles`) into a {@link ParseStateFiles}. Lets call
- * sites use a single line at the propagation seam without inlining
- * the spread + `new Set(...)` boilerplate.
+ * `detectFragmentFiles`) and a parser-bail-route file list (typically
+ * from `collectParserBailedRouteFiles`) into a {@link ParseStateFiles}.
+ * Lets call sites use a single line at the propagation seam without
+ * inlining the spread + `new Set(...)` boilerplate.
+ *
+ * The bail-route argument is optional so legacy / fixture callers
+ * stay backward-compatible — when omitted, the `parserBailRoute` set
+ * is left undefined and the gate denies attaching the
+ * `parse_bailed_non_jsx_in_tsx_route` code (per the safer half of
+ * the asymmetric failure modes).
  */
 export function buildSubstrateFiles(
   parsed: { readonly parseError: ReadonlySet<string>; readonly partialParse: ReadonlySet<string> },
   fragmentFiles: readonly string[],
+  parserBailRouteFiles: readonly string[] = [],
 ): ParseStateFiles {
-  return { ...parsed, fragment: new Set(fragmentFiles) };
+  return {
+    ...parsed,
+    fragment: new Set(fragmentFiles),
+    ...(parserBailRouteFiles.length > 0 ? { parserBailRoute: new Set(parserBailRouteFiles) } : {}),
+  };
 }
 
 /**
@@ -330,6 +364,11 @@ function isFileInSubstrateSetForCode(
   if (parseStateFiles === undefined) return true;
   if (setName === "fragment") {
     return parseStateFiles.fragment !== undefined && parseStateFiles.fragment.has(path);
+  }
+  if (setName === "parserBailRoute") {
+    return (
+      parseStateFiles.parserBailRoute !== undefined && parseStateFiles.parserBailRoute.has(path)
+    );
   }
   if (setName === "parseError") return parseStateFiles.parseError.has(path);
   return parseStateFiles.partialParse.has(path);

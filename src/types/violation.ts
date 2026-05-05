@@ -863,6 +863,19 @@ export interface PerRuleCoverage {
    *     per-file `byFile[]` still carries the per-file degradation
    *     for triage. Cross-references the same `parseErrorFiles[]` /
    *     `partialParseFiles[]` evidence the per-file adjuster consumed.
+   *   - `"parse-bailed-non-jsx-in-tsx-route"` — at least one file
+   *     matching this rule's extension gate was routed through the TSX
+   *     parser despite a non-TSX natural parser (`.js` / `.ts` / `.mdx`)
+   *     AND produced zero findings on that file. The TSX parser silently
+   *     bails on relational expressions read as JSX (`r.length<b.length`)
+   *     so the recovered AST may have no findings even when the source
+   *     contains rule-relevant content. The same evidence drives the
+   *     `parser_bailed_on_non_jsx_in_tsx_route` (project-shape) and
+   *     `scan_file_parser_bail_no_findings` (single-file shape) warning
+   *     codes — the per-rule downgrade keeps the per-rule layer honest
+   *     when the warning channel reports the route ambiguity. Files that
+   *     parsed cleanly through their natural parser are NOT in scope for
+   *     this reason; only the silent-bail-suspect routing-mismatch case.
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
@@ -883,7 +896,8 @@ export interface PerRuleCoverage {
     | "scss-unresolved-variables"
     | "fragment-input-no-document-envelope"
     | "scss-partial-input"
-    | "corpus-parse-error-rate-above-threshold";
+    | "corpus-parse-error-rate-above-threshold"
+    | "parse-bailed-non-jsx-in-tsx-route";
   /**
    * Discriminator for an `eligible === 0` extension-gated row,
    * differentiating two structurally distinct gaps the original
@@ -1092,7 +1106,7 @@ export interface PerRuleCoverage {
   readonly byFile?: readonly {
     readonly path: string;
     readonly confidence: "high" | "medium" | "low";
-    readonly reason: "file-parse-error" | "partial-parse";
+    readonly reason: "file-parse-error" | "partial-parse" | "parse-bailed-non-jsx-in-tsx-route";
   }[];
 }
 

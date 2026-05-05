@@ -66,6 +66,7 @@ import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
+import { collectParserBailedRouteFiles } from "./parser-bail-route-adjustment.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
@@ -839,6 +840,7 @@ export function assembleScanFamilyResponse(
     buildSubstrateFiles(
       partitionParseStateFiles(parsedFiles, violationFilePaths),
       detectFragmentFiles(parsedFiles),
+      collectParserBailedRouteFiles(parsedFiles, violationFilePaths),
     ),
   );
   // Per-finding confidence parity, per-FILE axis (sibling of the per-

@@ -34,6 +34,10 @@ import { applyCorpusParseErrorRateAdjustment } from "./corpus-parse-error-rate-a
 import { applyExtensionPresentSubkindAdjustment } from "./extension-subkind.ts";
 import { applyParseErrorAdjustment } from "./parse-error-adjustment.ts";
 import {
+  applyParserBailRouteAdjustment,
+  collectParserBailedRouteFiles,
+} from "./parser-bail-route-adjustment.ts";
+import {
   applyFragmentInputAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   detectFragmentFiles,
@@ -121,17 +125,25 @@ export interface SharedPerRuleCoverageMetaResult {
  *     vendor corpora (12% parse-error rate across 4000 files) the
  *     aggregate scalar is the field an agent budgets against and
  *     hundreds of invisible files would otherwise read as "high."
- *  3. {@link applyScssUnresolvedVariablesAdjustment} — drops rows to
+ *  3. {@link applyParserBailRouteAdjustment} — drops rows to `"low"`
+ *     (or appends per-file `byFile[]` entries while keeping aggregate
+ *     `"high"` when clean files outside the bailed set survive) for
+ *     rules whose eligible files include a routing-mismatch case
+ *     (`.js` / `.ts` / `.mdx` routed through the TSX parser, zero
+ *     findings on that file). Same evidence as the
+ *     `parser_bailed_on_non_jsx_in_tsx_route` /
+ *     `scan_file_parser_bail_no_findings` warning predicates.
+ *  4. {@link applyScssUnresolvedVariablesAdjustment} — drops rows to
  *     `"medium"` when at least one of the rule's eligible `.scss` files
  *     declares top-level `$variable: …` decls but produced no literal
  *     color usages.
- *  4. {@link applyFragmentInputAdjustment} — drops document-shaped rules
+ *  5. {@link applyFragmentInputAdjustment} — drops document-shaped rules
  *     to `"medium"` when at least one of their eligible HTML files
  *     classifies as a fragment.
- *  5. {@link applyScssPartialInputAdjustment} — drops rows to `"medium"`
+ *  6. {@link applyScssPartialInputAdjustment} — drops rows to `"medium"`
  *     when at least one of the rule's eligible `.scss` files is a
  *     `_partial.scss` declaring top-level `&` parent-references.
- *  6. {@link applyExtensionPresentSubkindAdjustment} — stamps
+ *  7. {@link applyExtensionPresentSubkindAdjustment} — stamps
  *     `subkind: "extension-absent" | "extension-present-but-out-of-scope"`
  *     on `eligible === 0` extension-gated rows when the caller probed.
  *
@@ -164,8 +176,30 @@ export function buildSharedPerRuleCoverageMeta(
   // low (25%) thresholds. Reads the `byFile[]` array the parse-error
   // pass populated; sequencing is load-bearing.
   const corpusRateAdjusted = applyCorpusParseErrorRateAdjustment(parseErrorAdjusted);
-  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
+  // Parser-bail-route pass — Q15 closure for "Parser-failure
+  // invalidates per-file confidence" extended to the silent-bail
+  // routing-mismatch case. Detects files whose natural parser is NOT
+  // tsx but were routed through the TSX parser AND produced zero
+  // findings (the same evidence that drives
+  // `parser_bailed_on_non_jsx_in_tsx_route` and
+  // `scan_file_parser_bail_no_findings`). Without this pass, a `.js`
+  // file that the TSX parser silently bailed on (no recorded errors,
+  // empty AST) ships per-rule rows at `coverageConfidence: "high"`
+  // even though the warning channel reports the route ambiguity. Runs
+  // after the parse-error / corpus-rate passes so the stronger
+  // upstream reason wins on row precedence (parse-error names file
+  // invisibility; route-bail names file routed-through-suspect-parser
+  // — both per-file `byFile[]` entries can ride alongside each other,
+  // and the row-level reason carries the upstream stronger code).
+  const parserBailRouteFiles = collectParserBailedRouteFiles(parsedFiles, violationFilePaths);
+  const parserBailRouteAdjusted = applyParserBailRouteAdjustment(
     corpusRateAdjusted,
+    parsedFiles,
+    activeRules,
+    new Set(parserBailRouteFiles),
+  );
+  const scssAdjusted = applyScssUnresolvedVariablesAdjustment(
+    parserBailRouteAdjusted,
     parsedFiles,
     activeRules,
     new Set(scssUnresolvedFiles),
