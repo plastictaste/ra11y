@@ -29,22 +29,28 @@
  * way (excluded — same predicate as `computeFindingsByRule`); both
  * collect from the FULL scan output (not the paginated `files[]`
  * subset). Pinned by an integration test.
+ *
+ * Helpers (input validation, scan-root resolution, alias warnings,
+ * per-finding collection, response assembly) live in
+ * `./tool-findings-by-rule-internals.ts` so this file stays under the
+ * per-MCP-tool effective-line budget (`scripts/check-limits.ts`); same
+ * split rationale as `tool-get-finding-internals.ts`.
  */
 
-import { existsSync } from "node:fs";
-import type { AgentFinding } from "../output/agent-response/types.ts";
-import { gitRoot } from "../utils/git.ts";
-import { scannedProject } from "./scanned-envelope.ts";
 import {
-  errorResult,
+  buildAliasWarnings,
+  buildResult,
+  collectFindingsForRule,
+  resolveScanRoot,
+  ruleNotFoundError,
+  validateInput,
+} from "./tool-findings-by-rule-internals.ts";
+import {
   findRuleWithAlias,
   type McpTool,
-  type McpToolResult,
   parseFilesWithDiagnostics,
   resolveStandards,
   runScanAndFormat,
-  strParam,
-  textResult,
 } from "./tools-helpers.ts";
 
 const FINDINGS_BY_RULE_DESCRIPTION =
@@ -71,46 +77,16 @@ export const findingsByRuleTool: McpTool = {
     annotations: { readOnlyHint: true, idempotentHint: true },
   },
   async handler(params, session) {
-    const inputRuleId = strParam(params, "ruleId");
-    if (inputRuleId === undefined || inputRuleId.length === 0) {
-      return errorResult({
-        code: "missing-required-param",
-        message: "ruleId is required.",
-        details: { missing: ["ruleId"] },
-      });
-    }
-    const explicitCwd = strParam(params, "cwd");
-    if (explicitCwd !== undefined && !existsSync(explicitCwd)) {
-      return errorResult({
-        code: "cwd-not-found",
-        message: `Requested cwd does not exist on disk: ${explicitCwd}`,
-        details: { cwd: explicitCwd },
-        remediation:
-          "Pass `cwd` as a path to an existing directory. Relative paths resolve against the MCP server's spawn directory.",
-      });
-    }
+    const validated = validateInput(params);
+    if ("error" in validated) return validated.error;
+    const { inputRuleId, explicitCwd } = validated;
 
-    // Alias-aware rule lookup — old IDs from `src/engine/rule-aliases.ts`
-    // resolve to canonical and surface a `deprecated_rule_id:<from>:<to>`
-    // warning so the agent can offer to rewrite. Same pattern
-    // `suggest_fix` / `suppress` / `explain_rule` use; a non-resolving
-    // ID returns a structured `rule-not-found` so the agent gets an
-    // actionable error rather than a silent zero-results envelope.
     const aliasResolution = findRuleWithAlias(inputRuleId, session);
     const rule = aliasResolution.rule;
-    if (rule === undefined) {
-      return errorResult({
-        code: "rule-not-found",
-        message: `Rule '${inputRuleId}' not found.`,
-        details: { requested: inputRuleId },
-        remediation: "Call `list_rules` to discover valid rule IDs.",
-      });
-    }
+    if (rule === undefined) return ruleNotFoundError(inputRuleId);
     const ruleId = rule.id;
 
-    const spawnCwd = process.cwd();
-    const hostRoot = explicitCwd === undefined ? session.firstRootPath() : null;
-    const root = explicitCwd ?? hostRoot ?? gitRoot(spawnCwd) ?? spawnCwd;
+    const root = resolveScanRoot(explicitCwd, session);
     const projectConfig = await session.loadProjectConfig(root);
     const { files } = await parseFilesWithDiagnostics(
       [root],
@@ -118,41 +94,31 @@ export const findingsByRuleTool: McpTool = {
       root,
       projectConfig.preset === "storybook" ? { includeStoryFiles: true } : {},
     );
-    // Per the AI-first doctrine "Zero-output success is ambiguous
-    // failure" — when no parseable files reach the scanner, an empty
-    // `findings: []` reads identically to "rule has zero findings on
-    // a real corpus." Surface a structured warning so the caller can
-    // distinguish "scan ran on nothing" from "rule is clean."
-    const warnings: string[] = [];
-    const warningsDetails: Record<string, unknown> = {};
-    if (aliasResolution.deprecated !== undefined) {
-      const alias = aliasResolution.deprecated;
-      const code = `deprecated_rule_id:${alias.from}:${alias.to}`;
-      warnings.push(code);
-      warningsDetails[code] = {
-        from: alias.from,
-        to: alias.to,
-        deprecatedSince: alias.deprecatedSince,
-        removeIn: alias.removeIn,
-      };
-    }
+    const warnings = buildAliasWarnings(aliasResolution.deprecated);
+
     if (files.length === 0) {
-      warnings.push("scanned_zero_files");
+      // Per the AI-first doctrine "Zero-output success is ambiguous
+      // failure" — when no parseable files reach the scanner, an empty
+      // `findings: []` reads identically to "rule has zero findings on
+      // a real corpus." Surface a structured warning so the caller can
+      // distinguish "scan ran on nothing" from "rule is clean."
+      warnings.warnings.push("scanned_zero_files");
       return buildResult({
         ruleId,
         findings: [],
         filesScanned: 0,
         root,
-        warnings,
-        warningsDetails,
+        warnings: warnings.warnings,
+        warningsDetails: warnings.warningsDetails,
       });
     }
+
     const standards = resolveStandards(undefined, session);
     const scanRunResult = await runScanAndFormat(
       files,
       session,
       standards,
-      undefined, // no minSeverity filter — let the per-finding severity check downstream handle the info-exclude
+      undefined, // info-exclude happens per-finding in `collectFindingsForRule`
       session.effectiveRules(projectConfig),
       undefined,
       root,
@@ -160,134 +126,14 @@ export const findingsByRuleTool: McpTool = {
     // Walk the FULL `formatted.files` list (not a paginated subset) so
     // the response is the entire per-rule distribution in one round
     // trip — that's the round-trip-cost reduction the tool exists for.
-    // Severity filter mirrors `computeFindingsByRule` exactly:
-    // info-severity findings are excluded so the totalFindings scalar
-    // here agrees with `plan.findingsByRule[ruleId]` on the same cwd
-    // (cross-surface count invariant per
-    // `docs/kb/architecture/ai-first-consumer.md`).
-    const findings: ReadonlyArray<AgentFinding & { readonly file: string }> =
-      collectFindingsForRule(scanRunResult.formatted.files, ruleId);
-
+    const findings = collectFindingsForRule(scanRunResult.formatted.files, ruleId);
     return buildResult({
       ruleId,
       findings,
       filesScanned: files.length,
       root,
-      warnings,
-      warningsDetails,
+      warnings: warnings.warnings,
+      warningsDetails: warnings.warningsDetails,
     });
   },
 };
-
-/**
- * Walks the scan-formatted per-file findings list and emits a flat
- * sequence of `(file, ...finding)` entries for the requested ruleId.
- * Info-severity findings are excluded — same predicate
- * `computeFindingsByRule` and `computeTopRules` apply, so the
- * cross-surface count invariant pinned by
- * `tests/integration/findings-by-rule-cross-surface.test.ts` holds.
- *
- * The flat shape is what differentiates this tool from `scan_project`:
- * agents triaging a single rule don't need the per-file bucket
- * structure (`{ path, findings: [...] }`); they need an addressable
- * list keyed by `(file, line, column)` so each entry round-trips into
- * `suggest_fix` directly.
- */
-function collectFindingsForRule(
-  files: readonly { readonly path: string; readonly findings: readonly AgentFinding[] }[],
-  ruleId: string,
-): readonly (AgentFinding & { readonly file: string })[] {
-  const out: (AgentFinding & { readonly file: string })[] = [];
-  for (const file of files) {
-    for (const finding of file.findings) {
-      if (finding.ruleId !== ruleId) continue;
-      if (finding.severity === "info") continue;
-      out.push({ ...finding, file: file.path });
-    }
-  }
-  return out;
-}
-
-interface BuildResultArgs {
-  readonly ruleId: string;
-  readonly findings: readonly (AgentFinding & { readonly file: string })[];
-  readonly filesScanned: number;
-  readonly root: string;
-  readonly warnings: readonly string[];
-  readonly warningsDetails: Readonly<Record<string, unknown>>;
-}
-
-/**
- * Assembles the wire shape for `findings_by_rule`. Conditional-spread
- * discipline for present-when-meaningful fields per
- * `.claude/rules/mcp-response-shapes.md`:
- *   - `warnings` / `warningsDetails`: omitted when no warning fired
- *     (never `[]` / `{}` sentinels — those would read as "the channel
- *     fired empty," ambiguous against "no signal to ship").
- *   - `nextStep` / `nextStepStructured`: ship as a unit; on a
- *     non-empty findings list route to `suggest_fix` for the first
- *     finding (the agent's natural first action); on an empty list
- *     route to `list_rules` so the agent can verify the rule is
- *     loaded if the empty count surprises them.
- */
-function buildResult(args: BuildResultArgs): McpToolResult {
-  const { ruleId, findings, filesScanned, root, warnings, warningsDetails } = args;
-  const nextStep =
-    findings.length === 0
-      ? buildEmptyNextStep({ ruleId, root })
-      : buildPopulatedNextStep({ ruleId, findings, root });
-  const response: Record<string, unknown> = {
-    ruleId,
-    totalFindings: findings.length,
-    findings,
-    filesScanned,
-    scanned: scannedProject(root),
-    ...nextStep,
-    ...(warnings.length > 0 ? { warnings } : {}),
-    ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
-  };
-  return textResult(response);
-}
-
-function buildEmptyNextStep(args: { readonly ruleId: string; readonly root: string }): {
-  readonly nextStep: string;
-  readonly nextStepStructured: {
-    readonly tool: string;
-    readonly args: Record<string, unknown>;
-  };
-} {
-  return {
-    nextStep: `No findings for \`${args.ruleId}\` in this scope. If the empty count is unexpected, call \`list_rules\` to verify the rule is loaded, or \`scan_project({ cwd })\` to confirm the corpus is being parsed (e.g. \`meta.filesByExtension\` shows the relevant file types).`,
-    nextStepStructured: { tool: "list_rules", args: { ruleId: args.ruleId } },
-  };
-}
-
-function buildPopulatedNextStep(args: {
-  readonly ruleId: string;
-  readonly findings: readonly (AgentFinding & { readonly file: string })[];
-  readonly root: string;
-}): {
-  readonly nextStep: string;
-  readonly nextStepStructured: {
-    readonly tool: string;
-    readonly args: Record<string, unknown>;
-  };
-} {
-  // Caller routes through `buildResult`, which only invokes this
-  // helper on a non-empty findings list. The explicit guard satisfies
-  // the no-non-null-assertion lint rule without changing semantics.
-  const first = args.findings[0];
-  if (first === undefined) {
-    return {
-      nextStep: `Found ${args.findings.length} findings for \`${args.ruleId}\`.`,
-      nextStepStructured: { tool: "list_rules", args: { ruleId: args.ruleId } },
-    };
-  }
-  return {
-    nextStep: `Found ${args.findings.length} finding${args.findings.length === 1 ? "" : "s"} for \`${args.ruleId}\`. Call \`suggest_fix({ ruleId, file, line })\` on each finding to get a primary/alternative fix path, or \`apply_fix({ findingId })\` for findings whose \`fixClass: "mechanical"\` lane carries a materialized edit.`,
-    nextStepStructured: {
-      tool: "suggest_fix",
-      args: { ruleId: args.ruleId, file: first.file, line: first.line, cwd: args.root },
-    },
-  };
-}
