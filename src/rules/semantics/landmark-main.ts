@@ -34,11 +34,7 @@ import {
   getHtmlAttribute,
   walkHtmlElements,
 } from "../../engine/ast-helpers.ts";
-import {
-  isFragmentFile,
-  isHtmlLayoutOrPartial,
-  looksLikeFullPage,
-} from "../../engine/layout-partial.ts";
+import { classifyHtmlFile, looksLikeFullPage } from "../../engine/layout-partial.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { FileContext } from "../../types/rule.ts";
 import type { ViolationEvidence } from "../../types/violation.ts";
@@ -71,41 +67,51 @@ export const rule = defineRule({
     const doc = ctx.ast as HtmlDocument;
     const bodies = findHtmlElementsByTag(doc, "body");
 
-    // Fragment-file gate.
-    // Component-fragment files without root <html>/<body>/<head>,
-    // content-fragment files with `---` front-matter, and partials under
-    // `_includes/`, `_layouts/`, `_partials/`, `partials/`, `components/`
-    // do not own the document envelope — the composed parent layout
-    // supplies <main>. The "missing <main>" emit is suppressed outright
-    // on these files; the duplicate-<main> emit continues to fire because
-    // multiple <main> elements in the same file is a real observable
-    // ordering bug regardless of whether the envelope is supplied
-    // elsewhere. Per docs/kb/architecture/ai-first-consumer.md, this
-    // suppression is honest because fragment classification is structural
-    // evidence (root-tag absence, front-matter delimiter, fragment-path
-    // segment) — not a heuristic guess about composition. Pairs with the
-    // matching gate on `semantics/heading-hierarchy`
-    //; the shared `isFragmentFile`
-    // helper in `src/engine/layout-partial.ts` is the single source of
-    // truth for both rules.
-    const fragment = isFragmentFile(doc, ctx.source, ctx.filePath);
-
-    // Layout / partial detection. Jekyll / Hugo / ERB / Razor layouts
-    // compose the rendered page from this file's markup PLUS another
-    // file's content (`{{ content }}`, `<%= yield %>`, `@RenderBody()`,
-    // `{% include %}`). Static analysis can't see the composed DOM, so
-    // a "missing <main>" emit shaped as a confident finding is dishonest
-    // — the <main> might live in a sibling partial. Per
-    // docs/kb/architecture/ai-first-consumer.md "Surface, don't
-    // suppress" + "No heuristic suppression," the rule still surfaces
-    // on these files so the agent sees the gap, but attaches
-    // `couldBeWrongBecause` + a fragment-shape message suffix so an
-    // agent routes to the parent/partial chain in one read. The
-    // deterministic escape hatch is the source-level disable pragma.
-    // Layout-partial enrichment fires only on files that are partials
-    // BUT NOT fragments — fragment-shaped files are suppressed by the
-    // gate above (the stronger signal).
-    const layoutOrPartial = isHtmlLayoutOrPartial(doc, ctx.source);
+    // Unified fragment / layout-or-partial classification. The shared
+    // {@link classifyHtmlFile} helper computes BOTH labels from a single
+    // signal-computation pass so the rule's enrichment branch and the
+    // meta-channel `analysisCoverage.fragmentFiles[]` builder consume
+    // the SAME predicate (per Q15 closure and
+    // docs/kb/architecture/ai-first-consumer.md "Per-tool lane and
+    // warning-set classification must agree"). The two labels mean:
+    //
+    //   `isFragment`: leaf-fragment shape — no `<html>`/`<body>`
+    //   envelope, no layout-composition directive, not under a
+    //   `_layouts/` path. Component-fragment files (alt-text snippet,
+    //   test-rule fixture, component sketch) and partials under
+    //   `_includes/`, `_partials/`, `partials/`, `components/` land
+    //   here. The "missing <main>" emit is suppressed outright on
+    //   these files; the duplicate-<main> emit continues to fire
+    //   because multiple `<main>` elements in the same file is a real
+    //   observable ordering bug regardless of whether the envelope is
+    //   supplied elsewhere. The fragment-shape suppression is honest
+    //   per docs/kb/architecture/ai-first-consumer.md because
+    //   classification is structural evidence (root-tag absence,
+    //   front-matter delimiter, fragment-path segment) — not a
+    //   heuristic guess about composition. Pairs with the matching
+    //   gate on `semantics/heading-hierarchy`.
+    //
+    //   `isLayoutOrPartial`: file participates in layout composition —
+    //   asymmetric `<html>`/`<body>` (layout-opener / layout-closer
+    //   partials), Jekyll / Eleventy front-matter `layout:`, or a
+    //   composition directive (`{{ content }}`, `<%= yield %>`,
+    //   `@RenderBody()`, `{% include %}`). Static analysis can't see
+    //   the composed DOM, so a "missing <main>" emit shaped as a
+    //   confident finding is dishonest — the `<main>` might live in a
+    //   sibling partial. Per docs/kb/architecture/ai-first-consumer.md
+    //   "Surface, don't suppress" + "No heuristic suppression," the
+    //   rule still surfaces on these files so the agent sees the gap,
+    //   but attaches `couldBeWrongBecause` + a fragment-shape message
+    //   suffix so an agent routes to the parent/partial chain in one
+    //   read. The deterministic escape hatch is the source-level
+    //   disable pragma. Layout-partial enrichment fires only on files
+    //   that are partials BUT NOT fragments — fragment-shaped files
+    //   are suppressed by the gate above (the stronger signal).
+    const { isFragment: fragment, isLayoutOrPartial: layoutOrPartial } = classifyHtmlFile(
+      doc,
+      ctx.source,
+      ctx.filePath,
+    );
 
     // Bodyless files that also don't look like layout partials are
     // just fragments (alt-text snippet, test-rule fixture, component
