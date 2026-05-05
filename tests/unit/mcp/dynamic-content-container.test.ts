@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { parseCss } from "../../../src/input/parsers/css.ts";
 import { parseHtml } from "../../../src/input/parsers/html.ts";
 import { detectDynamicContentContainers } from "../../../src/mcp/dynamic-content-container.ts";
 import type { ParsedFile } from "../../../src/engine/scanner.ts";
@@ -170,14 +171,12 @@ describe("detectDynamicContentContainers — canonical demo shell shape", () => 
     // A CSS file should not match — the detector gates on
     // `ast.language === "html"` first, so non-HTML languages drop
     // before any body-walk work.
+    const cssSource = ".x { color: red; }";
+    const cssParsed = parseCss(cssSource);
     const cssFile: ParsedFile = {
       filePath: "/proj/style.css",
-      source: ".x { color: red; }",
-      ast: {
-        language: "css",
-        root: { kind: "CssStylesheet", rules: [] },
-        errors: [],
-      },
+      source: cssSource,
+      ast: { language: "css", root: cssParsed.root, errors: cssParsed.errors },
     };
     const entries = detectDynamicContentContainers([cssFile]);
     expect(entries).toEqual([]);

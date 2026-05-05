@@ -134,7 +134,10 @@ export function detectDynamicContentContainers(
  * gated on body-direct-child shape, so descending deeper would let
  * nested decorative content leak past the body-child-count guard.
  */
-function classifyDocument(doc: HtmlDocument, path: string): DynamicContentContainerEntry | undefined {
+function classifyDocument(
+  doc: HtmlDocument,
+  path: string,
+): DynamicContentContainerEntry | undefined {
   const bodies = findHtmlElementsByTag(doc, "body");
   const body = bodies[0];
   if (body === undefined) return undefined;
@@ -210,11 +213,7 @@ function collectVisibleBodyChildren(body: HtmlElement): VisibleBodyChildren {
       continue;
     }
     bodyChildCount += 1;
-    if (
-      MOUNT_POINT_TAG_NAMES.has(tagLower) &&
-      isEmptyContainer(child) &&
-      hasIdAttribute(child)
-    ) {
+    if (MOUNT_POINT_TAG_NAMES.has(tagLower) && isEmptyContainer(child) && hasIdAttribute(child)) {
       emptyMountPoints.push(child);
     }
   }
@@ -292,4 +291,3 @@ function isTemplateExpressionLikeSrc(src: string): boolean {
 function uniqueSorted(values: readonly string[]): readonly string[] {
   return [...new Set(values)].sort();
 }
-

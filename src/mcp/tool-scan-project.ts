@@ -33,6 +33,7 @@ import {
 import { buildConfigHint } from "./config-hint.ts";
 import { nearestConfigAncestorPath, sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { detectDynamicContentContainers } from "./dynamic-content-container.ts";
 import { buildFileLimitation } from "./file-limitations.ts";
 import type { Hint } from "./hint-codes.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
@@ -48,7 +49,6 @@ import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-pro
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
-import { detectDynamicContentContainers } from "./dynamic-content-container.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
@@ -1255,9 +1255,7 @@ function buildBaseWarningsForScanProject(args: {
     // `warningsDetails.<code>.files` payload. Conditional-spread per
     // present-when-meaningful: empty list omits the field so the
     // warning predicate drops conservatively (no payload, no code).
-    ...(dynamicContentContainerEntries.length === 0
-      ? {}
-      : { dynamicContentContainerEntries }),
+    ...dynamicContentContainerEntriesField(dynamicContentContainerEntries),
     // pre-computed cross-check for
     // `coverage_confidence_uniformly_high_with_parse_errors`. The
     // warning fires only when this boolean is `true` AND
@@ -1306,6 +1304,24 @@ function codeDemoPropMatchesField(
 } {
   if (matches === undefined || matches.size === 0) return {};
   return { codeDemoPropMatches: matches };
+}
+
+/**
+ * Builds the spreadable `dynamicContentContainerEntries` subset for the
+ * `warningsFieldFromScanMeta` call. Conditional-spread per the
+ * present-when-meaningful contract: empty list omits the field so the
+ * warning code drops conservatively. Extracted from
+ * {@link buildBaseWarningsForScanProject} so the orchestrator's
+ * cognitive complexity stays under the lint cap (mirrors the existing
+ * `codeDemoPropMatchesField` / `templateLiteralFilesField` helpers).
+ */
+function dynamicContentContainerEntriesField(
+  entries: import("./warnings.ts").WarningInputs["dynamicContentContainerEntries"],
+): {
+  dynamicContentContainerEntries?: import("./warnings.ts").WarningInputs["dynamicContentContainerEntries"];
+} {
+  if (entries === undefined || entries.length === 0) return {};
+  return { dynamicContentContainerEntries: entries };
 }
 
 function warningsFieldsForAssembler(warningsFromMeta: {
