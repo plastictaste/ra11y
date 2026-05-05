@@ -146,41 +146,13 @@ export const coverageTool: McpTool = {
         scanRoot: cwd,
       });
 
-    const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
-    // Per-criterion candidate counts the per-entry
-    // `manualCandidatesTotal` reads off. Single pass over the candidate
-    // stream populates every entry the per-standard split below needs;
-    // the standard-level filter happens at read time when we sum over
-    // `withCandidates` (level-filtered, in-scope criteria for the
-    // entry). See {@link buildCandidateCountByCriterion} for doctrine.
-    const candidateCountByCriterion = buildCandidateCountByCriterion(report.candidates ?? []);
-    // Per-tool review-candidate
-    // shape must agree across surfaces. Build the deduped review-candidate
-    // surface ONCE per response using the same recipe `scan_project` and
-    // `scan_file` use ({@link buildScanProjectReviewCandidates}) so the
-    // `findingId` an agent reads on a `coverage.manualWithCandidates[]`
-    // entry's `candidates[]` row matches the id `scan_file.reviewCandidates[]`
-    // and `checklist.items[].candidates[]` ship for the same conceptual
-    // candidate. Group by criterion at the entry level — a candidate
-    // satisfying multiple criteria appears under each owning entry,
-    // mirroring how `checklist.items[].candidates[]` repeats a shared-
-    // location candidate under each owning item (the cross-tool invariant
-    // in `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`).
-    //
-    // `manualIds` is the union `candidateCriteria` so the helper's filter
-    // does not narrow the result — every candidate the report carries is
-    // eligible. Cap matches `scan_project`'s MAX_PAGE_LIMIT (2000); the
-    // coverage slim envelope drops `manualWithCandidates` entirely on
-    // oversize so we never have to paginate this surface in the wire
-    // shape (the agent's recovery is to re-call with narrower scope per
-    // `applyCoverageBudget`).
-    const dedupedCandidates = buildScanProjectReviewCandidates({
-      candidates: report.candidates ?? [],
-      manualIds: candidateCriteria,
-      limit: MANUAL_WITH_CANDIDATES_HARD_CAP,
-      scanRoot: cwd,
-    });
-    const candidatesByCriterion = indexDedupedCandidatesByCriterion(dedupedCandidates);
+    // candidateCriteria + candidateCountByCriterion + candidatesByCriterion
+    // all derive from `report.candidates` and feed the per-entry
+    // `manualWithCandidates` build. Bundled into one helper so the
+    // handler closure stays under the lint's cognitive-complexity ceiling
+    // as scan-confidence telemetry accretes on the response shape.
+    const { candidateCriteria, candidateCountByCriterion, candidatesByCriterion } =
+      buildCandidateIndexes({ reportCandidates: report.candidates ?? [], scanRoot: cwd });
     const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
@@ -1112,6 +1084,56 @@ function indexDedupedCandidatesByCriterion(
     }
   }
   return out;
+}
+
+/**
+ * Bundles the three per-criterion indexes the per-entry
+ * `manualWithCandidates` build reads from:
+ *   - `candidateCriteria`: the union of every criterion ID a candidate
+ *     touched (drives the `withCandidates` filter on each entry).
+ *   - `candidateCountByCriterion`: per-criterion candidate counts the
+ *     `manualCandidatesTotal` aggregate sums over.
+ *   - `candidatesByCriterion`: deduped position-keyed candidate list
+ *     attached to each entry's `candidates[]` array (per-tool
+ *     review-candidate shape parity with `scan_project.reviewCandidates[]`
+ *     and `checklist.items[].candidates[]`, including stable
+ *     `findingId`).
+ *
+ * Bundled into one helper so the `handler` closure's cognitive-
+ * complexity score stays under the lint cap as new scan-confidence
+ * telemetry accretes on the response shape. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-candidate
+ * shape must agree across surfaces": the `findingId`, criteria union,
+ * file/line/column/reason fields are shared with the surfaces
+ * `scan_project` and `checklist` already ship, so an agent calling any
+ * of the three on the same cwd addresses the same conceptual candidate
+ * by the same id.
+ *
+ * The deduped surface is capped at `MANUAL_WITH_CANDIDATES_HARD_CAP`
+ * (matching `scan_project`'s `MAX_PAGE_LIMIT`); the coverage slim
+ * envelope (`applyCoverageBudget`) drops `manualWithCandidates`
+ * entirely on oversize so this surface never needs pagination in the
+ * wire shape — the agent's recovery is to re-call with narrower
+ * scope.
+ */
+function buildCandidateIndexes(args: {
+  readonly reportCandidates: readonly ReviewCandidate[];
+  readonly scanRoot: string;
+}): {
+  readonly candidateCriteria: ReadonlySet<string>;
+  readonly candidateCountByCriterion: ReadonlyMap<string, number>;
+  readonly candidatesByCriterion: ReadonlyMap<string, readonly ScanProjectReviewCandidate[]>;
+} {
+  const candidateCriteria = new Set(args.reportCandidates.map((c) => c.criterionId));
+  const candidateCountByCriterion = buildCandidateCountByCriterion(args.reportCandidates);
+  const dedupedCandidates = buildScanProjectReviewCandidates({
+    candidates: args.reportCandidates,
+    manualIds: candidateCriteria,
+    limit: MANUAL_WITH_CANDIDATES_HARD_CAP,
+    scanRoot: args.scanRoot,
+  });
+  const candidatesByCriterion = indexDedupedCandidatesByCriterion(dedupedCandidates);
+  return { candidateCriteria, candidateCountByCriterion, candidatesByCriterion };
 }
 
 /**

@@ -115,6 +115,28 @@ interface ChecklistBody {
 }
 
 /**
+ * Indexes checklist candidate ids per criterion. Extracted from the
+ * cross-surface assertion test so the test body stays under the lint's
+ * cognitive-complexity ceiling.
+ */
+function indexChecklistFindingIdsByCriterion(
+  checklist: ChecklistBody,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const item of checklist.items) {
+    for (const criterionId of item.criteria) {
+      let bucket = out.get(criterionId);
+      if (bucket === undefined) {
+        bucket = new Set<string>();
+        out.set(criterionId, bucket);
+      }
+      for (const c of item.candidates) bucket.add(c.findingId);
+    }
+  }
+  return out;
+}
+
+/**
  * Fixture with a `<video>` element — the no-captions / no-audio-description
  * candidate finders ground manual candidates against
  * `wcag22:1.2.1`, `wcag22:1.2.2`, `wcag22:1.2.3`, etc. so coverage's
@@ -200,17 +222,7 @@ describe("coverage.manualWithCandidates[] per-entry candidate-shape contract", (
     // per-criterion sets (every criterion in coverage's
     // manualWithCandidates must have a corresponding checklist item
     // covering at least the same finding ids).
-    const checklistIdsByCriterion = new Map<string, Set<string>>();
-    for (const item of checklist.items) {
-      for (const criterionId of item.criteria) {
-        let bucket = checklistIdsByCriterion.get(criterionId);
-        if (bucket === undefined) {
-          bucket = new Set();
-          checklistIdsByCriterion.set(criterionId, bucket);
-        }
-        for (const c of item.candidates) bucket.add(c.findingId);
-      }
-    }
+    const checklistIdsByCriterion = indexChecklistFindingIdsByCriterion(checklist);
 
     const coverageEntries = coverage.manualWithCandidates ?? [];
     expect(coverageEntries.length).toBeGreaterThan(0);
