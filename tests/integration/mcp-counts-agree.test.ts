@@ -565,6 +565,116 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
 });
 
 /**
+ * `checklist.summary` previously reported `actionable.criteria`,
+ * `candidatesUncapped`, and `untargetedCriteria` but not the parse-
+ * error scalars `coverage` and `scan_project` lift onto their own
+ * `analysisCoverage` blocks. An agent reading the checklist summary as
+ * the headline (the surface read-order goes summary → items, per the
+ * tool docstring) saw `partial_parse_files_present` /
+ * `parse_errors_present` warnings firing without a parity counter on
+ * the same surface — the cross-surface count invariant violation the
+ * AI-first doctrine warns against. Closure: surface
+ * `summary.parseErrorFileCount` / `summary.partialParseFileCount` on
+ * `checklist`, present-when-meaningful, equal across all three tools
+ * on identical cwd.
+ */
+interface ChecklistSummaryParseScalars {
+  readonly summary: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+  readonly analysisCoverage?: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+}
+interface ScanBodyParseScalars {
+  readonly meta?: {
+    readonly analysisCoverage?: {
+      readonly parseErrorFileCount?: number;
+      readonly partialParseFileCount?: number;
+    };
+  };
+}
+interface CoverageEnvelopeParseScalars {
+  readonly analysisCoverage?: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+}
+
+describe("MCP invariant: checklist.summary parse-error scalars agree across surfaces", () => {
+  it("checklist.summary.parseErrorFileCount === coverage.analysisCoverage.parseErrorFileCount === scan_project.analysisCoverage.parseErrorFileCount", async () => {
+    const dir = await makeParseErrorFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+      toolCall(3, "coverage", { cwd: dir, verboseMeta: true }),
+      toolCall(4, "checklist", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<ScanBodyParseScalars>(responses[1]);
+    const coverageEnvelope = body<CoverageEnvelopeParseScalars>(responses[2]);
+    const checklistEnvelope = body<ChecklistSummaryParseScalars>(responses[3]);
+
+    const scanParse = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
+    const coverageParse = coverageEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    // Cross-surface count invariant: `summary.parseErrorFileCount`
+    // is present-when-meaningful (omitted on a zero-error scan), so
+    // the read defaults to 0 to keep the parity assertion symmetric
+    // with the analysisCoverage block (which ships `0` when the scan
+    // ran clean and the field altogether when entries exist).
+    const checklistParse = checklistEnvelope.summary.parseErrorFileCount ?? 0;
+
+    // Sanity floor — the fixture seeds a parse-error file so all three
+    // surfaces must observe at least one. A 0/0/0 result would mean
+    // the fixture stopped tripping the parser and the equality check
+    // passes trivially without exercising the invariant.
+    expect(scanParse).toBeGreaterThan(0);
+    expect(scanParse).toBe(coverageParse);
+    expect(scanParse).toBe(checklistParse);
+
+    // Per-bucket parity also extends to the partial-parse axis. The
+    // canonical fixture seeds a fully-failed parse (broken.tsx lands
+    // in `parseErrorFiles`, count > 0), and the partial bucket may
+    // legitimately be zero on this corpus. Either way, the three
+    // surfaces must agree on whichever value applies.
+    const scanPartial = scanBody.meta?.analysisCoverage?.partialParseFileCount ?? 0;
+    const coveragePartial = coverageEnvelope.analysisCoverage?.partialParseFileCount ?? 0;
+    const checklistPartial = checklistEnvelope.summary.partialParseFileCount ?? 0;
+    expect(scanPartial).toBe(coveragePartial);
+    expect(scanPartial).toBe(checklistPartial);
+
+    // Sibling-shape parity: `checklist.summary` and the top-level
+    // `analysisCoverage` block on the same response must agree on the
+    // counts; the summary scalar reads as a headline, the
+    // analysisCoverage scalar as the per-block detail, and any drift
+    // between them within one response is itself a cross-surface
+    // count failure.
+    const checklistAcParse = checklistEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    const checklistAcPartial = checklistEnvelope.analysisCoverage?.partialParseFileCount ?? 0;
+    expect(checklistAcParse).toBe(checklistParse);
+    expect(checklistAcPartial).toBe(checklistPartial);
+  });
+
+  it("omits summary.parseErrorFileCount on a clean fixture (present-when-meaningful)", async () => {
+    const dir = await makeMediaFreeFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { cwd: dir }),
+    ]);
+    const checklistEnvelope = body<ChecklistSummaryParseScalars>(responses[1]);
+    // A clean scan never failed any parse — the analysisCoverage block
+    // ships `0` (always-populated when the scan ran), but the summary
+    // scalars are omitted entirely so the headline doesn't carry the
+    // noise of a zero counter that no warning fired against. This is
+    // the present-when-meaningful contract per AI-first doctrine
+    // "Ambiguous field shapes are dishonest."
+    expect(checklistEnvelope.summary.parseErrorFileCount).toBeUndefined();
+    expect(checklistEnvelope.summary.partialParseFileCount).toBeUndefined();
+  });
+});
+
+/**
  * Per-bucket cross-surface invariant. The total `parseErrorFileCount` +
  * `partialParseFileCount` may agree across surfaces while the bucket
  * assignment drifts — the field-test reported scan_project: 100/105 and

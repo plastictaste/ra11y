@@ -481,7 +481,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 ### Cross-surface drift (counts + warnings + lane)
 
 - [ ] **Q15-UNTARGETED-CRITERIA-PROJECT-VS-FILE-SAME-FIELD-NAME** `scan_project.plan.untargetedCriteria: 7` on a bulk corpus root; `scan_file` on a single HTML in the same corpus reports `plan.untargetedCriteria: 18`; `scan_file` on a `*.min.js` reports `plan.untargetedCriteria: 19`. Per-file untargeted-count cannot logically exceed the project total — the field name names one concept while two slices ship under it. Closure: rename per-file vs per-project so the slice difference is explicit (`untargetedCriteriaForFile` vs `untargetedCriteriaForProject`), or drop the per-file scalar in favor of `criteriaCoverage.byFile[file]`. Per AI-first doctrine "Composite headline counts are dishonest."
-- [ ] **Q15-CHECKLIST-SUMMARY-NO-PARSE-ERROR-COUNTERS** `checklist.summary` reports `actionable.criteria`, `candidatesUncapped`, etc. but no `parseErrorFileCount` / `partialParseFileCount` despite `partial_parse_files_present` and `parse_errors_present` warnings firing on the same call. `coverage` and `scan_project` surface `analysisCoverage.partialParseFileCount: 10` directly. Closure: `checklist.summary` ships `parseErrorFileCount` / `partialParseFileCount` on parity with coverage; integration test pinning equality across all three surfaces on identical cwd. Per AI-first doctrine "Cross-surface count invariant."
 
 ### Reason / severity / priority / confidence channel mismatch
 

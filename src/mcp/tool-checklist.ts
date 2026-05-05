@@ -1324,6 +1324,58 @@ export const checklistTool: McpTool = {
     // branching on shape. Cross-surface invariant:
     // `scan_file.plan.actionableManualItems` === `summary.actionable.criteria`.
     const summaryActionable = buildChecklistSummaryActionable(summaryTally.actionable, page);
+    // Build `analysisCoverageField` here (rather than later alongside the
+    // response assembly) so the parse-error scalars below can read from
+    // it without recomputing the bucket split. The field also feeds the
+    // top-level `analysisCoverage` block on the response and the
+    // `buildScanTimeWarnings` call further down — same return value used
+    // in three places, computed once.
+    const analysisCoverageField = buildAnalysisCoverage(
+      files,
+      session.config.nativeWrappers,
+      activeRules,
+      false,
+      0,
+      undefined,
+      discoveryDiagnostics,
+      // Parse-error split by same rule as the scan surfaces: files
+      // that produced at least one violation OR review candidate land
+      // in `partialParseFiles` (output present, recall degraded); files
+      // whose parser errored without emitting anything stay in
+      // `parseErrorFiles` (invisible to rules and finders alike).
+      // Threaded from the shared cross-surface scan helper so the
+      // per-bucket assignment agrees with `scan_project` on identical
+      // input — not just the totals.
+      outputFilePaths,
+    );
+    // Parse-error scalars surfaced on `summary` itself (not just the
+    // top-level `analysisCoverage` block) so an agent reading the
+    // checklist summary as the headline observes the same scan-
+    // confidence telemetry `coverage` and `scan_project` lift via
+    // `analysisCoverage.parseErrorFileCount` / `partialParseFileCount`.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant": the same conceptual counter shipping from
+    // multiple project-rooted tools must agree on identical cwd —
+    // pinned by the integration test in
+    // `tests/integration/mcp-counts-agree.test.ts`. Present-when-
+    // meaningful: omitted when the scan recorded zero parse errors of
+    // that kind, matching the analysisCoverage block's own zero-omission
+    // rule for these scalars (the scan-ran-but-clean case still ships
+    // 0 on `analysisCoverage`, and the conditional spread here mirrors
+    // that semantics by only including the field when ≥1 entry exists,
+    // so a clean scan stays terse but a scan with parse failures
+    // surfaces the count alongside `actionable.criteria`).
+    const ac = analysisCoverageField.analysisCoverage as
+      | { parseErrorFileCount?: number; partialParseFileCount?: number }
+      | undefined;
+    const parseErrorScalars = {
+      ...(ac?.parseErrorFileCount && ac.parseErrorFileCount > 0
+        ? { parseErrorFileCount: ac.parseErrorFileCount }
+        : {}),
+      ...(ac?.partialParseFileCount && ac.partialParseFileCount > 0
+        ? { partialParseFileCount: ac.partialParseFileCount }
+        : {}),
+    };
     const summary = {
       actionable: summaryActionable,
       untargetedCriteria: summaryTally.untargeted,
@@ -1334,6 +1386,7 @@ export const checklistTool: McpTool = {
         "manual-review criteria whose candidate finder could not ground them in code. By default `untargetedCriteriaList` ships as a bare criterion-ID array; pass `showUntargeted: true` for full items (title + level + principle + empty candidates), or `showUntargeted: false` to omit the list entirely under size pressure.",
       likelyIrrelevant: filteredIrrelevant.length,
       automatedCoverage,
+      ...parseErrorScalars,
       ...(skipSet === undefined ? {} : { skippedByCaller: [...skipSet].sort() }),
     };
 
@@ -1415,30 +1468,12 @@ export const checklistTool: McpTool = {
     // telemetry we DO ship under delta mode is scan-confidence data
     // the agent uses to cross-check parity with the scan-family
     // tools, not trimmed for terseness).
-    const analysisCoverageField = buildAnalysisCoverage(
-      files,
-      session.config.nativeWrappers,
-      activeRules,
-      false,
-      0,
-      undefined,
-      discoveryDiagnostics,
-      // Parse-error split by same rule as the scan surfaces: files
-      // that produced at least one violation OR review candidate land
-      // in `partialParseFiles` (output present, recall degraded); files
-      // whose parser errored without emitting anything stay in
-      // `parseErrorFiles` (invisible to rules and finders alike). The
-      // candidate union is load-bearing per-
-      // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
-      // regex-scanning `ctx.source` even when the AST parse failed) can
-      // surface grounded candidates from a file that produced zero
-      // rule violations; without the union those files would mis-bucket
-      // as `invisible-to-rules` while live candidates reach the caller.
-      // Threaded from the shared cross-surface scan helper so the
-      // per-bucket assignment agrees with `scan_project` on identical
-      // input — not just the totals.
-      outputFilePaths,
-    );
+    //
+    // `analysisCoverageField` is built once above (next to the
+    // `summary.parseErrorFileCount` / `partialParseFileCount` scalars
+    // that read from it) so the same record feeds the top-level
+    // `analysisCoverage` block, the `summary` parse-error counters,
+    // and `buildScanTimeWarnings` below — three readers, one compute.
     const filesByExtension = countFilesByExtension(files);
     // emit the same `scanned` envelope
     // `scan_project`/`coverage` use so an agent cross-referencing the
