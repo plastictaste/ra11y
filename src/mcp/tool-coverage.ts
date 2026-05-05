@@ -24,6 +24,10 @@ import {
   type SharedPerRuleCoverageMetaResult,
 } from "./per-rule-coverage-shared.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import {
+  buildScanProjectReviewCandidates,
+  type ScanProjectReviewCandidate,
+} from "./scan-project-review-candidates.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
@@ -150,6 +154,33 @@ export const coverageTool: McpTool = {
     // `withCandidates` (level-filtered, in-scope criteria for the
     // entry). See {@link buildCandidateCountByCriterion} for doctrine.
     const candidateCountByCriterion = buildCandidateCountByCriterion(report.candidates ?? []);
+    // Per-tool review-candidate
+    // shape must agree across surfaces. Build the deduped review-candidate
+    // surface ONCE per response using the same recipe `scan_project` and
+    // `scan_file` use ({@link buildScanProjectReviewCandidates}) so the
+    // `findingId` an agent reads on a `coverage.manualWithCandidates[]`
+    // entry's `candidates[]` row matches the id `scan_file.reviewCandidates[]`
+    // and `checklist.items[].candidates[]` ship for the same conceptual
+    // candidate. Group by criterion at the entry level — a candidate
+    // satisfying multiple criteria appears under each owning entry,
+    // mirroring how `checklist.items[].candidates[]` repeats a shared-
+    // location candidate under each owning item (the cross-tool invariant
+    // in `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`).
+    //
+    // `manualIds` is the union `candidateCriteria` so the helper's filter
+    // does not narrow the result — every candidate the report carries is
+    // eligible. Cap matches `scan_project`'s MAX_PAGE_LIMIT (2000); the
+    // coverage slim envelope drops `manualWithCandidates` entirely on
+    // oversize so we never have to paginate this surface in the wire
+    // shape (the agent's recovery is to re-call with narrower scope per
+    // `applyCoverageBudget`).
+    const dedupedCandidates = buildScanProjectReviewCandidates({
+      candidates: report.candidates ?? [],
+      manualIds: candidateCriteria,
+      limit: MANUAL_WITH_CANDIDATES_HARD_CAP,
+      scanRoot: cwd,
+    });
+    const candidatesByCriterion = indexDedupedCandidatesByCriterion(dedupedCandidates);
     const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
@@ -266,9 +297,28 @@ export const coverageTool: McpTool = {
         "untestableCriteria",
         withTitles(c.untestableCriteria, session),
       );
+      // Per-tool review-candidate shape
+      // must agree across surfaces. Embed the deduped candidate surface
+      // (`{findingId, file, line, column, criteria, reason, confidence,
+      // snippet?}`) under each `manualWithCandidates` entry so an agent
+      // walking `coverage` does not have to round-trip to `checklist`
+      // (or `scan_file`) for the per-criterion file:line evidence the
+      // scan already produced. Backed by `dedupedCandidates` (same recipe
+      // `scan_project.reviewCandidates[]` ships) so `findingId` is
+      // identical on both surfaces — the cross-surface candidate
+      // identifier contract pinned by
+      // `tests/integration/coverage-manual-candidates.test.ts`.
+      //
+      // The previous shape was `{criterionId, title, level}` only — agents
+      // had to call `checklist` to recover the per-criterion candidate
+      // list `coverage` had already discarded; that disagreement was the
+      // canonical "Per-tool review-candidate shape must agree across
+      // surfaces" failure mode (the silent-miss case where the per-tool
+      // shape forces an extra round trip to recover information the first
+      // tool already had in hand).
       const manualWithCandidatesField = buildOptionalArrayField(
         "manualWithCandidates",
-        withTitles(withCandidates, session),
+        withTitlesAndCandidates(withCandidates, session, candidatesByCriterion),
       );
       const untargetedListField = buildUntargetedListField(
         showUntargeted,
@@ -980,6 +1030,88 @@ function withTitles(
     }
     return { criterionId: id, title: "", level: "" };
   });
+}
+
+/**
+ * Hard cap on the deduped review-candidate list `coverage` ships under
+ * each `manualWithCandidates` entry. Mirrors `scan_project`'s
+ * `MAX_PAGE_LIMIT` (= 2000) so the two project-rooted candidate
+ * surfaces budget against the same ceiling. The cap only narrows the
+ * deduped position-keyed surface (one entry per `(file, line, column,
+ * reason)` group) — typical real corpora ship far fewer entries; the
+ * cap exists to bound the worst case before the coverage slim envelope
+ * (`applyCoverageBudget`) drops `manualWithCandidates` entirely.
+ */
+const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
+
+/**
+ * Per-tool review-candidate
+ * shape must agree across surfaces. Builds the per-entry shape
+ * `{criterionId, title, level, candidates: ScanProjectReviewCandidate[]}`
+ * for `coverage.manualWithCandidates[]` so the array form carries the
+ * grounded file:line evidence already in hand. The candidate count is
+ * `entry.candidates.length` (no scalar twin per "Sibling fields naming
+ * the same concept must use one shape").
+ *
+ * Each criterion's `candidates` is the subset of `dedupedCandidates`
+ * whose `criteria[]` array contains the criterion ID — a candidate
+ * satisfying multiple criteria appears under each owning entry, mirroring
+ * how `checklist.items[].candidates[]` repeats a shared-location candidate
+ * under each owning checklist item. The cross-tool cardinality invariant
+ * (`coverage.manualWithCandidates.length === checklist.items.length` for
+ * the same scope) is preserved by `withCandidates` (the criterion-axis
+ * filter); this helper only attaches the existing candidates surface.
+ *
+ * Falls back to `candidates: []` when the criterion has no grounded
+ * deduped entries — defensive only; `withCandidates` is built from
+ * `candidateCriteria` upstream so every criterion in the input list IS
+ * grounded by ≥1 candidate. Empty arrays here would be the dishonest
+ * shape per CLAUDE.md §1; the upstream filter prevents the case.
+ */
+function withTitlesAndCandidates(
+  criterionIds: readonly string[],
+  session: import("./session.ts").McpSession,
+  candidatesByCriterion: ReadonlyMap<string, readonly ScanProjectReviewCandidate[]>,
+): readonly {
+  readonly criterionId: string;
+  readonly title: string;
+  readonly level: string;
+  readonly candidates: readonly ScanProjectReviewCandidate[];
+}[] {
+  return criterionIds.map((id) => {
+    const candidates = candidatesByCriterion.get(id) ?? [];
+    for (const std of session.registry.standards) {
+      const c = std.criteria.find((cr) => cr.id === id);
+      if (c) return { criterionId: id, title: c.title, level: c.level, candidates };
+    }
+    return { criterionId: id, title: "", level: "", candidates };
+  });
+}
+
+/**
+ * Indexes the deduped review-candidate stream by criterion ID so the
+ * per-entry `manualWithCandidates[].candidates[]` surface can attach in
+ * O(1) per lookup. A candidate satisfying N criteria appears under each
+ * of the N criterion keys — same conceptual shape `checklist.items[]`
+ * uses when annotating shared candidates across criteria. Encounter
+ * order is preserved (the dedup helper's first-seen ordering) so the
+ * per-entry surface stays deterministic across runs.
+ */
+function indexDedupedCandidatesByCriterion(
+  candidates: readonly ScanProjectReviewCandidate[],
+): ReadonlyMap<string, readonly ScanProjectReviewCandidate[]> {
+  const out = new Map<string, ScanProjectReviewCandidate[]>();
+  for (const c of candidates) {
+    for (const criterionId of c.criteria) {
+      let bucket = out.get(criterionId);
+      if (bucket === undefined) {
+        bucket = [];
+        out.set(criterionId, bucket);
+      }
+      bucket.push(c);
+    }
+  }
+  return out;
 }
 
 /**
