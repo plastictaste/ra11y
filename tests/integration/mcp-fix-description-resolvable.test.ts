@@ -262,7 +262,16 @@ describe("MCP scan response: every finding's fix.description is resolvable", () 
 </html>
 `,
       );
-      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
+      // `referenceGuide` is opt-in (default off) — pass
+      // `includeReferenceGuide: true` so the hoist passes engage and
+      // the per-finding-ref / group-ref branches have something to
+      // resolve against (otherwise the four-branch walk would
+      // collapse to inline-only on this fixture and the
+      // hoist-engagement assertion below would fail).
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: dir, includeReferenceGuide: true }),
+      ]);
       const body = bodyOf(responses[1]) as unknown as ResolvableScanBody;
 
       // The fixture must yield at least one finding to exercise the

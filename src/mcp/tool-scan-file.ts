@@ -111,6 +111,11 @@ export const scanFileTool: McpTool = {
           description:
             "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset.",
         },
+        includeReferenceGuide: {
+          type: "boolean",
+          description:
+            "When true, include the top-level `referenceGuide` object containing `suppressPlacement` (per-file-extension prose explaining where to drop `<!-- ra11y-disable -->` / `{/* ra11y-disable */}` pragmas) and `fixDescriptions` (per-rule deduplicated fix prose, referenced from individual findings via `fix.descriptionRef.hash`). Default false omits the block entirely and keeps full `fix.description` prose inline on every finding — typical responses save ~30-40 KB and stay under tighter MCP host token ceilings, the canonical motivating regression for this flag (dense HTML files crossing the host cap on the per-file fix-verify loop). Recommended workflow: enable on the FIRST `scan_file` / `scan_project` call of a session to learn the suppression-placement convention and fix-description prose layout for the rules you'll be triaging; subsequent calls within the same session can leave it off (the conventions don't change between calls). Inline `fix.description` is always honest — the opt-in only controls whether the duplicates get hoisted to a top-level lookup table.",
+        },
         metaMode: metaModeSchema,
       },
       required: ["path"],
@@ -124,6 +129,8 @@ export const scanFileTool: McpTool = {
     // for this handler.
     const verboseMetaCheck = requireBooleanParam(params, "verboseMeta");
     if (!verboseMetaCheck.ok) return errorResult(verboseMetaCheck.error);
+    const includeReferenceGuideCheck = requireBooleanParam(params, "includeReferenceGuide");
+    if (!includeReferenceGuideCheck.ok) return errorResult(includeReferenceGuideCheck.error);
     const filePath = strParam(params, "path");
     if (!filePath || filePath.length === 0) {
       return errorResult({
@@ -260,7 +267,21 @@ export const scanFileTool: McpTool = {
         // candidate; scan_file's deduped surface must match.
         criterionLevels: buildCriterionLevelMap(session.registry.standards),
       },
-      { tokenBudget: 0, includeReviewCandidates: true },
+      {
+        tokenBudget: 0,
+        includeReviewCandidates: true,
+        // opt-in default-false for the `referenceGuide` block.
+        // Omitting it skips the `fix.description` hoist entirely so
+        // prose stays inline on every finding (no dangling
+        // `descriptionRef` pointers) and the top-level guide block is
+        // dropped from the response — saves ~30-40 KB on dense HTML
+        // scans crossing the MCP host token ceiling on the per-file
+        // fix-verify loop. Per AI-first doctrine "Verbose meta is
+        // signal, not clutter" the guide is valuable scan-context —
+        // the opt-in framing keeps it discoverable via tool
+        // description rather than permanently stripping it.
+        hoistReferenceGuide: params["includeReferenceGuide"] === true,
+      },
     );
 
     // Cross-surface warning-channel parity: route through the shared

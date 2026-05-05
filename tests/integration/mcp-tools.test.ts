@@ -921,9 +921,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (mirrors the prompts-dedupe on review_candidates). Findings keep
     // `suppressWith` inline because the ruleId makes each one unique
     // and short; only the long placement prose is deduped.
+    // `referenceGuide` is opt-in (default off) per the agent-response
+    // token-cap regression — pass `includeReferenceGuide: true` so the
+    // hoisted prose ships and the assertions below have something to
+    // read.
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
+      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR, includeReferenceGuide: true }),
     ]);
     const body = bodyOf(responses[1]) as {
       files: readonly { findings: readonly Record<string, unknown>[] }[];
@@ -977,7 +981,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 </html>
 `,
       );
-      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
+      // `referenceGuide` is opt-in (default off) — pass
+      // `includeReferenceGuide: true` so the hoisted `fixDescriptions`
+      // map ships and the per-rule assertion below has something to
+      // read.
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: dir, includeReferenceGuide: true }),
+      ]);
       const body = bodyOf(responses[1]) as unknown as FixDescriptionHoistBody;
       // At least one rule fired with ≥2 duplicates that hoisted.
       const hoistedRuleIds = Object.keys(body.referenceGuide?.fixDescriptions ?? {});
@@ -1167,9 +1178,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("scan_file hoists suppressPlacement the same way scan_project does", async () => {
+    // `referenceGuide` is opt-in (default off) on both surfaces — pass
+    // `includeReferenceGuide: true` so the hoisted suppressPlacement
+    // map ships and the parity assertion below has something to read.
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
+      toolCall(2, "scan_file", { path: BAD_ALT_FILE, includeReferenceGuide: true }),
     ]);
     const body = bodyOf(responses[1]) as {
       findings: readonly Record<string, unknown>[];

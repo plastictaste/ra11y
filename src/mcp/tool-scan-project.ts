@@ -193,6 +193,11 @@ export const scanProjectTool: McpTool = {
           description:
             "When true, omit the per-file `files[]` array entirely and ship only the headline rollups: `plan` (with `topRules`, `findingsByFile`, `findingsByRule`, `fixesByClass`, `summary`, manual-review counters), `meta` slimmed to scan-confidence telemetry (including `filesByExtension` and `analysisCoverage`), `nextStep`/`nextStepStructured`, and `warnings`/`warningsDetails`. Designed as the bulk-corpus first-call ergonomic — on catalogs with 4000+ files producing 40k+ findings, the standard envelope cannot fit per-file findings under the host token cap and falls back to the slim envelope after a full assembly pass; `summaryOnly: true` is the explicit opt-in shortcut. The response carries `summaryOnly: true` and `filesArrayDropped: true` discriminators so the caller distinguishes summary mode from a clean scan of zero files. Recommended workflow: first call `scan_project({ cwd, summaryOnly: true })` to learn which rules and files dominate (`findingsByRule` gives the full per-rule distribution; `findingsByFile` ranks the densest files), then re-call with `restrictToPaths: [<dominant path>]` (without `summaryOnly`) to get per-file findings on a narrower scope. Default false preserves the existing per-file shape exactly.",
         },
+        includeReferenceGuide: {
+          type: "boolean",
+          description:
+            "When true, include the top-level `referenceGuide` object containing `suppressPlacement` (per-file-extension prose explaining where to drop `<!-- ra11y-disable -->` / `{/* ra11y-disable */}` pragmas) and `fixDescriptions` (per-rule deduplicated fix prose, referenced from individual findings via `fix.descriptionRef.hash`). Default false omits the block entirely and keeps full `fix.description` prose inline on every finding — typical responses save ~30-40 KB and stay under tighter MCP host token ceilings. Recommended workflow: enable on the FIRST `scan_project` / `scan_file` call of a session to learn the suppression-placement convention and fix-description prose layout for the rules you'll be triaging; subsequent calls within the same session can leave it off (the conventions don't change between calls). Inline `fix.description` is always honest — the opt-in only controls whether the duplicates get hoisted to a top-level lookup table.",
+        },
       },
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
@@ -510,7 +515,21 @@ export const scanProjectTool: McpTool = {
     // before pagination would let a description hoist on strength of
     // findings that never reach the caller, leaving a pointer with
     // no lookup target.
-    const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
+    //
+    // when the caller did not opt in via `includeReferenceGuide:
+    // true`, skip the hoist entirely. `fix.description` stays inline
+    // on every finding (no dangling `descriptionRef` pointers) and
+    // the top-level `referenceGuide` block is omitted from the
+    // response, saving ~30-40 KB on dense scans where
+    // `suppressPlacement` + `fixDescriptions` dominate the response
+    // payload. Per the AI-first doctrine "Verbose meta is signal,
+    // not clutter" the guide is valuable scan-context — the opt-in
+    // framing keeps it discoverable via tool description rather than
+    // permanently stripping it.
+    const includeReferenceGuide = params["includeReferenceGuide"] === true;
+    const hoisted = includeReferenceGuide
+      ? hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide)
+      : { files: page.files, referenceGuide: undefined };
     // annotate each per-file
     // entry with `limitations` when the underlying ParsedFile carried
     // parse errors. Scoped to files currently on this page so the
@@ -1750,6 +1769,8 @@ function validateScanProjectParamTypes(
   if (!summaryOnly.ok) return summaryOnly.error;
   const changedOnly = requireBooleanParam(params, "changedOnly");
   if (!changedOnly.ok) return changedOnly.error;
+  const includeReferenceGuide = requireBooleanParam(params, "includeReferenceGuide");
+  if (!includeReferenceGuide.ok) return includeReferenceGuide.error;
   const additionalPaths = requireStringArrayParam(params, "additionalPaths");
   if (!additionalPaths.ok) return additionalPaths.error;
   const restrictToPaths = requireStringArrayParam(params, "restrictToPaths");
