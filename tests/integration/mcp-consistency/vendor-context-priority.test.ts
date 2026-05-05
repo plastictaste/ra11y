@@ -56,7 +56,7 @@ interface ChecklistCandidate {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly ChecklistCandidate[];
 }
@@ -122,7 +122,7 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -150,7 +150,7 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -176,7 +176,7 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     if (!item) return;
     // At least one candidate (the authored-source one) lacks vendorContext.

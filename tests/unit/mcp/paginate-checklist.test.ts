@@ -46,7 +46,7 @@ function makeItem(
     suppressWith: `{/* ra11y-disable ${criterionId} */}`,
   }));
   return {
-    criterionId,
+    criteria: [criterionId] as readonly string[],
     title: `Criterion ${criterionId}`,
     level: "AA",
     priority: "high" as const,
@@ -237,7 +237,7 @@ describe("paginateChecklistItems — maxCandidatesPerCriterion axis", () => {
     // item[1] (5..9): candidates 7, 8, 9 would be in range — but
     // limit=3 caps at index 9, so slice is 7..9 = 3 candidates.
     expect(page.items.length).toBe(1);
-    expect(page.items[0].criterionId).toBe("wcag22:2.4.5");
+    expect(page.items[0].criteria[0]).toBe("wcag22:2.4.5");
     expect(page.items[0].candidates.length).toBe(3);
     expect(page.items[0].candidates[0].path).toBe("wcag22:2.4.5-2.tsx");
     expect(page.paginationFields.truncated).toBe(true);
@@ -456,7 +456,7 @@ describe("paginateChecklistItems — per-criterion cursor resume", () => {
       }),
     );
     expect(page2.items.length).toBe(1);
-    expect(page2.items[0].criterionId).toBe("wcag22:2.4.5");
+    expect(page2.items[0].criteria[0]).toBe("wcag22:2.4.5");
     expect(page2.items[0].candidates.length).toBe(5);
     expect(page2.items[0].candidates[0].path).toBe("wcag22:2.4.5-5.tsx");
     expect(page2.items[0].candidates[4].path).toBe("wcag22:2.4.5-9.tsx");

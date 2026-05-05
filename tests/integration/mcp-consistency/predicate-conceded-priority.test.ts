@@ -52,7 +52,7 @@ interface ChecklistCandidate {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly ChecklistCandidate[];
 }
@@ -121,7 +121,7 @@ describe("checklist priority must not contradict predicateConceded on candidates
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:1.4.5");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -158,7 +158,7 @@ describe("checklist priority must not contradict predicateConceded on candidates
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const aaa = checklist.items.find((i) => i.criterionId === "wcag22:1.4.9");
+    const aaa = checklist.items.find((i) => i.criteria[0] === "wcag22:1.4.9");
     if (aaa) {
       expect(aaa.candidates.every((c) => c.predicateConceded === undefined)).toBe(true);
     }

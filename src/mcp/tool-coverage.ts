@@ -953,7 +953,8 @@ function buildCoverageNextStep({
  * Falls back to ID-only if a criterion isn't found in any loaded standard.
  *
  * `criterionId` is the canonical field — matches
- * `checklist.items[].criterionId` and the namespaced-id convention used
+ * `checklist.items[].criteria[0]` (length-1 array — the row's owning
+ * criterion ID) and the namespaced-id convention used
  * elsewhere across the MCP surface (`wcag22:1.4.3`). The legacy `id`
  * alias was previously emitted alongside `criterionId` (under the
  * `deprecated_field_id_renamed_criterionId` warning code) but was

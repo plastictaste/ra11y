@@ -87,7 +87,7 @@ interface ScanFileBody {
 
 interface ChecklistBody {
   readonly items: ReadonlyArray<{
-    readonly criterionId: string;
+    readonly criteria: readonly string[];
     readonly candidates: ReadonlyArray<{
       readonly findingId: string;
       readonly path: string;
@@ -147,7 +147,7 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     // every surface that ships review candidates.
     expect(scanEntry.findingId).toMatch(/^[0-9a-f]{12}$/);
 
-    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:3.3.8");
+    const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:3.3.8");
     expect(checklistItem).toBeDefined();
     if (checklistItem === undefined) return;
     const checklistCandidate = checklistItem.candidates[0];
@@ -175,8 +175,8 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     // appears on both items and every per-item instance must carry
     // the SAME findingId so an agent dedup-walking the group reads
     // one id.
-    const a = checklistBody.items.find((i) => i.criterionId === "wcag22:1.3.6");
-    const b = checklistBody.items.find((i) => i.criterionId === "wcag22:3.3.8");
+    const a = checklistBody.items.find((i) => i.criteria[0] === "wcag22:1.3.6");
+    const b = checklistBody.items.find((i) => i.criteria[0] === "wcag22:3.3.8");
     if (a === undefined || b === undefined) return;
     const aFid = a.candidates[0]?.findingId;
     const bFid = b.candidates[0]?.findingId;
@@ -213,7 +213,7 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     if (scanEntry === undefined) return;
     expect(scanEntry.findingId).toMatch(/^[0-9a-f]{12}$/);
 
-    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:1.4.5");
     expect(checklistItem).toBeDefined();
     if (checklistItem === undefined) return;
     const checklistCandidate = checklistItem.candidates[0];
@@ -242,7 +242,7 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     expect(scanEntry).toBeDefined();
     if (scanEntry === undefined) return;
 
-    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:1.4.5");
     expect(checklistItem).toBeDefined();
     if (checklistItem === undefined) return;
     const checklistCandidate = checklistItem.candidates[0];

@@ -199,12 +199,10 @@ interface ChecklistCandidateOut {
    * group once via the array rather than re-reading the same file:line
    * under N items.
    *
-   * Renamed from `criteriaIds` (2026-04-26) — the new name makes the
-   * field a closer mirror of `Violation.criteria` on the rule surface
-   * (same shape, same semantics) and removes the awkward singular/
-   * plural mismatch between `criterionId` (the owning item's ID) and
-   * the array of co-covered criteria. No alias; this is a flat rename
-   * before the field had downstream consumers outside the MCP response.
+   * Mirrors `Violation.criteria` on the rule surface (same shape, same
+   * semantics) and pairs with the parent {@link ChecklistItemOut#criteria}
+   * (length-1 array) so an agent reads one consistent field name across
+   * row-level and candidate-level surfaces.
    */
   readonly criteria?: readonly string[];
   /**
@@ -372,7 +370,26 @@ interface WcagPrinciple {
 }
 
 interface ChecklistItemOut {
-  readonly criterionId: string;
+  /**
+   * Criterion ID(s) this checklist row covers, sorted. Always exactly
+   * one element by construction (each row is scoped per-criterion), but
+   * shaped as a `string[]` so the field name and shape match the
+   * cross-standard `criteria: string[]` array on
+   * {@link import("../types/violation.ts").Violation}, on
+   * `scan_file.reviewCandidates[].criteria`, and on
+   * `scan_project.reviewCandidates[].criteria`. An agent walking from
+   * a finding to its checklist row reads the same field name on both
+   * surfaces and a stable `readonly string[]` shape — closes the
+   * `criterionId` (singular scalar) vs `criteria` (plural array) field-
+   * name drift the prior shape carried.
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+   * candidate shape must agree across surfaces" + "Sibling fields
+   * naming the same concept must use one shape." The integration test
+   * `tests/integration/mcp-consistency/checklist-criteria-field-name-cross-surface.test.ts`
+   * pins the shape across all four candidate-bearing surfaces.
+   */
+  readonly criteria: readonly string[];
   readonly title: string;
   readonly level: string;
   readonly priority: ChecklistPriority;
@@ -826,7 +843,9 @@ function buildChecklistReviewCandidatePrompts(args: {
   readonly needsReview: readonly ChecklistItemOut[];
 }): Record<string, unknown> {
   const manualIds = new Set<string>();
-  for (const it of args.needsReview) manualIds.add(it.criterionId);
+  for (const it of args.needsReview) {
+    for (const cid of it.criteria) manualIds.add(cid);
+  }
   const prompts = buildReviewCandidatePrompts({
     candidates: args.reportCandidates,
     manualIds,
@@ -875,7 +894,7 @@ function buildUntargetedField(
   const raw = params["showUntargeted"];
   if (raw === true) return { untargetedCriteriaList: untargeted };
   if (raw === false) return {};
-  return { untargetedCriteriaList: untargeted.map((i) => i.criterionId) };
+  return { untargetedCriteriaList: untargeted.flatMap((i) => i.criteria) };
 }
 
 export const checklistTool: McpTool = {
@@ -1103,8 +1122,8 @@ export const checklistTool: McpTool = {
     // [...items, ...untargeted].
     const skipCriterion = strArrayParam(params, "skipCriterion");
     const skipSet = skipCriterion && skipCriterion.length > 0 ? new Set(skipCriterion) : undefined;
-    const keep = (i: { criterionId: string }) =>
-      skipSet === undefined || !skipSet.has(i.criterionId);
+    const keep = (i: { criteria: readonly string[] }) =>
+      skipSet === undefined || i.criteria.every((cid) => !skipSet.has(cid));
     // annotate candidates whose
     // (file, line, reason) surfaces under ≥2 items with `criteria:
     // [...]` so an agent walking a shared candidate reads one entry
@@ -1916,7 +1935,7 @@ function mapOneCandidateAdditiveFields(
  * criteria share the location.
  *
  * Why not collapse across items: the cross-tool invariant
- * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`)
+ * (`checklist.items[].criteria[0] ≡ coverage.manualWithCandidates[].criterionId`)
  * is load-bearing — it's how
  * the two tools read as one surface per ADR 0010. Dropping secondary
  * items would silently re-classify a
@@ -1965,10 +1984,14 @@ function annotateSharedCandidates(
     for (const c of item.candidates) {
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const existing = byKey.get(key);
+      // Each item owns exactly one criterion (length-1 array by
+      // construction); pull the canonical id without re-iterating.
+      const itemCid = item.criteria[0];
+      if (itemCid === undefined) continue;
       if (existing === undefined) {
-        byKey.set(key, [item.criterionId]);
-      } else if (!existing.includes(item.criterionId)) {
-        existing.push(item.criterionId);
+        byKey.set(key, [itemCid]);
+      } else if (!existing.includes(itemCid)) {
+        existing.push(itemCid);
       }
     }
   }
@@ -2139,7 +2162,7 @@ function buildChecklistItem(
   // bare-criterion item with no finder backing it).
   const reviewPrompt = findersByCriterion.get(criterion.id)?.docs.reviewPrompt;
   const base: ChecklistItemOut = {
-    criterionId: criterion.id,
+    criteria: [criterion.id],
     title: criterion.title,
     level: criterion.level,
     priority: itemPriority,
@@ -2689,8 +2712,13 @@ function clipChecklistItems(
       continue;
     }
     if (firstClippedCursor === undefined) {
+      const itemCid = item.criteria[0];
+      if (itemCid === undefined) {
+        clipped.push(item);
+        continue;
+      }
       firstClippedCursor = {
-        afterCriterion: item.criterionId,
+        afterCriterion: itemCid,
         afterCandidateIndex: cap - 1,
       };
       firstClippedTotalAvailable = item.candidates.length;
@@ -2735,7 +2763,7 @@ function paginateChecklistResume(
   let target: ChecklistItemOut | undefined;
   for (const item of items) {
     totalCandidates += item.candidates.length;
-    if (item.criterionId === cursor.afterCriterion && target === undefined) {
+    if (item.criteria[0] === cursor.afterCriterion && target === undefined) {
       target = item;
     }
   }
@@ -2755,9 +2783,11 @@ function paginateChecklistResume(
   const tail = target.candidates.slice(resumeStart, resumeEnd);
   const pageItems: ChecklistItemOut[] = tail.length === 0 ? [] : [{ ...target, candidates: tail }];
   const moreRemaining = resumeEnd < target.candidates.length;
-  const nextCursor: ChecklistCursor | undefined = moreRemaining
-    ? { afterCriterion: target.criterionId, afterCandidateIndex: resumeEnd - 1 }
-    : undefined;
+  const targetCid = target.criteria[0];
+  const nextCursor: ChecklistCursor | undefined =
+    moreRemaining && targetCid !== undefined
+      ? { afterCriterion: targetCid, afterCandidateIndex: resumeEnd - 1 }
+      : undefined;
   // same hint shape on the
   // resume branch — only emitted when more tail remains, since the
   // agent has already seen everything we have on the criterion when
@@ -2773,13 +2803,14 @@ function paginateChecklistResume(
   // resumeEnd - 1), `totalAvailable` is the criterion's full pre-clip
   // candidate count. Paired with `nextCursor` so cross-channel readers
   // (top-level pagination block, warning details payload) agree.
-  const nextCursorClipDetails = nextCursor
-    ? {
-        criterionId: target.criterionId,
-        clippedAt: resumeEnd,
-        totalAvailable: target.candidates.length,
-      }
-    : undefined;
+  const nextCursorClipDetails =
+    nextCursor && targetCid !== undefined
+      ? {
+          criterionId: targetCid,
+          clippedAt: resumeEnd,
+          totalAvailable: target.candidates.length,
+        }
+      : undefined;
   return {
     items: pageItems,
     totalCandidates,
@@ -3029,7 +3060,7 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   // not arbitrary.
   if (totalCandidates > limit * CHECKLIST_NEAR_LIMIT_RATIO) {
     return {
-      nextStep: `Total candidates (${totalCandidates}) is at >${Math.round(CHECKLIST_NEAR_LIMIT_RATIO * 100)}% of \`limit\` (${limit}); the response is near capacity. Call \`checklist\` again with \`offset: <n>, limit: <n>\` to walk the queue deliberately, or raise \`limit\` to fit the full inventory in one page. After verifying each item, call \`attest\` with the item's \`criterionId\`, a \`verdict\` (\`pass\` / \`fail\` / \`n/a\`), a \`reason\`, and an \`evidenceSource\` to record the verdict durably.`,
+      nextStep: `Total candidates (${totalCandidates}) is at >${Math.round(CHECKLIST_NEAR_LIMIT_RATIO * 100)}% of \`limit\` (${limit}); the response is near capacity. Call \`checklist\` again with \`offset: <n>, limit: <n>\` to walk the queue deliberately, or raise \`limit\` to fit the full inventory in one page. After verifying each item, call \`attest\` with the item's \`criteria[0]\` as \`criterionId\`, a \`verdict\` (\`pass\` / \`fail\` / \`n/a\`), a \`reason\`, and an \`evidenceSource\` to record the verdict durably.`,
       nextStepStructured: {
         tool: "checklist",
         args: buildChecklistArgs(inputs, { offset: 0, limit }),
@@ -3046,7 +3077,7 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   // fabricating provenance.
   return {
     nextStep:
-      "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
+      "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criteria[0]` as `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
     nextStepStructured: { tool: "scan_project", args: { cwd } },
   };
 }

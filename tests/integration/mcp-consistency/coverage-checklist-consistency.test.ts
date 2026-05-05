@@ -169,7 +169,9 @@ interface CoverageBody {
     readonly headline: string;
   };
   // Canonical field name is `criterionId` — matches
-  // `checklist.items[].criterionId` and the namespaced-id convention
+  // `checklist.items[].criteria[0]` (the row's owning criterion ID,
+  // shaped as a length-1 array per the cross-surface field-name
+  // alignment) and the namespaced-id convention
   // (`wcag22:1.4.3`) used elsewhere. The legacy `id` alias was dropped;
   // entries carry `criterionId` only. Present-when-meaningful:
   // omitted from the response entirely when no manual criterion
@@ -200,8 +202,8 @@ interface ChecklistBody {
     readonly untargetedCriteria: number;
     readonly likelyIrrelevant: number;
   };
-  readonly items: readonly { readonly criterionId: string }[];
-  readonly likelyIrrelevant: readonly { readonly criterionId: string }[];
+  readonly items: readonly { readonly criteria: readonly string[] }[];
+  readonly likelyIrrelevant: readonly { readonly criteria: readonly string[] }[];
   readonly nextStep?: string;
   readonly nextStepStructured?: NextStepStructured;
 }
@@ -293,7 +295,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const coverageIrrelevantIds = new Set(
       coverage.likelyIrrelevantCriteria.map((c) => c.criterionId),
     );
-    const checklistIrrelevantIds = new Set(checklist.likelyIrrelevant.map((c) => c.criterionId));
+    const checklistIrrelevantIds = new Set(checklist.likelyIrrelevant.flatMap((c) => c.criteria));
     expect(coverageIrrelevantIds).toEqual(checklistIrrelevantIds);
 
     // Actionable (checklist items with candidates) lines up with
@@ -304,7 +306,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const coverageActionableIds = new Set(
       (coverage.manualWithCandidates ?? []).map((c) => c.criterionId),
     );
-    const checklistActionableIds = new Set(checklist.items.map((i) => i.criterionId));
+    const checklistActionableIds = new Set(checklist.items.flatMap((i) => i.criteria));
     expect(checklistActionableIds).toEqual(coverageActionableIds);
   });
 

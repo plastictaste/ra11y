@@ -40,7 +40,7 @@ interface JsonRpcResponse {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly { readonly reason: string }[];
 }
@@ -118,7 +118,7 @@ describe("checklist priority must not contradict hedging in candidate reason tex
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.4.5");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.4.5");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -141,7 +141,7 @@ describe("checklist priority must not contradict hedging in candidate reason tex
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.3.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.3.1");
     expect(item).toBeDefined();
     if (!item) return;
     if (item.candidates.length === 0) return; // finder may emit no candidate; nothing to assert

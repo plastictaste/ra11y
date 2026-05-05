@@ -1385,11 +1385,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
     ]);
     const baselineBody = bodyOf(baseline[1]) as {
-      items: Array<{ criterionId: string }>;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      items: Array<{ criteria: readonly string[] }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
     };
-    const firstCrit = baselineBody.items[0]?.criterionId;
-    const firstIrrelevant = baselineBody.likelyIrrelevant[0]?.criterionId;
+    const firstCrit = baselineBody.items[0]?.criteria[0];
+    const firstIrrelevant = baselineBody.likelyIrrelevant[0]?.criteria[0];
     if (!(firstCrit && firstIrrelevant)) throw new Error("fixture produced no items");
 
     const skipped = await mcpSession([
@@ -1400,8 +1400,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       }),
     ]);
     const body = bodyOf(skipped[1]) as {
-      items: Array<{ criterionId: string }>;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      items: Array<{ criteria: readonly string[] }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
       summary: {
         actionable: {
           criteria: number;
@@ -1412,8 +1412,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         skippedByCaller?: readonly string[];
       };
     };
-    expect(body.items.some((i) => i.criterionId === firstCrit)).toBe(false);
-    expect(body.likelyIrrelevant.some((i) => i.criterionId === firstIrrelevant)).toBe(false);
+    expect(body.items.some((i) => i.criteria[0] === firstCrit)).toBe(false);
+    expect(body.likelyIrrelevant.some((i) => i.criteria[0] === firstIrrelevant)).toBe(false);
     expect(body.summary.skippedByCaller).toEqual([firstCrit, firstIrrelevant].sort());
     expect(body.summary.actionable.criteria).toBeLessThan(baselineBody.items.length + 1);
   });
@@ -1508,12 +1508,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: unknown[];
         principle?: { number: number; name: string };
       }>;
       untargetedCriteriaList?: unknown;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
       summary: {
         actionable: {
           criteria: number;
@@ -1556,12 +1556,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // A/AA criterion. The field is dropped — confidence is the
     // honest signal-bearing axis.
     expect(body.summary).not.toHaveProperty("byPriority");
-    // WCAG principle is spec-defined data derived from criterionId;
+    // WCAG principle is spec-defined data derived from criteria[0];
     // surfacing it lets the agent sort beyond level without us
     // inventing a priority ranking.
     for (const item of body.items) {
-      if (!item.criterionId.startsWith("wcag")) continue;
-      const expectedPrincipleNumber = Number(item.criterionId.split(":")[1]?.split(".")[0]);
+      const cid = item.criteria[0];
+      if (cid === undefined || !cid.startsWith("wcag")) continue;
+      const expectedPrincipleNumber = Number(cid.split(":")[1]?.split(".")[0]);
       expect(item.principle?.number).toBe(expectedPrincipleNumber);
       expect(["Perceivable", "Operable", "Understandable", "Robust"]).toContain(
         item.principle?.name ?? "",
@@ -1619,13 +1620,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR], showUntargeted: true }),
     ]);
     const body = bodyOf(responses[1]) as {
-      untargetedCriteriaList: Array<{ criterionId: string; candidates: unknown[] }>;
+      untargetedCriteriaList: Array<{ criteria: readonly string[]; candidates: unknown[] }>;
       summary: { untargetedCriteria: number };
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     expect(body.untargetedCriteriaList.every((i) => i.candidates.length === 0)).toBe(true);
-    // Full-item shape: each entry carries criterionId + empty candidates array.
-    expect(body.untargetedCriteriaList.every((i) => typeof i.criterionId === "string")).toBe(true);
+    // Full-item shape: each entry carries criteria + empty candidates array.
+    expect(body.untargetedCriteriaList.every((i) => Array.isArray(i.criteria))).toBe(true);
     expect(body.summary.untargetedCriteria).toBe(body.untargetedCriteriaList.length);
   });
 
@@ -1664,7 +1665,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const bodyData = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{
           path: string;
           line: number;
@@ -1700,7 +1701,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{
           path: string;
           suppressWith?: string;
@@ -1713,7 +1714,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         expect(typeof c.suppressWith).toBe("string");
         expect(c.suppressWith).toContain("ra11y-disable");
         // Scoped to the owning criterion ID.
-        expect(c.suppressWith).toContain(item.criterionId);
+        expect(c.suppressWith).toContain(item.criteria[0]);
         // Per-extension form: HTML / CSS / JSX comment shape MUST
         // match the file's extension so the agent pasting the pragma
         // doesn't corrupt source.
@@ -1825,7 +1826,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{ path: string; line: number; snippet?: string }>;
       }>;
     };

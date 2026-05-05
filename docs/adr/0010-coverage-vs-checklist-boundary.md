@@ -103,8 +103,9 @@ pairs following the P1-K contract.
   (`failingAutomatedCriteria`, `warningAutomatedCriteria`,
   `manualWithCandidates`, `likelyIrrelevantCriteria`,
   `untestableCriteria`, `untargetedCriteriaList`) carries the canonical
-  `criterionId` field — matching `checklist.items[].criterionId` so
-  agents joining the two surfaces key on the same name. An earlier
+  `criterionId` field — matching `checklist.items[].criteria[0]`
+  (length-1 array — the row's owning criterion) so agents joining
+  the two surfaces key on the same value. An earlier
   duplicate `id` alias was dropped before any release tagged the
   alias-narrating `deprecated_field_id_renamed_criterionId` warning
   code; per the AI-first consumer model "Ambiguous field shapes are

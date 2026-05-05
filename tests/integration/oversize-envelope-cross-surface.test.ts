@@ -58,7 +58,7 @@ function readDropPayload(response: Record<string, unknown>): SlimWarningPayload 
 function buildOversizeChecklistResponse(): Record<string, unknown> {
   return {
     summary: { actionable: { criteria: 1, candidatesUncapped: 1, candidatesReturned: 1 } },
-    items: [{ criterionId: "wcag22:1.1.1", candidates: [{ path: "x.tsx", line: 1 }] }],
+    items: [{ criteria: ["wcag22:1.1.1"], candidates: [{ path: "x.tsx", line: 1 }] }],
     totalCandidates: 1,
     nextStep: "Iterate items[].",
     nextStepStructured: { tool: "scan_project", args: { cwd: "/tmp/x" } },

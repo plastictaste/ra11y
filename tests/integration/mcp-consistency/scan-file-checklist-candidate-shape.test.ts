@@ -95,7 +95,7 @@ interface ScanFileBody {
 
 interface ChecklistBody {
   readonly items: ReadonlyArray<{
-    readonly criterionId: string;
+    readonly criteria: readonly string[];
     readonly priority: string;
     readonly confidence: string;
     readonly candidates: ReadonlyArray<{
@@ -158,7 +158,7 @@ describe("MCP invariant: scan_file and checklist agree on candidate priority / c
     expect(scanEntry.priority).toBeDefined();
     expect(scanEntry.confidence).toBeDefined();
 
-    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:3.3.8");
+    const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:3.3.8");
     expect(checklistItem).toBeDefined();
     if (checklistItem === undefined) return;
     // The candidate-level priority on scan_file equals the per-item
