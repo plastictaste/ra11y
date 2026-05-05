@@ -133,6 +133,31 @@ async function makeFixture(): Promise<{ dir: string; page: string }> {
   return { dir, page };
 }
 
+function collectScanFileCriteria(scanFile: ScanFileBody): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const f of scanFile.findings ?? []) {
+    for (const cid of f.criteria ?? []) out.add(cid);
+  }
+  for (const c of scanFile.reviewCandidates ?? []) {
+    for (const cid of c.criteria ?? []) out.add(cid);
+  }
+  return out;
+}
+
+function collectChecklistCriteria(checklist: ChecklistBody): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const item of checklist.items ?? []) {
+    for (const cid of item.criteria ?? []) out.add(cid);
+  }
+  return out;
+}
+
+function countOverlap(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
+  let overlap = 0;
+  for (const cid of a) if (b.has(cid)) overlap += 1;
+  return overlap;
+}
+
 describe("MCP invariant: criterion linkage field name + shape agree across surfaces", () => {
   it("checklist.items[*].criteria is a non-empty readonly string[] (length-1 by construction)", async () => {
     const { dir } = await makeFixture();
@@ -183,7 +208,7 @@ describe("MCP invariant: criterion linkage field name + shape agree across surfa
   });
 
   it("scan_file findings + reviewCandidates carry `criteria: string[]` (cross-surface field-name parity)", async () => {
-    const { dir, page } = await makeFixture();
+    const { page } = await makeFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: page })]);
     const scanFile = body<ScanFileBody>(responses[1]);
     for (const f of scanFile.findings ?? []) {
@@ -218,29 +243,13 @@ describe("MCP invariant: criterion linkage field name + shape agree across surfa
     const scanFile = body<ScanFileBody>(responses[1]);
     const checklist = body<ChecklistBody>(responses[2]);
 
-    // Collect every criterion ID the scan_file surface emits across
-    // both findings and reviewCandidates — this is the universe of
-    // criteria the agent's first call exposes.
-    const scanFileCriteria = new Set<string>();
-    for (const f of scanFile.findings ?? []) {
-      for (const cid of f.criteria ?? []) scanFileCriteria.add(cid);
-    }
-    for (const c of scanFile.reviewCandidates ?? []) {
-      for (const cid of c.criteria ?? []) scanFileCriteria.add(cid);
-    }
-
-    // Every checklist item reads its criterion via the same `criteria`
-    // accessor the agent used on scan_file. The intersection must be
-    // non-empty on this fixture (both surfaces ground at least 3.3.8
-    // via the password input).
-    const checklistCriteria = new Set<string>();
-    for (const item of checklist.items ?? []) {
-      for (const cid of item.criteria ?? []) checklistCriteria.add(cid);
-    }
-    let overlap = 0;
-    for (const cid of checklistCriteria) {
-      if (scanFileCriteria.has(cid)) overlap += 1;
-    }
+    // The intersection must be non-empty on this fixture (both
+    // surfaces ground at least 3.3.8 via the password input). Both
+    // sets are read via the SAME `criteria` accessor — the rename's
+    // load-bearing observable.
+    const scanFileCriteria = collectScanFileCriteria(scanFile);
+    const checklistCriteria = collectChecklistCriteria(checklist);
+    const overlap = countOverlap(checklistCriteria, scanFileCriteria);
     expect(overlap).toBeGreaterThan(0);
   });
 });
