@@ -153,7 +153,10 @@ describe("scan_project: deterministic per-kind violation headline", () => {
       // cross-surface count invariant.
       const bootstrapScan = bootstrapBody["scan"] as Record<string, unknown> | undefined;
       expect(bootstrapScan).toBeDefined();
-      const violationsCount = bootstrapScan?.["violationsCount"] as number | undefined;
+      if (!bootstrapScan) throw new Error("bootstrap.scan missing");
+      const violationsCountRaw = bootstrapScan["violationsCount"];
+      expect(typeof violationsCountRaw).toBe("number");
+      const violationsCount = violationsCountRaw as number;
       expect(violationsCount).toBeGreaterThan(0);
       // suppressRecommended findings ride on a separate lane that
       // bootstrap's `violationsCount` derivation excludes; subtract
