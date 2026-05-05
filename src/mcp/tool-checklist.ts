@@ -181,30 +181,43 @@ interface ChecklistCandidateOut {
    */
   readonly suppressWith: string;
   /**
-   * Every criterion ID this candidate covers, sorted, when the same
-   * `(path, line, reason)` evidence supports more than one criterion —
-   * e.g. a `<video>` at `Home.tsx:42` that surfaces under `wcag22:1.2.1`
-   * / `1.2.3` / `1.2.5`. Previously three separate item entries sharing
-   * one line; now one emitted shape + `criteria: [...ids...]` so the
-   * agent reads the dedup signal as a typed list rather than parsing
-   * "this row also matches…" reason text. Always populated with ≥2 IDs
-   * when present; omitted (present-when-meaningful per CLAUDE.md §1)
-   * when the candidate is single-criterion.
+   * Every criterion ID this candidate's evidence covers, sorted. Always
+   * populated (≥1 element) — same shape and semantics as
+   * `scan_file.reviewCandidates[].criteria` and
+   * `scan_project.reviewCandidates[].criteria` so an agent walking the
+   * same conceptual candidate across surfaces reads ONE field name and
+   * shape regardless of which tool produced it. The array is the agent-
+   * side dedup tool when ≥2 criteria share `(path, line, column)` — e.g.
+   * a `<video>` at `Home.tsx:42` that surfaces under `wcag22:1.2.1` /
+   * `1.2.3` / `1.2.5` (three separate item entries, one shared
+   * candidate, one `criteria: [1.2.1, 1.2.3, 1.2.5]` list per
+   * instance).
    *
-   * The candidate still ships on every owning item per ADR 0010's
-   * cross-tool count invariant (`coverage.manualWithCandidates`-vs-
-   * `checklist.items` parity is load-bearing — see
-   * `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`).
-   * The `criteria: [...]` array is the agent-side dedup tool: walk the
-   * group once via the array rather than re-reading the same file:line
-   * under N items.
+   * Computed via the same `(filePath, line, column)`-keyed union scan_
+   * file's deduped surface uses, so a single-criterion candidate carries
+   * `["wcag22:3.3.8"]` here AND on scan_file — same `findingId` carries
+   * the same `criteria` array. Pre-closure the field was conditionally
+   * omitted on single-criterion entries while scan_file populated even
+   * length-1 arrays — the omitted-vs-populated split was the canonical
+   * "Ambiguous field shapes are dishonest" + "Per-tool review-candidate
+   * shape must agree across surfaces" failure mode (per
+   * `docs/kb/architecture/ai-first-consumer.md`): an agent reading a
+   * checklist candidate alone could not tell whether the missing field
+   * meant "no criteria" or "single criterion that we hid for terseness."
+   *
+   * The candidate still ships on every owning checklist item per ADR
+   * 0010's cross-tool count invariant (`coverage.manualWithCandidates`-
+   * vs-`checklist.items` parity is load-bearing — see
+   * `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`);
+   * the `criteria: [...]` array lets the agent walk the cross-item
+   * group once rather than re-reading the same file:line under N items.
    *
    * Mirrors `Violation.criteria` on the rule surface (same shape, same
    * semantics) and pairs with the parent {@link ChecklistItemOut#criteria}
    * (length-1 array) so an agent reads one consistent field name across
    * row-level and candidate-level surfaces.
    */
-  readonly criteria?: readonly string[];
+  readonly criteria: readonly string[];
   /**
    * Structured vendor-path-shape evidence passed through from the
    * finder (see `ReviewCandidate.vendorPathHint`). True when the cited
@@ -1844,6 +1857,20 @@ function mapOneCandidate(
     line: c.location.line,
     reason: c.reason,
     confidence: c.confidence,
+    // Always populate `criteria` (≥1 element, sorted) so the same
+    // conceptual candidate carries the same field set on
+    // `scan_file.reviewCandidates[]` / `scan_project.reviewCandidates[]`
+    // and `checklist.items[].candidates[]`. The position-keyed union is
+    // the same recipe scan_file's deduped surface uses; populating both
+    // surfaces from the same source closes the "single-criterion
+    // omitted on checklist while scan_file populates even length-1"
+    // shape drift per `docs/kb/architecture/ai-first-consumer.md`
+    // "Per-tool review-candidate shape must agree across surfaces" +
+    // "Ambiguous field shapes are dishonest." Note: the criteria array
+    // is also load-bearing for the `findingId` hash above — the same
+    // sorted union that lands on the wire IS the criteria input the
+    // hash was computed over.
+    criteria,
     suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
     ...mapOneCandidateAdditiveFields(c, snippet, couldBeWrongBecause, buildArtifactPaths),
   };

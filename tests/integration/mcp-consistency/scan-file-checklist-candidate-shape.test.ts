@@ -104,6 +104,7 @@ interface ChecklistBody {
       readonly line: number;
       readonly priority?: string;
       readonly confidence: string;
+      readonly criteria?: readonly string[];
     }>;
   }>;
 }
@@ -194,5 +195,28 @@ describe("MCP invariant: scan_file and checklist agree on candidate priority / c
     expect(checklistCandidate.priority).toBeDefined();
     expect(checklistCandidate.priority).toBe(checklistItem.priority);
     expect(checklistCandidate.priority).toBe(scanEntry.priority);
+
+    // Per-candidate `criteria` agrees across surfaces. Pre-closure the
+    // checklist candidate omitted `criteria` on single-criterion entries
+    // while scan_file populated even length-1 arrays — an agent walking
+    // the same conceptual candidate read different field-population
+    // semantics on the two surfaces (the silent-miss failure mode is
+    // identical to the cross-surface count invariant but on the per-
+    // field-shape axis). Per AI-first doctrine "Per-tool review-
+    // candidate shape must agree across surfaces" the same `findingId`
+    // must carry the same populated field set regardless of which
+    // surface produced it; the criteria union is also load-bearing for
+    // the findingId hash, so divergent populated/omitted semantics on
+    // a hash input is doubly dishonest.
+    expect(checklistCandidate.criteria).toBeDefined();
+    expect(Array.isArray(checklistCandidate.criteria)).toBe(true);
+    // Length ≥ 1 by construction — the position-keyed union always
+    // contains at least the candidate's own criterionId.
+    expect((checklistCandidate.criteria ?? []).length).toBeGreaterThanOrEqual(1);
+    // Same array contents (sorted union) across surfaces. Both surfaces
+    // hash the same union into `findingId`, so equality of the array
+    // is a stronger statement than a length-only check — the same
+    // array IS the hash input.
+    expect([...(checklistCandidate.criteria ?? [])]).toEqual([...scanEntry.criteria]);
   });
 });
