@@ -42,6 +42,15 @@ export interface RunScanForCrossSurfaceParityArgs {
   readonly activeRules: readonly Rule[];
   readonly attestations: readonly AttestationRecord[];
   readonly projectConfig: LoadedConfig;
+  /**
+   * Caller-supplied scan root (typically the explicit `cwd` the agent
+   * passed). Plumbed into the engine's per-emission `findingId` hash
+   * so `checklist` / `coverage` and the scan-family tools produce the
+   * same id on the same conceptual rule emission. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+   * identifiers must be addressable, not collision-prone."
+   */
+  readonly scanRoot?: string;
 }
 
 /**
@@ -65,7 +74,8 @@ export function runScanForCrossSurfaceParity(args: RunScanForCrossSurfaceParityA
   readonly filesWithAnyRuleEvaluated: number;
   readonly outputFilePaths: ReadonlySet<string>;
 } {
-  const { files, session, enabled, level, activeRules, attestations, projectConfig } = args;
+  const { files, session, enabled, level, activeRules, attestations, projectConfig, scanRoot } =
+    args;
   const wrapperElements = projectConfig.nativeWrapperElements;
   const processes = projectConfig.processes;
   const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan({
@@ -78,6 +88,7 @@ export function runScanForCrossSurfaceParity(args: RunScanForCrossSurfaceParityA
     ...(attestations.length > 0 && { attestations }),
     ...(Object.keys(wrapperElements).length > 0 && { nativeWrapperElements: wrapperElements }),
     ...(processes.length > 0 && { processes }),
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   // Derived from the SAME `result.violations` / `report.candidates`
   // the caller will route into other consumers. Per the

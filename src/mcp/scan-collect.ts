@@ -144,6 +144,12 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
       processes,
       wrapperElements: resolvedWrappers.elements,
       session,
+      // Per-emission `findingId` cross-surface invariant — when the
+      // caller supplied a scan root, plumb through to the engine's
+      // stamp sites so scan_file (relative input) and scan_project /
+      // checklist (absolute discovery walk) hash the same id on the
+      // same conceptual rule emission.
+      ...(cwd === undefined ? {} : { scanRoot: cwd }),
     }),
   );
   const { violations: withoutWrapperNoise } = dropWrapperNoise(

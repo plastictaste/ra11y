@@ -119,6 +119,11 @@ export const baselineTool: McpTool = {
       files,
       finders: session.registry.finders,
       level,
+      // Per-emission `findingId` / cross-run-stable `findingGroupId`
+      // path normalization — must match the scan root scan_diff and
+      // the scan-family tools pass so the IDs round-trip across
+      // baseline / scan_diff / scan_project on identical cwd.
+      scanRoot: cwd,
     });
 
     if (mode === "create") return handleCreate(result, baselinePath, cwd);

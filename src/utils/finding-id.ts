@@ -53,13 +53,27 @@
  * where `normalizedLineText` is the source text of the single line at
  * `line` (1-based), with trailing whitespace stripped.
  *
- * Path normalization: both hashes work off the relative form — absolute
- * paths break across machines (CI vs developer laptop vs sandbox).
- * When `scanRoot` is provided and the `filePath` is absolute under
- * that root, the relative form is used; otherwise the `filePath` is
- * normalized in place (backslashes → forward slashes; leading `./`
- * stripped) so the same logical path produces the same hash on
- * Windows and POSIX.
+ * Path normalization: the per-emission `findingId` hashes a stable
+ * within-process address — its consumer is `suggest_fix(findingId)`
+ * resolving back through the same scanner state, never a cross-
+ * machine baseline (that's {@link computeFindingGroupId}'s job, which
+ * uses normalized line TEXT rather than path). To guarantee that the
+ * SAME conceptual candidate produces ONE id across `scan_file`
+ * (which receives the agent's `path` verbatim — possibly relative),
+ * `scan_project` (whose discovery walker resolves to absolute paths),
+ * and `checklist` (same), the per-emission hash always anchors on the
+ * RESOLVED ABSOLUTE path. When `scanRoot` is supplied and `filePath`
+ * is relative, the helper resolves `(scanRoot, filePath)` → absolute
+ * before hashing; when `filePath` is already absolute, it is used
+ * verbatim. Without `scanRoot`, a relative `filePath` is normalized
+ * in place (backslashes → forward slashes; leading `./` stripped) —
+ * the same shape both surfaces would have produced before this
+ * helper existed, so legacy fixture-stamp paths still hash stably.
+ *
+ * The cross-run-stable {@link computeFindingGroupId} continues to
+ * relativize where possible: that token's consumers (baseline,
+ * scan_diff) DO read across machines and need the cross-machine-
+ * stable shape.
  *
  * Length: 12 hex chars = 48 bits. For a single scan producing tens
  * of thousands of violations, the birthday-collision probability is
@@ -79,7 +93,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { isAbsolute, relative as relativePath } from "node:path";
+import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 
 /** Output length (hex chars) of the truncated sha256 digest. */
 export const FINDING_ID_LENGTH = 12;
@@ -147,9 +161,14 @@ export interface FindingGroupIdInputs {
  * no I/O. Two distinct emissions in the same response with different
  * `(line, column)` always get distinct ids, even when the surrounding
  * line text is identical.
+ *
+ * Hashes the resolved-absolute path (when `scanRoot` is supplied to
+ * resolve a relative input, OR when the input is already absolute)
+ * so the same conceptual emission produces ONE id whether the caller
+ * addressed the file by an absolute path or a `cwd`-relative shape.
  */
 export function computeFindingId(inputs: FindingIdInputs): string {
-  const path = normalizeRelativePath(inputs.filePath, inputs.scanRoot);
+  const path = normalizeAbsolutePathForFindingId(inputs.filePath, inputs.scanRoot);
   const variantSuffix =
     inputs.variantKey !== undefined && inputs.variantKey.length > 0 ? ` ${inputs.variantKey}` : "";
   const canonical = `${inputs.ruleId} ${path} ${inputs.line} ${inputs.column}${variantSuffix}`;
@@ -285,4 +304,33 @@ function normalizeRelativePath(filePath: string, scanRoot?: string): string {
     if (rel.length > 0) normalized = rel;
   }
   return normalized.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+/**
+ * Normalizes a file path to a resolved-absolute, forward-slash form
+ * for the per-emission {@link computeFindingId} hash. The within-
+ * process address consumer (`suggest_fix(findingId)`) reads the same
+ * scanner state, so cross-machine portability is not the goal here —
+ * cross-surface stability IS. Resolving to absolute means an agent
+ * calling `scan_file({path: "_includes/footer.html", cwd: "/abs"})`
+ * and `checklist({cwd: "/abs"})` produce the same id on the same
+ * conceptual emission, regardless of which path shape the agent
+ * happened to use.
+ *
+ * - Absolute `filePath` → returned verbatim (slash-normalized).
+ * - Relative `filePath` + `scanRoot` → `resolve(scanRoot, filePath)`.
+ * - Relative `filePath` without `scanRoot` → in-place normalization
+ *   (backslashes → slashes, leading `./` stripped) — matches the
+ *   pre-Q15 stamp shape so legacy fixture-stamp paths still hash
+ *   stably for tests that don't supply a root.
+ */
+function normalizeAbsolutePathForFindingId(filePath: string, scanRoot?: string): string {
+  if (isAbsolute(filePath)) {
+    return filePath.replace(/\\/g, "/");
+  }
+  if (scanRoot !== undefined && scanRoot.length > 0) {
+    const resolved = resolvePath(scanRoot, filePath);
+    return resolved.replace(/\\/g, "/");
+  }
+  return filePath.replace(/\\/g, "/").replace(/^\.\//, "");
 }

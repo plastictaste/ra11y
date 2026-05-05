@@ -197,6 +197,11 @@ export const proposeBaselineTool: McpTool = {
       enabled: standards,
       files,
       level: session.config.level,
+      // Scan-root agreement with the rest of the project-rooted
+      // tools — see `src/mcp/tool-baseline.ts` for the parallel
+      // plumb. Keeps `findingGroupId` round-tripping across baseline
+      // / propose-baseline / scan_diff on identical cwd.
+      scanRoot: root,
     });
 
     const rawProposed = buildProposedEntries({

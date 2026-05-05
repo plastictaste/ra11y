@@ -129,6 +129,11 @@ export const getFindingTool: McpTool = {
       candidates: scanRunResult.reviewCandidates,
       manualIds,
       limit: FINDING_LOOKUP_CANDIDATE_LIMIT,
+      // Same scan root the assembler uses so findingId hashes match
+      // what `scan_project` / `checklist` / `scan_file` produced. Per
+      // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+      // identifiers must be addressable, not collision-prone."
+      scanRoot: root,
     });
     const candidateHit = lookupCandidateById({
       findingId,

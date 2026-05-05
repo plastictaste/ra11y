@@ -49,6 +49,10 @@ import {
   requireStringArrayParam,
 } from "./param-validators.ts";
 import {
+  buildCandidateCriteriaUnion,
+  candidateCriteriaUnionKey,
+} from "./review-candidate-dedup.ts";
+import {
   candidateHedges,
   couldBeWrongBecauseForVendorBuildArtifact,
 } from "./review-candidate-priority.ts";
@@ -1019,6 +1023,7 @@ export const checklistTool: McpTool = {
         activeRules,
         attestations,
         projectConfig,
+        scanRoot: cwd,
       });
 
     // thread testableCriteria so the
@@ -1069,6 +1074,15 @@ export const checklistTool: McpTool = {
         (e) => e.path,
       ),
     );
+    // Per-emission `findingId` cross-surface invariant: hash with the
+    // same position-keyed cross-criterion / cross-finder union scan_file
+    // and scan_project use, AND with the same scan-root path
+    // normalization, so the same conceptual candidate produces ONE
+    // `findingId` regardless of which surface ships it. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+    // identifiers must be addressable, not collision-prone" + "Per-tool
+    // review-candidate shape must agree across surfaces."
+    const criteriaUnionByPosition = buildCandidateCriteriaUnion(reportCandidates);
     const { needsReview, likelyIrrelevant } = bucketChecklistItems(
       coverage,
       reportCandidates,
@@ -1078,6 +1092,8 @@ export const checklistTool: McpTool = {
       stalenessProbe,
       session,
       buildArtifactPaths,
+      criteriaUnionByPosition,
+      cwd,
     );
     // Actionable items (concrete candidates) stay in `items`; criteria
     // the finders couldn't ground in code move to `untargeted`. Keeping
@@ -1100,7 +1116,12 @@ export const checklistTool: McpTool = {
     // the raw `ReviewCandidate[]` since the output shape doesn't
     // carry `column` (`reportCandidates` does).
     const columnByKey = buildCandidateColumnLookup(reportCandidates);
-    const annotatedNeedsReview = annotateSharedCandidates(needsReview, columnByKey);
+    const annotatedNeedsReview = annotateSharedCandidates(
+      needsReview,
+      columnByKey,
+      criteriaUnionByPosition,
+      cwd,
+    );
     const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
     const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
@@ -1710,10 +1731,21 @@ function mapCandidates(
   candidates: readonly ReviewCandidate[],
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): PrePriorityChecklistCandidate[] {
   return candidates
     .filter((c) => c.criterionId === criterionId)
-    .map((c) => mapOneCandidate(c, criterionId, sources, buildArtifactPaths));
+    .map((c) =>
+      mapOneCandidate(
+        c,
+        criterionId,
+        sources,
+        buildArtifactPaths,
+        criteriaUnionByPosition,
+        scanRoot,
+      ),
+    );
 }
 
 /**
@@ -1730,6 +1762,8 @@ function mapOneCandidate(
   criterionId: string,
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): PrePriorityChecklistCandidate {
   // Compose the structured-evidence-stamp channel that pairs with the
   // per-item priority drop. The same gate that drops priority to
@@ -1759,19 +1793,31 @@ function mapOneCandidate(
   // `confidence` passes through verbatim from the finder. See
   // CLAUDE.md §1 — this is identity-like metadata, not an
   // optional enrichment, so it is always present.
-  // `findingId` is the per-emission address — hashed from
-  // `[criterionId]` here so a singleton checklist candidate gets the
-  // same id its sibling on `scan_file.reviewCandidates[]` /
-  // `scan_project.reviewCandidates[]` does. When the candidate later
-  // joins a cross-criterion group via `annotateSharedCandidates`, the
-  // id is recomputed there over the sorted-criteria union so all
-  // sibling instances share one id (still matching the dedup'd
-  // single-entry id on `scan_file`).
+  // `findingId` is the per-emission address — hashed from the
+  // position-keyed cross-criterion / cross-finder union the raw
+  // `ReviewCandidate[]` stream carries at this `(filePath, line,
+  // column)`. The union matches what scan_file's deduped surface
+  // hashes (post-pass-2 fold), so the same conceptual candidate
+  // produces ONE `findingId` across `scan_file.reviewCandidates[]`,
+  // `scan_project.reviewCandidates[]`, and `checklist.items[]
+  // .candidates[]`. Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Per-finding identifiers must be addressable, not collision-
+  // prone" + "Per-tool review-candidate shape must agree across
+  // surfaces." Falls back to `[criterionId]` only when the position
+  // lookup is empty (defensive: every emitted candidate is in the
+  // union since the union is built from the same stream).
+  const positionKey = candidateCriteriaUnionKey(
+    c.location.filePath,
+    c.location.line,
+    c.location.column,
+  );
+  const criteria = criteriaUnionByPosition.get(positionKey) ?? [criterionId];
   const findingId = computeCandidateFindingId({
-    criteria: [criterionId],
+    criteria,
     filePath: c.location.filePath,
     line: c.location.line,
     column: c.location.column,
+    scanRoot,
   });
   return {
     findingId,
@@ -1910,6 +1956,8 @@ function buildCandidateColumnLookup(
 function annotateSharedCandidates(
   items: readonly ChecklistItemOut[],
   byColumn: ReadonlyMap<string, number>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): ChecklistItemOut[] {
   // Map dedup-key → every criterion ID that owns this location.
   const byKey = new Map<string, string[]>();
@@ -1930,20 +1978,27 @@ function annotateSharedCandidates(
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const ids = byKey.get(key);
       if (ids === undefined || ids.length <= 1) return c;
-      // Cross-criterion sharing — recompute `findingId` over the
-      // sorted-criteria union so every sibling per-item instance under
-      // this group reads the SAME id, AND the id matches the same
-      // conceptual candidate's id on `scan_file.reviewCandidates[]` /
-      // `scan_project.reviewCandidates[]` (those surfaces compute the
-      // hash over the same sorted-criteria union via the shared
-      // `computeCandidateFindingId` helper). Per AI-first doctrine
-      // "Per-tool review-candidate shape must agree across surfaces."
-      const criteria = [...ids].sort();
+      // Cross-criterion sharing — `findingId` was already hashed on
+      // mapOneCandidate over the position-keyed cross-finder /
+      // cross-standard union (so it matches the same conceptual
+      // candidate's id on `scan_file.reviewCandidates[]` /
+      // `scan_project.reviewCandidates[]` regardless of which
+      // surface reads it). The annotation here only widens the
+      // candidate's own `criteria` list to the cross-item union the
+      // checklist surface has visibility into, so an agent walking the
+      // shared group sees every standard ID this evidence covers.
+      // Per AI-first doctrine "Per-tool review-candidate shape must
+      // agree across surfaces."
+      const column = byColumn.get(key) ?? c.line;
+      const positionKey = candidateCriteriaUnionKey(c.path, c.line, column);
+      const criteriaUnion = criteriaUnionByPosition.get(positionKey);
+      const criteria = criteriaUnion === undefined ? [...ids].sort() : [...criteriaUnion];
       const findingId = computeCandidateFindingId({
         criteria,
         filePath: c.path,
         line: c.line,
-        column: byColumn.get(key) ?? 1,
+        column,
+        scanRoot,
       });
       return { ...c, findingId, criteria };
     }),
@@ -2030,8 +2085,17 @@ function buildChecklistItem(
   stalenessProbe: AttestationStalenessProbe | undefined,
   buildArtifactPaths: ReadonlySet<string>,
   findersByCriterion: ReadonlyMap<string, CandidateFinder>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): { item: ChecklistItemOut; relevant: boolean } {
-  const mappedRaw = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
+  const mappedRaw = mapCandidates(
+    criterion.id,
+    candidates,
+    sources,
+    buildArtifactPaths,
+    criteriaUnionByPosition,
+    scanRoot,
+  );
   const mapped = partitionVendorCandidatesLast(mappedRaw, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
@@ -2102,6 +2166,8 @@ function bucketChecklistItems(
   stalenessProbe: AttestationStalenessProbe | undefined,
   session: import("./session.ts").McpSession,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
@@ -2128,6 +2194,8 @@ function bucketChecklistItems(
     stalenessProbe,
     buildArtifactPaths,
     findersByCriterion,
+    criteriaUnionByPosition,
+    scanRoot,
   } as const;
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
@@ -2171,6 +2239,8 @@ function pushChecklistItem(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2185,6 +2255,8 @@ function pushChecklistItem(
     builderArgs.stalenessProbe,
     builderArgs.buildArtifactPaths,
     builderArgs.findersByCriterion,
+    builderArgs.criteriaUnionByPosition,
+    builderArgs.scanRoot,
   );
   emittedCriterionIds.add(criterion.id);
   (relevant ? needsReview : likelyIrrelevant).push(item);
@@ -2226,6 +2298,8 @@ function appendPartialCriterionItems(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2268,6 +2342,8 @@ function appendPartialItemsFromEntry(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],

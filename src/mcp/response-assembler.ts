@@ -182,6 +182,23 @@ export interface ScanFamilyResponseInput {
    */
   readonly configSearchedFromForWarning?: string;
   /**
+   * Caller-supplied scan root for path normalization in the per-emission
+   * `findingId` hash. When provided, absolute violation / candidate
+   * paths under this root relativize before hashing so a `scan_file`
+   * call addressing files by absolute path and a `checklist` /
+   * `scan_project` call addressing the same files via cwd-walk produce
+   * identical ids on the same conceptual emission. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-finding identifiers
+   * must be addressable, not collision-prone" + "Per-tool review-
+   * candidate shape must agree across surfaces."
+   *
+   * Threaded through to {@link computeCandidateFindingId} via
+   * {@link import("./review-candidate-dedup.ts").materializeDedupedCandidate};
+   * omit when the caller has no canonical scan root (synthetic test
+   * fixtures, single-file scratch scans without `cwd`).
+   */
+  readonly scanRoot?: string;
+  /**
    * Pre-computed result of a cwd-rooted directory walk that probes
    * whether a rule's gated extensions exist anywhere under the project
    * root. Drives the {@link applyExtensionPresentSubkindAdjustment}
@@ -419,12 +436,33 @@ export function groupByFile(
  * — the assembler's outer conditional-spread suppresses an empty
  * payload).
  */
+/**
+ * Extracts the `scanRoot` ternary from {@link assembleScanFamilyResponse}
+ * so the orchestrator's cognitive-complexity score stays inside Biome's
+ * cap. Returns a spreadable fragment — empty when no root is supplied,
+ * `{ scanRoot }` otherwise — under the "Ambiguous field shapes are
+ * dishonest" present-when-meaningful contract.
+ */
+function maybeScanRootArg(scanRoot: string | undefined): { scanRoot?: string } {
+  return scanRoot === undefined ? {} : { scanRoot };
+}
+
 function maybeDedupeReviewCandidates(args: {
   readonly options: ScanFamilyResponseOptions;
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly criterionLevels: ReadonlyMap<string, string> | undefined;
   readonly buildArtifactPaths: ReadonlySet<string>;
   readonly fileEntries: readonly AssembledFile[];
+  /**
+   * Caller-supplied scan root for path normalization. Plumbed through to
+   * {@link computeCandidateFindingId} (via {@link materializeDedupedCandidate})
+   * so the per-emission `findingId` hashes a relative path regardless of
+   * whether the caller addressed files by an absolute or a `cwd`-relative
+   * shape. Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+   * identifiers must be addressable, not collision-prone" + "Per-tool
+   * review-candidate shape must agree across surfaces."
+   */
+  readonly scanRoot?: string;
 }): {
   readonly deduped: readonly DedupedReviewCandidate[] | undefined;
   /**
@@ -437,7 +475,8 @@ function maybeDedupeReviewCandidates(args: {
    */
   readonly filteredRaw: readonly ReviewCandidate[];
 } {
-  const { options, reviewCandidates, criterionLevels, buildArtifactPaths, fileEntries } = args;
+  const { options, reviewCandidates, criterionLevels, buildArtifactPaths, fileEntries, scanRoot } =
+    args;
   if (options.includeReviewCandidates !== true) {
     return { deduped: undefined, filteredRaw: reviewCandidates };
   }
@@ -462,6 +501,7 @@ function maybeDedupeReviewCandidates(args: {
     filtered,
     criterionLevels ?? new Map(),
     buildArtifactPaths,
+    scanRoot,
   );
   return { deduped, filteredRaw: filtered };
 }
@@ -653,6 +693,7 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
     criterionLevels,
+    scanRoot,
   } = input;
   // Cross-surface count invariant: when the caller supplied raw
   // (pre-filter) violations, derive the parser/finder-honesty
@@ -894,6 +935,8 @@ export function assembleScanFamilyResponse(
       // re-pointed — so the post-hoist view carries the load-bearing
       // axis the filter reads.
       fileEntries,
+      // findingId path normalization — see `maybeDedupeReviewCandidates`.
+      ...maybeScanRootArg(scanRoot),
     });
 
   // (8) Warnings channel — extracted to keep this orchestrator's

@@ -139,6 +139,7 @@ export const coverageTool: McpTool = {
         activeRules,
         attestations,
         projectConfig,
+        scanRoot: cwd,
       });
 
     const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));

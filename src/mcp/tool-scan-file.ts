@@ -231,6 +231,25 @@ export const scanFileTool: McpTool = {
         // calling scan_file gets the same canonical "where was the
         // search?" answer scan / scan_project surface.
         configSearchedFromForWarning: configSearchBase,
+        // Per-emission `findingId` path normalization: the scan root
+        // here MUST agree with the root that `checklist` /
+        // `scan_project` would use on the same canonical project
+        // (typically the user-supplied `cwd`), so the same conceptual
+        // candidate produces ONE id across surfaces. When the caller
+        // omitted `cwd`, fall back to omitting `scanRoot` entirely
+        // rather than substituting the file's parent directory — the
+        // parent-dir fallback `configSearchBase` uses for config
+        // resolution would relativize the path differently from the
+        // project-root walk other surfaces use, re-introducing the
+        // very cross-surface drift the closure fixes. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+        // identifiers must be addressable, not collision-prone" +
+        // "Per-tool review-candidate shape must agree across
+        // surfaces." Without `scanRoot`, the helper falls back to
+        // path-shape normalization in place (backslashes → slashes,
+        // `./` strip) — so absolute paths still produce stable ids
+        // across machines.
+        ...(scanFileCwd === undefined ? {} : { scanRoot: scanFileCwd }),
         // Thread the criterion-level lookup through to the
         // review-candidate dedup helper so per-candidate `priority`
         // resolves against the strongest-attention level among each

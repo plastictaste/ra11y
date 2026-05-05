@@ -23,9 +23,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
 
@@ -183,4 +183,107 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     if (aFid === undefined || bFid === undefined) return;
     expect(aFid).toBe(bFid);
   });
+
+  // Real-world drift: an agent calling `scan_file({path: "_includes/footer.html",
+  // cwd: "<abs>"})` and `checklist({cwd: "<abs>"})` is the canonical bug —
+  // scan_file stamps the relative path the user passed into the candidate
+  // findingId hash, while checklist's discovery walker resolves to absolute
+  // paths and stamps those, so the two surfaces produce divergent ids on the
+  // same conceptual candidate. Per AI-first doctrine "Per-finding identifiers
+  // must be addressable, not collision-prone" + "Per-tool review-candidate
+  // shape must agree across surfaces": both surfaces must hash a normalized-
+  // relative path so the id is stable regardless of which input shape the
+  // caller used.
+  it("scan_file with relative path + cwd matches checklist on same cwd", async () => {
+    const { dir, relPath } = await makeLogoFooterFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_file", { path: relPath, cwd: dir }),
+      toolCall(3, "checklist", { cwd: dir }),
+    ]);
+    const scanFileBody = body<ScanFileBody>(responses[1]);
+    const checklistBody = body<ChecklistBody>(responses[2]);
+
+    const scanCandidates = scanFileBody.reviewCandidates ?? [];
+    // images-of-text finder fires on the logo `<img>` and emits 1.4.5
+    // (and the AAA 1.4.9 sibling). Either is enough for the cross-
+    // surface check; pick the AA criterion deterministically.
+    const scanEntry = scanCandidates.find((c) => c.criteria.includes("wcag22:1.4.5"));
+    expect(scanEntry).toBeDefined();
+    if (scanEntry === undefined) return;
+    expect(scanEntry.findingId).toMatch(/^[0-9a-f]{12}$/);
+
+    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    expect(checklistItem).toBeDefined();
+    if (checklistItem === undefined) return;
+    const checklistCandidate = checklistItem.candidates[0];
+    expect(checklistCandidate).toBeDefined();
+    if (checklistCandidate === undefined) return;
+    expect(checklistCandidate.findingId).toMatch(/^[0-9a-f]{12}$/);
+
+    // Same conceptual candidate at `_includes/footer.html:<line>` —
+    // findingId must agree regardless of whether the caller addressed
+    // the file by an absolute or a `cwd`-relative path.
+    expect(checklistCandidate.findingId).toBe(scanEntry.findingId);
+  });
+
+  it("scan_file with absolute path matches checklist on same cwd", async () => {
+    const { dir, absPath } = await makeLogoFooterFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_file", { path: absPath }),
+      toolCall(3, "checklist", { cwd: dir }),
+    ]);
+    const scanFileBody = body<ScanFileBody>(responses[1]);
+    const checklistBody = body<ChecklistBody>(responses[2]);
+
+    const scanCandidates = scanFileBody.reviewCandidates ?? [];
+    const scanEntry = scanCandidates.find((c) => c.criteria.includes("wcag22:1.4.5"));
+    expect(scanEntry).toBeDefined();
+    if (scanEntry === undefined) return;
+
+    const checklistItem = checklistBody.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    expect(checklistItem).toBeDefined();
+    if (checklistItem === undefined) return;
+    const checklistCandidate = checklistItem.candidates[0];
+    expect(checklistCandidate).toBeDefined();
+    if (checklistCandidate === undefined) return;
+    expect(checklistCandidate.findingId).toBe(scanEntry.findingId);
+  });
 });
+
+/**
+ * Sanitized footer-with-logo fixture mirroring the real-world report
+ * the closure addresses (logo `<img>` inside a Jekyll-style
+ * `_includes/footer.html` partial). The images-of-text finder fires
+ * on the `class="logo"` token and emits a 1.4.5 review candidate at
+ * the `<img>` line.
+ */
+async function makeLogoFooterFixture(): Promise<{
+  dir: string;
+  absPath: string;
+  relPath: string;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-logo-footer-"));
+  const includesDir = join(dir, "_includes");
+  await mkdir(includesDir, { recursive: true });
+  const absPath = join(includesDir, "footer.html");
+  await writeFile(
+    absPath,
+    `<!doctype html>
+<html lang="en">
+<head><title>Footer</title></head>
+<body>
+<main>
+<p>Footer content.</p>
+</main>
+<footer>
+<p>Brand mark below — images-of-text candidate fires on the logo class.</p>
+<img class="logo" src="acme-logo.png" alt="Acme Corp">
+</footer>
+</body>
+</html>
+`,
+  );
+  return { dir, absPath, relPath: relative(dir, absPath) };
+}

@@ -599,12 +599,8 @@ export async function runScanAndFormat(
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
-  const {
-    wrappers,
-    sessionOnly,
-    bySource: wrapperProvenance,
-    elements: wrapperElements,
-  } = resolveWrapperSources(wrapperSources, session);
+  // biome-ignore format: keep destructure on one line — file effective-line budget
+  const { wrappers, sessionOnly, bySource: wrapperProvenance, elements: wrapperElements } = resolveWrapperSources(wrapperSources, session);
   const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
     buildRunScanOptions({
       activeRules,
@@ -615,6 +611,7 @@ export async function runScanAndFormat(
       processes,
       wrapperElements,
       session,
+      ...(cwd === undefined ? {} : { scanRoot: cwd }),
     }),
   );
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);

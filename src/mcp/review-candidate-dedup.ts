@@ -299,6 +299,7 @@ export function dedupeReviewCandidatesForSingleFile(
   candidates: readonly ReviewCandidate[],
   criterionLevels: ReadonlyMap<string, string> = new Map(),
   buildArtifactPaths: ReadonlySet<string> = new Set(),
+  scanRoot?: string,
 ): readonly DedupedReviewCandidate[] {
   const byReasonKey = passOneCollectByReasonKey(candidates);
   const byPositionKey = passTwoCollectByPosition(byReasonKey);
@@ -327,12 +328,59 @@ export function dedupeReviewCandidatesForSingleFile(
       return a.idx - b.idx;
     });
     return indexed.map((e) =>
-      materializeDedupedCandidate(e.acc, criterionLevels, buildArtifactPaths),
+      materializeDedupedCandidate(e.acc, criterionLevels, buildArtifactPaths, scanRoot),
     );
   }
   return ordered.map((acc) =>
-    materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths),
+    materializeDedupedCandidate(acc, criterionLevels, buildArtifactPaths, scanRoot),
   );
+}
+
+/**
+ * Builds a `(filePath \x00 line \x00 column) → sorted-criteria-union`
+ * lookup from the raw {@link ReviewCandidate} stream. Mirrors the
+ * post-pass-2 position-keyed criteria union that
+ * {@link dedupeReviewCandidatesForSingleFile} hashes into the per-
+ * deduped-candidate `findingId`, exposed as a free-standing helper so
+ * checklist's per-criterion mapper can hash with the same union.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+ * identifiers must be addressable, not collision-prone" + "Per-tool
+ * review-candidate shape must agree across surfaces": the same
+ * conceptual candidate must produce the same `findingId` across
+ * `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+ * and `checklist.items[].candidates[]`. Without this lookup checklist
+ * hashes `[criterionId]` (per-item singleton) while scan_file hashes
+ * the cross-criterion / cross-standard union — divergent ids on the
+ * same conceptual logo / form input across surfaces.
+ *
+ * Position key matches the post-pass-2 dedup key (no reason axis) so
+ * cross-finder coincidences at the same byte position fold into one
+ * union — same hash slot scan_file uses.
+ */
+export function buildCandidateCriteriaUnion(
+  candidates: readonly ReviewCandidate[],
+): ReadonlyMap<string, readonly string[]> {
+  const byKey = new Map<string, Set<string>>();
+  for (const c of candidates) {
+    const key = `${c.location.filePath}\x00${c.location.line}\x00${c.location.column}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.add(c.criterionId);
+    } else {
+      byKey.set(key, new Set([c.criterionId]));
+    }
+  }
+  const out = new Map<string, readonly string[]>();
+  for (const [key, set] of byKey.entries()) {
+    out.set(key, [...set].sort());
+  }
+  return out;
+}
+
+/** Composes the position key consumed by {@link buildCandidateCriteriaUnion}. */
+export function candidateCriteriaUnionKey(filePath: string, line: number, column: number): string {
+  return `${filePath}\x00${line}\x00${column}`;
 }
 
 /**
@@ -788,6 +836,7 @@ function materializeDedupedCandidate(
   g: DedupAcc,
   criterionLevels: ReadonlyMap<string, string>,
   buildArtifactPaths: ReadonlySet<string>,
+  scanRoot?: string,
 ): DedupedReviewCandidate {
   const criteria = [...g.criteria].sort();
   // Take the strongest-attention level across the union of criteria
@@ -849,6 +898,7 @@ function materializeDedupedCandidate(
     filePath: g.filePath,
     line: g.line,
     column: g.column,
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   return {
     findingId,

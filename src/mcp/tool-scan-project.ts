@@ -586,6 +586,15 @@ export const scanProjectTool: McpTool = {
       session,
       files,
       limit: pageParams.limit,
+      // Plumb scan root for path normalization in the per-emission
+      // `findingId` hash so this surface produces the SAME id the
+      // shared `computeCandidateFindingId` helper produces on
+      // `scan_file.reviewCandidates[]` and `checklist.items[]
+      // .candidates[]` for the same conceptual candidate. Per
+      // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+      // identifiers must be addressable, not collision-prone" +
+      // "Per-tool review-candidate shape must agree across surfaces."
+      scanRoot: root,
     });
     // Compute base warnings once — the same payload threads into
     // either the standard `assembleScanProjectResponse` path or the
@@ -845,13 +854,15 @@ function inlineReviewCandidatesFieldFor(args: {
   readonly session: import("./session.ts").McpSession;
   readonly files: readonly ParsedFile[];
   readonly limit: number;
+  readonly scanRoot?: string;
 }): {
   readonly reviewCandidates?: readonly ScanProjectReviewCandidate[];
   readonly reviewCandidatePrompts?: Readonly<
     Record<string, import("./review-candidate-prompts.ts").ReviewCandidatePromptEntry>
   >;
 } {
-  const { formattedFilesCount, candidates, enabledStandards, session, files, limit } = args;
+  const { formattedFilesCount, candidates, enabledStandards, session, files, limit, scanRoot } =
+    args;
   // Gate 1: when automated findings exist, the agent already has
   // `file:line` pointers — it can choose to call `checklist` itself
   // for the manual half. Don't duplicate that surface (doctrine:
@@ -859,7 +870,12 @@ function inlineReviewCandidatesFieldFor(args: {
   if (formattedFilesCount > 0) return {};
   if (candidates.length === 0) return {};
   const manualIds = collectManualCriteria(enabledStandards, session, session.config.level, files);
-  const surfaced = buildScanProjectReviewCandidates({ candidates, manualIds, limit });
+  const surfaced = buildScanProjectReviewCandidates({
+    candidates,
+    manualIds,
+    limit,
+    ...(scanRoot === undefined ? {} : { scanRoot }),
+  });
   if (surfaced.length === 0) return {};
   // Cross-surface candidate-shape contract: emit
   // `reviewCandidatePrompts` alongside the surfaced rows so an agent
