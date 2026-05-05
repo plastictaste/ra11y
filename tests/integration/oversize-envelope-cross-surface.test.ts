@@ -164,6 +164,39 @@ describe("oversize-envelope cross-surface parity — checklist / coverage / scan
     expect(ns.tool).not.toBe("checklist");
   });
 
+  it("checklist slim envelope renames items[] to itemsTruncated[] (per truncated-containers doctrine)", () => {
+    // Pins the field-rename so an agent reading just `response.items`
+    // gets `undefined` instead of the misleading `[]` that used to
+    // ship under the original field name. Mirrors the
+    // `meta.perRuleCoverageTruncated` / `fragmentFilesTruncated`
+    // precedent — the field name itself signals that contents were
+    // stripped. Per `docs/kb/architecture/ai-first-consumer.md`
+    // "Truncated containers must rename or sentinel, not retain".
+    const result = applyChecklistBudget({
+      response: buildOversizeChecklistResponse(),
+      hardCeilingChars: HARD_CEILING,
+    });
+    expect(result.truncated).toBe(true);
+    const slim = result.response as Record<string, unknown>;
+    // The original `items` key MUST be absent from the wire — the
+    // canonical regression case the doctrine bullet documents:
+    // shipping `items: []` alongside `truncated: true` makes an agent
+    // reading just `items` unable to distinguish "no actionable
+    // items" from "items array was stripped to fit."
+    expect(slim).not.toHaveProperty("items");
+    // The renamed field carries the empty array — the rename itself
+    // is the field-level signal.
+    expect(slim.itemsTruncated).toEqual([]);
+    // The companion `truncationReason` names the warning code that
+    // owns the byte-arithmetic payload, so an agent has a single
+    // string identifier to cross-reference `warningsDetails.<reason>`.
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
+    // The legacy redundant boolean flag was dropped — the field-rename
+    // already signals the same fact at the field level. Per "Sibling
+    // fields naming the same concept must use one shape".
+    expect(slim).not.toHaveProperty("itemsArrayDropped");
+  });
+
   it("coverage slim envelope ships the canonical warning code + payload schema", () => {
     const result = applyCoverageBudget({
       response: buildOversizeCoverageResponse(),

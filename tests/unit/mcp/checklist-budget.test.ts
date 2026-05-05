@@ -10,7 +10,8 @@
  *   - Pass-through when the response fits under the host ceiling — wire
  *     shape stays byte-identical to the input.
  *   - The slim fallback when the post-build envelope overflows —
- *     `items: []`, `itemsArrayDropped: true`, warnings + payload.
+ *     `itemsTruncated: []` (renamed from `items` so the field name
+ *     signals truncation), `truncationReason`, warnings + payload.
  *   - The slim envelope's structured `nextStep` routes to a different
  *     surface (`coverage`) than the failing tool, per the
  *     "NextStep prioritization on truncated/bulk responses must avoid
@@ -93,10 +94,20 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
     expect(result.truncated).toBe(true);
     const slim = result.response as Record<string, unknown>;
     // The slim shape keeps `summary` + slimmed `meta` + `nextStep` +
-    // the warnings channel. `items[]` ships as `[]` (the agent's
-    // recovery is to re-call with narrower scope).
-    expect(slim.items).toEqual([]);
-    expect(slim.itemsArrayDropped).toBe(true);
+    // the warnings channel. The verbose `items[]` array is RENAMED to
+    // `itemsTruncated` (per the doctrine bullet "Truncated containers
+    // must rename or sentinel, not retain") — an agent reading just
+    // `response.items` now gets `undefined` rather than the misleading
+    // `[]` that used to ship under the original field name. The
+    // recovery path is to re-call with narrower scope.
+    expect(slim.items).toBeUndefined();
+    expect(slim.itemsTruncated).toEqual([]);
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
+    // The legacy boolean flag was dropped — the field-rename signals
+    // the same fact at the field level, so a sibling boolean would be
+    // redundant (per "Sibling fields naming the same concept must use
+    // one shape").
+    expect(slim.itemsArrayDropped).toBeUndefined();
     expect(slim.truncated).toBe(true);
     expect(slim.totalCandidates).toBe(3);
     // `summary` is load-bearing — the agent budgets against it for the
@@ -189,7 +200,9 @@ describe("applyChecklistBudget — custom hardCeilingChars (test ergonomics)", (
     const result = applyChecklistBudget({ response, hardCeilingChars: 1000 });
     expect(result.truncated).toBe(true);
     const slim = result.response as Record<string, unknown>;
-    expect(slim.items).toEqual([]);
+    expect(slim.items).toBeUndefined();
+    expect(slim.itemsTruncated).toEqual([]);
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
     const warnings = slim.warnings as readonly string[];
     expect(warnings).toContain("response_dropped_files_oversize");
   });

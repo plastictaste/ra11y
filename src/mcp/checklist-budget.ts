@@ -37,8 +37,21 @@
  * Slim envelope shape — when the assembled response serializes over the
  * host ceiling:
  *
- *   - `items: []` (the verbose surface) + `itemsArrayDropped: true`.
+ *   - `itemsTruncated: []` (RENAMED from `items` so the field name
+ *     itself signals the contents were stripped — per the AI-first
+ *     doctrine bullet "Truncated containers must rename or sentinel,
+ *     not retain"). Mirrors the `meta.perRuleCoverageTruncated` /
+ *     `analysisCoverage.fragmentFilesTruncated` precedent in
+ *     `meta-array-cap.ts`. The original `items` key is absent from the
+ *     wire so an agent reading `response.items` (the populated path)
+ *     gets `undefined` rather than the misleading `[]` it used to.
  *   - `truncated: true`, `totalCandidates`: pre-drop inventory size.
+ *   - `truncationReason: "response_dropped_files_oversize"` — names the
+ *     warning code that owns the byte-arithmetic payload, so an agent
+ *     reading the per-field sentinel can cross-reference
+ *     `warningsDetails.<reason>` for `preDropBytes` /
+ *     `hardCeilingBytes` / `metaFieldsDropped` without parsing the
+ *     `warnings[]` channel separately.
  *   - `summary` retained — the actionable / candidates rollups are the
  *     load-bearing routing channel the agent budgets against.
  *   - `meta` slimmed to scan-confidence telemetry (matches
@@ -125,12 +138,21 @@ export function applyChecklistBudget(args: ApplyChecklistBudgetArgs): ApplyCheck
  * response is still over the host ceiling. The shape is the smallest
  * set of load-bearing fields the agent needs to route once.
  *
- * Drops `items[]` entirely (`[]`) — the verbose per-criterion candidate
- * fan is the canonical bloat source on bulk-vendor corpora, and the
- * agent's recovery path is to re-call with narrower scope (a smaller
- * `cwd`, a `paths` slice, or a tighter `standard` / `level`). Symmetric
- * to scan_project's `buildSlimScanProjectEnvelope` and scan_file's
- * `buildSlimScanFileEnvelope`.
+ * Replaces `items[]` with `itemsTruncated: []` — the field name swap
+ * signals "the contents were stripped" at the field level, so an agent
+ * reading just `response.items` sees `undefined` rather than the
+ * misleading empty array the prior shape shipped. The verbose
+ * per-criterion candidate fan is the canonical bloat source on
+ * bulk-vendor corpora, and the agent's recovery path is to re-call
+ * with narrower scope (a smaller `cwd`, a `paths` slice, or a tighter
+ * `standard` / `level`). Symmetric to scan_project's
+ * `buildSlimScanProjectEnvelope` and scan_file's
+ * `buildSlimScanFileEnvelope`; the field-rename pattern follows the
+ * `meta.perRuleCoverageTruncated` /
+ * `meta.analysisCoverage.fragmentFilesTruncated` precedent established
+ * in `meta-array-cap.ts`. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Truncated containers
+ * must rename or sentinel, not retain."
  *
  * Retains `summary` (the actionable / candidate rollups), `nextStep`,
  * the slimmed `meta` block, and the warnings channel. Drops
@@ -167,9 +189,9 @@ function buildSlimChecklistEnvelope(args: {
   const nextStepStructured = buildSlimNextStepStructured(original);
   const slim: Record<string, unknown> = {
     ...(summary === undefined ? {} : { summary }),
-    items: [],
-    itemsArrayDropped: true as const,
+    itemsTruncated: [] as readonly unknown[],
     truncated: true as const,
+    truncationReason: "response_dropped_files_oversize" as const,
     totalCandidates,
     nextStep,
     nextStepStructured,
