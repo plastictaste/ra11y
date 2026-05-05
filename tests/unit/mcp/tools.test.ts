@@ -2889,6 +2889,123 @@ describe("MCP tool: sessionConfigure", () => {
   });
 });
 
+describe("MCP tool: session_inspect", () => {
+  it("returns deterministic defaults with configured: false on a fresh session", async () => {
+    // The discriminator the tool exists for: a default-shaped echo
+    // with `configured: false` answers "the agent has not run
+    // sessionConfigure on this connection," distinct from an echo
+    // that happens to look like the defaults after explicit overrides.
+    const tool = findTool("session_inspect");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: Record<string, unknown>;
+    };
+    expect(data.configured).toBe(false);
+    expect(data.active["standard"]).toBe("wcag22");
+    expect(data.active["level"]).toBe("AA");
+    expect(data.active["allowWrite"]).toBe(false);
+    expect(typeof data.active["ruleCount"]).toBe("number");
+    expect(data.active["ruleCount"] as number).toBeGreaterThan(0);
+    // Optional fields are present-when-meaningful — never sentinel-empty.
+    expect("rules" in data.active).toBe(false);
+    expect("nativeWrappers" in data.active).toBe(false);
+    expect("nativeWrapperElements" in data.active).toBe(false);
+    expect("exclude" in data.active).toBe(false);
+    expect("cwd" in data.active).toBe(false);
+  });
+
+  it("round-trips configured state — sessionConfigure → session_inspect echoes the merged shape", async () => {
+    // The pairing the backlog item names: an agent that has just set
+    // rule overrides, native wrappers, and excludes can verify the
+    // merged state without making a no-op `scan` call.
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler(
+      {
+        standard: "wcag21",
+        level: "A",
+        rules: { "media/alt-text-missing": "off" },
+        nativeWrappers: ["Button", "ActionButton"],
+        exclude: ["packages/legacy/**"],
+        cwd: "/tmp/some-project",
+      },
+      session,
+    );
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: {
+        standard: string;
+        level: string;
+        ruleCount: number;
+        allowWrite: boolean;
+        rules?: Record<string, string>;
+        nativeWrappers?: readonly string[];
+        exclude?: readonly string[];
+        cwd?: string;
+      };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.standard).toBe("wcag21");
+    expect(data.active.level).toBe("A");
+    expect(data.active.allowWrite).toBe(false);
+    expect(data.active.rules).toEqual({ "media/alt-text-missing": "off" });
+    expect(data.active.nativeWrappers).toEqual(["Button", "ActionButton"]);
+    expect(data.active.exclude).toEqual(["packages/legacy/**"]);
+    expect(data.active.cwd).toBe("/tmp/some-project");
+  });
+
+  it("nativeWrapperElements echoes the object form when sessionConfigure received it", async () => {
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler({ nativeWrappers: { Button: "button", RouterLink: "a" } }, session);
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: {
+        nativeWrappers?: readonly string[];
+        nativeWrapperElements?: Record<string, string>;
+      };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.nativeWrapperElements).toEqual({ Button: "button", RouterLink: "a" });
+    // The flat-name list mirrors what `sessionConfigure.active.nativeWrappers`
+    // also surfaces — the object form folds names into the array form.
+    expect(data.active.nativeWrappers).toEqual(["Button", "RouterLink"]);
+  });
+
+  it("configured: true even when sessionConfigure flips only allowWrite", async () => {
+    // The discriminator must not falsely report `configured: false`
+    // on a session whose only override is the security-load-bearing
+    // write gate. allowWrite: true diverges from the default so the
+    // boolean must flip.
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler({ allowWrite: true }, session);
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: { allowWrite: boolean };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.allowWrite).toBe(true);
+  });
+
+  it("is idempotent — repeated calls return identical shapes without mutating state", async () => {
+    const tool = findTool("session_inspect");
+    const session = new McpSession();
+    const a = await tool.handler({}, session);
+    const b = await tool.handler({}, session);
+    expect(a.content[0].text).toBe(b.content[0].text);
+  });
+});
+
 describe("MCP tool: coverage", () => {
   it("returns coverage data", async () => {
     const tool = findTool("coverage");

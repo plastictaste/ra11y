@@ -36,6 +36,7 @@ import { scanDiffTool } from "./tool-scan-diff.ts";
 import { scanFileTool } from "./tool-scan-file.ts";
 import { scanProcessTool } from "./tool-scan-process.ts";
 import { scanProjectTool } from "./tool-scan-project.ts";
+import { sessionInspectTool } from "./tool-session-inspect.ts";
 import { suggestFixTool } from "./tool-suggest-fix.ts";
 import { suppressTool } from "./tool-suppress.ts";
 import { verdictCandidateTool } from "./tool-verdict-candidate.ts";
@@ -463,4 +464,5 @@ export const MCP_TOOLS: readonly McpTool[] = [
   proposeConfigTool,
   proposeBaselineTool,
   sessionConfigureTool,
+  sessionInspectTool,
 ];
