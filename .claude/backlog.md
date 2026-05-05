@@ -640,7 +640,6 @@ Response shape / cross-surface drift / honesty:
 
 Tool-orchestration / new tool surfaces:
 
-- [ ] **V1-TOOL-FINDINGS-BY-RULE** `scan_project` paginates by file; an agent triaging "all 169 `aria/expanded-on-disclosure` findings" must page 110 files. Add `findings_by_rule({ruleId, cwd})` that returns just the findings for one rule across the project. Replaces 22 paginated calls with one. Pairs with V1-CROSS-FILE-ROLLUP-PRIMITIVE.
 - [ ] **V1-TOOL-AUDIT-RULE-COVERAGE** No tool surfaces "rule X did not fire on file Y, but heuristic predicates suggest it should have." The only way to discover an FN is to manually inspect `perRuleCoverage` and reason about it. Add `audit_rule_coverage({ruleId, file})` returning `{fired: false, eligibleByExtension: true, predicateMissed: true, hint: "trigger requires static-text child; file contains Liquid expression"}`.
 
 Catalog-scale perf / scoping:
