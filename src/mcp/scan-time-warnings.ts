@@ -57,6 +57,10 @@ import {
 } from "./build-artifacts.ts";
 import { type BulkCatalogDetection, detectBulkCatalog } from "./bulk-catalog.ts";
 import {
+  type DynamicContentContainerEntry,
+  detectDynamicContentContainers,
+} from "./dynamic-content-container.ts";
+import {
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   type LinkedStylesheetsUnresolvedForContrast,
@@ -253,6 +257,7 @@ interface DerivedBuildArtifactSignals {
   }[];
   readonly linkedStylesheetsUnresolvedForContrast: LinkedStylesheetsUnresolvedForContrast;
   readonly parserBailedJsTsxRouteFiles: readonly string[];
+  readonly dynamicContentContainerEntries: readonly DynamicContentContainerEntry[];
 }
 
 /**
@@ -409,6 +414,19 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     findingBearingPaths,
   );
 
+  // Detect canonical vanilla-JS demo shell shapes — body has ≤3
+  // non-script visible children, contains an empty `<div id>` (or
+  // landmark-tagged equivalent), and has a sibling `<script src>`
+  // referencing an external JS file. Drives
+  // `dynamic_content_container_detected` per AI-first doctrine
+  // "Zero-output success is ambiguous failure": without this code,
+  // a runtime-render shell page returns zero findings and reads as
+  // "clean page" when the truthful answer is "static scan cannot
+  // evaluate runtime-generated DOM." The detector is pure over the
+  // parsed-file list; the warnings module fires the code when the
+  // list is non-empty.
+  const dynamicContentContainerEntries = detectDynamicContentContainers(inputs.parsedFiles);
+
   return {
     buildArtifactEntries,
     buildArtifactsMetaField,
@@ -427,6 +445,7 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     jsInnerHtmlFileSamples,
     linkedStylesheetsUnresolvedForContrast,
     parserBailedJsTsxRouteFiles,
+    dynamicContentContainerEntries,
   };
 }
 
@@ -662,6 +681,9 @@ function buildWarningsFieldInputs(
     ...(derived.parserBailedJsTsxRouteFiles.length === 0
       ? {}
       : { parserBailedJsTsxRouteFiles: derived.parserBailedJsTsxRouteFiles }),
+    ...(derived.dynamicContentContainerEntries.length === 0
+      ? {}
+      : { dynamicContentContainerEntries: derived.dynamicContentContainerEntries }),
     ...uniformlyHighInput(inputs.perRuleCoverageUniformlyHighWithParseErrors),
     ...scanFileParserBailInput(inputs.scanFileParserBailNoFindings),
   };

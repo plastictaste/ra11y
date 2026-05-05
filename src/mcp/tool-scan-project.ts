@@ -48,6 +48,7 @@ import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-pro
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
+import { detectDynamicContentContainers } from "./dynamic-content-container.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
@@ -1155,6 +1156,16 @@ function buildBaseWarningsForScanProject(args: {
     parsedFiles,
     formatted.files,
   );
+  // Detect canonical vanilla-JS demo shell shapes — body has ≤3
+  // non-script visible children, contains an empty `<div id>` (or
+  // landmark-tagged equivalent), and has a sibling `<script src>`
+  // referencing an external JS file. Drives
+  // `dynamic_content_container_detected` per AI-first doctrine
+  // "Zero-output success is ambiguous failure": without this code, a
+  // runtime-render shell page returns zero findings and reads as
+  // "clean page" when the truthful answer is "static scan cannot
+  // evaluate runtime-generated DOM."
+  const dynamicContentContainerEntries = detectDynamicContentContainers(parsedFiles);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -1238,6 +1249,15 @@ function buildBaseWarningsForScanProject(args: {
     // warning predicate drops conservatively per the doctrine bullet
     // "Empty `warningsDetails.<code>: {}` is dishonest."
     ...(parserBailedJsTsxRouteFiles.length === 0 ? {} : { parserBailedJsTsxRouteFiles }),
+    // Surface the runtime-render-shell shape when the detector
+    // matched at least one HTML page. Drives
+    // `dynamic_content_container_detected` and its
+    // `warningsDetails.<code>.files` payload. Conditional-spread per
+    // present-when-meaningful: empty list omits the field so the
+    // warning predicate drops conservatively (no payload, no code).
+    ...(dynamicContentContainerEntries.length === 0
+      ? {}
+      : { dynamicContentContainerEntries }),
     // pre-computed cross-check for
     // `coverage_confidence_uniformly_high_with_parse_errors`. The
     // warning fires only when this boolean is `true` AND

@@ -816,7 +816,33 @@ export type ScanWarningCode =
   // `{ fileCount, files: [{ path, propNames, matchCount }], propNames }`
   // so an agent has the load-bearing pivot (which docs files, which prop
   // names appeared) in one read.
-  | "jsx_code_demo_prop_parsed_as_live_dom";
+  | "jsx_code_demo_prop_parsed_as_live_dom"
+  // At least one scanned HTML page matches the canonical vanilla-JS
+  // demo shell shape: body has ≤3 non-script visible children AND
+  // contains an empty `<div id="...">` (or empty `<main id>` /
+  // `<section id>` / `<article id>`) AND has a sibling
+  // `<script src="...">` referencing an external JS file. Without this
+  // code, a demo page where every interactive control is built at
+  // runtime by the script (canonical shape: `<div id="buttons"></div>` +
+  // `<script src="script.js"></script>`) returns zero findings and
+  // reads as "clean page" when the truthful answer is "static scan
+  // cannot evaluate runtime-generated DOM" — the canonical
+  // "Zero-output success is ambiguous failure" shape one layer deeper
+  // than `scanned_zero_files` (discovery returned files; the files
+  // are structurally runtime-rendered shells). Per AI-first doctrine
+  // "Zero-output success is ambiguous failure" the warning channel
+  // surfaces the substrate so an agent can route a follow-up at the
+  // runtime layer (browser-driven probe, manual review of the cited
+  // script(s)) rather than concluding "no findings, clean codebase."
+  // Paired payload: `warningsDetails.dynamic_content_container_detected`
+  // carries `{ files: [{ path, bodyChildCount, emptyContainerIds,
+  // scriptSources }], fileCount }` — the agent reads the per-file
+  // pivot in one read without descending into individual file
+  // contents to re-derive the shell shape. Distinct from the runtime-
+  // mutation-on-populated-DOM axis (which fires on a page with
+  // authored content the script then mutates); this code names the
+  // never-populated-at-parse-time axis specifically.
+  | "dynamic_content_container_detected";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -1360,6 +1386,32 @@ export interface WarningInputs {
     readonly naturalParser?: string;
     readonly evidence: "non_jsx_in_tsx_route" | "parse_errors";
   };
+  /**
+   * caller-supplied list of per-file evidence records produced by
+   * {@link import("./dynamic-content-container.ts").detectDynamicContentContainers}.
+   * Each entry names a scanned HTML file matching the canonical
+   * runtime-render shell shape: body has ≤3 non-script visible
+   * children AND contains an empty `<div id>` (or other layout/
+   * landmark mount-point candidate) AND has a sibling
+   * `<script src="...">` referencing an external JS file. Drives the
+   * `dynamic_content_container_detected` warning code AND its paired
+   * `warningsDetails` payload.
+   *
+   * The detector lives at the assembly seam so this module stays pure
+   * over its inputs — the predicate walks parsed HTML ASTs and returns
+   * the deterministic per-file evidence shape directly. Pass an empty
+   * list (or omit) when no scanned file matched; the warning code
+   * drops conservatively in that case per the AI-first doctrine
+   * "Empty `warningsDetails.<code>: {}` is dishonest" — the predicate
+   * gate on a non-empty list ensures the payload is populated whenever
+   * the warning fires.
+   */
+  readonly dynamicContentContainerEntries?: readonly {
+    readonly path: string;
+    readonly bodyChildCount: number;
+    readonly emptyContainerIds: readonly string[];
+    readonly scriptSources: readonly string[];
+  }[];
 }
 
 // MARKER_PROBE_002
@@ -2842,6 +2894,49 @@ export interface ScanWarningDetails {
     readonly propNames: readonly string[];
   };
   /**
+   * Payload for `dynamic_content_container_detected`. Carries the
+   * per-file evidence the predicate fired on — body-child count, the
+   * empty-mount-point id list, and the external-script src list — so
+   * the agent reads the scan-shell shape directly off the warning
+   * channel without re-deriving the predicate from the file contents.
+   *
+   * - `fileCount` — total HTML pages in the scan that matched the
+   *   conjunction. Always carries the full count (no cap) so the
+   *   scalar reads honestly off the warning channel.
+   * - `files` — sorted-ascending per-file evidence records:
+   *     - `path` — absolute path to the matching HTML file.
+   *     - `bodyChildCount` — number of non-script visible children
+   *       directly under `<body>` (always ≤ 3 — predicate gate).
+   *     - `emptyContainerIds` — sorted-ascending, de-duplicated list
+   *       of `id` values from the empty mount-point candidates the
+   *       predicate matched (`<div id>` / `<main id>` / `<section id>` /
+   *       `<article id>`). Always carries at least one entry per
+   *       record.
+   *     - `scriptSources` — sorted-ascending, de-duplicated list of
+   *       `src` values from the external `<script src>` siblings.
+   *       Always carries at least one entry per record.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires. The predicate
+   * gate at the call site ensures the payload is non-empty before the
+   * warning code is emitted, so the wire never carries the empty
+   * `{}` shape. Mirrors the surface contract of
+   * `linked_stylesheet_local_unresolved` (per-file actionable
+   * evidence with deterministic sort) and
+   * `jsx_code_demo_prop_parsed_as_live_dom` (per-file mount-point
+   * evidence) — the agent reads each one with the same shape
+   * vocabulary.
+   */
+  readonly dynamic_content_container_detected?: {
+    readonly fileCount: number;
+    readonly files: readonly {
+      readonly path: string;
+      readonly bodyChildCount: number;
+      readonly emptyContainerIds: readonly string[];
+      readonly scriptSources: readonly string[];
+    }[];
+  };
+  /**
    * Payload for `linked_stylesheet_local_unresolved`. Carries the
    * relative-path-href subset of the unresolved-link tally — the
    * actionable bucket the agent can pull into scope via
@@ -3165,6 +3260,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "erb_islands_unrendered",
   "astro_islands_unrendered",
   "jsx_code_demo_prop_parsed_as_live_dom",
+  "dynamic_content_container_detected",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3612,6 +3708,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   if (hasCodeDemoPropMatches(inputs.codeDemoPropMatches)) {
     out.push("jsx_code_demo_prop_parsed_as_live_dom");
   }
+  // Dynamic-content-container shell shape
+  // (`dynamic_content_container_detected`). Per AI-first doctrine
+  // "Zero-output success is ambiguous failure" the warning channel
+  // surfaces the substrate when an HTML page is structurally a
+  // runtime-render shell (empty `<div id>` mount + sibling external
+  // `<script src>`); without this code, a page where every interactive
+  // control is built at runtime reads as a clean scan when the truthful
+  // answer is "static scan cannot evaluate runtime-generated DOM."
+  // The predicate detector lives at the assembly seam
+  // (`./dynamic-content-container.ts`) so this module stays pure over
+  // its inputs — the call site materializes the per-file evidence list
+  // and the warnings module fires the code when the list is non-empty.
+  if (hasDynamicContentContainerEntries(inputs.dynamicContentContainerEntries)) {
+    out.push("dynamic_content_container_detected");
+  }
   return out;
 }
 
@@ -3625,6 +3736,22 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  */
 function hasCodeDemoPropMatches(matches: WarningInputs["codeDemoPropMatches"]): boolean {
   return matches !== undefined && matches.size > 0;
+}
+
+/**
+ * Predicate for `dynamic_content_container_detected`. Returns `true`
+ * when the caller-supplied per-file evidence list carries at least
+ * one entry — empty or undefined drops conservatively per AI-first
+ * doctrine "Empty `warningsDetails.<code>: {}` is dishonest." The
+ * shell-shape predicate (body child shape, empty mount-point, sibling
+ * external script) lives at the call site
+ * (`detectDynamicContentContainers` in `./dynamic-content-container.ts`);
+ * this module stays pure over its inputs.
+ */
+function hasDynamicContentContainerEntries(
+  entries: WarningInputs["dynamicContentContainerEntries"],
+): boolean {
+  return entries !== undefined && entries.length > 0;
 }
 
 /**
@@ -4446,6 +4573,15 @@ type ScanMetaWarningArgs = {
    * other tools leave it undefined.
    */
   readonly scanFileParserBailNoFindings?: WarningInputs["scanFileParserBailNoFindings"];
+  /**
+   * Pass-through for the per-file evidence list that drives
+   * `dynamic_content_container_detected`. See
+   * {@link WarningInputs.dynamicContentContainerEntries} for the contract.
+   * The detector runs at the assembly seam (`detectDynamicContentContainers`
+   * in `./dynamic-content-container.ts`) so this module stays pure over
+   * its inputs.
+   */
+  readonly dynamicContentContainerEntries?: WarningInputs["dynamicContentContainerEntries"];
 };
 
 /**
@@ -4489,6 +4625,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "parserBailedJsTsxRouteFiles",
   "perRuleCoverageUniformlyHighWithParseErrors",
   "scanFileParserBailNoFindings",
+  "dynamicContentContainerEntries",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**
@@ -4652,6 +4789,11 @@ function buildScanWarningDetailsDispatch(
     {
       code: "jsx_code_demo_prop_parsed_as_live_dom",
       summarize: () => summarizeJsxCodeDemoPropParsedAsLiveDom(inputs.codeDemoPropMatches),
+    },
+    {
+      code: "dynamic_content_container_detected",
+      summarize: () =>
+        summarizeDynamicContentContainerDetected(inputs.dynamicContentContainerEntries),
     },
     ...linkedStylesheetDispatchRows(inputs),
     {
@@ -5254,6 +5396,49 @@ function summarizeJsxCodeDemoPropParsedAsLiveDom(
     fileCount,
     files: trimmed,
     propNames: [...corpusPropNames].sort(),
+  };
+}
+
+/**
+ * Hard cap on the number of per-file evidence records surfaced on
+ * `warningsDetails.dynamic_content_container_detected.files`. Mirrors
+ * {@link CODE_DEMO_PROP_FILES_CAP} — twenty entries are enough for an
+ * agent to see whether the runtime-render shells cluster by directory
+ * (every `examples/<demo>/index.html` matches the canonical shape) or
+ * are heterogeneous one-offs without re-reading every cited file.
+ * `fileCount` carries the authoritative scalar at every wire shape,
+ * so the cap is a wire-shape concern only.
+ */
+const DYNAMIC_CONTENT_CONTAINER_FILES_CAP = 20;
+
+/**
+ * Builds the `dynamic_content_container_detected` payload from the
+ * caller-supplied per-file evidence list. Returns `undefined` when the
+ * list is absent or empty so the dispatch table conditional-spreads
+ * the entry away — the warning code's predicate fires off the same
+ * list, so the payload-and-code never disagree (per AI-first doctrine
+ * "Empty `warningsDetails.<code>: {}` is dishonest").
+ *
+ * Per-file records arrive sorted-ascending by path from the detector;
+ * the summarizer re-sorts defensively (cheap on a presorted array) so
+ * the wire shape stays deterministic regardless of upstream order.
+ * `fileCount` is the authoritative count (distinct from `files.length`
+ * only when the cap trims).
+ */
+function summarizeDynamicContentContainerDetected(
+  entries: WarningInputs["dynamicContentContainerEntries"],
+): NonNullable<ScanWarningDetails["dynamic_content_container_detected"]> | undefined {
+  if (entries === undefined || entries.length === 0) return undefined;
+  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const trimmed = sorted.slice(0, DYNAMIC_CONTENT_CONTAINER_FILES_CAP);
+  return {
+    fileCount: entries.length,
+    files: trimmed.map((e) => ({
+      path: e.path,
+      bodyChildCount: e.bodyChildCount,
+      emptyContainerIds: e.emptyContainerIds,
+      scriptSources: e.scriptSources,
+    })),
   };
 }
 
