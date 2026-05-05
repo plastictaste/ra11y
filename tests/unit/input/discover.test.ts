@@ -37,6 +37,19 @@ function write(path: string, content = "// noop\n"): void {
   writeFileSync(path, content);
 }
 
+/**
+ * Sums the values of a per-extension count record. Used by the
+ * accounting invariant test — kept inline so the test harness can
+ * read the assertion ("parsed + skipped + excludedByPattern +
+ * sourcemap = raw walker count") in one place without a side trip
+ * to a utility module.
+ */
+function sumValues(counts: Readonly<Record<string, number>>): number {
+  let total = 0;
+  for (const value of Object.values(counts)) total += value;
+  return total;
+}
+
 describe("discoverFiles .gitignore walk-up", () => {
   let dir: string;
 
@@ -304,6 +317,127 @@ describe("discoverFilesWithDiagnostics", () => {
 
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
+    // The two pattern-rejected parseable files (.ts in __mocks__,
+    // .tsx via gitignore) DO surface under the dedicated channel —
+    // closing the per-extension accounting axis without polluting the
+    // "we never had a parser for this" surface.
+    expect(result.diagnostics.excludedByPatternByExtension).toEqual({
+      ".ts": 1,
+      ".tsx": 1,
+    });
+  });
+
+  it("counts parseable files filtered by gitignore under excludedByPatternByExtension", async () => {
+    // Closes the per-extension accounting axis exposed by V1-FILES-BY-
+    // EXTENSION-GROUND-TRUTH-UNDERCOUNT: when `meta.filesByExtension`
+    // undercounts ground-truth file totals because a `.gitignore`
+    // pattern silently dropped parseable-extension files, the agent
+    // reads the deficit as a parser-routing bug; with this channel,
+    // the agent reads "parsed + excludedByPattern = ground truth."
+    //
+    // Note: the test fixture uses a directory name that is NOT in
+    // `DEFAULT_IGNORED_DIRS` (`generated/`, not `dist/` or `build/`),
+    // because `DEFAULT_IGNORED_DIRS` is checked at the entry-name
+    // level before gitignore matters. `dist/` etc. land in
+    // `defaultExcludedArtifactPaths` instead — a separate
+    // already-surfaced channel.
+    markGitRoot(dir);
+    write(join(dir, ".gitignore"), "generated/\n");
+    write(join(dir, "src", "page.css"));
+    write(join(dir, "src", "app.js"));
+    write(join(dir, "generated", "compiled.css"));
+    write(join(dir, "generated", "compiled.js"));
+    write(join(dir, "generated", "deeper", "extra.css"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.excludedByPatternByExtension).toEqual({
+      ".css": 2,
+      ".js": 1,
+    });
+  });
+
+  it("counts user-excluded parseable files under excludedByPatternByExtension", async () => {
+    // The user's `excludes` array is a separate channel from
+    // `.gitignore`, but the silent-drop axis is the same — a parseable
+    // file that matches a user exclude was never going to reach the
+    // parser, and the agent needs to see it in the accounting bucket.
+    write(join(dir, "src", "page.tsx"));
+    write(join(dir, "third-party", "third.tsx"));
+    write(join(dir, "third-party", "third.css"));
+    write(join(dir, "src", "page.css"));
+
+    const result = await discoverFilesWithDiagnostics([dir], {
+      excludes: ["third-party/**"],
+    });
+    expect(result.diagnostics.excludedByPatternByExtension).toEqual({
+      ".css": 1,
+      ".tsx": 1,
+    });
+  });
+
+  it("returns empty excludedByPatternByExtension when no parseable files are pattern-rejected", async () => {
+    // Present-when-meaningful: the discovery layer always populates
+    // the field with an empty record so downstream consumers can
+    // unconditionally key into it; the surfacing layer
+    // (`analysis-coverage.ts`) is what gates on emptiness for the
+    // wire shape. The behavior is symmetric with `skippedByExtension`.
+    write(join(dir, "page.tsx"));
+    write(join(dir, "styles.css"));
+
+    const result = await discoverFilesWithDiagnostics([dir]);
+    expect(result.diagnostics.excludedByPatternByExtension).toEqual({});
+  });
+
+  it("closes the per-extension accounting invariant on a corpus with mixed drop axes", async () => {
+    // Invariant: parsed + skipped + excludedByPattern + sourcemap
+    // equals the raw walker count (under the dir-ignore set) — the
+    // load-bearing assertion the V1-FILES-BY-EXTENSION-GROUND-TRUTH-
+    // UNDERCOUNT backlog item names. Hits every drop axis the agent
+    // should see for a parseable extension under directories the
+    // walker actually descends into (i.e. not in `DEFAULT_IGNORED_DIRS`).
+    // `dist/` / `build/` / `node_modules/` etc. are intentionally
+    // omitted: those are dir-level skips already surfaced through
+    // `defaultExcludedArtifactPaths` (build artifacts) or are
+    // universal caches every consumer expects unsurfaced.
+    //
+    //   - parsed: src/page.css, src/app.tsx
+    //   - skipped (non-parseable ext): src/note.txt
+    //   - excludedByPattern (gitignore): generated/compiled.css, generated/big.tsx
+    //   - excludedByPattern (DEFAULT_EXCLUDED_PATTERNS): __mocks__/fs.ts
+    //   - excludedByPattern (user exclude): third-party/lib.tsx
+    //   - sourcemap: assets/app.css.map
+    markGitRoot(dir);
+    write(join(dir, ".gitignore"), "generated/\n");
+    write(join(dir, "src", "page.css"));
+    write(join(dir, "src", "app.tsx"));
+    write(join(dir, "src", "note.txt"));
+    write(join(dir, "generated", "compiled.css"));
+    write(join(dir, "generated", "big.tsx"));
+    write(join(dir, "__mocks__", "fs.ts"));
+    write(join(dir, "third-party", "lib.tsx"));
+    write(join(dir, "assets", "app.css.map"));
+
+    const result = await discoverFilesWithDiagnostics([dir], {
+      excludes: ["third-party/**"],
+    });
+
+    // Closure: the four surfaced buckets sum to the raw walker count
+    // under the dir-ignore set. We compute by hand here because the
+    // `DEFAULT_IGNORED_DIRS` predicate also lives in the walker, but
+    // the fixture deliberately uses directory names outside that set
+    // so every visited file lands in exactly one of the four buckets.
+    const parsed = result.files.length;
+    const skipped = sumValues(result.diagnostics.skippedByExtension);
+    const excludedByPattern = sumValues(result.diagnostics.excludedByPatternByExtension);
+    const sourcemap = result.diagnostics.sourcemapFiles.length;
+
+    expect(parsed).toBe(2);
+    expect(skipped).toBe(1);
+    expect(excludedByPattern).toBe(4);
+    expect(sourcemap).toBe(1);
+    // Invariant: every file the walker considered under the dir-ignore
+    // set lands in exactly one of the four buckets.
+    expect(parsed + skipped + excludedByPattern + sourcemap).toBe(8);
   });
 
   it("includes test/spec/story/dev-tools files in discovery by default", async () => {

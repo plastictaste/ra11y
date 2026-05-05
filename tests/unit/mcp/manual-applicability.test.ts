@@ -151,6 +151,7 @@ describe("detectApplicability", () => {
   it("ignores non-content extensions in skippedByExtension", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 50, ".astro": 10, ".vue": 5 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -161,6 +162,7 @@ describe("detectApplicability", () => {
   it("picks up content extensions with non-zero counts", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307, ".scss": 50, ".rst": 2 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -171,6 +173,7 @@ describe("detectApplicability", () => {
   it("skips content extensions with zero counts", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 0, ".markdown": 4 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -188,6 +191,7 @@ describe("detectApplicability", () => {
         ".adoc": 1,
         ".asciidoc": 1,
       },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -228,6 +232,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("appends a parse-coverage caveat when content extensions were skipped", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 307 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -241,6 +246,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("lists multiple skipped content extensions in sorted order", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".rst": 2, ".md": 10, ".markdown": 5 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -253,6 +259,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("uses singular 'file' when exactly one content file was skipped", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 1 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -265,6 +272,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("covers every MEDIA_ONLY criterion with the caveat", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 42 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -283,6 +291,7 @@ describe("irrelevanceReason — parse-coverage caveat", () => {
   it("does not append a caveat when the applicability's skipped map is empty", () => {
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".scss": 100 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
@@ -346,6 +355,7 @@ describe("isLikelyIrrelevant stays stable across caveat rollout", () => {
     // enrichment rather than a bucket demotion.
     const diagnostics: DiscoveryDiagnostics = {
       skippedByExtension: { ".md": 300 },
+      excludedByPatternByExtension: {},
       sourcemapFiles: [],
       defaultExcludedArtifactPaths: [],
     };
