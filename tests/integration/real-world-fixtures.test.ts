@@ -11,6 +11,10 @@
  * `tests/fixtures/real-world/runner.ts`; this file's only job is to
  * drive the harness and turn per-expectation results into test-
  * framework assertions with fixture-scoped messages.
+ *
+ * Fixtures with `assertions.todo === true` are registered as
+ * `it.todo(...)` — they are intentionally RED (capturing a known bug
+ * before the upstream `src/` fix lands) and must not block CI.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -34,6 +38,16 @@ describe("real-world fixtures", () => {
   for (const fixture of fixtures) {
     it(fixture.id, async () => {
       const assertions = await loadAssertions(fixture);
+
+      // Fixtures marked `todo: true` capture a known bug before the
+      // upstream `src/` fix lands. Register them as pending so CI
+      // does not block, but the test is recorded as "to do" rather
+      // than silently skipped. Once the fix lands, remove `todo`.
+      if (assertions.todo === true) {
+        it.todo(fixture.id);
+        return;
+      }
+
       const ctx = await loadAndScanFixture(fixture, assertions.toolInput ?? {});
       const results = evaluateExpectations(ctx, assertions.expectations);
 

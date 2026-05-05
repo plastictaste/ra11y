@@ -188,6 +188,43 @@ export type FixtureExpectation =
       readonly predicate: MetaFieldLengthPredicate;
     }
   /**
+   * Assert that every `meta.perRuleCoverage` entry whose `ruleId`
+   * matches has `coverageConfidence` equal to `expected`. Pass
+   * `ruleId: "*"` to assert ALL rows in the array. Requires
+   * `toolInput.verboseMeta: true` on the fixture so the harness
+   * populates the verbose `meta.perRuleCoverage[]` array.
+   *
+   * When `reasonIncludes` is set, every matching row must also carry a
+   * `coverageConfidenceReason` containing the substring. Use this to pin
+   * both the downgrade AND the structured cause code in one assertion.
+   *
+   * Failure modes (distinguished in the message):
+   *   - `meta.perRuleCoverage` absent or not an array — likely
+   *     `verboseMeta` not set on `toolInput`
+   *   - no rows match `ruleId` — ruleId typo or rule not registered
+   *   - at least one matching row has the wrong `coverageConfidence`
+   *   - `reasonIncludes` set but matching row's
+   *     `coverageConfidenceReason` absent or does not contain the
+   *     substring
+   */
+  | {
+      readonly kind: "per-rule-coverage-confidence";
+      /**
+       * Rule ID to match. Use `"*"` to assert ALL rows in
+       * `meta.perRuleCoverage[]`. Use a specific rule ID when only one
+       * rule's confidence is under test.
+       */
+      readonly ruleId: string;
+      /** Expected `coverageConfidence` value on every matching row. */
+      readonly expected: "high" | "medium" | "low";
+      /**
+       * When set, every matching row's `coverageConfidenceReason` must
+       * contain this substring. Omit when the invariant is only about
+       * the confidence level, not the cause code.
+       */
+      readonly reasonIncludes?: string;
+    }
+  /**
    * Assert that `collectBuildArtifacts` does NOT label the given fixture
    * source path as a build artifact. Guards `src/mcp/build-artifacts.ts`
    * doctrine — the `scannedBuildArtifacts` label must be provable from
@@ -276,6 +313,16 @@ export interface FixtureAssertions {
   readonly toolInput?: FixtureToolInput;
   /** The actual expectations being asserted. */
   readonly expectations: readonly FixtureExpectation[];
+  /**
+   * When `true`, the integration test runner marks this fixture as
+   * `it.todo()` — pending rather than failing. Use this ONLY for
+   * fixtures that are intentionally RED: they capture a known bug
+   * before the upstream `src/` fix lands. A fixture marked `todo`
+   * is expected to fail; the downstream fix commit removes this flag
+   * so the test turns green permanently. Never set `todo: true` on a
+   * fixture whose assertions currently pass.
+   */
+  readonly todo?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +709,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalMetaField(fixtureId, exp, ctx);
     case "meta-field-length":
       return evalMetaFieldLength(fixtureId, exp, ctx);
+    case "per-rule-coverage-confidence":
+      return evalPerRuleCoverageConfidence(fixtureId, exp, ctx);
     case "no-build-artifact-label":
       return evalNoBuildArtifactLabel(fixtureId, exp, ctx);
     default: {
@@ -1245,6 +1294,124 @@ function formatLengthBounds(pred: MetaFieldLengthPredicate): string {
   return parts.length > 0 ? parts.join(", ") : "(no bounds specified)";
 }
 
+// ─── per-rule-coverage-confidence ───────────────────────────────────────────
+
+/**
+ * Asserts that every `meta.perRuleCoverage` row matching `ruleId`
+ * has `coverageConfidence === expected`. Requires `verboseMeta: true`
+ * on the fixture's `toolInput` so the harness populates the verbose
+ * `meta.perRuleCoverage[]` array.
+ *
+ * `ruleId: "*"` matches ALL rows in the array — use this to assert
+ * a corpus-wide invariant (e.g. "every rule on a bailed-route scan
+ * is at non-'high' confidence").
+ *
+ * Failure modes distinguished in the message:
+ *   - `meta.perRuleCoverage` absent or not an array — likely
+ *     `verboseMeta` not set
+ *   - no rows matched `ruleId` — ruleId typo or rule not registered
+ *   - at least one matching row has unexpected `coverageConfidence`
+ *   - `reasonIncludes` set but the matching row's
+ *     `coverageConfidenceReason` is absent or does not contain the
+ *     substring
+ */
+function evalPerRuleCoverageConfidence(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  ctx: FixtureScanContext,
+): ExpectationResult {
+  const { found, value } = lookupPath(ctx.formatted.meta, ["perRuleCoverage"]);
+  if (!(found && Array.isArray(value))) {
+    return {
+      expectation: exp,
+      pass: false,
+      message:
+        `real-world/${fixtureId}: per-rule-coverage-confidence requires meta.perRuleCoverage[] ` +
+        `(set toolInput.verboseMeta: true). Field was ${found ? "present but not an array" : "absent"}.`,
+    };
+  }
+  const rows = value as ReadonlyArray<Record<string, unknown>>;
+  const matched = exp.ruleId === "*" ? rows : rows.filter((r) => r["ruleId"] === exp.ruleId);
+  if (matched.length === 0) {
+    const ids = rows.map((r) => r["ruleId"]).join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message:
+        `real-world/${fixtureId}: per-rule-coverage-confidence: no rows match ruleId '${exp.ruleId}'. ` +
+        `Available ruleIds: [${ids}]`,
+    };
+  }
+  const confidenceFail = checkPerRuleCoverageConfidence(fixtureId, exp, matched);
+  if (confidenceFail !== null) return confidenceFail;
+  if (exp.reasonIncludes !== undefined) {
+    const reasonFail = checkPerRuleCoverageReason(fixtureId, exp, matched, exp.reasonIncludes);
+    if (reasonFail !== null) return reasonFail;
+  }
+  const reasonSuffix =
+    exp.reasonIncludes === undefined
+      ? ""
+      : ` with coverageConfidenceReason containing '${exp.reasonIncludes}'`;
+  return {
+    expectation: exp,
+    pass: true,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${matched.length} row(s) matching '${exp.ruleId}' all have ` +
+      `coverageConfidence='${exp.expected}'` +
+      reasonSuffix,
+  };
+}
+
+/** Returns a failure result when any matched row has wrong confidence, or null when all pass. */
+function checkPerRuleCoverageConfidence(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  matched: ReadonlyArray<Record<string, unknown>>,
+): ExpectationResult | null {
+  const bad = matched.filter((r) => r["coverageConfidence"] !== exp.expected);
+  if (bad.length === 0) return null;
+  const summary = bad
+    .slice(0, 5)
+    .map((r) => `${r["ruleId"]}:${r["coverageConfidence"]}`)
+    .join(", ");
+  const more = bad.length > 5 ? ` (and ${bad.length - 5} more)` : "";
+  return {
+    expectation: exp,
+    pass: false,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${bad.length} of ${matched.length} matching rows have ` +
+      `coverageConfidence !== '${exp.expected}': ${summary}${more}`,
+  };
+}
+
+/** Returns a failure result when any matched row has missing/wrong reason, or null when all pass. */
+function checkPerRuleCoverageReason(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  matched: ReadonlyArray<Record<string, unknown>>,
+  reasonIncludes: string,
+): ExpectationResult | null {
+  const bad = matched.filter((r) => {
+    const reason = r["coverageConfidenceReason"];
+    return typeof reason !== "string" || !reason.includes(reasonIncludes);
+  });
+  if (bad.length === 0) return null;
+  const summary = bad
+    .slice(0, 5)
+    .map((r) => `${r["ruleId"]}:${JSON.stringify(r["coverageConfidenceReason"])}`)
+    .join(", ");
+  const more = bad.length > 5 ? ` (and ${bad.length - 5} more)` : "";
+  return {
+    expectation: exp,
+    pass: false,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${bad.length} of ${matched.length} matching rows have ` +
+      `coverageConfidenceReason not containing '${reasonIncludes}': ${summary}${more}`,
+  };
+}
 // ─── no-build-artifact-label ────────────────────────────────────────────────
 
 /**
