@@ -82,9 +82,92 @@ const TEMPLATE_PAGE_CONTENT = [
   "<body><h1>Sample Page</h1>",
   '<video controls src="movie.mp4"></video>',
   '<audio controls src="track.mp3"></audio>',
-  "<form><input type=\"text\" name=\"q\" /></form>",
+  '<form><input type="text" name="q" /></form>',
   "</body></html>",
 ].join("\n");
+
+/**
+ * Seeds N sibling sub-directories, each carrying an identical copy of
+ * the templated page so the engine emits N copies of every per-
+ * criterion candidate at the same source line.
+ */
+function seedTemplatedPages(dir: string, copies: number): void {
+  for (let i = 0; i < copies; i += 1) {
+    const sub = join(dir, `site-${String(i).padStart(2, "0")}`);
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
+  }
+}
+
+async function runChecklist(dir: string): Promise<ChecklistEnvelope> {
+  const tool = findTool("checklist");
+  const session = new McpSession();
+  const result = await tool.handler({ cwd: dir }, session);
+  expect(result.isError).toBeUndefined();
+  return parseEnvelope(result.content[0]?.text ?? "{}");
+}
+
+/**
+ * Walks every checklist row across `items` AND `likelyIrrelevant` —
+ * the regression appeared on `likelyIrrelevant` rows when the
+ * deterministic "no `<video>` / `<audio>` parsed" predicate didn't
+ * fire, but the collapse must apply uniformly on any surface that
+ * carries per-criterion candidate fans.
+ */
+function collectAllItems(data: ChecklistEnvelope): readonly ChecklistItem[] {
+  return [...(data.items ?? []), ...(data.likelyIrrelevant ?? [])];
+}
+
+/**
+ * Asserts at least one candidate row landed on the templated page and
+ * carries the collapse signal with the expected shape (counts in range,
+ * sample paths capped, canonical path == first sample).
+ */
+function expectCollapseSignalPresent(allItems: readonly ChecklistItem[], copies: number): void {
+  let found = false;
+  for (const item of allItems) {
+    for (const c of item.candidates ?? []) {
+      if (c.path?.endsWith("index.html") && typeof c.occurrences === "number") {
+        found = true;
+        verifyCollapsedCandidateShape(c, copies);
+      }
+    }
+  }
+  expect(found).toBe(true);
+}
+
+function verifyCollapsedCandidateShape(c: ChecklistCandidate, copies: number): void {
+  expect(c.occurrences).toBeGreaterThan(5);
+  expect(c.occurrences ?? 0).toBeLessThanOrEqual(copies);
+  expect(c.samplePaths).toBeDefined();
+  expect((c.samplePaths ?? []).length).toBeLessThanOrEqual(5);
+  expect((c.samplePaths ?? []).length).toBeGreaterThanOrEqual(2);
+  for (const p of c.samplePaths ?? []) {
+    expect(p.endsWith("index.html")).toBe(true);
+  }
+  expect(c.samplePaths?.[0]).toBe(c.path);
+}
+
+/**
+ * Per-cohort row-count invariant: groups candidates on the templated
+ * page by `(line, reason)` so a criterion grounded on TWO genuinely
+ * different lines (e.g. `<video>` at one line + `<audio>` at another)
+ * still satisfies the invariant per cohort. Each cohort must collapse
+ * to ONE row.
+ */
+function expectAntiVolumeInvariant(allItems: readonly ChecklistItem[]): void {
+  for (const item of allItems) {
+    const cohorts = new Map<string, number>();
+    for (const c of item.candidates ?? []) {
+      if (!c.path?.endsWith("index.html")) continue;
+      const key = `${c.line}\x00${c.reason}`;
+      cohorts.set(key, (cohorts.get(key) ?? 0) + 1);
+    }
+    for (const count of cohorts.values()) {
+      expect(count).toBe(1);
+    }
+  }
+}
 
 describe("checklist tool: cross-file repeated-candidate collapse", () => {
   let dir: string;
@@ -104,73 +187,18 @@ describe("checklist tool: cross-file repeated-candidate collapse", () => {
     // copy; pre-fix the response shipped 20 separate rows per
     // criterion.
     const COPIES = 20;
-    for (let i = 0; i < COPIES; i += 1) {
-      const sub = join(dir, `site-${String(i).padStart(2, "0")}`);
-      mkdirSync(sub, { recursive: true });
-      writeFileSync(join(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
-    }
-    const tool = findTool("checklist");
-    const session = new McpSession();
-    const result = await tool.handler({ cwd: dir }, session);
-
-    expect(result.isError).toBeUndefined();
-    const data = parseEnvelope(result.content[0]?.text ?? "{}");
-
-    // Walk every checklist row across `items` AND `likelyIrrelevant`
-    // — the regression observed appeared on `likelyIrrelevant` rows
-    // when the deterministic "no <video>/<audio> parsed" predicate
-    // didn't fire, but the collapse must apply uniformly on any
-    // surface that carries per-criterion candidate fans.
-    const allItems: readonly ChecklistItem[] = [
-      ...(data.items ?? []),
-      ...(data.likelyIrrelevant ?? []),
-    ];
+    seedTemplatedPages(dir, COPIES);
+    const data = await runChecklist(dir);
+    const allItems = collectAllItems(data);
     expect(allItems.length).toBeGreaterThan(0);
 
-    // Find at least one candidate row that landed on the templated
-    // page and carries the collapse signal.
-    let foundCollapsed = false;
-    for (const item of allItems) {
-      for (const c of item.candidates ?? []) {
-        if (c.path?.endsWith("index.html") && typeof c.occurrences === "number") {
-          foundCollapsed = true;
-          expect(c.occurrences).toBeGreaterThan(5);
-          expect(c.occurrences).toBeLessThanOrEqual(COPIES);
-          expect(c.samplePaths).toBeDefined();
-          expect((c.samplePaths ?? []).length).toBeLessThanOrEqual(5);
-          expect((c.samplePaths ?? []).length).toBeGreaterThanOrEqual(2);
-          // Every sample path must point at a copy of the templated
-          // page, and the canonical `path` must equal the FIRST
-          // sample (encounter order = sort order).
-          for (const p of c.samplePaths ?? []) {
-            expect(p.endsWith("index.html")).toBe(true);
-          }
-          expect(c.samplePaths?.[0]).toBe(c.path);
-        }
-      }
-    }
-    expect(foundCollapsed).toBe(true);
-
-    // Anti-volume invariant: per criterion, the candidate row count
-    // for the templated page is now 1 (collapsed), NOT 20 (one per
-    // copy). We assert this on every criterion that carries a
-    // candidate — a single criterion shipping 20 rows would fail.
-    for (const item of allItems) {
-      // Group candidates on the templated page by `(line, reason)` so
-      // a criterion that grounded on TWO genuinely different lines
-      // (e.g. `<video>` at one line + `<audio>` at another) still
-      // satisfies the invariant per cohort. Each cohort must collapse
-      // to ONE row.
-      const cohortKey = (c: ChecklistCandidate) => `${c.line}\x00${c.reason}`;
-      const cohorts = new Map<string, number>();
-      for (const c of item.candidates ?? []) {
-        if (!c.path?.endsWith("index.html")) continue;
-        cohorts.set(cohortKey(c), (cohorts.get(cohortKey(c)) ?? 0) + 1);
-      }
-      for (const count of cohorts.values()) {
-        expect(count).toBe(1);
-      }
-    }
+    // (1) Find at least one candidate row carrying the collapse
+    // signal AND verify its shape invariants.
+    expectCollapseSignalPresent(allItems, COPIES);
+    // (2) Anti-volume invariant: per (criterion, line, reason)
+    // cohort, the surviving row count must be 1 — pre-fix this would
+    // equal `COPIES` (20).
+    expectAntiVolumeInvariant(allItems);
   });
 
   it("does NOT collapse cohorts of fewer than the threshold (preserves full evidence on small fan-outs)", async () => {

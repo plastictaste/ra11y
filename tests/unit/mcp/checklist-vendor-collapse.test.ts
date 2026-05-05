@@ -36,7 +36,12 @@ interface MinimalCandidate {
   readonly snippet?: string;
 }
 
-function makeRow(path: string, line = 4, reason = "iframe template", snippet?: string): MinimalCandidate {
+function makeRow(
+  path: string,
+  line = 4,
+  reason = "iframe template",
+  snippet?: string,
+): MinimalCandidate {
   const base = { path, line, reason } as const;
   return snippet === undefined ? base : { ...base, snippet };
 }
@@ -74,7 +79,9 @@ describe("collapseRepeatedAcrossFiles", () => {
 
   it("caps samplePaths at SAMPLE_PATHS_CAP regardless of cohort size", () => {
     expect(SAMPLE_PATHS_CAP).toBe(5);
-    const rows = Array.from({ length: 50 }, (_, i) => makeRow(`/s${String(i).padStart(2, "0")}/v.js`));
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      makeRow(`/s${String(i).padStart(2, "0")}/v.js`),
+    );
     const out = collapseRepeatedAcrossFiles(rows);
     expect(out.length).toBe(1);
     expect(out[0]?.occurrences).toBe(50);
