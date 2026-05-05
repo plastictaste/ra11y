@@ -266,9 +266,7 @@ describe("scan_file: applySingleFileScopeFilterToMeta", () => {
     const meta = {
       analysisCoverage: {
         partialParseFileCount: 1,
-        partialParseFiles: [
-          { path: SIBLING, parserAttempted: "html", reason: "Unclosed <body>" },
-        ],
+        partialParseFiles: [{ path: SIBLING, parserAttempted: "html", reason: "Unclosed <body>" }],
       },
     } as const;
     const before = JSON.stringify(meta);
