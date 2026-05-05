@@ -66,6 +66,7 @@ describe("canonicalizeValueShape", () => {
 
   it("strips template/SSG interpolation placeholders", () => {
     expect(canonicalizeValueShape("{{ duration }}s ease")).toBe("#s ease");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${...}` is the test input
     expect(canonicalizeValueShape("${duration}s linear")).toBe("#s linear");
   });
 

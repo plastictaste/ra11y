@@ -128,11 +128,7 @@ describe("checklist priority drops to 'low' on minified-vendor-no-sourcemap cand
     // Paired evidence stamp lands on every candidate so the agent reads
     // BOTH the budget signal AND the predicate-strength concession.
     expect(
-      item.candidates.every(
-        (c) =>
-          c.couldBeWrongBecause !== undefined &&
-          c.couldBeWrongBecause.includes("minified_vendor_no_sourcemap"),
-      ),
+      item.candidates.every((c) => c.couldBeWrongBecause?.includes("minified_vendor_no_sourcemap")),
     ).toBe(true);
   });
 

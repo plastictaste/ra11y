@@ -236,14 +236,14 @@ describe("detectTemplateDirectiveTarget — directive flavor coverage", () => {
     expect(ctx?.kinds).toContain("jsp-tag");
   });
 
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${...}` token is the predicate under test
   it("detects JS template literal `${x}` only when a backtick is on the line", () => {
     // String-concat the dollar-brace token so the test source can carry
     // a literal `${...}` without itself being flagged by Biome's
     // `useTemplate` lint (the test is a literal-string fixture, not a
     // template-literal example). The biome-ignore comments below mark
     // the deliberate concatenation.
-    // biome-ignore lint/style/useTemplate: deliberate literal-string fixture, not a template
-    const dollarBrace = "$" + "{name}";
+    const dollarBrace = `$${"{name}"}`;
     // biome-ignore lint/style/useTemplate: preserves the literal `${...}` token under test
     const withBacktick = "const x = `hello " + dollarBrace + "`;\n";
     // biome-ignore lint/style/useTemplate: preserves the literal `${...}` token under test
