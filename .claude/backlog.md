@@ -511,8 +511,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### suggest_fix shape contradictions
 
-- [ ] **Q15-SUGGEST-FIX-DIDYOUMEAN-FLIPFLOP-LOOP** `suggest_fix(contrast/minimum, file, line: 5)` returns `kind: "none"` with `didYouMean: [{line: 7}, {line: 7}, {line: 7}]`. `suggest_fix(...line: 7)` returns `kind: "none"` with `didYouMean: [{line: 5}, {line: 5}, {line: 5}]`. The agent oscillates indefinitely between two lines that each redirect at the other. Closure: `didYouMean` dedupes to one row per distinct line AND must not point back to the line just queried; if no actionable alternative remains, return empty `didYouMean: []`. Per AI-first doctrine "Per-finding identifiers must be addressable, not collision-prone" — `didYouMean` is the addressability fallback channel and must not produce closed loops.
-
 ### Truncation reporters disagree
 
 - [ ] **Q15-COVERAGE-METAARRAY-TRUNCATED-AS-THIRD-REPORTER** `coverage` ships top-level scalar `metaArrayTruncated: true` AND `warnings: ["response_meta_truncated"]` AND `warningsDetails.response_meta_truncated.fields: ["analysisCoverage.fragmentFiles"]` — three concurrent reporters describing one truncation event. Closure: drop the orphan top-level `metaArrayTruncated` scalar; canonical truncation reporter is the `warningsDetails.<truncation_code>` channel; if a top-level scalar is genuinely useful it must point at the warning via `seeAlso` rather than enumerate independently. Per AI-first doctrine "Truncation reporters must reconcile across warnings."
