@@ -732,28 +732,7 @@ export const coverageTool: McpTool = {
         scanned: scannedProject(cwd),
         ...analysisCoverageField,
         ...metaField,
-        // Explicitly destructure the warnings channel from the helper
-        // result instead of `...scanTime`. The helper returns four
-        // fields (`warnings`, `warningsDetails`, `buildArtifactEntries`,
-        // `buildArtifactsMetaField`, `scssUnresolvedVariableFiles`); the
-        // last three are internal helpers used by predicate evaluation
-        // and to feed the canonical `meta.scannedBuildArtifacts` slot,
-        // not wire surfaces. Pre-fix, `...warnings` (the misnamed local
-        // bound to the entire helper result) leaked all internal fields
-        // at the top level — three sibling empty containers
-        // (`buildArtifactEntries: []`, `buildArtifactsMetaField: {}`,
-        // `scssUnresolvedVariableFiles: []`) for the same conceptual
-        // "absent on this corpus" state, the canonical "Sibling fields
-        // naming the same concept must use one shape" failure mode in
-        // `docs/kb/architecture/ai-first-consumer.md`. The build-artifact
-        // shape now rides on `meta.scannedBuildArtifacts` (canonical,
-        // matches `scan_project` / `scan_file`); SCSS unresolved-
-        // variable file paths ride on
-        // `warningsDetails.scss_unresolved_variables.files[]` already.
-        ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
-        ...(scanTime.warningsDetails === undefined
-          ? {}
-          : { warningsDetails: scanTime.warningsDetails }),
+        ...selectScanTimeWireFields(scanTime),
       };
       // last-resort
       // hard-ceiling guard. After every other clip pass settled
@@ -1225,4 +1204,35 @@ function readManualWithCandidatesLen(
   if (!entry) return 0;
   const arr = entry.manualWithCandidates;
   return arr === undefined ? 0 : arr.length;
+}
+
+/**
+ * Extracts the `{ warnings, warningsDetails }` wire surface from the
+ * full {@link buildScanTimeWarnings} result. The helper returns four
+ * additional fields (`buildArtifactEntries`, `buildArtifactsMetaField`,
+ * `scssUnresolvedVariableFiles`) that are internal predicate inputs —
+ * `buildArtifactsMetaField` is lifted onto `meta.scannedBuildArtifacts`
+ * by {@link buildCoverageMetaField}, and the other two never reach the
+ * wire (the SCSS list rides on
+ * `warningsDetails.scss_unresolved_variables.files[]` already).
+ *
+ * Pre-fix, the handler spread the entire helper result, leaking three
+ * sibling empty containers at the top level for the same conceptual
+ * "absent on this corpus" state — the canonical "Sibling fields naming
+ * the same concept must use one shape" failure mode in
+ * `docs/kb/architecture/ai-first-consumer.md`. Conditional-spread per
+ * the present-when-meaningful contract — codes only appear when at
+ * least one fired.
+ */
+function selectScanTimeWireFields(scanTime: {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+}): {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+} {
+  return {
+    ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
+    ...(scanTime.warningsDetails === undefined ? {} : { warningsDetails: scanTime.warningsDetails }),
+  };
 }
