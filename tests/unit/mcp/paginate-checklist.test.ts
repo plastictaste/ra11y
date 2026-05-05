@@ -43,6 +43,11 @@ function makeItem(
     // payloads.
     priority: "high" as const,
     confidence,
+    // Always-populated `criteria` array per the cross-surface candidate
+    // shape contract (`scan_file.reviewCandidates[]` and checklist
+    // candidates ship the same field set on the same `findingId`).
+    // Mock keeps the length-1 array shape live in production.
+    criteria: [criterionId] as readonly string[],
     suppressWith: `{/* ra11y-disable ${criterionId} */}`,
   }));
   return {

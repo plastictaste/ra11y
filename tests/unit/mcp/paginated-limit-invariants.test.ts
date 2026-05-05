@@ -138,6 +138,9 @@ describe("Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE — top-level effectiveLimit surfa
           // mock matches the live shape.
           priority: "high" as const,
           confidence: "medium" as const,
+          // Always-populated `criteria` array per the cross-surface
+          // candidate-shape contract.
+          criteria: ["wcag22:2.4.5"] as readonly string[],
           suppressWith: "{/* ra11y-disable wcag22:2.4.5 */}",
         })),
       },
