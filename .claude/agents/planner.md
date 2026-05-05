@@ -54,7 +54,8 @@ The orchestrator still enforces the fanout rules at dispatch: if you emit 4 pick
      - `src/input/parsers/**` → `parser-author`
      - `src/output/formatters/**` → `formatter-author`
      - `src/types/**` or `src/engine/ast-helpers.ts` → `type-smith`
-     - `src/mcp/**`, `src/review/finders/**`, `scripts/**`, `.github/workflows/**`, `docs/adr/**`, release/demo/tag → `main-session`
+     - `src/mcp/**`, `src/review/finders/**` → `general-purpose` (worktree-isolated)
+     - `scripts/**`, `.github/workflows/**`, `docs/adr/**`, release/demo/tag → `main-session`
      - `tests/fixtures/real-world/**` → `fixture-curator`
      - `tests/**` (edge/fuzz/property) → `test-author`
      - `docs/**` (user-facing) → `doc-writer`
