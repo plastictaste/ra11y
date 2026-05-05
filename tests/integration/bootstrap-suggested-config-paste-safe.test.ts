@@ -82,9 +82,7 @@ function parseSuggestedConfig(source: string): {
   });
   const diags = result.diagnostics ?? [];
   const firstMessage =
-    diags.length === 0
-      ? null
-      : ts.flattenDiagnosticMessageText(diags[0]?.messageText ?? "", "\n");
+    diags.length === 0 ? null : ts.flattenDiagnosticMessageText(diags[0]?.messageText ?? "", "\n");
   return { diagnosticCount: diags.length, firstMessage };
 }
 
@@ -97,6 +95,40 @@ function parseSuggestedConfig(source: string): {
 function extractExcludeBody(source: string): string | null {
   const match = source.match(/exclude: \[([\s\S]*?)\n\s*\],/);
   return match === null ? null : (match[1] ?? "");
+}
+
+/**
+ * Seeds N sibling subtrees, each mixing definite-classified `.min.js`
+ * files with authored HTML pages. Used by the bulk-template-corpus
+ * sweep test so the per-test arrow stays under Biome's
+ * cyclomatic-complexity ceiling.
+ */
+async function seedMixedSubtrees(root: string, topdirs: readonly string[]): Promise<void> {
+  for (const topdir of topdirs) {
+    await mkdir(join(root, topdir), { recursive: true });
+    for (const minName of ["a.min.js", "b.min.js", "c.min.js"]) {
+      await writeFile(join(root, topdir, minName), "// min\n");
+    }
+    for (const htmlName of ["one.html", "two.html"]) {
+      await writeFile(
+        join(root, topdir, htmlName),
+        `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${htmlName}</title></head><body><p>x</p></body></html>\n`,
+      );
+    }
+  }
+}
+
+/**
+ * Asserts that none of `topdirs` shows up as a `<topdir>/**` glob in
+ * the emitted exclude body. Tolerant to the body being absent
+ * (gated entries fully stripped).
+ */
+function assertNoTopdirGlobs(suggestedConfig: string, topdirs: readonly string[]): void {
+  const excludeBody = extractExcludeBody(suggestedConfig);
+  if (excludeBody === null) return;
+  for (const topdir of topdirs) {
+    expect(excludeBody).not.toContain(`"${topdir}/**"`);
+  }
 }
 
 async function callBootstrap(dir: string): Promise<BootstrapResponseLike> {
@@ -214,27 +246,11 @@ describe("bootstrap suggestedConfig: vendor-classification gate keeps authored s
     // mixing minified vendor with authored HTML. Without the gate
     // the emitter ships `<topdir>/**` for all four, sweeping
     // ~20 authored pages. With the gate, none of them collapse.
+    const topdirs = ["templates", "snippets", "components", "examples"];
     await withScratch(async (dir) => {
-      const topdirs = ["templates", "snippets", "components", "examples"];
-      for (const topdir of topdirs) {
-        await mkdir(join(dir, topdir), { recursive: true });
-        for (const minName of ["a.min.js", "b.min.js", "c.min.js"]) {
-          await writeFile(join(dir, topdir, minName), "// min\n");
-        }
-        for (const htmlName of ["one.html", "two.html"]) {
-          await writeFile(
-            join(dir, topdir, htmlName),
-            `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${htmlName}</title></head><body><p>x</p></body></html>\n`,
-          );
-        }
-      }
+      await seedMixedSubtrees(dir, topdirs);
       const { suggestedConfig } = await callProposeConfig(dir);
-      const excludeBody = extractExcludeBody(suggestedConfig);
-      if (excludeBody !== null) {
-        for (const topdir of topdirs) {
-          expect(excludeBody).not.toContain(`"${topdir}/**"`);
-        }
-      }
+      assertNoTopdirGlobs(suggestedConfig, topdirs);
     });
   });
 

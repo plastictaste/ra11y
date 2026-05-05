@@ -254,9 +254,7 @@ export const proposeConfigTool: McpTool = {
     //      is generated" signal the agent can rely on; anything else
     //      stays itemized (definite paths) or in the commented hint
     //      block (likely paths).
-    const allArtifactPaths = new Set<string>(
-      [...definiteArtifactPaths, ...likelyArtifactPaths],
-    );
+    const allArtifactPaths = new Set<string>([...definiteArtifactPaths, ...likelyArtifactPaths]);
     const parsedFilePaths = new Set<string>(files.map((f) => f.filePath));
     const excludeGate = buildExcludeGate(
       scanReport.findingPaths,
@@ -742,7 +740,7 @@ function appendGroupExcludes(
 ): void {
   const hasFinding = gate.topdirHasFinding(topDir);
   const hasAuthored = gate.topdirHasAuthoredFile(topDir);
-  if (!hasFinding && !hasAuthored) {
+  if (!(hasFinding || hasAuthored)) {
     // Topdir is fully vendor-classified. Standard threshold-driven
     // collapse fires when the count is high enough; otherwise
     // members ride itemized.
