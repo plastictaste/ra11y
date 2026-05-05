@@ -650,7 +650,6 @@ Response shape / cross-surface drift / honesty:
 
 Tool-orchestration / new tool surfaces:
 
-- [ ] **V1-TOOL-SCAN-PROJECT-SUMMARY-MODE** Add `scan_project({summaryOnly: true})` that returns `plan + meta + topRules: [{ruleId, count}] + topFiles: [{path, count}] + filesByExtension + plan.summary` and *omits* per-file `files` array entirely. Fits under 20 KB. First-call ergonomics on bulk catalogs (templates 4043 files / 40k findings). Pairs with V1-RESPONSE-SIZE-PRE-ESTIMATOR.
 - [ ] **V1-TOOL-FINDING-BY-ID** No tool retrieves a finding by `findingId` after the scan. `suggest_fix` requires `ruleId + file + line` — but `scan_project` returns `findingId: "b0d1b34c01d1"` opaque IDs. Add `get_finding({findingId})`.
 - [ ] **V1-TOOL-FINDINGS-BY-RULE** `scan_project` paginates by file; an agent triaging "all 169 `aria/expanded-on-disclosure` findings" must page 110 files. Add `findings_by_rule({ruleId, cwd})` that returns just the findings for one rule across the project. Replaces 22 paginated calls with one. Pairs with V1-CROSS-FILE-ROLLUP-PRIMITIVE.
 - [ ] **V1-TOOL-SESSION-INSPECT** No read-only tool to retrieve current session state. After `sessionConfigure`, agents have no way to verify rule overrides, native wrappers, or excludes without making a no-op `scan` call. Add `sessionInspect()` returning the same shape `sessionConfigure.active` returns plus `rules`, `nativeWrappers`, `cwd`. Pairs with V1-SESSION-CONFIGURE-ECHO-STATE.
