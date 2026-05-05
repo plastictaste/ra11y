@@ -33,6 +33,7 @@ import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
+import { collapseRepeatedAcrossFiles } from "./checklist-vendor-collapse.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import {
@@ -373,6 +374,50 @@ interface ChecklistCandidateOut {
    * the response had already classified as vendor.
    */
   readonly scanKind?: "buildArtifact";
+  /**
+   * Number of distinct file paths whose candidates folded into this
+   * canonical row when the same `(line, reason, snippet)` fingerprint
+   * fired across more than `MIN_OCCURRENCES_TO_COLLAPSE` (= 5)
+   * distinct paths within this checklist item. The canonical row's
+   * `path` field names the lexicographically-earliest source; sibling
+   * cohort members are summarized via {@link
+   * ChecklistCandidateOut#samplePaths}.
+   *
+   * Canonical regression: a website-templates corpus with 74 sub-sites
+   * each shipping `fancybox.pack.js` produced 74 byte-identical
+   * candidate rows per criterion under `likelyIrrelevant`. The bucket
+   * label was doctrine-correct (deterministic "no `<video>`/`<audio>`
+   * parsed") but the *quantity* was not. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+   * counts are dishonest" extended to per-row volume — the agent
+   * reads the same evidence once with a count, never N copies of one
+   * line.
+   *
+   * Per AI-first doctrine "Surface, don't suppress" the row stays in
+   * the response — only the redundant per-path duplicates fold into
+   * `samplePaths`. The threshold is intentionally above 2-3 distinct
+   * vendor copies so two genuine same-line cohorts on different
+   * codebases still surface separately.
+   *
+   * Present-when-meaningful per CLAUDE.md §1: omitted on candidates
+   * that did not collapse. When present, the value is always > 5 AND
+   * paired with `samplePaths.length >= 2`.
+   */
+  readonly occurrences?: number;
+  /**
+   * Up to 5 cited file paths from the cohort that triggered the
+   * occurrence collapse — see {@link ChecklistCandidateOut#occurrences}.
+   * Listed in encounter order (matching the engine's per-`(filePath,
+   * line, column)` emit sort), so the canonical `path` field is also
+   * the first sample. The agent reads the cap as "here are 5
+   * instances; there are `occurrences` total."
+   *
+   * Present-when-meaningful per CLAUDE.md §1: omitted whenever
+   * `occurrences` is omitted; populated only when collapse fired.
+   * Never empty when present — `samplePaths.length === Math.min(
+   * distinct cohort paths, 5)` by construction.
+   */
+  readonly samplePaths?: readonly string[];
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -2146,7 +2191,22 @@ function buildChecklistItem(
     criteriaUnionByPosition,
     scanRoot,
   );
-  const mapped = partitionVendorCandidatesLast(mappedRaw, buildArtifactPaths);
+  // Cross-file repeated-candidate fold — when the same `(line, reason,
+  // snippet)` fingerprint fired on > 5 distinct file paths within this
+  // criterion (canonical case: 74 copies of `fancybox.pack.js:4` on a
+  // website-templates corpus), collapse to ONE canonical row carrying
+  // `occurrences: N` + `samplePaths: [up-to-5]`. Per AI-first doctrine
+  // "Composite headline counts are dishonest" extended to per-row
+  // volume: the agent reads the underlying evidence once with a total
+  // count rather than N near-identical rows. Runs BEFORE the vendor
+  // partition so the cohort discovery isn't perturbed by a pre-sort —
+  // the engine's `(filePath, line, column)`-asc emit order makes the
+  // first cohort member the lexicographically-earliest path, which is
+  // the canonical sample. The vendor partition then runs over the
+  // already-collapsed list (cohort representatives surface or fall
+  // last by their canonical path's vendor classification).
+  const mappedCollapsed = collapseRepeatedAcrossFiles(mappedRaw);
+  const mapped = partitionVendorCandidatesLast(mappedCollapsed, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
   // "low" confidence — by definition the scanner has no specific
