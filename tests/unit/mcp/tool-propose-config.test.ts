@@ -118,8 +118,11 @@ describe("propose_config: wrappers only", () => {
       expect(body.suggestedConfig).toContain('"Button"');
       expect(body.suggestedConfig).not.toContain("exclude:");
       // Shape invariant: array form (all names, no mappings), matching
-      // the shared buildNativeWrappersBody output.
-      expect(body.suggestedConfig).toMatch(/nativeWrappers: \[\s+"Button",\s+\],/);
+      // the shared buildNativeWrappersBody output. The final entry
+      // omits its trailing element-comma per the
+      // "Bootstrap output must be paste-safe" doctrine — only the
+      // closing `],` retains its outer object-body comma.
+      expect(body.suggestedConfig).toMatch(/nativeWrappers: \[\s+"Button"\s+\],/);
       expect(body.nextStep).toContain("1 confirmed wrapper");
     });
   });

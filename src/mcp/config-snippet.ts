@@ -19,8 +19,15 @@
  *     (link-descriptive-text, alt-text) can flow through the wrapper.
  *
  * Names / keys are sorted lexicographically so the output is stable
- * across runs. Two-space indentation matches project Biome style; each
- * list/object has a trailing comma on its final entry.
+ * across runs. Two-space indentation matches project Biome style. The
+ * final entry of each list/object body emits WITHOUT a trailing
+ * element-comma — per the "Bootstrap output must be paste-safe"
+ * doctrine bullet (`docs/kb/architecture/ai-first-consumer.md`),
+ * paste-safety is the higher bar than emitter convenience: trailing
+ * element-commas can trip downstream linters and snapshot diffs even
+ * though the TS grammar accepts them. The closing `,` after the
+ * `nativeWrappers: ...` entry stays because that comma is the
+ * parent object body's separator, not the list/object's own.
  *
  * The caller decides whether to emit the snippet at all — per CLAUDE.md
  * §1 "Ambiguous field shapes are dishonest," the response omits the
@@ -84,7 +91,15 @@ export function buildNativeWrappersBody(
 
 function buildArrayFormBody(wrappers: readonly ConfirmedWrapperForSnippet[]): readonly string[] {
   const names = [...new Set(wrappers.map((w) => w.component))].sort();
-  const lines = names.map((name) => `${INDENT}${JSON.stringify(name)},`);
+  // No trailing element-comma on the final entry — per the
+  // "Bootstrap output must be paste-safe" doctrine the snippet bears
+  // a higher correctness bar than emitter convenience. Each entry
+  // gets a comma except the last; the `],` that closes the array
+  // still carries its outer object-body comma.
+  const lines = names.map((name, idx) => {
+    const tail = idx === names.length - 1 ? "" : ",";
+    return `${INDENT}${JSON.stringify(name)}${tail}`;
+  });
   return ["nativeWrappers: [", ...lines, "],"];
 }
 
@@ -102,10 +117,13 @@ function buildObjectFormBody(wrappers: readonly ConfirmedWrapperForSnippet[]): r
     if (!byName.has(component)) byName.set(component, mapped);
   }
   const sorted = [...byName.keys()].sort();
-  const entries = sorted.map((name) => {
+  // No trailing element-comma on the final entry — see
+  // {@link buildArrayFormBody} for the rationale.
+  const entries = sorted.map((name, idx) => {
     const element = byName.get(name);
     const value = element === null ? "null" : JSON.stringify(element);
-    return `${INDENT}${JSON.stringify(name)}: ${value},`;
+    const tail = idx === sorted.length - 1 ? "" : ",";
+    return `${INDENT}${JSON.stringify(name)}: ${value}${tail}`;
   });
   return ["nativeWrappers: {", ...entries, "},"];
 }

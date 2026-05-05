@@ -2094,8 +2094,11 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(data.candidates.length).toBeGreaterThan(0);
     expect(typeof data.suggestedConfigSnippet).toBe("string");
     // defineConfig-compatible; names sorted lexicographically.
+    // Final entry omits its trailing element-comma per the
+    // "Bootstrap output must be paste-safe" doctrine; "Button"
+    // (sorted before "Link") still carries its separator comma.
     expect(data.suggestedConfigSnippet).toBe(
-      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link",', "  ],", "});"].join(
+      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link"', "  ],", "});"].join(
         "\n",
       ),
     );

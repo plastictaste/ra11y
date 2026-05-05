@@ -234,7 +234,36 @@ export const proposeConfigTool: McpTool = {
     // Surface what was filtered via `excludesGatedByFindings` so
     // the agent has the additive context the doctrine bullet
     // calls for.
-    const excludeGate = buildExcludeGate(scanReport.findingPaths, root);
+    // The exclude gate consults THREE predicates before promoting a
+    // candidate path into the live `exclude: [...]` array:
+    //   1. `topdirHasFinding(topdir)` — dropped from earlier patches:
+    //      a finding-bearing topdir refuses the `<topdir>/**` collapse.
+    //   2. `fileHasFinding(rel)` — itemized entries that name a
+    //      finding-bearing file are dropped.
+    //   3. `topdirHasAuthoredFile(topdir)` — added per the
+    //      "Bootstrap output must be paste-safe" doctrine: a
+    //      `<topdir>/**` glob only fires when *every* parsed file
+    //      under the topdir is build-artifact-classified (definite OR
+    //      likely). The canonical regression: 100+ subtree globs
+    //      sweeping authored source on a bulk-template corpus where
+    //      most files produce zero findings (templates parsed as
+    //      literal). The findings-bearing axis missed those because
+    //      authored-but-quiet still trips the silent-miss failure
+    //      mode. Vendor-classification (the union of definite + likely
+    //      build-artifact paths) is the deterministic "this subtree
+    //      is generated" signal the agent can rely on; anything else
+    //      stays itemized (definite paths) or in the commented hint
+    //      block (likely paths).
+    const allArtifactPaths = new Set<string>(
+      [...definiteArtifactPaths, ...likelyArtifactPaths],
+    );
+    const parsedFilePaths = new Set<string>(files.map((f) => f.filePath));
+    const excludeGate = buildExcludeGate(
+      scanReport.findingPaths,
+      parsedFilePaths,
+      allArtifactPaths,
+      root,
+    );
     const { paths: buildArtifacts, gated: gatedExcludePaths } = normalizeExcludes(
       definiteArtifactPaths,
       root,
@@ -486,13 +515,16 @@ function normalizeExcludes(
  * build-artifact classification is path-anchored evidence the file
  * itself is generated, but a `<topdir>/**` glob built from a few
  * such files would silence every authored sibling under the same
- * topdir. The gate refuses to collapse to a glob whose tree contains
- * any finding-bearing path, and refuses to itemize a single file
- * that is itself a finding-bearing path. Both cases are silent
- * misses if surfaced as live excludes — pasting the suggested
- * config would cancel the very signal the agent just observed.
+ * topdir. The gate refuses to collapse to a glob whose tree
+ * (a) contains any finding-bearing path, OR (b) contains any parsed
+ * file that is NOT build-artifact-classified. It also refuses to
+ * itemize a single file that is itself a finding-bearing path. All
+ * three cases are silent misses if surfaced as live excludes —
+ * pasting the suggested config would cancel signal the agent just
+ * observed (cases a, c) or pre-emptively silence authored siblings
+ * the agent never read (case b).
  *
- * Two-axis predicate:
+ * Three-axis predicate:
  *
  *   - `topdirHasFinding(topdir)`: true if any finding fires on a
  *     file whose POSIX-relative path starts with `<topdir>/`. Used
@@ -500,33 +532,59 @@ function normalizeExcludes(
  *     regression: `exclude: ["docs/**"]` swept the only directory
  *     with content because three `.min.` files lived under
  *     `docs/vendor/`.
+ *   - `topdirHasAuthoredFile(topdir)`: true if any parsed file
+ *     under `<topdir>/` is NOT classified as a build artifact
+ *     (definite or likely). Used to refuse the `<topdir>/**`
+ *     collapse on bulk-template corpora — without this axis, a
+ *     topdir with 3 definite-min-infix files and 100 authored
+ *     templates that produce zero findings would silently collapse
+ *     to a glob that sweeps the templates. Vendor-classification
+ *     (every parsed file in the topdir landing in the artifact set)
+ *     is the deterministic signal that earns the glob.
  *   - `fileHasFinding(rel)`: true if a finding fires on this exact
  *     POSIX-relative path. Used to drop itemized exclude entries
  *     that name a finding-bearing file.
  *
- * Both predicates are pure boolean queries over the finding-paths
- * set built once at handler-call time (see
- * {@link buildExcludeGate}).
+ * All three predicates are pure boolean queries over sets built
+ * once at handler-call time (see {@link buildExcludeGate}).
  */
 interface ExcludeGate {
   topdirHasFinding(topdir: string): boolean;
+  topdirHasAuthoredFile(topdir: string): boolean;
   fileHasFinding(rel: string): boolean;
 }
 
 /**
- * Builds the {@link ExcludeGate} predicate from the set of finding-
- * bearing absolute paths the scanner observed on this run.
- * Relativizes against `root` and indexes both the per-file paths
- * and the per-topdir prefixes so the gate's predicates are O(1).
+ * Builds the {@link ExcludeGate} predicate from three input sets:
  *
- * The empty-scan case (no findings observed) returns a gate whose
- * predicates always return false — i.e. the gate is a no-op and the
- * `definite-*` paths flow through to the live `exclude` array
- * unchanged. This preserves backward-compatible behaviour for the
- * canonical onboarding case (a vendor-bundle-only repo with no
- * authored findings yet).
+ *   - `findingPaths`: absolute paths that fire any finding. Drives
+ *     `topdirHasFinding` / `fileHasFinding`.
+ *   - `parsedFilePaths`: absolute paths of every parsed file the
+ *     scanner walked (the `ParsedFile.filePath` set). Combined with
+ *     `artifactPaths` to derive `topdirHasAuthoredFile`.
+ *   - `artifactPaths`: union of definite + likely build-artifact
+ *     absolute paths — every path the build-artifact classifier
+ *     accepted, regardless of confidence grade. A topdir is "fully
+ *     vendor-classified" when every parsed file under it is in
+ *     this set; that's the only state in which a `<topdir>/**`
+ *     collapse fires.
+ *
+ * Relativizes against `root` and indexes per-file + per-topdir so
+ * each predicate is O(1).
+ *
+ * The empty-input case (no findings, no authored files, etc.)
+ * returns a gate whose predicates degrade to "false" — the
+ * `definite-*` paths flow through unchanged. Preserves the
+ * canonical onboarding shape: a vendor-bundle-only repo with no
+ * authored findings yet still emits the expected `<topdir>/**`
+ * collapse.
  */
-function buildExcludeGate(findingPaths: ReadonlySet<string>, root: string): ExcludeGate {
+function buildExcludeGate(
+  findingPaths: ReadonlySet<string>,
+  parsedFilePaths: ReadonlySet<string>,
+  artifactPaths: ReadonlySet<string>,
+  root: string,
+): ExcludeGate {
   const fileSet = new Set<string>();
   const topdirSet = new Set<string>();
   for (const p of findingPaths) {
@@ -536,9 +594,26 @@ function buildExcludeGate(findingPaths: ReadonlySet<string>, root: string): Excl
     const slash = rel.indexOf("/");
     if (slash !== -1) topdirSet.add(rel.slice(0, slash));
   }
+  // Derive topdirs that contain at least one parsed file the
+  // artifact classifier did NOT accept (i.e. authored source). A
+  // topdir is safe to collapse to `<topdir>/**` only when this set
+  // does NOT contain it — every parsed file under the topdir is
+  // build-artifact-classified.
+  const authoredTopdirSet = new Set<string>();
+  for (const p of parsedFilePaths) {
+    if (artifactPaths.has(p)) continue;
+    const rel = relative(root, p).replace(/\\/g, "/");
+    if (rel === "" || rel.startsWith("..")) continue;
+    const slash = rel.indexOf("/");
+    if (slash === -1) continue;
+    authoredTopdirSet.add(rel.slice(0, slash));
+  }
   return {
     topdirHasFinding(topdir: string): boolean {
       return topdirSet.has(topdir);
+    },
+    topdirHasAuthoredFile(topdir: string): boolean {
+      return authoredTopdirSet.has(topdir);
     },
     fileHasFinding(rel: string): boolean {
       return fileSet.has(rel);
@@ -599,10 +674,10 @@ function partitionByTopDir(paths: readonly string[]): {
 }
 
 /**
- * Per-topdir collapse + finding-bearing-directory gate. Two cases
- * per group:
+ * Per-topdir collapse + vendor-classification gate. Three cases
+ * per group, in declaration order:
  *
- *   1. Topdir has finding-bearing files → never collapse to
+ *   1. Topdir contains finding-bearing files → never collapse to
  *      `<topdir>/**`. The collapse would silence every authored
  *      sibling under the topdir (the `exclude: ["docs/**"]`
  *      regression). Members are also filtered: an itemized entry
@@ -610,9 +685,19 @@ function partitionByTopDir(paths: readonly string[]): {
  *      file the scanner found a real violation on is, by
  *      definition, not a "you can ignore this whole file" case).
  *      Surviving members ride into the live exclude list itemized.
- *   2. Topdir has no finding-bearing files → standard
- *      threshold-driven collapse to `<topdir>/**` when the count
- *      crosses {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD}.
+ *   2. Topdir has no findings BUT carries any authored-source
+ *      parsed file → never collapse to `<topdir>/**`. Closes the
+ *      bulk-template-corpus regression where a topdir with three
+ *      `.min.` files and 100 authored quiet templates collapsed
+ *      to a glob that swept all templates. Vendor classification
+ *      is the deterministic signal that earns the glob; mixed
+ *      topdirs stay itemized. Definite-classified members
+ *      passthrough as itemized exclude entries; the would-be glob
+ *      lands in `gated` so the agent has additive context.
+ *   3. Topdir is fully vendor-classified (no findings, no authored
+ *      siblings) → standard threshold-driven collapse to
+ *      `<topdir>/**` when the count crosses
+ *      {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD}.
  *
  * Root-level files (no topdir) are filtered the same way: a single
  * file at the repo root that fires a finding is dropped from the
@@ -655,7 +740,12 @@ function appendGroupExcludes(
   out: string[],
   gated: string[],
 ): void {
-  if (!gate.topdirHasFinding(topDir)) {
+  const hasFinding = gate.topdirHasFinding(topDir);
+  const hasAuthored = gate.topdirHasAuthoredFile(topDir);
+  if (!hasFinding && !hasAuthored) {
+    // Topdir is fully vendor-classified. Standard threshold-driven
+    // collapse fires when the count is high enough; otherwise
+    // members ride itemized.
     if (members.length >= EXCLUDE_GLOB_COLLAPSE_THRESHOLD) {
       out.push(`${topDir}/**`);
     } else {
@@ -663,14 +753,14 @@ function appendGroupExcludes(
     }
     return;
   }
-  // Topdir contains finding-bearing files. Refuse the
-  // `<topdir>/**` collapse outright; itemize survivors and drop
-  // members that themselves carry a finding. If the collapse
-  // threshold WOULD have fired and the gate dropped it, record
-  // the would-be glob in `gated` too — the agent reading
-  // `meta.excludesGatedByFindings` should see both shapes the
-  // gate refused (the `<topdir>/**` collapse and the per-file
-  // entries that landed on findings).
+  // Topdir contains finding-bearing files OR at least one authored
+  // parsed file. Refuse the `<topdir>/**` collapse outright;
+  // itemize survivors and drop members that themselves carry a
+  // finding. If the collapse threshold WOULD have fired and the
+  // gate dropped it, record the would-be glob in `gated` too —
+  // the agent reading `meta.excludesGatedByFindings` should see
+  // both shapes the gate refused (the `<topdir>/**` collapse and
+  // the per-file entries that landed on findings).
   for (const m of members) {
     if (gate.fileHasFinding(m)) gated.push(m);
     else out.push(m);
@@ -814,15 +904,21 @@ function buildConfigString(args: {
 
   // exclude: straight array of paths in scan-discovered order (same
   // order the `scannedBuildArtifacts` meta field surfaces). ONLY
-  // `definite-*` build-artifact classifications populate this list —
-  // see the splitter at the handler call site for the doctrine
-  // rationale (`docs/kb/architecture/ai-first-consumer.md` "Bootstrap
-  // output must be paste-safe").
+  // `definite-*` build-artifact classifications survive the
+  // vendor-classification gate at the handler call site; a
+  // `<topdir>/**` glob only fires when every parsed file under that
+  // topdir is build-artifact-classified. See
+  // `collapseGroupsWithGate` and the doctrine bullet
+  // (`docs/kb/architecture/ai-first-consumer.md` "Bootstrap output
+  // must be paste-safe"). The final entry omits its trailing
+  // element-comma so the emitted file passes lint configurations
+  // that flag dangling commas.
   if (excludes.length > 0) {
     bodyLines.push(`${INDENT}exclude: [`);
-    for (const path of excludes) {
-      bodyLines.push(`${INDENT}${INDENT}${JSON.stringify(path)},`);
-    }
+    excludes.forEach((path, idx) => {
+      const tail = idx === excludes.length - 1 ? "" : ",";
+      bodyLines.push(`${INDENT}${INDENT}${JSON.stringify(path)}${tail}`);
+    });
     bodyLines.push(`${INDENT}],`);
   }
 
@@ -850,9 +946,10 @@ function buildConfigString(args: {
     bodyLines.push(`${INDENT}// signals fire on authored content too (template literals, SVG path`);
     bodyLines.push(`${INDENT}// data, SCSS function bodies). NOT auto-applied; opt in per path.`);
     bodyLines.push(`${INDENT}// likelyBuildPaths: [`);
-    for (const path of likelyBuildPaths) {
-      bodyLines.push(`${INDENT}//   ${JSON.stringify(path)},`);
-    }
+    likelyBuildPaths.forEach((path, idx) => {
+      const tail = idx === likelyBuildPaths.length - 1 ? "" : ",";
+      bodyLines.push(`${INDENT}//   ${JSON.stringify(path)}${tail}`);
+    });
     bodyLines.push(`${INDENT}// ],`);
   }
 
@@ -865,11 +962,12 @@ function buildConfigString(args: {
     bodyLines.push(`${INDENT}// Top-fired rules on this scan. Uncomment + adjust the severity`);
     bodyLines.push(`${INDENT}// ("error" | "warning" | "info" | "off") to tune or suppress.`);
     bodyLines.push(`${INDENT}// rules: {`);
-    for (const entry of topRules) {
+    topRules.forEach((entry, idx) => {
+      const tail = idx === topRules.length - 1 ? "" : ",";
       bodyLines.push(
-        `${INDENT}//   ${JSON.stringify(entry.ruleId)}: ${JSON.stringify(entry.severity)}, // ${entry.count} finding${entry.count === 1 ? "" : "s"}`,
+        `${INDENT}//   ${JSON.stringify(entry.ruleId)}: ${JSON.stringify(entry.severity)}${tail} // ${entry.count} finding${entry.count === 1 ? "" : "s"}`,
       );
-    }
+    });
     bodyLines.push(`${INDENT}// },`);
   }
 
