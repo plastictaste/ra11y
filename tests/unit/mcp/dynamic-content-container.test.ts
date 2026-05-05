@@ -17,10 +17,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import type { ParsedFile } from "../../../src/engine/scanner.ts";
 import { parseCss } from "../../../src/input/parsers/css.ts";
 import { parseHtml } from "../../../src/input/parsers/html.ts";
 import { detectDynamicContentContainers } from "../../../src/mcp/dynamic-content-container.ts";
-import type { ParsedFile } from "../../../src/engine/scanner.ts";
 
 const htmlFile = (filePath: string, source: string): ParsedFile => {
   const parsed = parseHtml(source);
@@ -32,7 +32,7 @@ const htmlFile = (filePath: string, source: string): ParsedFile => {
 };
 
 describe("detectDynamicContentContainers — canonical demo shell shape", () => {
-  it("fires on the canonical `<div id=\"buttons\"></div>` + `<script src=\"script.js\"></script>` shape", () => {
+  it('fires on the canonical `<div id="buttons"></div>` + `<script src="script.js"></script>` shape', () => {
     const source = `<!DOCTYPE html>
 <html lang="en">
 <head><title>Demo</title></head>
