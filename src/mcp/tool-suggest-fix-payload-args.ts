@@ -9,8 +9,8 @@
  * Pure type module — no runtime exports.
  */
 
-import type { ReviewCandidate } from "../types/review.ts";
 import type { Violation } from "../types/violation.ts";
+import type { CandidateMatch } from "./suggest-fix-candidate-match.ts";
 import type {
   MarkdownHeadingIdCollision,
   TemplateDirectiveContext,
@@ -149,21 +149,24 @@ export interface BuildSuggestFixPayloadArgs {
    */
   readonly markdownHeadingCollision?: MarkdownHeadingIdCollision;
   /**
-   * Set on the `kind: "none"` branch when the rule lookup missed but a
-   * candidate finder for one of the rule's `satisfies` criteria (or for
-   * the criterion the caller passed via the criterion-bridge) emitted a
-   * candidate at the requested line. Drives the
-   * candidate-bridge `kind: "guidance"` reroute in
-   * `tool-suggest-fix-internals.ts`: the candidate's `reason` becomes
-   * the primary explanation so an agent following a checklist row
-   * doesn't dead-end on `kind: "none"` for low-confidence candidates the
-   * narrower rule predicate would skip.
-   *
-   * Doctrine: ai-first-consumer.md "Per-call shape must agree with
-   * per-class plan tally" extended to "checklist candidate →
-   * suggest_fix lane parity." Conditional-spread per CLAUDE.md §1
+   * Set when no rule violation matches the requested `(file, line)`
+   * AND a manual-review candidate at the same coordinate carries a
+   * `criterionId` the requested rule satisfies. Lets the payload
+   * builder route the `match === undefined` branch to a `kind:
+   * "guidance"` outcome carrying the candidate's `reason` + the
+   * finder's `reviewPrompt`, instead of dead-ending the per-call
+   * surface with `kind: "none"` after the cross-surface tool
+   * (`checklist`, `coverage`, `review_candidates`) just pointed the
+   * agent here. Closes the checklist→suggest_fix lane parity gap per
+   * AI-first doctrine "Per-call shape must agree with per-class plan
+   * tally" extended one hop. Conditional-spread per CLAUDE.md §1
    * "Ambiguous field shapes are dishonest" — undefined leaves behavior
-   * identical to today.
+   * identical to the kind: "none" + breadcrumb path.
+   *
+   * Mutually exclusive with `match` at the resolver level: the handler
+   * looks up a candidate match only when `result.violations` had no
+   * matching emission. When a violation matches, the rule fired and
+   * the existing routing lanes own the response.
    */
-  readonly candidateMatch?: ReviewCandidate;
+  readonly candidateMatch?: CandidateMatch;
 }

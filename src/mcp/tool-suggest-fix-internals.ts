@@ -57,9 +57,8 @@
  * directly.
  */
 
-import type { ReviewCandidate } from "../types/review.ts";
+import type { CandidateMatch } from "./suggest-fix-candidate-match.ts";
 import {
-  buildPerCallEnrichmentAlternatives,
   deriveApproachFromProse,
   type VerifyCommandStructured,
 } from "./suggest-fix-guidance-shape.ts";
@@ -137,6 +136,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     sameFileFindings,
     vendorContext,
     inheritedFromWrapper,
+    candidateMatch,
   } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
@@ -167,140 +167,146 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     vendorContextField,
   };
   if (!match) {
-    // Candidate-bridge guidance: when the rule lookup missed but a
-    // candidate finder for one of the rule's `satisfies` criteria
-    // emitted at the same line, route to `kind: "guidance"` carrying
-    // the candidate's `reason` as the primary explanation. This closes
-    // the checklist→suggest_fix lane parity gap — finders are
-    // intentionally broader than the single rule that satisfies the
-    // criterion (see `src/mcp/suggest-fix-candidate-bridge.ts` for the
-    // doctrine rationale). Routed BEFORE the dead-end `kind: "none"`
-    // shape because the candidate is the agent's actual entry point
-    // when working a checklist row.
-    if (args.candidateMatch !== undefined) {
-      return buildCandidateBridgeOutcome({
+    // Review-candidate match path: when the rule did not fire at the
+    // queried line BUT a manual-review candidate at the same
+    // coordinate carries a criterion the rule satisfies, return
+    // `kind: "guidance"` derived from the candidate's prose so the
+    // agent gets the same actionable framing the manual-review
+    // surface promised. Closes the checklist→suggest_fix lane parity
+    // gap per AI-first doctrine "Per-call shape must agree with
+    // per-class plan tally" extended one hop. The verify pair rides
+    // along — once the agent edits source after reading the
+    // candidate's reason, `scan_file` is the canonical re-check.
+    if (candidateMatch !== undefined) {
+      return buildCandidateGuidancePayload({
         ruleId,
-        candidate: args.candidateMatch,
-        sourceContext: args.sourceContext,
-        filePath,
         line,
-        verify,
-        warningsField,
-        disambiguationNoteField,
-        vendorContextField,
+        filePath,
+        candidateMatch,
+        shared,
       });
     }
-    // omit the verify pair on
-    // `kind: "none"`. A populated `verifyCommand` next to "no
-    // violation found at this line" reads as "you already fixed it
-    // and verified," which is indistinguishable from "the finding
-    // never existed." Present-when-meaningful (CLAUDE.md §1
-    // "Ambiguous field shapes are dishonest") — the verify pair only
-    // belongs on the lanes that actually applied a fix.
-    //
-    // walk the per-file findings
-    // for same-rule matches within ±NEAREST_FINDING_WINDOW lines of the
-    // requested line. Single match → `nearestFinding: { ruleId, line }`;
-    // multi match → `didYouMean[]`. Without these breadcrumbs the
-    // response is a dead end forcing the agent to re-scan when paginated
-    // scans drifted the line, the agent lost the original line, or a
-    // rule rename swapped the ID. Conditional-spread so the field is
-    // absent when no nearby same-rule finding exists (CLAUDE.md §1
-    // "Ambiguous field shapes are dishonest").
-    const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
-    // when the requested
-    // (filePath, line) resolves to a registered native-element wrapper
-    // call site, the multi-file scan synthesized the finding via the
-    // inherited-findings post-pass — the rule never fired at this line
-    // single-file. The inherited-hint payload tells the agent the rule
-    // lives at the wrapper component definition so the next call can
-    // re-target there rather than re-running the same dead-end lookup.
-    // See `src/mcp/suggest-fix-inherited-hint.ts` and the doctrine
-    // "Cross-surface count invariant" applied to the per-finding lookup
-    // channel.
-    const inheritedSpread = inheritedFromWrapper
-      ? { inheritedFromWrapper: { wrapperName: inheritedFromWrapper.wrapperName } }
-      : {};
-    const explanation = inheritedFromWrapper
-      ? buildInheritedHintExplanation(ruleId, line, inheritedFromWrapper.wrapperName)
-      : `No violation for ${ruleId} at line ${line}.`;
-    return {
-      kind: "none",
-      explanation,
-      // `confidence` is OMITTED on `kind: "none"`. The field is
-      // semantically meaningful only on the positive answers
-      // (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`)
-      // where it grades how confident the fix recommendation is.
-      // "Low confidence we have no fix" is a category error — the
-      // negative answer is "no violation matches at the queried
-      // location," and confidence on that statement is structurally
-      // undefined. Per CLAUDE.md §1 "Ambiguous field shapes are
-      // dishonest" + "Sibling fields naming the same concept must
-      // use one shape": a field that's sometimes meaningful and
-      // sometimes a category error forces the agent to disambiguate
-      // and the silent-miss failure mode is identical to the
-      // `newText: ""` / `snippet: ""` mistakes.
-      ...inheritedSpread,
-      ...nearestSpread,
-      ...warningsField,
-      ...disambiguationNoteField,
-      ...vendorContextField,
-    };
+    return buildNoMatchPayload({
+      ruleId,
+      line,
+      sameFileFindings,
+      inheritedFromWrapper,
+      warningsField,
+      disambiguationNoteField,
+      vendorContextField,
+    });
   }
   return routeMatchedPayload({ args, match, shared });
 }
 
 /**
- * Shape the `kind: "guidance"` outcome the candidate-bridge produces
- * when the rule lookup misses but a candidate finder emitted at the
- * requested line. The candidate's `reason` is the agent's actionable
- * starting point — finders frame manual-review questions ("verify the
- * handler doesn't navigate / submit") in a form the agent can verify
- * with a single Read at the cited line.
- *
- * Confidence on this branch reflects the candidate's tier (high /
- * medium / low) — the finder's predicate is the only static evidence
- * available, and surfacing it honestly preserves the agent's attention
- * budget. The `verifyCommandStructured` pair is included because the
- * agent CAN re-check after acting on the guidance (the candidate is a
- * real review prompt, not a "we know nothing" admission).
- *
- * Lives on the candidate-bridge outcome lane to keep the per-call
- * shape consistent with `buildPerCallEnrichmentAlternatives` (the same
- * verify-by-reading + suppression-pragma fallbacks the no-fixPaths
- * guidance branch surfaces). See
- * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
- * agree with per-class plan tally" extended to the
- * checklist→suggest_fix lane parity case.
+ * `kind: "none"` payload assembler — the dead-end path when neither a
+ * rule violation nor a review candidate matches the queried line.
+ * Walks `sameFileFindings` for nearby same-rule emissions and builds
+ * the `nearestFinding` / `didYouMean` breadcrumbs so the response is
+ * never a true dead end (paginated scans drift the line, agents lose
+ * the original line, rule renames swap the ID — the breadcrumb
+ * recovers from all three). When the queried line resolves to a
+ * registered wrapper-call site, `inheritedFromWrapper` re-routes the
+ * agent to the wrapper definition. Extracted from the parent so the
+ * candidate-match branch above stays readable; the field set returned
+ * here is unchanged from the prior inline shape.
  */
-function buildCandidateBridgeOutcome(args: {
+function buildNoMatchPayload(args: {
   readonly ruleId: string;
-  readonly candidate: ReviewCandidate;
-  readonly sourceContext: string;
-  readonly filePath: string;
   readonly line: number;
-  readonly verify: { readonly verifyCommandStructured: VerifyCommandStructured };
+  readonly sameFileFindings: BuildSuggestFixPayloadArgs["sameFileFindings"];
+  readonly inheritedFromWrapper: BuildSuggestFixPayloadArgs["inheritedFromWrapper"];
   readonly warningsField: { readonly warnings?: readonly string[] };
   readonly disambiguationNoteField: { readonly disambiguationNote?: string };
   readonly vendorContextField: { readonly vendorContext?: VendorContext };
 }): Record<string, unknown> {
-  const { candidate } = args;
-  const explanation = candidate.reason;
-  const enrichments = buildPerCallEnrichmentAlternatives(args.filePath, args.line, [
-    candidate.criterionId,
-  ]);
+  const {
+    ruleId,
+    line,
+    sameFileFindings,
+    inheritedFromWrapper,
+    warningsField,
+    disambiguationNoteField,
+    vendorContextField,
+  } = args;
+  const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
+  const inheritedSpread = inheritedFromWrapper
+    ? { inheritedFromWrapper: { wrapperName: inheritedFromWrapper.wrapperName } }
+    : {};
+  const explanation = inheritedFromWrapper
+    ? buildInheritedHintExplanation(ruleId, line, inheritedFromWrapper.wrapperName)
+    : `No violation for ${ruleId} at line ${line}.`;
+  return {
+    kind: "none",
+    explanation,
+    // `confidence` is OMITTED on `kind: "none"`. The field is
+    // semantically meaningful only on the positive answers
+    // (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`)
+    // where it grades how confident the fix recommendation is.
+    // "Low confidence we have no fix" is a category error — the
+    // negative answer is "no violation matches at the queried
+    // location," and confidence on that statement is structurally
+    // undefined. Per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest" + "Sibling fields naming the same concept must
+    // use one shape": a field that's sometimes meaningful and
+    // sometimes a category error forces the agent to disambiguate
+    // and the silent-miss failure mode is identical to the
+    // `newText: ""` / `snippet: ""` mistakes.
+    ...inheritedSpread,
+    ...nearestSpread,
+    ...warningsField,
+    ...disambiguationNoteField,
+    ...vendorContextField,
+  };
+}
+
+/**
+ * Build the `kind: "guidance"` payload for the review-candidate match
+ * path. Mirrors the shape the prose-only fallback produces in
+ * `routeMatchedPayload`'s tail — the agent reads the same `primary`
+ * block (`approach` + `explanation` + `confidence` + optional
+ * `sourceContext`) regardless of whether the guidance came from a
+ * rule's `match.suggestion` or from a finder's review prose. The
+ * candidate's `reason` becomes the explanation; the `approach` label
+ * is derived from the same {@link deriveApproachFromProse} helper so
+ * the terse-summary surface stays consistent across guidance lanes.
+ *
+ * Confidence is sourced from the candidate's framing: review
+ * candidates are always investigation prompts ("verify X"), never
+ * deterministic fix recipes — `medium` matches that framing across
+ * the existing guidance shapes (the prose-only fallback uses
+ * `confidence === "high"` only for severity-`error` rule matches; a
+ * candidate is structurally a softer signal than a rule violation).
+ *
+ * The verify pair rides along — once the agent edits source after
+ * reading the candidate's reason, `scan_file` is the canonical
+ * re-check. The same `warningsField` / `disambiguationNoteField` /
+ * `vendorContextField` spreads ride here as on every guidance lane so
+ * scan-confidence telemetry stays consistent across branches.
+ */
+function buildCandidateGuidancePayload(args: {
+  readonly ruleId: string;
+  readonly line: number;
+  readonly filePath: string;
+  readonly candidateMatch: CandidateMatch;
+  readonly shared: PayloadSharedFields;
+}): Record<string, unknown> {
+  const { line, filePath, candidateMatch, shared } = args;
+  const explanation = candidateMatch.reviewPrompt
+    ? `${candidateMatch.reason}\n\n${candidateMatch.reviewPrompt}`
+    : candidateMatch.reason;
   return {
     kind: "guidance",
     primary: {
-      approach: deriveApproachFromProse(explanation),
+      approach: deriveApproachFromProse(candidateMatch.reason),
       explanation,
-      sourceContext: args.sourceContext,
-      confidence: candidate.confidence,
+      sourceContext: `Manual-review candidate at ${filePath}:${line} (criterion ${candidateMatch.criterionId}).`,
+      confidence: "medium",
     },
-    ...(enrichments ? { alternatives: enrichments } : {}),
-    ...args.verify,
-    ...args.warningsField,
-    ...args.disambiguationNoteField,
-    ...args.vendorContextField,
+    ...shared.verify,
+    ...shared.warningsField,
+    ...shared.disambiguationNoteField,
+    ...shared.vendorContextField,
   };
 }

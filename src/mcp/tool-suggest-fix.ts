@@ -4,16 +4,21 @@
  * wiring landed.
  */
 
+import { runScan } from "../engine/scanner.ts";
+import { indexFindersByCriterion } from "./review-candidate-prompts.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
+import { findCandidateMatch } from "./suggest-fix-candidate-match.ts";
 import { collectSuggestFixContext } from "./suggest-fix-context.ts";
-import { optionalSuggestFixFields, resolveSuggestFixRule } from "./suggest-fix-criterion-bridge.ts";
+import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
-import { runSuggestFixPreflight } from "./tool-suggest-fix-preflight.ts";
 import {
+  applyRuleSettings,
   errorResult,
+  findRule,
   type McpTool,
   type McpToolResult,
   numParam,
+  resolveStandards,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
@@ -64,19 +69,6 @@ function checkRequiredParams(
   });
 }
 
-/**
- * Builds the canonical `file-unsupported` envelope. Extracted so the
- * suggest_fix MCP handler stays under the 150-effective-line cap.
- */
-function fileUnsupportedResult(filePath: string): McpToolResult {
-  return errorResult({
-    code: "file-unsupported",
-    message: `Unsupported or unreadable file: ${filePath}`,
-    details: { file: filePath },
-    remediation: "Pass a .tsx/.jsx/.ts/.js, .html/.htm, or .css file that exists on disk.",
-  });
-}
-
 export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
@@ -114,15 +106,26 @@ export const suggestFixTool: McpTool = {
       return checkRequiredParams(inputRuleId, filePath, line) as McpToolResult;
     }
 
-    // Criterion-id bridge + rule-existence check. Manual-review
-    // candidates carry criterion IDs; without this bridge the handoff
-    // `review_candidates → suggest_fix` hard-errors with `Rule not
-    // found.` See `docs/kb/architecture/ai-first-consumer.md`:
-    // "One tool call should answer 'what next?'" + "Surface, don't
-    // suppress."
-    const resolved = resolveSuggestFixRule(inputRuleId, session);
-    if ("error" in resolved) return resolved.error;
-    const { rule, ruleId, disambiguationNote, inputCriterionId } = resolved;
+    // Criterion-id bridge: when the caller passes a criterion ID
+    // (`wcag22:N.N.N`, `section508:…`, `en301549:…`) instead of a rule
+    // ID, resolve it to the most-specific rule that satisfies it.
+    // Manual-review candidates carry criterion IDs; without this bridge
+    // the handoff `review_candidates → suggest_fix` hard-errors with
+    // `Rule not found. Call list_rules.` See
+    // `docs/kb/architecture/ai-first-consumer.md`: "One tool call
+    // should answer 'what next?'" + "Surface, don't suppress."
+    const bridge = applyCriterionBridge(inputRuleId, session);
+    if ("error" in bridge) return bridge.error;
+    const { ruleId, disambiguationNote } = bridge;
+
+    if (!findRule(ruleId, session)) {
+      return errorResult({
+        code: "rule-not-found",
+        message: `Rule '${ruleId}' not found.`,
+        details: { requested: ruleId },
+        remediation: "Call `list_rules` to discover valid rule IDs.",
+      });
+    }
 
     // reject paths that escape the
     // declared `cwd` sandbox before any parse or fs access. See the
@@ -134,16 +137,47 @@ export const suggestFixTool: McpTool = {
 
     // Parse the file to find the specific violation and its suggestion.
     const parsed = await session.parseFile(filePath, suggestFixCwd);
-    if (!parsed) return fileUnsupportedResult(filePath);
+    if (!parsed) {
+      return errorResult({
+        code: "file-unsupported",
+        message: `Unsupported or unreadable file: ${filePath}`,
+        details: { file: filePath },
+        remediation: "Pass a .tsx/.jsx/.ts/.js, .html/.htm, or .css file that exists on disk.",
+      });
+    }
 
-    const { result, match, candidateMatch } = runSuggestFixPreflight({
-      session,
-      parsed,
-      rule,
-      inputCriterionId,
-      ruleId,
-      line,
+    const standards = resolveStandards(undefined, session);
+    const { result, report } = runScan({
+      standards: session.registry.standards,
+      rules: applyRuleSettings(session.registry.rules, session.config.rules),
+      enabled: standards,
+      files: [parsed],
+      level: session.config.level,
     });
+
+    const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
+    // Review-candidate match resolver — closes the
+    // checklist→suggest_fix lane parity gap. When the rule did not
+    // fire at the queried line BUT a manual-review candidate at the
+    // same coordinate carries a criterion the rule satisfies, the
+    // payload builder routes to `kind: "guidance"` derived from the
+    // candidate's prose instead of dead-ending at `kind: "none"`. The
+    // resolver runs only when the rule lookup missed (mutually
+    // exclusive with `match`) and only consults `report.candidates`,
+    // which the suggest_fix single-file scan already produced.
+    // See `src/mcp/suggest-fix-candidate-match.ts` for the doctrine
+    // rationale.
+    const rule = findRule(ruleId, session);
+    const candidateMatch =
+      match !== undefined || rule === undefined
+        ? null
+        : findCandidateMatch({
+            rule,
+            filePath,
+            line,
+            candidates: report.candidates ?? [],
+            findersByCriterion: indexFindersByCriterion(session.registry.finders),
+          });
     const ctx = await collectSuggestFixContext({
       session,
       parsed,
