@@ -248,20 +248,21 @@ After the integrator returns and before looping, dispatch the `meta-reviewer` su
 
 **Orchestrator handling of the meta-reviewer's return:**
 
-The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory_retired, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
+The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory_retirement_proposed, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
 
 | Return | Orchestrator action |
 |---|---|
 | `signals_observed: 0`, `writes: { all empty }`, `findings: []` | Nothing to do. Append nothing to the user-facing turn summary. |
 | `writes.harness[]` non-empty | Note the patch SHA(s) in the turn summary so the user sees the auto-edit landed. Continue. |
 | `writes.memory[]` non-empty | No action — memory is silent by design. |
-| `writes.memory_retired[]` non-empty | No action — informational. The retired memory files are recorded per-machine in the ledger; the durable cross-machine reference is the harness patch SHA in the same turn. |
+| `writes.memory_retirement_proposed[]` non-empty | Surface every entry verbatim in `/continue`'s final report under "memory retirement proposals — user review needed". Each entry names a `feedback_*.md` file the agent thinks is now subsumed by a harness patch. The user runs `rm <file>` and edits `MEMORY.md` themselves if they agree. The agent never deletes memory autonomously. |
 | `writes.backlog_reopens[]` non-empty | The pick was reopened. Treat as if it had returned `blocked` for purposes of the "picks dispatched this invocation" set so it can be re-picked next invocation. |
 | `correlations[]` non-empty | No action — informational. The pair is recorded in the ledger so next turn's meta-reviewer can decide whether to bundle a patch or escalate the unaddressed half. |
 | `patch_effects[]` contains `verdict: "no_effect"` | Note the no-effect commit SHA and the original patch SHA in the turn summary. Surface in the final `/continue` report so the user sees which auto-patches earned a `git revert` review. |
 | `patch_effects[]` only carries `"too_early"` / `"effective"` / `"inconclusive"` / `"aged_out"` / `"user_reverted"` | No action — informational; the verdicts live in the ledger and shape next-turn routing. |
 | `findings[].kind: "structural_flag"` | Surface in the final `/continue` report (not the per-turn summary) so the user sees the structural concern at end-of-run. |
 | `findings[].kind: "skill_patch_proposal"` | Surface in the final `/continue` report verbatim — including the `target`, `rationale`, `proposed_change` diff text, and `rule_patch_sha`. Frame as "user approval needed: a rule-file patch (sha X) earned `no_effect`; the meta-reviewer proposes promoting enforcement to `<target>`." Do NOT auto-apply — the meta-reviewer's allowlist explicitly forbids skill-file edits, and the orchestrator must respect that boundary. The user reviews and decides whether to apply manually. |
+| `findings[].kind: "memory_retirement_proposed"` | Already covered by the `writes.memory_retirement_proposed[]` row above — same proposals; the duplicate `findings[]` entry is structural redundancy. Surface once in the final report; do NOT delete memory autonomously. |
 | `ledger_appended: false` | Surface in the per-turn summary as a warning. The next turn's occurrence counts will be off until the ledger is repaired. |
 
 **Do not block the loop on the meta-reviewer.** If the agent returns `findings[]` with structural concerns or `ledger_appended: false`, log them and continue to the next turn. The meta-reviewer is advisory; only an explicit user-blocking item from a structural flag (rare) stops the loop.
