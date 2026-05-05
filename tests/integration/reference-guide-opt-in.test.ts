@@ -168,10 +168,7 @@ describe("scan_project — referenceGuide opt-in", () => {
     const dir = await mkdtemp(join(tmpdir(), "ra11y-ref-guide-default-off-"));
     try {
       await writeHoistFixture(dir);
-      const responses = await mcpSession([
-        initMsg(1),
-        toolCall(2, "scan_project", { cwd: dir }),
-      ]);
+      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
       const body = bodyOf(responses[1]) as unknown as OptInScanBody;
       expect(body.referenceGuide).toBeUndefined();
       const findings = flattenFindings(body);
