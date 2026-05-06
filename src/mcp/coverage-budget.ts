@@ -342,45 +342,55 @@ function fixupOversizeDropCounter(
 /**
  * Prose for the slim envelope's nextStep. Names the recovery the
  * agent needs to perform: the response shape itself signals "I had
- * to drop the per-rule coverage detail to fit." Concrete options:
- * scope to a single subdirectory, narrow by standard/level, or pivot
- * to `checklist` for the manual-review-half angle.
+ * to drop the per-rule coverage detail to fit."
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+ * must terminate at a narrowing tool, never form a cycle between
+ * transport-failing siblings": when this surface's slim guard fires
+ * on a bulk-vendor / oversize corpus, `checklist` on the same cwd is
+ * the OTHER project-rooted tool the doctrine warns against pointing
+ * at — the cross-corpus sweep observed `coverage.nextStep → checklist`
+ * AND `checklist.nextStep → coverage` both transport-failing on the
+ * same input, leaving the agent in a circular handoff with no
+ * narrowing path in the cycle. The recovery now points at
+ * `propose_config` — a deterministic narrowing tool that emits an
+ * `exclude` block from the same `scannedBuildArtifacts` evidence the
+ * over-cap envelope carries. The next `scan_project` call after the
+ * agent applies the proposed excludes traverses a narrower file set
+ * by construction. Concrete narrowing knobs (`cwd`, `paths`,
+ * `standard` / `level`) are still named in the prose for callers
+ * that want to skip the round-trip.
  */
 const SLIM_NEXT_STEP_PROSE =
   "The full response was over the MCP host's token ceiling, so the per-rule and per-criterion detail surfaces were dropped to keep the envelope routable. " +
-  "Re-call `coverage` with a narrower scope to recover the full detail: pass a tighter `cwd` (a single subdirectory), " +
-  "use `paths` to scope to a specific file set, or restrict by `standard` / `level`. " +
-  "For the manual-review angle without the per-rule fan, call `checklist` on the same cwd — its `items[]` carries the " +
-  "actionable criteria with grounded candidates.";
+  "Call `propose_config` to emit an `exclude` block from the build-artifact classifier, then re-run `scan_project` (or `coverage`) over the narrowed file set. " +
+  "Alternatively re-call `coverage` directly with a narrower scope: pass a tighter `cwd` (a single subdirectory), " +
+  "`paths` to scope to a specific file set, or restrict by `standard` / `level`. " +
+  "Do NOT re-call `checklist` on the same cwd — that surface ships the same scope-classifier and will transport-fail the same way (per `docs/kb/architecture/ai-first-consumer.md` \"NextStep handoffs must terminate at a narrowing tool\").";
 
 /**
- * Structured nextStep for the slim envelope. Routes to a DIFFERENT
- * surface than `coverage` — `checklist` is the manual-review-half
- * surface that doesn't traverse the per-rule coverage envelope, so
- * the recovery call won't re-trip the slim guard. Echoes the caller's
- * `cwd` when the original meta carried it; otherwise ships empty
- * args (per "Ambiguous field shapes are dishonest," omitting cwd is
- * honest when we have no provenance for it).
+ * Structured nextStep for the slim envelope. Routes to `propose_config`
+ * — a deterministic scope-narrowing tool — instead of the sibling
+ * project-rooted `checklist` tool. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs must
+ * terminate at a narrowing tool, never form a cycle between
+ * transport-failing siblings," routing the agent at `checklist` on
+ * the same cwd would echo the parameters that just produced the
+ * oversize envelope: `checklist` ships the same scope-classifier and
+ * its own slim guard fires on the same corpus. `propose_config`
+ * consumes the `scannedBuildArtifacts` evidence to emit an `exclude`
+ * block — the next call after the agent applies that block runs over
+ * a narrower file set by construction. Args ship empty per
+ * "Ambiguous field shapes are dishonest" — `propose_config` resolves
+ * its own scan root, and fabricating a `cwd` here would lock the
+ * agent into the same too-large scope.
  */
-function buildSlimNextStepStructured(original: Record<string, unknown>): {
+function buildSlimNextStepStructured(_original: Record<string, unknown>): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
-  const cwd = readCwd(original);
   return {
-    tool: "checklist",
-    args: cwd === undefined ? {} : { cwd },
+    tool: "propose_config",
+    args: {},
   };
-}
-
-/**
- * Reads `meta.cwd` off the original response. Returns `undefined` when
- * the field is absent or shaped unexpectedly — defensive narrowing
- * matches the rest of this module's `Record<string, unknown>` reads.
- */
-function readCwd(original: Record<string, unknown>): string | undefined {
-  const meta = readMeta(original);
-  if (meta === undefined) return undefined;
-  const cwd = meta["cwd"];
-  return typeof cwd === "string" && cwd.length > 0 ? cwd : undefined;
 }

@@ -144,12 +144,20 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
     expect(meta.cwd).toBe("/tmp/example-project");
   });
 
-  it("routes nextStep to coverage (different surface) when the slim guard fires", () => {
-    // Routing back to `checklist` would land the agent on the same
-    // tool that just transport-failed even with cosmetically narrower
-    // args. The slim envelope's structured next-call routes to
-    // `coverage` (the manual-review-half tally without the
-    // per-criterion items[] envelope).
+  it("routes nextStep to propose_config (scope-narrowing tool) when the slim guard fires", () => {
+    // Cycle-break invariant per
+    // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+    // must terminate at a narrowing tool, never form a cycle between
+    // transport-failing siblings": pointing at the sibling
+    // project-rooted `coverage` tool (the previous routing) on a
+    // bulk-vendor / oversize corpus would echo the same scope-
+    // classifier and re-trigger `coverage`'s own slim guard — the
+    // canonical circular handoff with no narrowing path. The slim
+    // envelope's structured next-call routes to `propose_config`
+    // (deterministic exclude-block emission from the build-artifact
+    // classifier), so the next `scan_project` call after the agent
+    // applies the proposed excludes traverses a narrower file set by
+    // construction.
     const response = buildSyntheticChecklistResponse(3, {
       metaBloat: true,
       cwd: "/tmp/example-project",
@@ -163,19 +171,26 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
       args: Record<string, unknown>;
     };
     expect(structured).toBeDefined();
-    expect(structured.tool).toBe("coverage");
-    // Echoes the caller's cwd so the recovery call is directly
-    // addressable; per "Ambiguous field shapes are dishonest," the
-    // empty-args case is reserved for when no cwd is recoverable.
-    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).toBe("propose_config");
+    // `propose_config` resolves its own scan root, and fabricating a
+    // `cwd` here would lock the agent into the same too-large scope
+    // that just produced the oversize envelope. Empty args is the
+    // honest shape — per the doctrine bullet, the structured target
+    // must "never echo the parameters that just produced the
+    // truncation."
+    expect(structured.args).toEqual({});
+    // Cycle-break: must NOT route to either project-rooted sibling
+    // that ships from the same scope-classifier.
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 
-  it("ships empty args when meta carries no cwd (defensive)", () => {
-    // When the original meta lacks a cwd, the slim envelope must NOT
-    // fabricate one — empty args is the honest shape per
-    // "Ambiguous field shapes are dishonest."
+  it("ships empty args even when meta carries cwd (cycle-break invariant)", () => {
+    // The cycle-break routing is unconditional — `propose_config`
+    // resolves its own scan root regardless of whether the caller's
+    // cwd is recoverable, and including the cwd would echo the same
+    // scope the slim envelope just truncated.
     const response = buildSyntheticChecklistResponse(3, { metaBloat: true });
-    // Manually strip cwd from the meta to hit the defensive arm.
     (response.meta as Record<string, unknown>).cwd = undefined;
     const result = applyChecklistBudget({ response });
     const slim = result.response as Record<string, unknown>;
@@ -183,7 +198,7 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("coverage");
+    expect(structured.tool).toBe("propose_config");
     expect(structured.args).toEqual({});
   });
 });
