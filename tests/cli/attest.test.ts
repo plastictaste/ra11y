@@ -7,10 +7,10 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { runCli } from "../../src/cli/run.ts";
 import type { AttestationRecord } from "../../src/types/evidence.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -21,13 +21,13 @@ afterAll(async () => {
 });
 
 async function makeScratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-attest-cli-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-attest-cli-"));
   scratchDirs.push(dir);
   return dir;
 }
 
 async function readStore(dir: string): Promise<readonly AttestationRecord[]> {
-  const raw = await readFile(join(dir, ".ra11y", "attestations.jsonl"), "utf8");
+  const raw = await readFile(posixJoin(dir, ".ra11y", "attestations.jsonl"), "utf8");
   return raw
     .split("\n")
     .filter((l) => l.length > 0)
@@ -160,7 +160,7 @@ describe("ra11y attest", () => {
 
   it("parses --location <file>:<line>:<col> with scope=file", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "a.tsx"), "export {};\n");
+    await writeFile(posixJoin(dir, "a.tsx"), "export {};\n");
     chdir(dir);
     const r = await runCli([
       "attest",

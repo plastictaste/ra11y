@@ -114,13 +114,6 @@ const SRC_ALLOWLIST: ReadonlySet<string> = new Set<string>([
  * replaces each with `posixJoin` from `tests/helpers/path.ts`.
  */
 const TEST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  // MIGRATION: CLI command tests — to remove after tests/ migration
-  "tests/cli/attest.test.ts",
-  "tests/cli/attestations-prune.test.ts",
-  "tests/cli/baseline-prune.test.ts",
-  "tests/cli/conformance.test.ts",
-  // MIGRATION: hook tests — to remove after tests/ migration
-  "tests/hooks/verify-marker.test.ts",
   // MIGRATION: integration tests (MCP cross-surface, scan-project,
   // checklist, coverage, baseline, propose-baseline, suppress, attest)
   // — to remove after tests/ migration

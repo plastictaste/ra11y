@@ -8,9 +8,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { runCli } from "../../src/cli/run.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -21,7 +21,7 @@ afterAll(async () => {
 });
 
 async function makeScratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-conformance-cli-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-conformance-cli-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -29,7 +29,7 @@ async function makeScratch(): Promise<string> {
 describe("ra11y conformance — emit mode", () => {
   it("renders a Markdown conformance statement by default", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body><p>hi</p></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body><p>hi</p></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance", "--standard", "wcag22", "--level", "AA"]);
     chdir(originalCwd);
@@ -42,7 +42,7 @@ describe("ra11y conformance — emit mode", () => {
 
   it("renders JSON with --output json", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body><p>hi</p></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body><p>hi</p></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance", "--output", "json", "--standard", "wcag22"]);
     chdir(originalCwd);
@@ -58,7 +58,7 @@ describe("ra11y conformance — emit mode", () => {
 
   it("emits non_git_repo_signature_omitted warning outside a repo", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance"]);
     chdir(originalCwd);
@@ -69,7 +69,7 @@ describe("ra11y conformance — emit mode", () => {
 
   it("honors --profile with a valid name", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance", "--profile", "wcag22-aa"]);
     chdir(originalCwd);
@@ -102,7 +102,7 @@ describe("ra11y conformance --verify", () => {
 
   it("errors with exit 2 on malformed JSON", async () => {
     const dir = await makeScratch();
-    const bundlePath = join(dir, "bundle.json");
+    const bundlePath = posixJoin(dir, "bundle.json");
     await writeFile(bundlePath, "not json at all");
     chdir(dir);
     const r = await runCli(["conformance", "--verify", "bundle.json"]);
@@ -114,7 +114,7 @@ describe("ra11y conformance --verify", () => {
 
   it("errors with exit 2 when the bundle lacks a signature block", async () => {
     const dir = await makeScratch();
-    const bundlePath = join(dir, "bundle.json");
+    const bundlePath = posixJoin(dir, "bundle.json");
     // A minimal statement shape without signature — simulates someone
     // trying to verify a non-conformant (unsigned) statement.
     await writeFile(
@@ -141,7 +141,7 @@ describe("ra11y conformance --verify", () => {
     // verifier walks commit hash first, so a fabricated commit produces
     // `commit-drift`.
     const dir = await makeScratch();
-    const bundlePath = join(dir, "bundle.json");
+    const bundlePath = posixJoin(dir, "bundle.json");
     const stampedSignature = {
       algorithm: "sha256",
       digest: "deadbeef",
@@ -180,7 +180,7 @@ describe("ra11y conformance --verify", () => {
 describe("ra11y conformance statement payload shape (AI-first)", () => {
   it("JSON output includes scope.files and summary", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body><h1>ok</h1></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body><h1>ok</h1></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance", "--output", "json"]);
     chdir(originalCwd);
@@ -196,7 +196,7 @@ describe("ra11y conformance statement payload shape (AI-first)", () => {
 
   it("verbose markdown includes the technologies-relied-upon block", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "page.html"), "<html><body></body></html>\n");
+    await writeFile(posixJoin(dir, "page.html"), "<html><body></body></html>\n");
     chdir(dir);
     const r = await runCli(["conformance"]);
     chdir(originalCwd);
