@@ -121,6 +121,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasSrcTsChange,
   },
   {
+    name: "path-normalization",
+    cmd: ["bun", "scripts/check-paths.ts"],
+    precommit: true,
+    full: true,
+    affectedBy: hasAnyTsChange,
+  },
+  {
     name: "builtins-scope",
     cmd: ["bun", "scripts/check-builtins-scope.ts"],
     precommit: true,

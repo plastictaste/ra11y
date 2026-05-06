@@ -60,20 +60,146 @@ const EXTERNAL_FILES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Allowlist of files whose existing `node:path` usage hasn't been
- * migrated. Each entry is the relative-to-ROOT path of a file that
- * the script would otherwise flag. The migration agent walks this
- * list top-to-bottom, fixing each entry then deleting it. When the
- * list is empty, the invariant is fully ratcheted in.
+ * Migration allowlist: files whose existing `node:path` usage
+ * hasn't been migrated to the POSIX helpers yet. Each entry is the
+ * repo-relative path of a file that the script would otherwise flag.
+ * The migration agent walks this list top-to-bottom, fixing each
+ * entry then deleting it. When the lists are empty, the invariant
+ * is fully ratcheted in.
  *
- * Each entry MUST be tagged with a `// MIGRATION: <area> — to remove
- * after src/ migration` comment naming the surface the file owns, so
- * the migration agent has a clear scope.
+ * Each entry is tagged inline with the surface area it owns, so the
+ * migration agent has a clear scope per file.
  */
-const ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  // Populated by the wiring commit (Phase 4) once the violation count
-  // is known. Phase 3 ships the script with an empty allowlist so the
-  // migration map can be measured.
+const SRC_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  // MIGRATION: scanner output assembly — to remove after src/ migration
+  "src/engine/baseline.ts",
+  // MIGRATION: MCP tool surface (catalog / SSG / ecosystem detection)
+  // — to remove after src/ migration
+  "src/mcp/additional-paths-classifier.ts",
+  "src/mcp/baseline-status.ts",
+  "src/mcp/build-provenance.ts",
+  "src/mcp/catalog-detect.ts",
+  "src/mcp/config-hint.ts",
+  "src/mcp/config-search-marker.ts",
+  "src/mcp/ecosystem-detect.ts",
+  "src/mcp/extension-presence-probe.ts",
+  "src/mcp/path-exists.ts",
+  "src/mcp/propose-baseline-classify.ts",
+  "src/mcp/resolve-inside-cwd.ts",
+  "src/mcp/resources/index.ts",
+  "src/mcp/scan-group-by.ts",
+  "src/mcp/scanner-meta.ts",
+  "src/mcp/session.ts",
+  "src/mcp/ssg-detect.ts",
+  "src/mcp/suggest-fix-inherited-hint.ts",
+  "src/mcp/tool-apply-fix.ts",
+  "src/mcp/tool-attest.ts",
+  "src/mcp/tool-audit-rule-coverage-result.ts",
+  "src/mcp/tool-baseline.ts",
+  "src/mcp/tool-conformance-statement.ts",
+  "src/mcp/tool-propose-config.ts",
+  "src/mcp/tool-scan-diff.ts",
+  "src/mcp/tool-scan-file.ts",
+  "src/mcp/tool-scan-process.ts",
+  "src/mcp/tool-scan-project.ts",
+  "src/mcp/tool-suppress.ts",
+  "src/mcp/tools-helpers.ts",
+  "src/mcp/top-directories.ts",
+]);
+
+/**
+ * Migration allowlist for tests. Same shape as SRC_ALLOWLIST: each
+ * entry is a test file whose `expect(...)` calls compare against
+ * native-`path.join`-built expected strings. Migration agent
+ * replaces each with `posixJoin` from `tests/helpers/path.ts`.
+ */
+const TEST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  // MIGRATION: CLI command tests — to remove after tests/ migration
+  "tests/cli/attest.test.ts",
+  "tests/cli/attestations-prune.test.ts",
+  "tests/cli/baseline-prune.test.ts",
+  "tests/cli/conformance.test.ts",
+  // MIGRATION: hook tests — to remove after tests/ migration
+  "tests/hooks/verify-marker.test.ts",
+  // MIGRATION: integration tests (MCP cross-surface, scan-project,
+  // checklist, coverage, baseline, propose-baseline, suppress, attest)
+  // — to remove after tests/ migration
+  "tests/integration/audit-rule-coverage.test.ts",
+  "tests/integration/bootstrap-suggested-config-paste-safe.test.ts",
+  "tests/integration/checklist-vendor-iframe-occurrences-collapse.test.ts",
+  "tests/integration/cli-report-commands-parse-route.test.ts",
+  "tests/integration/conformance-e2e.test.ts",
+  "tests/integration/findings-by-rule-cross-surface.test.ts",
+  "tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts",
+  "tests/integration/mcp-consistency/hedging-aware-priority.test.ts",
+  "tests/integration/mcp-consistency/minified-vendor-no-sourcemap-priority.test.ts",
+  "tests/integration/mcp-consistency/no-config-found-cross-surface.test.ts",
+  "tests/integration/mcp-consistency/predicate-conceded-priority.test.ts",
+  "tests/integration/mcp-consistency/scan-file-minified-vendor-candidate-priority.test.ts",
+  "tests/integration/mcp-consistency/small-demo-catalog-groupby-nextstep.test.ts",
+  "tests/integration/mcp-consistency/vendor-context-priority.test.ts",
+  "tests/integration/mcp-fragment-classification-cross-surface.test.ts",
+  "tests/integration/mcp-logging.test.ts",
+  "tests/integration/mcp-protocol.test.ts",
+  "tests/integration/mcp-roots.test.ts",
+  "tests/integration/mcp-scan-diff-hunks.test.ts",
+  "tests/integration/mcp-scan-errors.test.ts",
+  "tests/integration/mcp-scan-project-catalog-hint.test.ts",
+  "tests/integration/mcp-scan-project-findings-by-file.test.ts",
+  "tests/integration/mcp-scan-project-findings-by-rule.test.ts",
+  "tests/integration/mcp-scan-project-fixes-by-class-by-scan-kind.test.ts",
+  "tests/integration/mcp-scan-project-layout-files-included.test.ts",
+  "tests/integration/mcp-scan-project-ssg-hint.test.ts",
+  "tests/integration/mcp-scan-project-top-directories.test.ts",
+  "tests/integration/mcp-scan-project-violations-by-scan-kind.test.ts",
+  "tests/integration/mcp-tool-apply-fix.test.ts",
+  "tests/integration/mcp-tool-baseline.test.ts",
+  "tests/integration/mcp-tool-scan-diff.test.ts",
+  "tests/integration/mcp-tool-vpat.test.ts",
+  "tests/integration/mcp-tools.test.ts",
+  "tests/integration/mcp-warnings.test.ts",
+  "tests/integration/scan-file-vs-scan-project-build-artifact-lane.test.ts",
+  "tests/integration/scan-project-total-findings.test.ts",
+  // MIGRATION: unit tests (CLI commands, config loader/processes,
+  // input discover, MCP tool/protocol/extension/scan-* helpers,
+  // review pointer-input) — to remove after tests/ migration
+  "tests/unit/cli/commands/certification.test.ts",
+  "tests/unit/cli/commands/checklist.test.ts",
+  "tests/unit/cli/commands/coverage.test.ts",
+  "tests/unit/cli/commands/doctor.test.ts",
+  "tests/unit/cli/commands/init.test.ts",
+  "tests/unit/cli/commands/vpat.test.ts",
+  "tests/unit/config/loader.test.ts",
+  "tests/unit/config/processes.test.ts",
+  "tests/unit/input/discover.test.ts",
+  "tests/unit/mcp/additional-paths-classifier.test.ts",
+  "tests/unit/mcp/build-provenance.test.ts",
+  "tests/unit/mcp/catalog-detect.test.ts",
+  "tests/unit/mcp/config-search-marker.test.ts",
+  "tests/unit/mcp/cwd-containment.test.ts",
+  "tests/unit/mcp/ecosystem-detect.test.ts",
+  "tests/unit/mcp/extension-presence-probe.test.ts",
+  "tests/unit/mcp/parser-routing-xhtml-mkdn.test.ts",
+  "tests/unit/mcp/rules-evaluated-ssot.test.ts",
+  "tests/unit/mcp/scan-file-extension-filter.test.ts",
+  "tests/unit/mcp/scan-limitations.test.ts",
+  "tests/unit/mcp/ssg-detect.test.ts",
+  "tests/unit/mcp/tool-apply-fix-edges.test.ts",
+  "tests/unit/mcp/tool-apply-fix.test.ts",
+  "tests/unit/mcp/tool-bootstrap.test.ts",
+  "tests/unit/mcp/tool-checklist.test.ts",
+  "tests/unit/mcp/tool-conformance-statement.test.ts",
+  "tests/unit/mcp/tool-coverage.test.ts",
+  "tests/unit/mcp/tool-list-suppressions.test.ts",
+  "tests/unit/mcp/tool-propose-baseline-invariants.test.ts",
+  "tests/unit/mcp/tool-propose-baseline.test.ts",
+  "tests/unit/mcp/tool-propose-config.test.ts",
+  "tests/unit/mcp/tool-scan-diff-hunks.test.ts",
+  "tests/unit/mcp/tool-scan-diff.test.ts",
+  "tests/unit/mcp/tool-suppress.test.ts",
+  "tests/unit/mcp/tool-wrapper-introspect.test.ts",
+  "tests/unit/mcp/tools.test.ts",
+  "tests/unit/review/pointer-input.test.ts",
 ]);
 
 /** Names from `node:path` whose return value is a path string. */
@@ -118,11 +244,12 @@ const TEST_WINDOW_LINES = 10;
 walkSrc(SRC_DIR);
 walkTests(TESTS_DIR);
 
-const filteredSrcViolations = srcViolations.filter((v) => !ALLOWLIST.has(v.file));
-const violationCount = filteredSrcViolations.length + testViolations.length;
+const filteredSrcViolations = srcViolations.filter((v) => !SRC_ALLOWLIST.has(v.file));
+const filteredTestViolations = testViolations.filter((v) => !TEST_ALLOWLIST.has(v.file));
+const violationCount = filteredSrcViolations.length + filteredTestViolations.length;
 
 if (violationCount === 0) {
-  const allowSize = ALLOWLIST.size;
+  const allowSize = SRC_ALLOWLIST.size + TEST_ALLOWLIST.size;
   const suffix =
     allowSize > 0
       ? ` (${allowSize} file${allowSize === 1 ? "" : "s"} allowlisted pending migration)`
@@ -140,7 +267,7 @@ for (const v of filteredSrcViolations) {
   );
   console.error(`    ${v.text}`);
 }
-for (const v of testViolations) {
+for (const v of filteredTestViolations) {
   console.error(
     `  ${v.file}:${v.line}: expect-side path.${v.fn} — use posix${capitalize(v.fn)} from tests/helpers/path.ts`,
   );
