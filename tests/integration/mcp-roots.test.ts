@@ -13,7 +13,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+// Normalize to forward slashes — the scanner emits POSIX-style paths
+// in `meta.scanned.root`, so the Windows backslash form would mismatch
+// in expect(...).toEqual on Windows runners.
+const PROJECT_ROOT = join(import.meta.dir, "..", "..").replace(/\\/g, "/");
 
 type JsonRpcResponse = Record<string, unknown>;
 

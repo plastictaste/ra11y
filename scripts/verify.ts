@@ -231,6 +231,14 @@ for (let i = 0; i < runs.length; i++) {
 const total = Date.now() - start;
 if (failures.length > 0) {
   console.error(`\n✗ verify failed: ${failures.join(", ")}  (${total}ms)`);
+  // Drain stdout/stderr before exit — process.exit(1) otherwise drops
+  // any buffered output that hasn't drained to the pipe yet, which on
+  // CI loses the tail of the failed test's report (the (fail) lines
+  // and stack traces).
+  await Promise.all([
+    new Promise<void>((r) => process.stdout.write("", () => r())),
+    new Promise<void>((r) => process.stderr.write("", () => r())),
+  ]);
   process.exit(1);
 }
 const ran = selected.length - skippedCount;

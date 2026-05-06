@@ -213,6 +213,9 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
     }
   });
 
+  // Loads a real ra11y.config.ts on top of the MCP subprocess spawn —
+  // the loader runs Bun's TypeScript pipeline and pushes this test
+  // past bun:test's 5s default on slower machines / CI runners.
   it("scan_project with an explicit ra11y.config.ts loaded does not emit `configSearchedFrom` either", async () => {
     // Healthy-config path — even when `configSource` resolves
     // successfully (not null), the loader's search base is still
@@ -235,5 +238,5 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });
