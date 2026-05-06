@@ -50,6 +50,10 @@
 import { existsSync } from "node:fs";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
 import { gitRoot } from "../utils/git.ts";
+import {
+  type BulkCatalogTriggerToken,
+  buildBulkCatalogWorkflowRecommendation,
+} from "./config-snippet.ts";
 import { detectForeignEcosystem, type ForeignEcosystem } from "./ecosystem-detect.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { scannedProject } from "./scanned-envelope.ts";
@@ -151,7 +155,24 @@ export const bootstrapTool: McpTool = {
 
     const failedLegs: SubLeg[] = [];
     const wrappersPayload = extractWrappersSubset(detectSettled, failedLegs);
-    const suggestedConfig = extractProposedConfig(proposeSettled, failedLegs);
+    const proposedConfigBase = extractProposedConfig(proposeSettled, failedLegs);
+    // Workflow-recommendation extension to the proposed config: when
+    // the scan-leg's `warningsDetails.bulk_catalog_detected` payload
+    // fires (any of the three triggers — `slow_and_vendor_heavy`,
+    // `bulk_and_vendor_heavy`, `small_demo_catalog`), append a paste-
+    // safe TS comment block AFTER the `});` close that names the
+    // catalog-shape narrowing levers (`groupBy: "firstChildDir"` and
+    // example `restrictToPaths`). Per AI-first doctrine "Bootstrap
+    // output must be paste-safe" extension: paste-safety covers
+    // workflow recommendations on detected shapes — without this
+    // append, the agent gets severity overrides and no scope guidance
+    // for the catalog shape that drives the noise floor. The append
+    // never modifies the `defineConfig({...})` body itself; line
+    // comments past the export are valid TS.
+    const suggestedConfig = appendBulkCatalogWorkflowRecommendation(
+      proposedConfigBase,
+      readBulkCatalogDetection(scan),
+    );
 
     // Baseline runs sequentially when opted in. In dry-run the field is
     // omitted from the response entirely and a `baseline_dry_run` code
@@ -315,6 +336,90 @@ function extractProposedConfig(
     return null;
   }
   return cfg;
+}
+
+/**
+ * Subset of {@link import("./bulk-catalog.ts").BulkCatalogDetection}
+ * the bootstrap surface reads off the scan-leg's
+ * `warningsDetails.bulk_catalog_detected` payload. Carries only the
+ * fields the workflow-recommendation builder consumes — `trigger` (to
+ * name the regime in the comment header) and the optional
+ * `siblingShape.exampleSiblings[0]` (to fill the `restrictToPaths`
+ * example with a concrete path on the small_demo_catalog trigger). On
+ * the vendor-heavy triggers the warning payload omits `siblingShape`,
+ * and the recommendation falls back to a placeholder example.
+ */
+interface ReadBulkCatalogResult {
+  readonly trigger: BulkCatalogTriggerToken;
+  readonly exampleSibling?: string;
+}
+
+/**
+ * Reads the bulk-catalog warning payload off the scan-leg response.
+ * The scan-family ships `warningsDetails.bulk_catalog_detected` with
+ * a `trigger` discriminator and (for the small_demo_catalog trigger)
+ * a `siblingShape.exampleSiblings[]` array. Returns `null` when the
+ * warning didn't fire, the payload is malformed, or the trigger
+ * value isn't one of the three known tokens.
+ *
+ * Defensive on every step: this is forwarded JSON the bootstrap tool
+ * doesn't own, so any wire-shape regression upstream falls through
+ * to "skip the recommendation" rather than throw — the bootstrap
+ * surface stays paste-safe even when the upstream shape drifts.
+ */
+function readBulkCatalogDetection(scan: unknown): ReadBulkCatalogResult | null {
+  if (!scan || typeof scan !== "object") return null;
+  const details = (scan as Record<string, unknown>)["warningsDetails"];
+  if (!details || typeof details !== "object") return null;
+  const payload = (details as Record<string, unknown>)["bulk_catalog_detected"];
+  if (!payload || typeof payload !== "object") return null;
+  const triggerRaw = (payload as Record<string, unknown>)["trigger"];
+  if (
+    triggerRaw !== "slow_and_vendor_heavy" &&
+    triggerRaw !== "bulk_and_vendor_heavy" &&
+    triggerRaw !== "small_demo_catalog"
+  ) {
+    return null;
+  }
+  const trigger = triggerRaw;
+  const siblingShape = (payload as Record<string, unknown>)["siblingShape"];
+  let exampleSibling: string | undefined;
+  if (siblingShape && typeof siblingShape === "object") {
+    const examples = (siblingShape as Record<string, unknown>)["exampleSiblings"];
+    if (Array.isArray(examples) && typeof examples[0] === "string" && examples[0].length > 0) {
+      exampleSibling = examples[0];
+    }
+  }
+  return exampleSibling === undefined ? { trigger } : { trigger, exampleSibling };
+}
+
+/**
+ * Appends the workflow-recommendation comment block to a `propose_config`
+ * `suggestedConfig` string when the scan-leg's bulk-catalog warning
+ * fired. Returns the input unchanged when:
+ *   - `suggestedConfig` is null (propose_config leg degraded — no
+ *     base string to append onto), or
+ *   - `detection` is null (the warning didn't fire on this scan, so
+ *     the recommendation is not relevant).
+ *
+ * The comment block is appended AFTER `suggestedConfig`'s trailing
+ * newline. The base string already ends with `});` + `\n` (per
+ * `tool-propose-config.ts.buildConfigString`), so the append produces
+ * a single string with the comment block following the export. Line
+ * comments past the export statement are valid top-level TS — the
+ * paste-safety guarantee holds.
+ */
+function appendBulkCatalogWorkflowRecommendation(
+  suggestedConfig: string | null,
+  detection: ReadBulkCatalogResult | null,
+): string | null {
+  if (suggestedConfig === null) return null;
+  if (detection === null) return suggestedConfig;
+  const recommendation = buildBulkCatalogWorkflowRecommendation({
+    trigger: detection.trigger,
+    ...(detection.exampleSibling === undefined ? {} : { exampleSibling: detection.exampleSibling }),
+  });
+  return `${suggestedConfig}${recommendation}`;
 }
 
 interface FixesByClassLaneSubset {

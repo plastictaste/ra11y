@@ -127,3 +127,96 @@ function buildObjectFormBody(wrappers: readonly ConfirmedWrapperForSnippet[]): r
   });
   return ["nativeWrappers: {", ...entries, "},"];
 }
+
+/**
+ * Trigger discriminator carried on `warningsDetails.bulk_catalog_detected`.
+ * Mirrors `BulkCatalogTrigger` from `src/mcp/bulk-catalog.ts` without
+ * importing it (this module stays a leaf / paste-safe-builder so its
+ * dependency arrows point inward only — `tool-bootstrap.ts` is the
+ * caller that already owns the dependency on the warning surface).
+ */
+export type BulkCatalogTriggerToken =
+  | "slow_and_vendor_heavy"
+  | "bulk_and_vendor_heavy"
+  | "small_demo_catalog";
+
+/**
+ * Inputs to {@link buildBulkCatalogWorkflowRecommendation}. The fields
+ * mirror the {@link import("./bulk-catalog.ts").BulkCatalogDetection}
+ * payload that ships on `warningsDetails.bulk_catalog_detected` — the
+ * caller (`tool-bootstrap.ts`) reads the warning payload off the
+ * scan-leg response and passes it through. Kept as a flat record so
+ * the helper has no upstream dependency.
+ *
+ * `exampleSibling` is populated from `siblingShape.exampleSiblings[0]`
+ * on the `small_demo_catalog` trigger; `undefined` on the vendor-heavy
+ * triggers (where the canonical scope-down lever is exclude rather
+ * than restrictToPaths). The recommendation text branches on its
+ * presence — when set, the example fills the `restrictToPaths: ["..."]`
+ * slot in the recommendation comment; when unset, the slot ships a
+ * placeholder and the agent supplies the path.
+ */
+export interface BulkCatalogWorkflowInputs {
+  readonly trigger: BulkCatalogTriggerToken;
+  readonly exampleSibling?: string;
+}
+
+/**
+ * Builds a paste-safe TS comment block recommending the catalog-shape
+ * narrowing workflow. Returned as a string of `// ...` line comments
+ * separated by `\n` and ending with a trailing newline so the caller
+ * concatenates it directly onto the end of the suggestedConfig string
+ * (which itself ends with the `});` close + a trailing newline). The
+ * comment block lives AFTER `});` so the `defineConfig({...})` body
+ * stays unchanged and the appended lines cannot break the TS grammar
+ * — line comments are valid at the top level after an export
+ * statement.
+ *
+ * Per the AI-first doctrine "Bootstrap output must be paste-safe": the
+ * recommendation text never modifies the `defineConfig({...})` body
+ * itself (which would risk a paste-time syntax error or behavior
+ * change), and never proposes a `defineConfig` field that doesn't
+ * exist (`groupBy` / `restrictToPaths` are runtime `scan_project`
+ * params, not config-file fields — they go in the workflow comment,
+ * not the body).
+ *
+ * Each recommendation block carries:
+ *   1. A header line naming which trigger fired so the agent can
+ *      reconcile the recommendation against its own classification
+ *      reading of `warningsDetails.bulk_catalog_detected.trigger`.
+ *   2. The `groupBy: "firstChildDir"` recommendation as a callable
+ *      `scan_project` invocation — same canonical narrowing lever
+ *      `nextStepStructured` proposes on the small_demo_catalog
+ *      trigger (per `next-step.ts` `smallDemoCatalogGroupByNextStep`),
+ *      reachable from any of the three triggers because the
+ *      catalog-shape rollup applies to all three.
+ *   3. The `restrictToPaths: [...]` recommendation as the per-subdir
+ *      alternative. Populated from `exampleSibling` when the warning
+ *      payload carried a concrete sibling subdir; otherwise
+ *      placeholder-only so the recommendation stays honest about not
+ *      having a concrete pivot to fill in.
+ *
+ * Empty input is not a valid call site — the caller skips the helper
+ * entirely when the warning didn't fire.
+ */
+export function buildBulkCatalogWorkflowRecommendation(inputs: BulkCatalogWorkflowInputs): string {
+  const { trigger, exampleSibling } = inputs;
+  const restrictToPathsExample =
+    exampleSibling !== undefined && exampleSibling.length > 0
+      ? `restrictToPaths: [${JSON.stringify(exampleSibling)}]`
+      : `restrictToPaths: ["<one-sub-project>"]`;
+  const lines = [
+    "",
+    `// Bulk-catalog workflow recommendation (trigger: ${trigger})`,
+    "// The scan classified this corpus as a parallel-sub-project / vendor-heavy catalog.",
+    '// Beyond the severity tuning above, the per-call workflow has two scope-down levers:',
+    '//   - scan_project({ groupBy: "firstChildDir" }) — one whole-tree scan with',
+    "//     per-sub-project rollup (`plan.byGroup`), no paging through every file.",
+    `//   - scan_project({ ${restrictToPathsExample} }) — scope to one sub-project at a time;`,
+    "//     swap the path per sub-project rather than re-scanning the whole catalog.",
+    "// Both are runtime scan_project params, not defineConfig fields — they live in the",
+    "// per-call invocation, not the config body above.",
+    "",
+  ];
+  return lines.join("\n");
+}
