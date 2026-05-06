@@ -31,6 +31,45 @@ export type ScanWarningCode =
   | "no_config_found"
   | "tailwind_detected_css_undercounted"
   | "template_files_parsed_as_literal"
+  // Per-token-style splits of `template_files_parsed_as_literal`. Each
+  // names the dialect family the line evidence carries so an agent
+  // scoping around a specific engine can route on the per-style code
+  // rather than re-walking the corpus. Per AI-first doctrine "Routing
+  // skips that drop content are the symmetric twin of suppression"
+  // (split-by-predicate closure path): the parent code is a single
+  // bucket; an agent reading "template_files_parsed_as_literal: {{x}}
+  // 3396, {%x%} 704, <%x%> 9" cannot tell which engine to scope around
+  // without descending into `meta.analysisCoverage.templateInterpolationFound`.
+  // The per-style codes ship the same evidence at the warning-channel
+  // surface so the routing pivot is visible in one read.
+  //
+  // Co-fire semantics: each per-style code fires INDEPENDENTLY when
+  // its overlap subset is non-empty AND the parent
+  // `template_files_parsed_as_literal` predicate held — frontmatter-
+  // only files (no directive overlap) surface only on the parent code.
+  // Per-style codes never fire alone; they always co-fire with the
+  // parent so an agent reading either surface gets a consistent
+  // picture.
+  //
+  // Liquid covers `{% ... %}` family — Jinja, Liquid, Nunjucks, Twig.
+  // The surface token is unambiguous across these dialects so the
+  // warning name picks the most common member; the agent reads the
+  // file to disambiguate dialect.
+  | "liquid_directives_unparsed"
+  // ERB covers `<% ... %>` (and `<%= ... %>` / `<%# ... %>` / `<%- ... %>`
+  // variants) — ERB, EJS. The surface token is unambiguous across these
+  // dialects so the warning name picks the most common member.
+  | "erb_directives_unparsed"
+  // Curly-double covers `{{ ... }}` interpolation — Handlebars,
+  // Mustache, Liquid plain interpolation, Jinja interpolation, Vue,
+  // Angular. The surface token is STRUCTURALLY ambiguous between these
+  // dialects (per `analysis-coverage-template-tokens.ts`'s docblock —
+  // family attribution fails the "provable from the code" bar), so the
+  // warning name is engine-agnostic and the payload's `reason` field
+  // names the ambiguity explicitly per AI-first doctrine "Heuristic-
+  // mislabeled meta sub-fields are dishonest" — the agent reads the
+  // file to pick a dialect.
+  | "curly_double_directives_unparsed"
   // at least one scanned `.php` / `.phtml` file ran through the
   // {@link parsePhp} adapter's island-stripping pass and contained at
   // least one PHP block (`<?php … ?>`, `<?= … ?>`, or `<? … ?>`).
@@ -1065,6 +1104,32 @@ export interface WarningInputs {
    * `undefined` — neither populates the payload.
    */
   readonly templateLiteralFiles?: readonly string[];
+  /**
+   * Per-style splits of {@link templateLiteralFiles} keyed by the
+   * dialect family the line evidence carried — `liquid` for `{% ... %}`
+   * (Jinja / Liquid / Nunjucks / Twig), `erb` for `<% ... %>` (ERB /
+   * EJS), `curlyDouble` for `{{ ... }}` (Handlebars / Mustache / Liquid /
+   * Jinja / Vue / Angular interpolation). Each list drives its
+   * corresponding `*_directives_unparsed` warning code + paired
+   * `warningsDetails.<code>: { fileCount, files }` payload so an agent
+   * scoping around a specific token style routes off the warning
+   * channel rather than re-walking
+   * `meta.analysisCoverage.templateInterpolationFound`. The lists are a
+   * disjoint OR overlapping partition of `templateLiteralFiles`'s
+   * directive-overlap subset (a single file carrying multiple styles
+   * appears in every matching list) — frontmatter-only files surface on
+   * the parent code only and never appear here.
+   *
+   * Pass `undefined` (or omit) when the caller didn't materialize per-
+   * style evidence (e.g. derivative tools that consume only the parent
+   * `templateLiteralFiles` list). Empty arrays are treated identically
+   * to `undefined` — neither fires the corresponding per-style code.
+   */
+  readonly liquidLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly erbLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly curlyDoubleLiteralFiles?: readonly string[];
   /**
    * Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: true when the walk-up from the
    * scan root saw a `package.json` (or a `ra11y.config.*` that for some
@@ -2615,6 +2680,55 @@ export interface ScanWarningDetails {
       }
     | BinaryPresenceMarker;
   /**
+   * Payload for `liquid_directives_unparsed`. Names every file whose
+   * source carried a `{% ... %}` line that intersected an emitted
+   * finding — i.e. the literal-template-parse touched the same line a
+   * rule reported on. Companion per-style payload to
+   * {@link template_files_parsed_as_literal}; the parent code aggregates
+   * across every directive style + frontmatter fence, this code narrows
+   * to the Liquid / Jinja / Nunjucks / Twig family specifically so an
+   * agent scoping around the dialect routes off the warning channel
+   * directly. `fileCount` always carries the full count;
+   * `files` is sorted alphabetically for deterministic wire output. Per
+   * AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest"
+   * — populated whenever the warning fires; the empty-list branch
+   * returns `undefined` from the summarizer so the dispatch falls
+   * through to the schema-discipline sentinel rather than shipping an
+   * ambiguous `{}`.
+   */
+  readonly liquid_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+  };
+  /**
+   * Payload for `erb_directives_unparsed`. Names every file whose
+   * source carried a `<% ... %>` line that intersected an emitted
+   * finding — same shape as {@link liquid_directives_unparsed} but
+   * narrowing to the ERB / EJS family. See that field's docblock for
+   * the full contract.
+   */
+  readonly erb_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+  };
+  /**
+   * Payload for `curly_double_directives_unparsed`. Names every file
+   * whose source carried a `{{ ... }}` line that intersected an emitted
+   * finding. Same shape as {@link liquid_directives_unparsed} with one
+   * extension: a `reason` field naming the dialect ambiguity
+   * `{{ ... }}` carries (Handlebars / Mustache / Liquid plain
+   * interpolation / Jinja interpolation / Vue / Angular) so the agent
+   * reads the file to disambiguate dialect — per AI-first doctrine
+   * "Heuristic-mislabeled meta sub-fields are dishonest," the warning
+   * surface name does NOT pick a dialect family and the payload makes
+   * the ambiguity explicit.
+   */
+  readonly curly_double_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+    readonly reason: string;
+  };
+  /**
    * Payload for `php_islands_stripped`. Names the parsed `.php` /
    * `.phtml` files whose source contained at least one PHP island
    * opener (`<?php`, `<?=`, `<?`) and therefore ran through the
@@ -3222,6 +3336,9 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "no_config_found",
   "tailwind_detected_css_undercounted",
   "template_files_parsed_as_literal",
+  "liquid_directives_unparsed",
+  "erb_directives_unparsed",
+  "curly_double_directives_unparsed",
   "php_islands_stripped",
   "scanned_build_artifacts_present",
   "no_hunks_in_comparison",
@@ -3509,6 +3626,31 @@ function substrateIslandCodes(inputs: WarningInputs): readonly ScanWarningCode[]
 }
 
 /**
+ * Sub-chain extracted from {@link computeScanWarnings} to keep its
+ * cognitive complexity under the lint cap. Emits per-token-style
+ * splits of `template_files_parsed_as_literal` whenever the
+ * corresponding overlap file list is non-empty. Each code fires
+ * independently and co-fires with the parent code; the parent fires
+ * on the broader frontmatter-OR-overlap predicate so frontmatter-only
+ * files surface on the parent alone. Emit order matches declaration
+ * order on {@link ScanWarningCode} for stable `warnings[]` sequencing:
+ * liquid first, erb second, curly-double third.
+ */
+function perStyleTemplateLiteralCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (inputs.liquidLiteralFiles !== undefined && inputs.liquidLiteralFiles.length > 0) {
+    out.push("liquid_directives_unparsed");
+  }
+  if (inputs.erbLiteralFiles !== undefined && inputs.erbLiteralFiles.length > 0) {
+    out.push("erb_directives_unparsed");
+  }
+  if (inputs.curlyDoubleLiteralFiles !== undefined && inputs.curlyDoubleLiteralFiles.length > 0) {
+    out.push("curly_double_directives_unparsed");
+  }
+  return out;
+}
+
+/**
  * Returns the codes whose conditions hold, in declaration order. Callers
  * conditional-spread the result: `...(warnings.length ? { warnings } : {})`.
  */
@@ -3552,6 +3694,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // only.
     out.push("template_files_parsed_as_literal");
   }
+  // Per-style splits of `template_files_parsed_as_literal` — co-fire
+  // with the parent code when a per-style overlap subset is non-empty.
+  // Each independent: a corpus carrying `{%x%}` AND `<%x%>` in
+  // separate files surfaces both `liquid_directives_unparsed` AND
+  // `erb_directives_unparsed`. Frontmatter-only files (no directive
+  // overlap) surface on the parent code alone — the per-style codes
+  // measure overlap evidence, not parser-level substrate, so a file
+  // with a frontmatter fence and no directives doesn't appear here.
+  // Per AI-first doctrine "Routing skips that drop content are the
+  // symmetric twin of suppression" (split-by-predicate closure path):
+  // the parent code is a single bucket; the per-style codes ship the
+  // routing pivot at the warning-channel surface so an agent scoping
+  // around a specific engine reads the per-style file list directly
+  // without descending into `meta.analysisCoverage.templateInterpolationFound`.
+  out.push(...perStyleTemplateLiteralCodes(inputs));
   // Substrate-island code family — see `substrateIslandCodes`. Three
   // branches extracted into the helper so this function's cognitive
   // complexity stays under the lint cap as new substrate detectors
@@ -4370,6 +4527,38 @@ function shouldEmitTemplateFilesLiteral(inputs: WarningInputs): boolean {
 const TEMPLATE_DIRECTIVE_LINE_RE = /\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>/;
 
 /**
+ * Per-style directive openers — used to classify which token style fired
+ * the overlap on a given line. `liquid` covers `{% ... %}` family
+ * (Jinja / Liquid / Nunjucks / Twig — the surface token is unambiguous
+ * across these dialects so the warning name picks the most common
+ * member); `erb` covers `<% ... %>` (ERB / EJS — likewise unambiguous);
+ * `curlyDouble` covers `{{ ... }}` (Handlebars / Mustache / Liquid plain
+ * interpolation / Jinja interpolation / Vue / Angular — the surface
+ * token is structurally ambiguous between these dialects, so the
+ * warning name is engine-agnostic and the payload's `reason` field
+ * names the ambiguity per AI-first doctrine "Heuristic-mislabeled meta
+ * sub-fields are dishonest").
+ *
+ * Each pattern matches the SAME text the combined
+ * {@link TEMPLATE_DIRECTIVE_LINE_RE} would; the per-style split here
+ * exists so we can attribute each overlap to the dialect family the
+ * line carries, not to invent a per-engine classification we cannot
+ * honestly establish from the surface token alone.
+ */
+const TEMPLATE_DIRECTIVE_PER_STYLE_RE = {
+  liquid: /\{%-?|-?%\}/,
+  erb: /<%[=-]?|%>/,
+  curlyDouble: /\{\{-?|-?\}\}/,
+} as const;
+
+/**
+ * Token-style discriminator for {@link computeTemplateDirectiveOverlap}'s
+ * per-style overlap file map. Each key names the directive shape the
+ * line carries; payload codes route by this discriminator.
+ */
+export type TemplateDirectiveStyle = keyof typeof TEMPLATE_DIRECTIVE_PER_STYLE_RE;
+
+/**
  * Set of 1-based line numbers in `source` that contain at least one
  * template-directive opener or closer. Pure over its input; used by
  * {@link computeTemplateDirectiveOverlap} to decide whether an emitted
@@ -4387,6 +4576,34 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
     }
   }
   return out;
+}
+
+/**
+ * Per-style line-set companion to {@link templateDirectiveLines}. Returns
+ * three sets keyed by token-style discriminator — `liquid` for
+ * `{% ... %}` family lines, `erb` for `<% ... %>` family lines,
+ * `curlyDouble` for `{{ ... }}` family lines. A single line carrying
+ * multiple styles (rare but legal — e.g. `{% if x %}{{ y }}{% endif %}`)
+ * appears in every matching set so the per-style warning attribution
+ * stays honest with the line evidence. Pure over its input.
+ */
+function templateDirectiveLinesByStyle(
+  source: string,
+): Readonly<Record<TemplateDirectiveStyle, ReadonlySet<number>>> {
+  const liquid = new Set<number>();
+  const erb = new Set<number>();
+  const curlyDouble = new Set<number>();
+  if (source.length === 0) return { liquid, erb, curlyDouble };
+  const lines = source.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i];
+    if (lineText === undefined) continue;
+    const lineNum = i + 1;
+    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.liquid.test(lineText)) liquid.add(lineNum);
+    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.erb.test(lineText)) erb.add(lineNum);
+    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.curlyDouble.test(lineText)) curlyDouble.add(lineNum);
+  }
+  return { liquid, erb, curlyDouble };
 }
 
 /**
@@ -4413,27 +4630,57 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
 export function computeTemplateDirectiveOverlap(args: {
   readonly findings: Iterable<{ readonly filePath: string; readonly line: number }>;
   readonly sourcesByPath: ReadonlyMap<string, string>;
-}): { readonly overlap: boolean; readonly overlapFiles: ReadonlySet<string> } {
+}): {
+  readonly overlap: boolean;
+  readonly overlapFiles: ReadonlySet<string>;
+  readonly overlapByStyle: Readonly<Record<TemplateDirectiveStyle, ReadonlySet<string>>>;
+} {
   const linesByPath = new Map<string, ReadonlySet<number>>();
+  const linesByStyleByPath = new Map<
+    string,
+    Readonly<Record<TemplateDirectiveStyle, ReadonlySet<number>>>
+  >();
   const overlapFiles = new Set<string>();
+  const liquidFiles = new Set<string>();
+  const erbFiles = new Set<string>();
+  const curlyDoubleFiles = new Set<string>();
   for (const finding of args.findings) {
     let directiveLines = linesByPath.get(finding.filePath);
-    if (directiveLines === undefined) {
+    let perStyleLines = linesByStyleByPath.get(finding.filePath);
+    if (directiveLines === undefined || perStyleLines === undefined) {
       const source = args.sourcesByPath.get(finding.filePath);
       if (source === undefined) {
         // The file doesn't live in our parsed-file index (e.g. a
-        // synthetic finding targeting a generated path). Record an
-        // empty set so we don't repeat the lookup, and move on —
-        // without source we cannot prove overlap.
+        // synthetic finding targeting a generated path). Record empty
+        // sets so we don't repeat the lookup, and move on — without
+        // source we cannot prove overlap.
         directiveLines = new Set<number>();
+        perStyleLines = {
+          liquid: new Set<number>(),
+          erb: new Set<number>(),
+          curlyDouble: new Set<number>(),
+        };
       } else {
         directiveLines = templateDirectiveLines(source);
+        perStyleLines = templateDirectiveLinesByStyle(source);
       }
       linesByPath.set(finding.filePath, directiveLines);
+      linesByStyleByPath.set(finding.filePath, perStyleLines);
     }
     if (directiveLines.has(finding.line)) overlapFiles.add(finding.filePath);
+    if (perStyleLines.liquid.has(finding.line)) liquidFiles.add(finding.filePath);
+    if (perStyleLines.erb.has(finding.line)) erbFiles.add(finding.filePath);
+    if (perStyleLines.curlyDouble.has(finding.line)) curlyDoubleFiles.add(finding.filePath);
   }
-  return { overlap: overlapFiles.size > 0, overlapFiles };
+  return {
+    overlap: overlapFiles.size > 0,
+    overlapFiles,
+    overlapByStyle: {
+      liquid: liquidFiles,
+      erb: erbFiles,
+      curlyDouble: curlyDoubleFiles,
+    },
+  };
 }
 
 /**
@@ -4471,6 +4718,16 @@ type ScanMetaWarningArgs = {
    * warnings module stays pure over its inputs.
    */
   readonly templateLiteralFiles?: readonly string[];
+  /**
+   * Pass-through for the per-style `{% ... %}` overlap subset. Drives
+   * `warningsDetails.liquid_directives_unparsed`. See
+   * {@link WarningInputs.liquidLiteralFiles}.
+   */
+  readonly liquidLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly erbLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly curlyDoubleLiteralFiles?: readonly string[];
   readonly additionalPathsRedundant?: boolean;
   /**
    * Pass-through for the per-input redundant-paths list that drives the
@@ -4605,6 +4862,9 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "vendorCssNoise",
   "templateDirectivesOverlap",
   "templateLiteralFiles",
+  "liquidLiteralFiles",
+  "erbLiteralFiles",
+  "curlyDoubleLiteralFiles",
   "additionalPathsRedundant",
   "redundantAdditionalPathsList",
   "restrictToPathsEmpty",
@@ -4750,10 +5010,7 @@ function buildScanWarningDetailsDispatch(
       code: "scanned_minified_file",
       summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
     },
-    {
-      code: "template_files_parsed_as_literal",
-      summarize: () => summarizeTemplateFilesParsedAsLiteral(inputs.templateLiteralFiles),
-    },
+    ...templateLiteralDispatchRows(inputs),
     {
       code: "bulk_catalog_detected",
       summarize: () => summarizeBulkCatalog(inputs.bulkCatalogDetection),
@@ -4803,6 +5060,39 @@ function buildScanWarningDetailsDispatch(
     {
       code: "parser_bailed_on_non_jsx_in_tsx_route",
       summarize: () => summarizeParserBailedOnNonJsxInTsxRoute(inputs.parserBailedJsTsxRouteFiles),
+    },
+  ];
+}
+
+/**
+ * Template-literal dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the file-budget effective-line cap. Pairs the parent
+ * `template_files_parsed_as_literal` row with the three per-token-style
+ * payload rows; all four route off the same overlap-derived per-style
+ * file lists threaded onto `WarningInputs`. Order matches declaration
+ * order on {@link ScanWarningCode} for stable wire-key sequencing:
+ * parent first, then liquid / erb / curly_double.
+ */
+function templateLiteralDispatchRows(
+  inputs: WarningInputs,
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "template_files_parsed_as_literal",
+      summarize: () => summarizeTemplateFilesParsedAsLiteral(inputs.templateLiteralFiles),
+    },
+    {
+      code: "liquid_directives_unparsed",
+      summarize: () => summarizeLiquidDirectivesUnparsed(inputs.liquidLiteralFiles),
+    },
+    {
+      code: "erb_directives_unparsed",
+      summarize: () => summarizeErbDirectivesUnparsed(inputs.erbLiteralFiles),
+    },
+    {
+      code: "curly_double_directives_unparsed",
+      summarize: () => summarizeCurlyDoubleDirectivesUnparsed(inputs.curlyDoubleLiteralFiles),
     },
   ];
 }
@@ -5122,6 +5412,56 @@ function summarizeTemplateFilesParsedAsLiteral(
     if (ext.length > 1) extSet.add(ext);
   }
   return { files: sortedFiles, extensions: [...extSet].sort() };
+}
+
+/**
+ * Builds the `liquid_directives_unparsed` payload from the caller-
+ * supplied per-style file list. Returns `undefined` when the list is
+ * absent or empty so the dispatch falls through to the
+ * schema-discipline sentinel — populating an empty `{}` would lie per
+ * AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+ * `files` is sorted alphabetically for deterministic wire output.
+ */
+function summarizeLiquidDirectivesUnparsed(
+  files: WarningInputs["liquidLiteralFiles"],
+): NonNullable<ScanWarningDetails["liquid_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return { fileCount: sortedFiles.length, files: sortedFiles };
+}
+
+/** see {@link summarizeLiquidDirectivesUnparsed}. */
+function summarizeErbDirectivesUnparsed(
+  files: WarningInputs["erbLiteralFiles"],
+): NonNullable<ScanWarningDetails["erb_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return { fileCount: sortedFiles.length, files: sortedFiles };
+}
+
+/**
+ * Builds the `curly_double_directives_unparsed` payload — same shape as
+ * {@link summarizeLiquidDirectivesUnparsed} with an additional `reason`
+ * field naming the dialect ambiguity per AI-first doctrine "Heuristic-
+ * mislabeled meta sub-fields are dishonest." The `{{ ... }}` token is
+ * structurally ambiguous between Handlebars / Mustache / Liquid plain
+ * interpolation / Jinja interpolation / Vue / Angular; the warning
+ * surface name is engine-agnostic and the `reason` field makes the
+ * ambiguity explicit so the agent reads the file to pick a dialect.
+ */
+function summarizeCurlyDoubleDirectivesUnparsed(
+  files: WarningInputs["curlyDoubleLiteralFiles"],
+): NonNullable<ScanWarningDetails["curly_double_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return {
+    fileCount: sortedFiles.length,
+    files: sortedFiles,
+    reason:
+      "{{ ... }} is structurally ambiguous between Handlebars, Mustache, " +
+      "Liquid plain interpolation, Jinja interpolation, Vue, and Angular — " +
+      "read the cited files to disambiguate dialect.",
+  };
 }
 
 /**

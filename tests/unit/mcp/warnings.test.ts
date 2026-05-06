@@ -16,6 +16,7 @@ import { describe, expect, it } from "bun:test";
 import {
   computeScanWarningDetails,
   computeScanWarnings,
+  computeTemplateDirectiveOverlap,
   type ScanWarningCode,
   TRUNCATED_FILES_TOP_DROPPED_RULES_CAP,
   tokenBudgetTruncatedDetailsField,
@@ -336,6 +337,127 @@ describe("computeScanWarnings", () => {
       filesByExtension: { ".html": 5 },
     });
     expect(codes).not.toContain("template_files_parsed_as_literal");
+  });
+
+  // Per-token-style splits of `template_files_parsed_as_literal` —
+  // each fires independently on its overlap subset. The split closes
+  // the doctrine-named gap where the parent warning lumps three
+  // categorically-different engines (Liquid `{% %}`, ERB `<% %>`,
+  // ambiguous `{{ }}`) into a single bucket; the per-style codes ship
+  // the routing pivot at the warning channel surface so an agent can
+  // scope around a specific engine in one read.
+  it("fires `liquid_directives_unparsed` when liquidLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      liquidLiteralFiles: ["/proj/page.liquid"],
+    });
+    expect(codes).toContain("liquid_directives_unparsed");
+  });
+
+  it("fires `erb_directives_unparsed` when erbLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      erbLiteralFiles: ["/proj/page.erb"],
+    });
+    expect(codes).toContain("erb_directives_unparsed");
+  });
+
+  it("fires `curly_double_directives_unparsed` when curlyDoubleLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      curlyDoubleLiteralFiles: ["/proj/page.html"],
+    });
+    expect(codes).toContain("curly_double_directives_unparsed");
+  });
+
+  it("co-fires all three per-style codes alongside parent on a mixed-engine corpus", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        templateInterpolationFound: [
+          { token: "{%x%}", count: 3 },
+          { token: "<%x%>", count: 2 },
+          { token: "{{x}}", count: 4 },
+        ],
+      },
+      filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: true,
+      liquidLiteralFiles: ["/proj/a.liquid"],
+      erbLiteralFiles: ["/proj/b.erb"],
+      curlyDoubleLiteralFiles: ["/proj/c.html"],
+    });
+    expect(codes).toContain("template_files_parsed_as_literal");
+    expect(codes).toContain("liquid_directives_unparsed");
+    expect(codes).toContain("erb_directives_unparsed");
+    expect(codes).toContain("curly_double_directives_unparsed");
+  });
+
+  it("does NOT fire per-style codes when their lists are empty/absent", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      liquidLiteralFiles: [],
+      erbLiteralFiles: [],
+      curlyDoubleLiteralFiles: [],
+    });
+    expect(codes).not.toContain("liquid_directives_unparsed");
+    expect(codes).not.toContain("erb_directives_unparsed");
+    expect(codes).not.toContain("curly_double_directives_unparsed");
+  });
+
+  it("ships per-style payloads with sorted files, fileCount, and ambiguity-reason on curly-double", () => {
+    const codes: ScanWarningCode[] = [
+      "liquid_directives_unparsed",
+      "erb_directives_unparsed",
+      "curly_double_directives_unparsed",
+    ];
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 3 },
+      liquidLiteralFiles: ["/proj/b.liquid", "/proj/a.liquid"],
+      erbLiteralFiles: ["/proj/x.erb"],
+      curlyDoubleLiteralFiles: ["/proj/page.html"],
+    });
+    expect(details.liquid_directives_unparsed).toEqual({
+      fileCount: 2,
+      files: ["/proj/a.liquid", "/proj/b.liquid"],
+    });
+    expect(details.erb_directives_unparsed).toEqual({
+      fileCount: 1,
+      files: ["/proj/x.erb"],
+    });
+    expect(details.curly_double_directives_unparsed).toMatchObject({
+      fileCount: 1,
+      files: ["/proj/page.html"],
+    });
+    // The reason field names the dialect ambiguity per AI-first
+    // doctrine "Heuristic-mislabeled meta sub-fields are dishonest" —
+    // `{{ ... }}` is structurally indistinguishable between Handlebars
+    // / Mustache / Liquid / Jinja / Vue / Angular from the surface
+    // token alone, and the warning surface name does NOT pick a
+    // dialect family.
+    expect(details.curly_double_directives_unparsed?.reason ?? "").toContain("Handlebars");
+    expect(details.curly_double_directives_unparsed?.reason ?? "").toContain("ambiguous");
   });
 
   // Parser-level signal that `.php` / `.phtml` files ran through the
@@ -4509,5 +4631,72 @@ describe("truncatedFilesDroppedDetailsField — Q9 rule-level truncation impact"
       droppedFileCount: 2,
     });
     expect(out?.ruleFamiliesAffected).toEqual(["another-no-slash", "single-token-rule"]);
+  });
+});
+
+describe("computeTemplateDirectiveOverlap — per-style overlap classification", () => {
+  // The per-style return shape attributes each finding-line overlap to
+  // the dialect family the line evidence carries. A corpus carrying
+  // `{% %}` AND `<% %>` AND `{{ }}` in separate files surfaces three
+  // disjoint sets; a single file carrying multiple styles appears in
+  // every matching set so the warning attribution stays honest.
+  it("partitions overlap files by directive token style", () => {
+    const liquidSrc = "<p>{% if x %}\nhello\n{% endif %}</p>";
+    const erbSrc = "<div><% if @user %>\nrails!\n<% end %></div>";
+    const curlySrc = "<p>{{ user.name }}</p>";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        // line 1 of liquidSrc carries `{%` opener — liquid family
+        { filePath: "/proj/a.liquid", line: 1 },
+        // line 1 of erbSrc carries `<%` opener — erb family
+        { filePath: "/proj/b.erb", line: 1 },
+        // line 1 of curlySrc carries `{{ }}` — curlyDouble family
+        { filePath: "/proj/c.html", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/a.liquid", liquidSrc],
+        ["/proj/b.erb", erbSrc],
+        ["/proj/c.html", curlySrc],
+      ]),
+    });
+    expect(result.overlap).toBe(true);
+    expect([...result.overlapFiles].sort()).toEqual([
+      "/proj/a.liquid",
+      "/proj/b.erb",
+      "/proj/c.html",
+    ]);
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/a.liquid"]);
+    expect([...result.overlapByStyle.erb]).toEqual(["/proj/b.erb"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual(["/proj/c.html"]);
+  });
+
+  it("attributes a single line carrying multiple styles to every matching set", () => {
+    // `{% if x %}{{ y }}{% endif %}` carries BOTH `{% %}` and `{{ }}`
+    // openers on the same line — the per-style attribution must
+    // include the file in BOTH `liquid` and `curlyDouble` so the
+    // warning channel stays honest with the line evidence (per the
+    // doctrine: don't invent classification you can't establish from
+    // the surface token).
+    const mixedSrc = "<p>{% if x %}{{ y }}{% endif %}</p>";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [{ filePath: "/proj/mixed.html", line: 1 }],
+      sourcesByPath: new Map([["/proj/mixed.html", mixedSrc]]),
+    });
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/mixed.html"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual(["/proj/mixed.html"]);
+    expect([...result.overlapByStyle.erb]).toEqual([]);
+  });
+
+  it("returns empty per-style sets when no overlap occurred", () => {
+    // Finding line 5; directives are on line 1.
+    const src = "{% if x %}\n\n\n\nhello\n";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [{ filePath: "/proj/a.liquid", line: 5 }],
+      sourcesByPath: new Map([["/proj/a.liquid", src]]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapByStyle.liquid.size).toBe(0);
+    expect(result.overlapByStyle.erb.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
   });
 });

@@ -66,6 +66,10 @@ import {
   type LinkedStylesheetsUnresolvedForContrast,
 } from "./scan-assembly.ts";
 import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
+import {
   ANIMATION_LIB_GUARD_FINDING_FLOOR,
   computeTemplateDirectiveOverlap,
   SCANNED_BUILD_ARTIFACTS_TOP_CAP,
@@ -248,6 +252,9 @@ interface DerivedBuildArtifactSignals {
   readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
   readonly templateDirectivesOverlap: boolean;
   readonly templateLiteralFiles: readonly string[];
+  readonly liquidLiteralFiles: readonly string[];
+  readonly erbLiteralFiles: readonly string[];
+  readonly curlyDoubleLiteralFiles: readonly string[];
   readonly filesScanned: number;
   readonly totalFindings: number;
   readonly jsInnerHtmlFileSamples: readonly {
@@ -370,6 +377,15 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     inputs.analysisCoverage,
     overlapResult.overlapFiles,
   );
+  // Per-style splits of `templateLiteralFiles` — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` codes. Shared helper so all
+  // three call sites (here, response-assembler, tool-scan-project)
+  // compute the predicate identically.
+  const perStyleFiles = computePerStyleTemplateLiteralFiles(
+    inputs.analysisCoverage,
+    overlapResult.overlapByStyle,
+  );
 
   // Per-file inline-HTML pattern samples are surfaced only for files
   // where the routed parser produced zero findings — the routing-skip
@@ -440,6 +456,9 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     bulkCatalogDetection,
     templateDirectivesOverlap,
     templateLiteralFiles,
+    liquidLiteralFiles: perStyleFiles.liquid,
+    erbLiteralFiles: perStyleFiles.erb,
+    curlyDoubleLiteralFiles: perStyleFiles.curlyDouble,
     filesScanned,
     totalFindings,
     jsInnerHtmlFileSamples,
@@ -653,6 +672,11 @@ function buildWarningsFieldInputs(
     ...(inputs.sessionWrappersMismatchCwd ? { sessionWrappersMismatchCwd: true } : {}),
     templateDirectivesOverlap: derived.templateDirectivesOverlap,
     ...templateLiteralInputs(derived.templateLiteralFiles),
+    ...perStyleLiteralFilesField({
+      liquid: derived.liquidLiteralFiles,
+      erb: derived.erbLiteralFiles,
+      curlyDouble: derived.curlyDoubleLiteralFiles,
+    }),
     ...(inputs.additionalPathsRedundant ? { additionalPathsRedundant: true } : {}),
     ...(inputs.restrictToPathsEmpty ? { restrictToPathsEmpty: true } : {}),
     configSearchSawProjectMarker: inputs.configSearchSawProjectMarker,

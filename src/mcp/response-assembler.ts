@@ -110,6 +110,10 @@ import {
 } from "./scan-assembly.ts";
 import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
+import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
 import { computeTemplateDirectiveOverlap, warningsField } from "./warnings.ts";
@@ -609,6 +613,14 @@ function buildAssemblerWarningsField(args: {
     analysisCoverage,
     overlapResult.overlapFiles,
   );
+  // Per-style splits of the overlap-confirmed file list — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` per-style codes via the shared
+  // helper. Same fragment-classifier deduplication as the parent.
+  const perStyleLiteralFiles = computePerStyleTemplateLiteralFiles(
+    analysisCoverage,
+    overlapResult.overlapByStyle,
+  );
   // Q-SHARED-META-ARRAY-BUDGET-CAP: the assembler-seam meta block
   // already carries the capped `analysisCoverage.*` arrays with
   // their per-array `*Truncated: { shown, total }` siblings; derive
@@ -636,6 +648,7 @@ function buildAssemblerWarningsField(args: {
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
     templateDirectivesOverlap,
     ...(templateLiteralFiles.length === 0 ? {} : { templateLiteralFiles }),
+    ...perStyleLiteralFilesField(perStyleLiteralFiles),
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),

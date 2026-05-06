@@ -81,6 +81,10 @@ import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import { detectSsgFramework, ssgEmptyResultMetaFields, withSsgHint } from "./ssg-detect.ts";
 import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
+import {
   collectManualCriteria,
   errorResult,
   type McpTool,
@@ -1179,6 +1183,15 @@ function buildBaseWarningsForScanProject(args: {
     formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
     templateOverlapResult.overlapFiles,
   );
+  // Per-style splits of the overlap-confirmed file list — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` per-style codes. Shared helper
+  // applies the same fragment-classifier deduplication the parent
+  // file list uses.
+  const perStyleLiteralFiles = computePerStyleTemplateLiteralFiles(
+    formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
+    templateOverlapResult.overlapByStyle,
+  );
   const scannedBuildArtifactsSummary = buildScannedBuildArtifactsSummary(buildArtifacts.entries);
   // narrow the build-artifact
   // entries to the minified subset specifically. The classifier emits
@@ -1267,6 +1280,7 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
     ...templateLiteralFilesField(templateLiteralFiles),
+    ...perStyleLiteralFilesField(perStyleLiteralFiles),
     additionalPathsRedundant,
     ...(redundantAdditionalPathsList.length > 0 ? { redundantAdditionalPathsList } : {}),
     restrictToPathsEmpty,
