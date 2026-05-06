@@ -44,6 +44,11 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
     it("a fragment file contains TWO unlabeled <form> elements", () => {
       // Two same-type landmarks in one fragment is a deterministic
       // duplicate — observable from the file, fires per instance.
+      // On `html_partial` classification the framing is reshaped:
+      // severity drops to `info` and the message reads "this partial
+      // supplies N <form> landmarks" rather than "Document has N".
+      // Pairs with the partial-input couldBeWrongBecause concession
+      // code so the agent reads the dismissal hatch in one pass.
       const source = [
         "<section>",
         "  <form action='/search'>search</form>",
@@ -53,6 +58,13 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       const violations = runRule(rule, source, { filePath: "_includes/footer.html" });
       expect(violations).toHaveLength(2);
       expect(violations[0]?.message).toContain("<form>");
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain("partial");
+      expect(violations[0]?.message).not.toContain("Document has");
+      expect(violations[0]?.couldBeWrongBecause).toContain(
+        "partial_input_duplicate_landmark_in_fragment",
+      );
+      expect(violations[0]?.suggestion).toContain("ra11y-disable");
     });
 
     it("a full page has two unlabeled <aside> elements", () => {
@@ -130,10 +142,11 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       expect(violations[0]?.suggestion).toContain("1 does");
     });
 
-    it("two body-level <header> elements in a fragment file", () => {
-      // Two same-type landmarks observable in the fragment is the
-      // deterministic duplicate path — fires per-instance, just like
-      // the two-form fragment case for <form>.
+    it("two body-level <header> elements in a layout file (not fragment-classified)", () => {
+      // _layouts/ is the page envelope under the unified classifier —
+      // `inLayoutsDir: true` vetoes the `isFragment` label. The
+      // duplicate-in-document framing stays correct, the emit stays
+      // at `warning`, and no partial concession fires.
       const source = [
         "<header>Site title</header>",
         "<main>article body</main>",
@@ -142,6 +155,9 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       const violations = runRule(rule, source, { filePath: "_layouts/page.html" });
       expect(violations).toHaveLength(2);
       expect(violations[0]?.message).toContain("<header>");
+      expect(violations[0]?.severity).toBe("warning");
+      expect(violations[0]?.message).toContain("Document has");
+      expect(violations[0]?.couldBeWrongBecause).toBeUndefined();
     });
   });
 
@@ -362,10 +378,15 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
 
     it("fragment with a <nav> deeply nested (not at root) AND a second same-type sibling fires on both", () => {
       // Fragment top-level has two nav elements; both unlabeled.
-      // This exercises the duplicate path inside a fragment.
+      // This exercises the duplicate path inside a fragment — the
+      // emit fires but downgrades to `info` and reframes to
+      // "this partial supplies N" because `_includes/nav.html` is
+      // an `html_partial` whose composing parent is unobservable.
       const source = ["<nav><a href='/a'>A</a></nav>", "<nav><a href='/b'>B</a></nav>"].join("\n");
       const violations = runRule(rule, source, { filePath: "_includes/nav.html" });
       expect(violations).toHaveLength(2);
+      expect(violations[0]?.severity).toBe("info");
+      expect(violations[0]?.message).toContain("partial");
     });
 
     it("three <nav> elements, one labeled, two unlabeled → two findings", () => {
@@ -405,6 +426,32 @@ describe("rule semantics/duplicate-landmark-unlabeled", () => {
       ].join("\n");
       const violations = runRule(rule, source, { filePath: "page.html" });
       expect(violations).toHaveLength(0);
+    });
+
+    it("html_partial with 2 <nav> emits at info severity with partial framing (not 'Document has 2')", () => {
+      // Backlog regression: a Jekyll _includes/header.html with two
+      // <nav>s previously fired at severity="warning" with message
+      // "Document has 2 <nav> landmarks" — dishonest because the
+      // file is a partial. Closure: severity drops to info, message
+      // reframes to "this partial supplies", couldBeWrongBecause
+      // surfaces the partial-input concession code, suggestion
+      // names the dismissal hatch (ra11y-disable pragma).
+      const source = [
+        "<header>",
+        "  <nav><a href='/primary'>Primary</a></nav>",
+        "  <nav><a href='/utility'>Utility</a></nav>",
+        "</header>",
+      ].join("\n");
+      const violations = runRule(rule, source, { filePath: "_includes/header.html" });
+      expect(violations).toHaveLength(2);
+      for (const v of violations) {
+        expect(v.severity).toBe("info");
+        expect(v.message).not.toContain("Document has");
+        expect(v.message).toContain("partial");
+        expect(v.couldBeWrongBecause).toContain("partial_input_duplicate_landmark_in_fragment");
+        expect(v.suggestion).toContain("this partial");
+        expect(v.suggestion).toContain("ra11y-disable");
+      }
     });
 
     it("two body-level <header>s both unlabeled, suggestion enumerates the other line", () => {
