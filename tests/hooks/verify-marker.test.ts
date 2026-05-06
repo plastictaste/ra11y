@@ -69,12 +69,23 @@ afterEach(() => {
   }
 });
 
+/**
+ * `getMarkerPath` returns native-separator paths (it composes via
+ * `path.join`); the substring assertions below want a single canonical
+ * shape regardless of platform. Normalize to forward slashes so the
+ * Windows shards see the same `.git/` infix as POSIX runners.
+ */
+function posix(p: string | null | undefined): string {
+  if (!p) return "";
+  return p.split(/[\\/]/).join("/");
+}
+
 describe("getMarkerPath", () => {
   test("returns absolute path under .git for main checkout", () => {
     const path = getMarkerPath(repo);
     expect(path).toBeTruthy();
-    expect(path?.endsWith(`/${MARKER_FILENAME}`)).toBe(true);
-    expect(path?.includes("/.git/")).toBe(true);
+    expect(posix(path).endsWith(`/${MARKER_FILENAME}`)).toBe(true);
+    expect(posix(path).includes("/.git/")).toBe(true);
   });
 
   test("returns null when cwd is not a git repo", () => {
@@ -282,9 +293,9 @@ describe("worktree isolation", () => {
 
     expect(mainPath).not.toBe(wtPath);
     // Linked worktree marker lives under .git/worktrees/<name>/
-    expect(wtPath.includes("/.git/worktrees/")).toBe(true);
+    expect(posix(wtPath).includes("/.git/worktrees/")).toBe(true);
     // Main checkout marker is the bare .git/ dir.
-    expect(mainPath.includes("/.git/worktrees/")).toBe(false);
+    expect(posix(mainPath).includes("/.git/worktrees/")).toBe(false);
 
     // Write to the worktree marker; main marker stays absent.
     writeMarker(wtPath, "b".repeat(40));

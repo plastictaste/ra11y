@@ -46,9 +46,13 @@ const BASE: AttestationRecord = {
 
 describe("attestation-store: paths", () => {
   it("resolves under <projectRoot>/.ra11y/attestations.jsonl", () => {
-    const p = resolveAttestationStorePath("/tmp/project");
+    // Normalize to forward slashes — `path.join` returns the platform's
+    // native separator, so the substring assertions need to compare on
+    // a single canonical shape regardless of OS. The relative path
+    // constant itself uses forward slashes.
+    const p = resolveAttestationStorePath("/tmp/project").split(/[\\/]/).join("/");
     expect(p.endsWith(ATTESTATION_STORE_RELATIVE_PATH)).toBe(true);
-    expect(p.startsWith("/tmp/project")).toBe(true);
+    expect(p.endsWith("/tmp/project/.ra11y/attestations.jsonl")).toBe(true);
   });
 });
 
