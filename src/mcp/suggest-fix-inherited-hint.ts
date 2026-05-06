@@ -37,9 +37,9 @@
  * the one place that consults the session's wrapper config.
  */
 
-import { dirname } from "node:path";
 import { walkJsxElements } from "../engine/ast-helpers.ts";
 import type { Ast } from "../types/ast.ts";
+import { posixDirname } from "../utils/path.ts";
 import type { McpSession } from "./session.ts";
 
 /**
@@ -134,7 +134,7 @@ function deriveConfigSearchBase(filePath: string): string {
   // Windows (backslash) separators — a forward-slash-only `lastIndexOf`
   // returns -1 on a backslash-separated absolute and silently
   // routes the search at `process.cwd()`.
-  const dir = dirname(filePath);
+  const dir = posixDirname(filePath);
   if (!dir || dir === filePath || dir === "." || dir === "/") return process.cwd();
   return dir;
 }

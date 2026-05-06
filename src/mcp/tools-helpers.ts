@@ -6,7 +6,7 @@
  * on tool schemas and handler logic.
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { readAttestations } from "../config/attestation-store.ts";
 import { type RuleAlias, resolveRuleId } from "../engine/rule-aliases.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
@@ -30,6 +30,7 @@ import {
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { posixResolve } from "../utils/path.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
@@ -336,7 +337,7 @@ export async function parseFilesWithDiagnostics(
   readonly codeDemoPropMatches: ReadonlyMap<string, readonly CodeDemoPropMatch[]>;
 }> {
   const base = cwd ?? process.cwd();
-  const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
+  const absPaths = paths.map((p) => (isAbsolute(p) ? p : posixResolve(base, p)));
   const { files: discovered, diagnostics } = await discoverFilesWithDiagnostics(absPaths, {
     excludes: session.config.exclude,
     ...(options.includeStoryFiles === true ? { includeStoryFiles: true } : {}),
@@ -369,7 +370,7 @@ export async function parseExplicitPaths(
   cwd?: string,
 ): Promise<readonly ParsedFile[]> {
   const base = cwd ?? process.cwd();
-  const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
+  const absPaths = paths.map((p) => (isAbsolute(p) ? p : posixResolve(base, p)));
   const discovered = await discoverExplicitPaths(absPaths, { excludes: session.config.exclude });
   const parsed: ParsedFile[] = [];
   for (const filePath of discovered) {

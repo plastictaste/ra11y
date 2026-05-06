@@ -20,7 +20,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   BASELINE_FILENAME,
   type BaselineEntry,
@@ -37,6 +37,7 @@ import {
   stagedFiles,
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { posixJoin, posixResolve } from "../utils/path.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
@@ -552,8 +553,8 @@ function buildHunkNextStep(
 }
 
 function resolveBaselinePath(rel: string | undefined, cwd: string): string {
-  if (rel === undefined) return join(cwd, BASELINE_FILENAME);
-  return isAbsolute(rel) ? rel : resolve(cwd, rel);
+  if (rel === undefined) return posixJoin(cwd, BASELINE_FILENAME);
+  return isAbsolute(rel) ? rel : posixResolve(cwd, rel);
 }
 
 function resolveScanRoots(params: Record<string, unknown>, root: string): readonly string[] {

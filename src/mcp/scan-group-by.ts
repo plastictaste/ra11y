@@ -32,8 +32,8 @@
  * replacement.
  */
 
-import { extname, relative, sep } from "node:path";
-
+import { extname, sep } from "node:path";
+import { posixRelative } from "../utils/path.ts";
 /**
  * Canonical {@link GroupBy} param values. Schema-enforced at the
  * tool-handler seam; this list is the authority for spelling.
@@ -103,8 +103,8 @@ export function groupKeyFor(path: string, root: string, strategy: GroupBy): stri
     const ext = extname(path).toLowerCase();
     return ext.startsWith(".") ? ext.slice(1) : ext;
   }
-  const rel = relative(root, path);
-  // Path lay outside `root` — `relative()` produced a `..`-prefixed
+  const rel = posixRelative(root, path);
+  // Path lay outside `root` — `posixRelative()` produced a `..`-prefixed
   // path. `additionalPaths` may contribute files outside the project
   // root; bucketing them under `..` would lose information, so name
   // the regime explicitly.

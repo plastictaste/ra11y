@@ -20,12 +20,12 @@
  *     {@link configSearchedFromField} helper widens the omit predicate
  *     so the field never echoes an input the agent already has
  *     (caller-supplied `cwd`, the resolved `scanned.root`, or
- *     `dirname(scanned.file)`).
+ *     `posixDirname(scanned.file)`).
  *
  * Pure over its inputs; no I/O, no global state.
  */
 
-import { dirname } from "node:path";
+import { posixDirname } from "../utils/path.ts";
 import type { ScannedEnvelope } from "./scanned-envelope.ts";
 
 /**
@@ -38,7 +38,7 @@ import type { ScannedEnvelope } from "./scanned-envelope.ts";
  *      passed the value, the loader walked up from it, no new signal.
  *   2. `searchBase` equals `scanned.root` (project-mode scans) — the
  *      resolved root already rides on the response.
- *   3. `searchBase` equals `dirname(scanned.file)` (file-mode scans
+ *   3. `searchBase` equals `posixDirname(scanned.file)` (file-mode scans
  *      where the loader walked up from the file's parent dir) — the
  *      agent computes that with one path operation.
  *
@@ -59,7 +59,7 @@ export function configSearchedFromField(args: {
   if (scanned !== undefined) {
     if (scanned.mode === "project" && scanned.root === searchBase) return {};
     if (scanned.mode === "file" && scanned.file !== undefined) {
-      if (dirname(scanned.file) === searchBase) return {};
+      if (posixDirname(scanned.file) === searchBase) return {};
     }
   }
   return { configSearchedFrom: searchBase };

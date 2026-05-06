@@ -62,7 +62,7 @@
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { posixJoin } from "../utils/path.ts";
 import type { Hint } from "./hint-codes.ts";
 
 /**
@@ -408,7 +408,7 @@ export function detectSsgFramework(
   if (jekyll !== null) return jekyll;
   for (const descriptor of SSG_DESCRIPTORS) {
     for (const marker of descriptor.markers) {
-      if (existsSync(join(root, marker))) {
+      if (existsSync(posixJoin(root, marker))) {
         return {
           name: descriptor.name,
           buildOutput: descriptor.buildOutput,
@@ -464,10 +464,10 @@ export function detectSsgFramework(
  * stays total.
  */
 function detectJekyllWithGradedConfidence(root: string): DetectedFramework | null {
-  if (!existsSync(join(root, JEKYLL_CONFIG))) return null;
+  if (!existsSync(posixJoin(root, JEKYLL_CONFIG))) return null;
   let count = 0;
   for (const dir of JEKYLL_DIR_CORROBORATORS) {
-    const path = join(root, dir);
+    const path = posixJoin(root, dir);
     if (!existsSync(path)) continue;
     try {
       if (statSync(path).isDirectory()) count += 1;
@@ -487,7 +487,7 @@ function detectJekyllWithGradedConfidence(root: string): DetectedFramework | nul
  * (missing file, permission error, decode error) returns false.
  */
 function gemfileMentionsJekyll(root: string): boolean {
-  const gemfilePath = join(root, JEKYLL_GEMFILE);
+  const gemfilePath = posixJoin(root, JEKYLL_GEMFILE);
   if (!existsSync(gemfilePath)) return false;
   try {
     const stats = statSync(gemfilePath);
@@ -516,7 +516,7 @@ function gemfileMentionsJekyll(root: string): boolean {
  * never a silent-wrong classification.
  */
 function detectHugoLegacyConfigToml(root: string): DetectedFramework | null {
-  const configPath = join(root, HUGO_LEGACY_CONFIG);
+  const configPath = posixJoin(root, HUGO_LEGACY_CONFIG);
   if (!existsSync(configPath)) return null;
   let slice: string;
   try {
@@ -615,7 +615,7 @@ function detectJekyllWithoutSentinel(
  * failure (permission error, race) returns false.
  */
 function hasJekyllDirectory(root: string, name: string): boolean {
-  const path = join(root, name);
+  const path = posixJoin(root, name);
   if (!existsSync(path)) return false;
   try {
     return statSync(path).isDirectory();

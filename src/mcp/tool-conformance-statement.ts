@@ -17,7 +17,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   BUILTIN_PROFILES,
   getProfile,
@@ -35,6 +35,7 @@ import type { ConfigFingerprint, FileManifestEntry } from "../reports/conformanc
 import type { LoadedConfig } from "../types/config.ts";
 import type { AttestationRecord } from "../types/evidence.ts";
 import { headSha } from "../utils/git.ts";
+import { posixRelative } from "../utils/path.ts";
 import { VERSION } from "../version.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import {
@@ -658,7 +659,7 @@ function buildFileManifest(
   cwd: string,
 ): readonly FileManifestEntry[] {
   return files.map((f) => {
-    const path = isAbsolute(f.filePath) ? relative(cwd, f.filePath) : f.filePath;
+    const path = isAbsolute(f.filePath) ? posixRelative(cwd, f.filePath) : f.filePath;
     const sha256 = createHash("sha256").update(f.source, "utf8").digest("hex");
     return { path, sha256 };
   });

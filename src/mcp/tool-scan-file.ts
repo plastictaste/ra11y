@@ -14,7 +14,7 @@
  * `configSource`, `configSearchedFrom`, `nextStep`).
  */
 
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { filterPerRuleCoverageForSingleFile } from "../engine/per-rule-coverage.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
@@ -24,6 +24,8 @@ import {
   extension as fileExtension,
   naturalParserFor,
   parseableExtensions,
+  posixDirname,
+  posixResolve,
 } from "../utils/path.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -187,11 +189,11 @@ export const scanFileTool: McpTool = {
     // can still find a project config when the agent didn't pass cwd.
     const absFilePath = isAbsolute(filePath)
       ? filePath
-      : resolve(scanFileCwd ?? process.cwd(), filePath);
+      : posixResolve(scanFileCwd ?? process.cwd(), filePath);
     // Compute the directory name from the absolute path. `dirname`
     // handles both POSIX and Windows separators, so this works
     // regardless of which separator `absFilePath` uses.
-    const configSearchBase = scanFileCwd ?? dirname(absFilePath) ?? process.cwd();
+    const configSearchBase = scanFileCwd ?? posixDirname(absFilePath) ?? process.cwd();
     const projectConfig = await session.loadProjectConfig(configSearchBase);
     // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the walk-up range the
     // config loader searched so the warning gate distinguishes
@@ -696,7 +698,7 @@ function buildScanFileResponse(args: {
     // shared {@link configSearchedFromField} helper widens the omit
     // predicate uniformly across every MCP surface: omit when the
     // value would echo (a) the caller-supplied `cwd`, (b) the
-    // `scanned.root` of a project-mode scan, or (c) `dirname(scanned.file)`
+    // `scanned.root` of a project-mode scan, or (c) `posixDirname(scanned.file)`
     // of a file-mode scan. The Q6 closure used (a) only — `dirname`
     // matches kept slipping through on `scan_file` and on docs-site
     // fragment scans, so the helper folds (c) in too. `configNote`

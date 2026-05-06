@@ -11,8 +11,9 @@
  * the AI-first doctrine "One tool call should answer 'what next?'".
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import type { RuleAlias } from "../engine/rule-aliases.ts";
+import { posixResolve } from "../utils/path.ts";
 import { type McpToolResult, textResult } from "./tools-helpers.ts";
 
 export interface BuildResultArgs {
@@ -36,7 +37,7 @@ export interface BuildResultArgs {
  */
 export function buildResult(args: BuildResultArgs): McpToolResult {
   const { ruleId, filePath, fired, eligibleByExtension, predicateMissed, hint, deprecated } = args;
-  const absFile = isAbsolute(filePath) ? filePath : resolve(process.cwd(), filePath);
+  const absFile = isAbsolute(filePath) ? filePath : posixResolve(process.cwd(), filePath);
   const nextStep = buildNextStep({ ruleId, filePath: absFile, fired, predicateMissed });
   const warnings: string[] = [];
   const warningsDetails: Record<string, unknown> = {};

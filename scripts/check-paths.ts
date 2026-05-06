@@ -70,42 +70,7 @@ const EXTERNAL_FILES: ReadonlySet<string> = new Set([
  * Each entry is tagged inline with the surface area it owns, so the
  * migration agent has a clear scope per file.
  */
-const SRC_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  // MIGRATION: scanner output assembly — to remove after src/ migration
-  "src/engine/baseline.ts",
-  // MIGRATION: MCP tool surface (catalog / SSG / ecosystem detection)
-  // — to remove after src/ migration
-  "src/mcp/additional-paths-classifier.ts",
-  "src/mcp/baseline-status.ts",
-  "src/mcp/build-provenance.ts",
-  "src/mcp/catalog-detect.ts",
-  "src/mcp/config-hint.ts",
-  "src/mcp/config-search-marker.ts",
-  "src/mcp/ecosystem-detect.ts",
-  "src/mcp/extension-presence-probe.ts",
-  "src/mcp/path-exists.ts",
-  "src/mcp/propose-baseline-classify.ts",
-  "src/mcp/resolve-inside-cwd.ts",
-  "src/mcp/resources/index.ts",
-  "src/mcp/scan-group-by.ts",
-  "src/mcp/scanner-meta.ts",
-  "src/mcp/session.ts",
-  "src/mcp/ssg-detect.ts",
-  "src/mcp/suggest-fix-inherited-hint.ts",
-  "src/mcp/tool-apply-fix.ts",
-  "src/mcp/tool-attest.ts",
-  "src/mcp/tool-audit-rule-coverage-result.ts",
-  "src/mcp/tool-baseline.ts",
-  "src/mcp/tool-conformance-statement.ts",
-  "src/mcp/tool-propose-config.ts",
-  "src/mcp/tool-scan-diff.ts",
-  "src/mcp/tool-scan-file.ts",
-  "src/mcp/tool-scan-process.ts",
-  "src/mcp/tool-scan-project.ts",
-  "src/mcp/tool-suppress.ts",
-  "src/mcp/tools-helpers.ts",
-  "src/mcp/top-directories.ts",
-]);
+const SRC_ALLOWLIST: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * Migration allowlist for tests. Same shape as SRC_ALLOWLIST: each

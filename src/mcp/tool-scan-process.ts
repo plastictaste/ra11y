@@ -96,12 +96,13 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { runScan } from "../engine/scanner.ts";
 import type { Process } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { ScanResult } from "../types/violation.ts";
 import { gitRoot } from "../utils/git.ts";
+import { posixDirname, posixResolve } from "../utils/path.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -216,7 +217,7 @@ export const scanProcessTool: McpTool = {
     // config file was loaded (ADR 0016). When no config file was
     // found the processes list is empty by construction, so we never
     // reach this branch without `sourcePath`.
-    const baseDir = projectConfig.sourcePath ? dirname(projectConfig.sourcePath) : cwd;
+    const baseDir = projectConfig.sourcePath ? posixDirname(projectConfig.sourcePath) : cwd;
     const { present, missing } = splitPagesByExistence(matched.pages, baseDir);
 
     const { pagesScanned, perPageResults } = await scanPages({
@@ -277,7 +278,7 @@ function splitPagesByExistence(
   const present: string[] = [];
   const missing: string[] = [];
   for (const page of pages) {
-    const abs = isAbsolute(page) ? page : resolve(baseDir, page);
+    const abs = isAbsolute(page) ? page : posixResolve(baseDir, page);
     if (existsSync(abs)) {
       present.push(page);
     } else {
@@ -351,7 +352,7 @@ async function scanPages(args: {
   const perPageResults: ScanResult[] = [];
 
   for (const pagePath of present) {
-    const abs = isAbsolute(pagePath) ? pagePath : resolve(baseDir, pagePath);
+    const abs = isAbsolute(pagePath) ? pagePath : posixResolve(baseDir, pagePath);
     const parsed = await session.parseFile(abs);
     if (parsed === null) {
       missing.push(pagePath);

@@ -37,8 +37,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-
+import { posixJoin } from "../utils/path.ts";
 /**
  * Stable kebab-case identifiers for the ecosystems the detector
  * recognizes. Agents branch on these tags; English prose names ("Ruby",
@@ -87,12 +86,12 @@ export function detectForeignEcosystem(root: string): ForeignEcosystem | null {
   // Node toolchain short-circuits — a mixed repo with both `package.json`
   // and `Gemfile` is unambiguously Node-aware and doesn't earn the
   // foreign-ecosystem label.
-  if (existsSync(join(root, NODE_MARKER))) return null;
+  if (existsSync(posixJoin(root, NODE_MARKER))) return null;
   for (const [language, markers] of Object.entries(FOREIGN_MARKERS) as Array<
     [ForeignEcosystem, readonly string[]]
   >) {
     for (const marker of markers) {
-      if (existsSync(join(root, marker))) return language;
+      if (existsSync(posixJoin(root, marker))) return language;
     }
   }
   return null;

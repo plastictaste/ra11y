@@ -21,8 +21,8 @@
  */
 
 import { stat } from "node:fs/promises";
-import { join } from "node:path";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
+import { posixJoin } from "../utils/path.ts";
 
 export interface BaselineStatus {
   readonly exists: true;
@@ -32,7 +32,7 @@ export interface BaselineStatus {
 }
 
 export async function probeBaselineStatus(cwd: string): Promise<BaselineStatus | null> {
-  const path = join(cwd, BASELINE_FILENAME);
+  const path = posixJoin(cwd, BASELINE_FILENAME);
   try {
     const s = await stat(path);
     return { exists: true, path, lastModified: s.mtime.toISOString() };

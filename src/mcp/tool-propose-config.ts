@@ -61,9 +61,9 @@
  */
 
 import { existsSync } from "node:fs";
-import { relative } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import { gitRoot } from "../utils/git.ts";
+import { posixRelative } from "../utils/path.ts";
 import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
@@ -592,7 +592,7 @@ function buildExcludeGate(
   const fileSet = new Set<string>();
   const topdirSet = new Set<string>();
   for (const p of findingPaths) {
-    const rel = relative(root, p).replace(/\\/g, "/");
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
     if (rel === "" || rel.startsWith("..")) continue;
     fileSet.add(rel);
     const slash = rel.indexOf("/");
@@ -606,7 +606,7 @@ function buildExcludeGate(
   const authoredTopdirSet = new Set<string>();
   for (const p of parsedFilePaths) {
     if (artifactPaths.has(p)) continue;
-    const rel = relative(root, p).replace(/\\/g, "/");
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
     if (rel === "" || rel.startsWith("..")) continue;
     const slash = rel.indexOf("/");
     if (slash === -1) continue;
@@ -646,7 +646,7 @@ function normalizeLikelyHints(paths: readonly string[], root: string): readonly 
 function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {
   const out: string[] = [];
   for (const p of paths) {
-    const rel = relative(root, p).replace(/\\/g, "/");
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
     // Skip paths outside the root (starts with `..`) and the root
     // itself (empty string from `relative`). Both would be nonsense as
     // exclude entries.

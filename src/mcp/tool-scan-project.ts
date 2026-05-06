@@ -5,11 +5,12 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { posixDirname, posixResolve } from "../utils/path.ts";
 import {
   additionalPathsScannedField,
   classifyAdditionalPathSkips,
@@ -1472,7 +1473,7 @@ function resolveProcessesForScan(
   root: string,
 ): readonly import("../types/config.ts").Process[] {
   if (processes.length === 0) return processes;
-  const base = configSourcePath === null ? root : dirname(configSourcePath);
+  const base = configSourcePath === null ? root : posixDirname(configSourcePath);
   // POSIX-normalize the resolved page paths so they compare on the same
   // separator as `ProjectFile.filePath` (the discovery walker emits
   // POSIX absolute paths even on Windows). Without normalization,
@@ -1481,7 +1482,7 @@ function resolveProcessesForScan(
   return processes.map((p) => ({
     ...p,
     pages: p.pages.map((pagePath) =>
-      (isAbsolute(pagePath) ? pagePath : resolve(base, pagePath)).split(/[\\/]/).join("/"),
+      (isAbsolute(pagePath) ? pagePath : posixResolve(base, pagePath)).split(/[\\/]/).join("/"),
     ),
   }));
 }
@@ -2283,7 +2284,7 @@ function intersectFilesWithRestrictPaths<T extends { readonly filePath: string }
   // forward-slash absolute paths even on Windows, but `path.resolve`
   // returns native (backslash) form there.
   const absRestricts = restrictToPaths.map((p) =>
-    (isAbsolute(p) ? p : resolve(root, p)).split(/[\\/]/).join("/"),
+    (isAbsolute(p) ? p : posixResolve(root, p)).split(/[\\/]/).join("/"),
   );
   return files.filter((f) => {
     for (const r of absRestricts) {

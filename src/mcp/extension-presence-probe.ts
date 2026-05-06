@@ -42,8 +42,7 @@
 
 import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-import { extension } from "../utils/path.ts";
+import { extension, posixJoin } from "../utils/path.ts";
 
 /**
  * Maximum directory depth the probe will traverse from the root. Beyond
@@ -211,7 +210,7 @@ async function processDirectory(dir: string, depth: number, state: WalkState): P
   }
   for (const entry of entries) {
     if (entry.name.startsWith(".") || PROBE_SKIP_DIRS.has(entry.name)) continue;
-    const full = join(dir, entry.name);
+    const full = posixJoin(dir, entry.name);
     if (entry.isDirectory()) {
       state.stack.push({ dir: full, depth: depth + 1 });
       continue;
