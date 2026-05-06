@@ -517,7 +517,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### Rule predicate gaps (false negatives)
 
-- [ ] **Q15-LIVE-REGION-RULE-MISSES-CROSS-FILE-INNERHTML-TARGET** An `index.html` declares `<div id="insert">...</div>`; sibling `script.js` writes `insert.innerHTML = \`<div>${event.key}...\`` on every keydown — a visible status update channel. `aria/live-region-missing-on-innerhtml-target` shipped `fired: false` at `coverageConfidence: high` on `scan_file`, with no cross-file annotation. Same shape as Q9-RULE-KEYBOARD-HANDLER-FP-CROSS-FILE-NATIVE-BUTTON applied to live-region targeting. Closure: when the rule cannot resolve cross-file `innerHTML` targets, downgrade per-rule `coverageConfidence` + emit `cross_file_innerhtml_target_resolution_not_attempted_by_rule` (using the `_not_attempted_by_rule` suffix per Q9 honesty closure). Per AI-first doctrine "Per-finding confidence must reflect per-rule coverage limitations."
 - [ ] **Q15-LANG-ZXX-WITH-PROSE-NOT-FLAGGED** `scan_file` on a `<html lang="zxx">` document with visible English UI prose does not emit a finding. `zxx` is valid BCP-47 ("no linguistic content") but inappropriate when the document carries non-symbol prose. Closure: add a review candidate for `document/lang-zxx-with-prose` that fires when `lang="zxx"` is present AND the document contains visible non-symbol text content; the candidate carries `criterion: wcag22:3.1.1` and reason text framing the question. Per AI-first doctrine "Surface, don't suppress."
 
 ### Cross-template / per-rule fingerprint dedup
