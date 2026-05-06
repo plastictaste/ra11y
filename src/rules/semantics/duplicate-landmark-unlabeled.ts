@@ -195,11 +195,7 @@ export const rule = defineRule({
  * generic group, not a `banner` landmark, and so does not contribute
  * to the duplicate predicate.
  */
-function checkDuplicateLandmarks(
-  ctx: FileContext,
-  doc: HtmlDocument,
-  isFragment: boolean,
-): void {
+function checkDuplicateLandmarks(ctx: FileContext, doc: HtmlDocument, isFragment: boolean): void {
   for (const tag of UNSCOPED_DUPLICATE_TAGS) {
     const all = findHtmlElementsByTag(doc, tag);
     if (all.length <= 1) continue;
@@ -254,18 +250,43 @@ function emitDuplicatesForTag(
     const siblings = otherLines.filter((line) => line !== el.loc.start.line);
     ctx.emit({
       severity: isFragment ? "info" : "warning",
-      location: {
-        filePath: "",
-        line: el.loc.start.line,
-        column: el.loc.start.column,
-      },
-      message: isFragment
-        ? `This partial supplies ${all.length} <${tag}> landmarks (composed into a parent page at render time); this one has no aria-label or aria-labelledby, so once the partial composes, screen readers cannot tell it apart from the ${siblings.length === 1 ? "other" : "others"} same-type landmark${siblings.length === 1 ? "" : "s"} in the file.`
-        : `Document has ${all.length} <${tag}> landmarks; this one has no aria-label or aria-labelledby, so screen readers cannot tell it apart from the ${siblings.length === 1 ? "other" : "others"}.`,
+      location: { filePath: "", line: el.loc.start.line, column: el.loc.start.column },
+      message: buildDuplicateMessage(tag, all.length, siblings.length, isFragment),
       suggestion: duplicateSuggestion(tag, all.length, labeledCount, siblings, isFragment),
       ...(isFragment ? { couldBeWrongBecause: [PARTIAL_INPUT_DUPLICATE_LANDMARK_CODE] } : {}),
     });
   }
+}
+
+/**
+ * Builds the per-emit message text. Two branches keyed off
+ * {@link classifyHtmlFile}'s `isFragment` label:
+ *
+ *   - Fragment branch: "This partial supplies N <tag> landmarks
+ *     (composed into a parent page at render time); …" — concedes
+ *     the partial-shape composition. Pairs with the `info` severity
+ *     downgrade and the {@link PARTIAL_INPUT_DUPLICATE_LANDMARK_CODE}
+ *     concession code so the agent reads attention-budget and reason
+ *     in agreement.
+ *   - Non-fragment branch: "Document has N <tag> landmarks; …" —
+ *     the canonical full-page framing.
+ *
+ * Extracted from {@link emitDuplicatesForTag} to keep that function
+ * under the cyclomatic-complexity limit while still preserving the
+ * per-instance fanout the rule emits.
+ */
+function buildDuplicateMessage(
+  tag: string,
+  total: number,
+  siblingCount: number,
+  isFragment: boolean,
+): string {
+  const otherWord = siblingCount === 1 ? "other" : "others";
+  if (isFragment) {
+    const landmarkSingularPlural = siblingCount === 1 ? "landmark" : "landmarks";
+    return `This partial supplies ${total} <${tag}> landmarks (composed into a parent page at render time); this one has no aria-label or aria-labelledby, so once the partial composes, screen readers cannot tell it apart from the ${otherWord} same-type ${landmarkSingularPlural} in the file.`;
+  }
+  return `Document has ${total} <${tag}> landmarks; this one has no aria-label or aria-labelledby, so screen readers cannot tell it apart from the ${otherWord}.`;
 }
 
 /**
