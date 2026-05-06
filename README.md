@@ -95,11 +95,13 @@ ra11y ships a built-in [MCP](https://modelcontextprotocol.io) server so AI codin
   "mcpServers": {
     "ra11y": {
       "command": "npx",
-      "args": ["@ra11y/core", "--mcp"]
+      "args": ["-y", "--package=@ra11y/core", "ra11y", "--mcp"]
     }
   }
 }
 ```
+
+The explicit `--package=@ra11y/core ra11y` form is required because the package name (`@ra11y/core`) doesn't match the bin name (`ra11y`); the shorter `npx @ra11y/core --mcp` form races on npx's bin-resolution cache and intermittently fails with `command not found`.
 
 Or, from a clone: `bun run src/cli.ts --mcp`.
 
