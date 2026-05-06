@@ -366,7 +366,7 @@ const SLIM_NEXT_STEP_PROSE =
   "Call `propose_config` to emit an `exclude` block from the build-artifact classifier, then re-run `scan_project` (or `coverage`) over the narrowed file set. " +
   "Alternatively re-call `coverage` directly with a narrower scope: pass a tighter `cwd` (a single subdirectory), " +
   "`paths` to scope to a specific file set, or restrict by `standard` / `level`. " +
-  "Do NOT re-call `checklist` on the same cwd — that surface ships the same scope-classifier and will transport-fail the same way (per `docs/kb/architecture/ai-first-consumer.md` \"NextStep handoffs must terminate at a narrowing tool\").";
+  'Do NOT re-call `checklist` on the same cwd — that surface ships the same scope-classifier and will transport-fail the same way (per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs must terminate at a narrowing tool").';
 
 /**
  * Structured nextStep for the slim envelope. Routes to `propose_config`
