@@ -11,12 +11,12 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
 // Normalize to forward slashes — the scanner emits POSIX-style paths
 // in `meta.scanned.root`, so the Windows backslash form would mismatch
 // in expect(...).toEqual on Windows runners.
-const PROJECT_ROOT = join(import.meta.dir, "..", "..").replace(/\\/g, "/");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..").replace(/\\/g, "/");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -89,9 +89,9 @@ function scanProject(id: number, args: Record<string, unknown>): Record<string, 
  * URI construction by the caller.
  */
 function makeFixtureRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), "ra11y-roots-"));
+  const dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-roots-"));
   writeFileSync(
-    join(dir, "ok.html"),
+    posixJoin(dir, "ok.html"),
     `<!DOCTYPE html><html lang="en"><head><title>ok</title></head><body><h1>ok</h1></body></html>`,
     "utf8",
   );

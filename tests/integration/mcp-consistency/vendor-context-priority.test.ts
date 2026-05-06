@@ -37,9 +37,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -110,14 +110,14 @@ function body<T>(resp: JsonRpcResponse): T {
 
 describe("checklist priority must not contradict vendorContext on candidates", () => {
   it("downgrades wcag22:2.2.1 priority when every candidate sits in a vendor-bundle file", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-vendor-2-2-1-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-vendor-2-2-1-"));
     // Canonical vendor-bundle basename — `isVendorBundleBasename`
     // fires; every emitted setTimeout candidate carries
     // `vendorContext: { signal: { kind: "vendor-bundle-basename" } }`.
     // 2.2.1 is Level A, so the un-downgraded priority would be "high";
     // the vendor-context downgrade must drop it to "medium".
     await writeFile(
-      join(dir, "jquery-1.10.2.js"),
+      posixJoin(dir, "jquery-1.10.2.js"),
       `function tick(){ setTimeout(function(){ tick(); }, 2000); }\n`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
@@ -137,7 +137,7 @@ describe("checklist priority must not contradict vendorContext on candidates", (
   });
 
   it("downgrades wcag22:2.2.1 priority when every candidate sits in a `.min.js` file", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-vendor-min-2-2-1-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-vendor-min-2-2-1-"));
     // Filename matches the minified-shape predicate via the `.min.`
     // infix even on short content — `isMinifiedForEnrichment`
     // returns true on basename match alone. The signal kind names
@@ -145,7 +145,7 @@ describe("checklist priority must not contradict vendorContext on candidates", (
     // preference order — vendor-bundle-basename wins when both
     // match; here only the minified-shape predicate applies).
     await writeFile(
-      join(dir, "respond.min.js"),
+      posixJoin(dir, "respond.min.js"),
       `var p=2000;setTimeout(function(){doStuff();},p);\n`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
@@ -160,18 +160,18 @@ describe("checklist priority must not contradict vendorContext on candidates", (
   });
 
   it("keeps wcag22:2.2.1 priority high when at least one candidate is on authored source", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-mixed-2-2-1-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-mixed-2-2-1-"));
     // Two files: one authored, one vendor. The all-or-nothing
     // downgrade test mirrors hedging-aware priority — a single
     // hand-authored sibling on the same criterion keeps the item at
     // "high" so the agent doesn't miss the actionable case among
     // the vendor-pathed siblings.
     await writeFile(
-      join(dir, "src.js"),
+      posixJoin(dir, "src.js"),
       `function bootstrap(){ setTimeout(function(){ tick(); }, 5000); }\n`,
     );
     await writeFile(
-      join(dir, "jquery-1.10.2.js"),
+      posixJoin(dir, "jquery-1.10.2.js"),
       `function tick(){ setTimeout(function(){ tick(); }, 2000); }\n`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);

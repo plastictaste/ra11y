@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 // JSON-RPC error code (mirrors src/mcp/server.ts).
 const INVALID_PARAMS = -32602;
@@ -96,7 +96,7 @@ describe("MCP logging: setLevel handler", () => {
 });
 
 describe("MCP logging: scan bookends", () => {
-  const goodFixture = join(
+  const goodFixture = posixJoin(
     PROJECT_ROOT,
     "tests",
     "fixtures",

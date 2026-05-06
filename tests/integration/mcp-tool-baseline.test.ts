@@ -18,9 +18,9 @@ import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -84,8 +84,11 @@ function isError(response: JsonRpcResponse): boolean {
  * produce at least one violation. Returns the directory path.
  */
 async function scratchDirWithBadFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-baseline-"));
-  await writeFile(join(dir, "index.html"), '<html><body><img src="/logo.png"></body></html>\n');
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-baseline-"));
+  await writeFile(
+    posixJoin(dir, "index.html"),
+    '<html><body><img src="/logo.png"></body></html>\n',
+  );
   return dir;
 }
 
@@ -94,7 +97,7 @@ async function scratchDirWithBadFixture(): Promise<string> {
  * `check` surfaces new violations on top of the baseline.
  */
 async function addSecondBadFile(dir: string): Promise<void> {
-  await writeFile(join(dir, "page.html"), '<html><body><img src="/hero.jpg"></body></html>\n');
+  await writeFile(posixJoin(dir, "page.html"), '<html><body><img src="/hero.jpg"></body></html>\n');
 }
 
 describe("MCP baseline tool: create/check/update round-trips", () => {
@@ -113,7 +116,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
         nextStep: string;
       };
       expect(body.mode).toBe("create");
-      expect(body.baselinePath).toBe(join(dir, ".ra11y-baseline.json"));
+      expect(body.baselinePath).toBe(posixJoin(dir, ".ra11y-baseline.json"));
       expect(body.entriesWritten).toBeGreaterThan(0);
       expect(body.hadViolations).toBe(true);
       expect(typeof body.nextStep).toBe("string");
@@ -209,7 +212,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
       expect(created.entriesWritten).toBeGreaterThanOrEqual(2);
 
       // Fix page.html — delete it outright so no violations remain.
-      await rm(join(dir, "page.html"));
+      await rm(posixJoin(dir, "page.html"));
 
       const updateResponses = await mcpSession([
         initMsg(1),
@@ -258,7 +261,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
   it("check on a malformed baseline file surfaces the parse failure with code baseline-load-failed", async () => {
     const dir = await scratchDirWithBadFixture();
     try {
-      await writeFile(join(dir, ".ra11y-baseline.json"), "{ not valid json");
+      await writeFile(posixJoin(dir, ".ra11y-baseline.json"), "{ not valid json");
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "baseline", { mode: "check", cwd: dir }),
@@ -283,7 +286,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
       // Version 999 is incompatible; the engine's loadBaseline throws a
       // specific message that the tool should propagate verbatim.
       await writeFile(
-        join(dir, ".ra11y-baseline.json"),
+        posixJoin(dir, ".ra11y-baseline.json"),
         JSON.stringify({
           version: 999,
           generatedAt: new Date().toISOString(),
@@ -309,7 +312,7 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
   it("baselinePath is honored and resolves relative paths against cwd", async () => {
     const dir = await scratchDirWithBadFixture();
     try {
-      await mkdir(join(dir, "sub"));
+      await mkdir(posixJoin(dir, "sub"));
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "baseline", {
@@ -319,10 +322,10 @@ describe("MCP baseline tool: create/check/update round-trips", () => {
         }),
       ]);
       const body = bodyOf(responses[1]) as { baselinePath: string };
-      expect(body.baselinePath).toBe(join(dir, "sub", "custom-baseline.json"));
+      expect(body.baselinePath).toBe(posixJoin(dir, "sub", "custom-baseline.json"));
       expect(existsSync(body.baselinePath)).toBe(true);
       // Default file must NOT have been written.
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

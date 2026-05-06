@@ -15,11 +15,11 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
-const BAD_ALT_FILE = join(BAD_ALT_DIR, "img-no-alt.html");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const BAD_ALT_FILE = posixJoin(BAD_ALT_DIR, "img-no-alt.html");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -288,9 +288,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // Initialize a git repo with an initial commit, then write a new bad
     // file and stage it. `changedOnly: true` should scan only that one
     // staged file and truthfully report `scanMode: "changedOnly"`.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-staged-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-staged-"));
     try {
-      await writeFile(join(dir, "clean.html"), "<html><body></body></html>\n");
+      await writeFile(posixJoin(dir, "clean.html"), "<html><body></body></html>\n");
       const git = (args: readonly string[]) =>
         spawnSync("git", [...args], { cwd: dir, stdio: "ignore" });
       git(["init"]);
@@ -299,7 +299,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       git(["add", "."]);
       git(["commit", "-m", "initial"]);
       // New bad file staged on top of the initial commit.
-      await writeFile(join(dir, "bad.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(posixJoin(dir, "bad.html"), '<html><body><img src="/x.png"></body></html>\n');
       git(["add", "bad.html"]);
       const responses = await mcpSession([
         initMsg(1),
@@ -326,9 +326,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // couldn't detect that their diff gate was a no-op. The honest shape
     // is a `no-staged-files` error envelope so the agent can surface
     // the precondition miss and stage files (or drop changedOnly).
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-no-staged-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-no-staged-"));
     try {
-      await writeFile(join(dir, "index.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(
+        posixJoin(dir, "index.html"),
+        '<html><body><img src="/x.png"></body></html>\n',
+      );
       const git = (args: readonly string[]) =>
         spawnSync("git", [...args], { cwd: dir, stdio: "ignore" });
       git(["init"]);
@@ -369,9 +372,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (run a full scan rather than error) but STOP lying about it:
     // `scanMode` reports "full-fallback", never "changedOnly", and
     // `fallbackReason` names why.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-not-git-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-not-git-"));
     try {
-      await writeFile(join(dir, "index.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(
+        posixJoin(dir, "index.html"),
+        '<html><body><img src="/x.png"></body></html>\n',
+      );
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "scan_project", { cwd: dir, changedOnly: true }),
@@ -543,9 +549,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // path end-to-end for one of the newly-wired rules
     // (aria/redundant-role-on-host-element — pure deletion, simplest
     // deterministic edit).
-    const tmpDir = await mkdtemp(join(tmpdir(), "ra11y-suggest-fix-edit-"));
+    const tmpDir = await mkdtemp(posixJoin(tmpdir(), "ra11y-suggest-fix-edit-"));
     try {
-      const badFile = join(tmpDir, "index.html");
+      const badFile = posixJoin(tmpDir, "index.html");
       await writeFile(
         badFile,
         '<!DOCTYPE html>\n<html lang="en"><body>\n<nav role="navigation">Links</nav>\n</body></html>\n',
@@ -720,7 +726,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // Agents skimming a clean response for the next action can miss a
     // "don't claim a11y clean" caveat tucked into nextStep. Surface
     // it as a structured field so the signal is harder to drop.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: {
@@ -876,7 +882,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 
   it("clean scan (directory mode) points at checklist via the structured pair", async () => {
     // top-level location.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -899,7 +905,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // finding can be named) is covered by the unit test; end-to-end
     // scans don't reach it via the public surface.
     // top-level location.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -965,9 +971,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (`tagName, type, attributes-modulo-id`) differs across siblings
     // and the rollup does not engage — three distinct findings still
     // fire, exercising the fix-description hoist as intended.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-fixdesc-hoist-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-fixdesc-hoist-"));
     try {
-      const fixturePath = join(dir, "form.html");
+      const fixturePath = posixJoin(dir, "form.html");
       await writeFile(
         fixturePath,
         `<!DOCTYPE html>
@@ -1037,9 +1043,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // sibling `fixDescriptionRef` rides anywhere and the prose-bearing
     // field on `fix` is one of `description` (string) or
     // `descriptionRef.hash` (12-hex), never both, never neither.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-cross-surface-fix-shape-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cross-surface-fix-shape-"));
     try {
-      const fixturePath = join(dir, "form.html");
+      const fixturePath = posixJoin(dir, "form.html");
       await writeFile(
         fixturePath,
         `<!DOCTYPE html>
@@ -1121,7 +1127,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("clean scan omits referenceGuide entirely (no findings → no guide)", async () => {
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -1143,9 +1149,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // it satisfies (1.2.4/1.2.6/1.2.7/1.2.8 + cross-standard echoes).
     // After dedup we expect a single entry whose `criteria` array
     // contains the wcag22 video SCs.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-candidates-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-candidates-"));
     try {
-      const fixturePath = join(dir, "video.html");
+      const fixturePath = posixJoin(dir, "video.html");
       await writeFile(
         fixturePath,
         "<html><body><video src='/intro.mp4' controls></video></body></html>\n",
@@ -1678,9 +1684,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // signal the agent consumes.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir: _tmpdir } = await import("node:os");
-    const dir = await mkdtemp(join(_tmpdir(), "ra11y-criteria-"));
+    const dir = await mkdtemp(posixJoin(_tmpdir(), "ra11y-criteria-"));
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       `<html><body><video src="x.mp4"></video></body></html>`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
@@ -1796,7 +1802,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // divergent route files — a reliable source of review candidates
     // grounded in real file:line, which is what the snippet path
     // needs to populate.
-    const fixtureDir = join(
+    const fixtureDir = posixJoin(
       PROJECT_ROOT,
       "tests",
       "fixtures",
@@ -1833,7 +1839,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist candidate entries carry snippet with the same shape", async () => {
-    const fixtureDir = join(
+    const fixtureDir = posixJoin(
       PROJECT_ROOT,
       "tests",
       "fixtures",

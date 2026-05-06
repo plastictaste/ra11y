@@ -26,9 +26,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -107,8 +107,8 @@ describe("scan_file.reviewCandidates priority drops to 'low' on minified-vendor-
     // 5ms debounce. Per AI-first doctrine "Reason / priority /
     // fix-description must agree across all three channels," the
     // priority signal must concede the predicate-strength gap.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-min-vendor-priority-"));
-    const filePath = join(dir, "lib.min.js");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-min-vendor-priority-"));
+    const filePath = posixJoin(dir, "lib.min.js");
     // Multiple setTimeout / setInterval / innerHTML calls within one
     // minified bundle — the canonical scan_file shape the field report
     // observed (15+ review candidates on a single `*.min.js`). All
@@ -152,8 +152,8 @@ describe("scan_file.reviewCandidates priority drops to 'low' on minified-vendor-
   });
 
   it("keeps priority unchanged on candidates carrying neither signal (negative control)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-authored-priority-"));
-    const filePath = join(dir, "src.js");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-authored-priority-"));
+    const filePath = posixJoin(dir, "src.js");
     // Hand-authored source: no `.min.` infix, lines under the
     // minified-shape threshold, so the timing finder leaves
     // `vendorPathHint` omitted AND the build-artifact classifier

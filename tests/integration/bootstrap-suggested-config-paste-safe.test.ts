@@ -28,11 +28,11 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import ts from "typescript";
 import { McpSession } from "../../src/mcp/session.ts";
 import { bootstrapTool } from "../../src/mcp/tool-bootstrap.ts";
 import { proposeConfigTool } from "../../src/mcp/tool-propose-config.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 interface BootstrapResponseLike {
   readonly suggestedConfig?: string;
@@ -43,7 +43,7 @@ interface ProposeConfigResponseLike {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-bootstrap-paste-safe-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-bootstrap-paste-safe-"));
   try {
     return await fn(dir);
   } finally {
@@ -105,13 +105,13 @@ function extractExcludeBody(source: string): string | null {
  */
 async function seedMixedSubtrees(root: string, topdirs: readonly string[]): Promise<void> {
   for (const topdir of topdirs) {
-    await mkdir(join(root, topdir), { recursive: true });
+    await mkdir(posixJoin(root, topdir), { recursive: true });
     for (const minName of ["a.min.js", "b.min.js", "c.min.js"]) {
-      await writeFile(join(root, topdir, minName), "// min\n");
+      await writeFile(posixJoin(root, topdir, minName), "// min\n");
     }
     for (const htmlName of ["one.html", "two.html"]) {
       await writeFile(
-        join(root, topdir, htmlName),
+        posixJoin(root, topdir, htmlName),
         `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${htmlName}</title></head><body><p>x</p></body></html>\n`,
       );
     }
@@ -152,7 +152,7 @@ describe("bootstrap suggestedConfig: parses as valid TS", () => {
   it("produces TS that transpiles without diagnostics on a clean codebase", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const { suggestedConfig } = await callBootstrap(dir);
@@ -168,12 +168,12 @@ describe("bootstrap suggestedConfig: parses as valid TS", () => {
 
   it("produces TS that transpiles without diagnostics on a corpus with definite-min-infix files", async () => {
     await withScratch(async (dir) => {
-      await mkdir(join(dir, "assets"), { recursive: true });
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
       // Three `.min.`-infix files — all definite-min-infix, vendor-
       // classified. The collapse fires; emitted body must still parse.
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
       const { suggestedConfig } = await callProposeConfig(dir);
       const { diagnosticCount, firstMessage } = parseSuggestedConfig(suggestedConfig);
       expect(diagnosticCount).toBe(0);
@@ -185,16 +185,16 @@ describe("bootstrap suggestedConfig: parses as valid TS", () => {
     await withScratch(async (dir) => {
       // Confirmed-wrapper case (Button.tsx native <button> root).
       await writeFile(
-        join(dir, "Button.tsx"),
+        posixJoin(dir, "Button.tsx"),
         "export function Button(props: { onClick: () => void; children: unknown }) {\n" +
           "  return <button onClick={props.onClick}>{props.children}</button>;\n" +
           "}\n",
       );
       // Definite-classified vendor file at root → exclude entry.
-      await writeFile(join(dir, "vendor.min.js"), "// minified vendor bundle\n");
+      await writeFile(posixJoin(dir, "vendor.min.js"), "// minified vendor bundle\n");
       // A page that fires several rules → top-rules stub populated.
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         "<!DOCTYPE html><html><head></head><body>" +
           '<img src="/a.png"><img src="/b.png"><img src="/c.png">' +
           "</body></html>\n",
@@ -215,11 +215,11 @@ describe("bootstrap suggestedConfig: vendor-classification gate keeps authored s
   // predicate that earns the glob.
   it("does NOT emit `templates/**` when templates/ contains authored HTML alongside minified vendor", async () => {
     await withScratch(async (dir) => {
-      await mkdir(join(dir, "templates"), { recursive: true });
+      await mkdir(posixJoin(dir, "templates"), { recursive: true });
       // Three minified files — definite-min-infix.
-      await writeFile(join(dir, "templates", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "templates", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "templates", "c.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "templates", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "templates", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "templates", "c.min.js"), "// min\n");
       // Five authored HTML pages, all WCAG-clean (proper lang +
       // title, no images). They produce zero findings, so the
       // earlier finding-bearing-directory gate would have allowed
@@ -227,7 +227,7 @@ describe("bootstrap suggestedConfig: vendor-classification gate keeps authored s
       // because the authored pages are parsed-but-not-artifact.
       for (const name of ["intro.html", "guide.html", "faq.html", "about.html", "contact.html"]) {
         await writeFile(
-          join(dir, "templates", name),
+          posixJoin(dir, "templates", name),
           `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${name}</title></head><body><p>content</p></body></html>\n`,
         );
       }
@@ -260,10 +260,10 @@ describe("bootstrap suggestedConfig: vendor-classification gate keeps authored s
     // canonical onboarding shape — a `vendor/`-style subtree with
     // only minified bundles inside.
     await withScratch(async (dir) => {
-      await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
       const { suggestedConfig } = await callProposeConfig(dir);
       expect(suggestedConfig).toContain('"assets/**"');
     });

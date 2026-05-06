@@ -33,9 +33,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -98,7 +98,7 @@ interface FindingShape {
 
 describe("findings_by_rule: cross-surface count + per-finding shape parity", () => {
   it("returns every finding for a single rule across the project, agreeing with scan_project.plan.findingsByRule", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-tool-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-tool-"));
     try {
       // Multiple HTML files exercising several rules so the per-rule
       // distribution has multiple entries to walk. Three files with
@@ -107,14 +107,14 @@ describe("findings_by_rule: cross-surface count + per-finding shape parity", () 
       // (count parity, shape parity) rather than fixed absolute counts
       // so a future rule addition won't break the contract.
       writeFileSync(
-        join(root, "a.html"),
+        posixJoin(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"></body></html>\n',
       );
       writeFileSync(
-        join(root, "b.html"),
+        posixJoin(root, "b.html"),
         '<html><body><img src="3.png"><img src="4.png"></body></html>\n',
       );
-      writeFileSync(join(root, "c.html"), '<html><body><a href="/x"></a></body></html>\n');
+      writeFileSync(posixJoin(root, "c.html"), '<html><body><a href="/x"></a></body></html>\n');
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
@@ -182,7 +182,7 @@ describe("findings_by_rule: cross-surface count + per-finding shape parity", () 
   });
 
   it("emits a `scanned_zero_files` warning when called on a cwd with no parseable files", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-empty-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-empty-"));
     try {
       // Empty corpus — the tool ran but had nothing to scan. Per
       // `docs/kb/architecture/ai-first-consumer.md` "Zero-output
@@ -207,9 +207,9 @@ describe("findings_by_rule: cross-surface count + per-finding shape parity", () 
   });
 
   it("returns rule-not-found for an unknown ruleId rather than a silent zero-results envelope", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-unknown-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-unknown-"));
     try {
-      writeFileSync(join(root, "a.html"), "<html><body></body></html>\n");
+      writeFileSync(posixJoin(root, "a.html"), "<html><body></body></html>\n");
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "findings_by_rule", {

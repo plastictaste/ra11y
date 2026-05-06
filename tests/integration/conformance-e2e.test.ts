@@ -36,7 +36,6 @@ import { spawnSync } from "node:child_process";
 import { realpathSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd as getCwd } from "node:process";
 import { runCli } from "../../src/cli/run.ts";
 import {
@@ -52,6 +51,7 @@ import {
 } from "../../src/reports/conformance-signature.ts";
 import { BUILTIN_STANDARDS } from "../../src/standards/index.ts";
 import type { AttestationRecord } from "../../src/types/evidence.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 // ─── Shared harness ────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ async function makeScratchRepo(): Promise<ScratchRepo> {
   // `/private/var/folders/...`; the staleness probe and manifest paths
   // must live in the same namespace for set-membership comparisons to
   // match.
-  const raw = await mkdtemp(join(tmpdir(), "ra11y-conform-e2e-"));
+  const raw = await mkdtemp(posixJoin(tmpdir(), "ra11y-conform-e2e-"));
   const dir = realpathSync(raw);
   return {
     dir,
@@ -116,7 +116,7 @@ function commitAll(dir: string, message: string, isoDate: string): void {
  * attestation + signing flow rather than rule behavior.
  */
 async function seedApp(dir: string, contents = "export const App = () => null;\n"): Promise<void> {
-  await writeFile(join(dir, "app.tsx"), contents, "utf8");
+  await writeFile(posixJoin(dir, "app.tsx"), contents, "utf8");
 }
 
 /**
@@ -153,7 +153,7 @@ async function seedAttestationsFile(
   dir: string,
   records: readonly AttestationRecord[],
 ): Promise<void> {
-  await mkdir(join(dir, ".ra11y"), { recursive: true });
+  await mkdir(posixJoin(dir, ".ra11y"), { recursive: true });
   const body = records.map((r) => JSON.stringify(r)).join("\n");
   await writeFile(resolveAttestationStorePath(dir), body.length > 0 ? `${body}\n` : "", "utf8");
 }
@@ -237,7 +237,7 @@ describe("conformance e2e: stale attestation blocker", () => {
     // Commit a modification AFTER T1. `createGitStalenessProbe` resolves
     // the stamp to the T0 commit, then compares against HEAD (which is
     // now the T2 commit) and finds app.tsx in the changed-files set.
-    await writeFile(join(dir, "app.tsx"), "export const App = () => <div />;\n", "utf8");
+    await writeFile(posixJoin(dir, "app.tsx"), "export const App = () => <div />;\n", "utf8");
     git(dir, ["add", "app.tsx"]);
     commitAll(dir, "update app", T2);
 
@@ -272,7 +272,7 @@ describe("conformance e2e: file-manifest drift after signing", () => {
 
     // Mutate the scanned file WITHOUT committing — the file-content
     // SHA-256 in the fingerprint manifest no longer matches the tree.
-    await writeFile(join(dir, "app.tsx"), "export const App = () => <span />;\n", "utf8");
+    await writeFile(posixJoin(dir, "app.tsx"), "export const App = () => <span />;\n", "utf8");
 
     // Rebuild a fresh SignatureInput by re-running the statement
     // pipeline, then feed it to the verifier. The rebuilt manifest's

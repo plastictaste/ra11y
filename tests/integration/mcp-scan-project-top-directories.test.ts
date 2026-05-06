@@ -33,9 +33,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -95,7 +95,7 @@ interface TopDirectoryEntry {
 
 describe("scan_project: plan.topDirectories rollup", () => {
   it("ranks sub-trees by violationCount desc on a multi-bucket fixture", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-top-directories-rank-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-top-directories-rank-"));
     try {
       // Three mini-projects under the root. `heavy/` carries multiple
       // missing-alt violations on top of the standard document-shape
@@ -104,19 +104,19 @@ describe("scan_project: plan.topDirectories rollup", () => {
       // depend on the active rule set, so the test asserts structural
       // invariants (monotonic-desc sort, top entry strictly higher
       // than the tail) rather than fixed counts.
-      mkdirSync(join(root, "heavy"));
-      mkdirSync(join(root, "medium"));
-      mkdirSync(join(root, "light"));
+      mkdirSync(posixJoin(root, "heavy"));
+      mkdirSync(posixJoin(root, "medium"));
+      mkdirSync(posixJoin(root, "light"));
       writeFileSync(
-        join(root, "heavy", "index.html"),
+        posixJoin(root, "heavy", "index.html"),
         '<html><body><img src="1.png"><img src="2.png"><img src="3.png"></body></html>\n',
       );
       writeFileSync(
-        join(root, "medium", "index.html"),
+        posixJoin(root, "medium", "index.html"),
         '<html><body><img src="x.png"></body></html>\n',
       );
       writeFileSync(
-        join(root, "light", "index.html"),
+        posixJoin(root, "light", "index.html"),
         '<html><body><img src="y.png"></body></html>\n',
       );
 
@@ -170,15 +170,21 @@ describe("scan_project: plan.topDirectories rollup", () => {
   });
 
   it("omits topDirectories when every finding falls in one sub-tree (single-bucket short-circuit)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-top-directories-single-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-top-directories-single-"));
     try {
       // Two files in the same first-child-dir bucket — rollup would
       // produce one row, which tells the agent nothing the existing
       // surfaces don't already say. The helper short-circuits to omit
       // the field; that's the single-bucket-redundancy invariant.
-      mkdirSync(join(root, "only"));
-      writeFileSync(join(root, "only", "a.html"), '<html><body><img src="x.png"></body></html>\n');
-      writeFileSync(join(root, "only", "b.html"), '<html><body><img src="y.png"></body></html>\n');
+      mkdirSync(posixJoin(root, "only"));
+      writeFileSync(
+        posixJoin(root, "only", "a.html"),
+        '<html><body><img src="x.png"></body></html>\n',
+      );
+      writeFileSync(
+        posixJoin(root, "only", "b.html"),
+        '<html><body><img src="y.png"></body></html>\n',
+      );
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);

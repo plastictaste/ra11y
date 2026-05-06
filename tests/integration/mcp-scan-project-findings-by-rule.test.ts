@@ -32,9 +32,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -119,7 +119,7 @@ function fixesByClassTotal(fbc: FixesByClass): number {
 
 describe("scan_project: plan.findingsByRule full per-rule count map", () => {
   it("emits a flat ruleId→count map covering every rule that fired at least one error/warning", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-"));
     try {
       // Multiple HTML files exercising several rules so the per-rule
       // distribution has multiple entries to walk. `a.html` carries
@@ -132,10 +132,10 @@ describe("scan_project: plan.findingsByRule full per-rule count map", () => {
       // total) rather than fixed absolute counts so a future rule
       // addition won't break the contract.
       writeFileSync(
-        join(root, "a.html"),
+        posixJoin(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"></body></html>\n',
       );
-      writeFileSync(join(root, "b.html"), '<html><body><a href="/x"></a></body></html>\n');
+      writeFileSync(posixJoin(root, "b.html"), '<html><body><a href="/x"></a></body></html>\n');
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
@@ -184,7 +184,7 @@ describe("scan_project: plan.findingsByRule full per-rule count map", () => {
   });
 
   it("omits findingsByRule on a clean scan (no error/warning findings) — present-when-meaningful", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-clean-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-clean-"));
     try {
       // Empty corpus → no findings. The map would be `{}` if emitted —
       // the helper conditional-spreads it out so the agent reading the
@@ -205,13 +205,13 @@ describe("scan_project: plan.findingsByRule full per-rule count map", () => {
   });
 
   it("ships findingsByRule on the summaryOnly: true envelope alongside topRules and findingsByFile", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-rule-summary-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-rule-summary-"));
     try {
       writeFileSync(
-        join(root, "a.html"),
+        posixJoin(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"></body></html>\n',
       );
-      writeFileSync(join(root, "b.html"), '<html><body><img src="x.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "b.html"), '<html><body><img src="x.png"></body></html>\n');
 
       const responses = await mcpSession([
         initMsg(1),

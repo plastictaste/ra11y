@@ -34,9 +34,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -111,13 +111,16 @@ function noConfigEnvelope(raw: Record<string, unknown>): NoConfigEnvelope {
  * through the assembler differently.
  */
 async function makeNoConfigFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-no-config-"));
-  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "fixture", version: "0.0.0" }));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-no-config-"));
+  await writeFile(
+    posixJoin(dir, "package.json"),
+    JSON.stringify({ name: "fixture", version: "0.0.0" }),
+  );
   // Create 12 HTML files so files.length >= 10. Each file is shaped to
   // produce one `media/alt-text-missing` violation.
   for (let i = 0; i < 12; i++) {
     await writeFile(
-      join(dir, `page-${i}.html`),
+      posixJoin(dir, `page-${i}.html`),
       `<html><body><img src="a.png"><p>page ${i}</p></body></html>`,
     );
   }
@@ -182,7 +185,7 @@ describe("no_config_found warning is consistent across every project-rooted tool
     const dir = await makeNoConfigFixture();
     // Seed an empty baseline so scan_diff doesn't bail before reaching
     // the warning-emission site.
-    const baselinePath = join(dir, ".ra11y-baseline.json");
+    const baselinePath = posixJoin(dir, ".ra11y-baseline.json");
     await writeFile(
       baselinePath,
       JSON.stringify({ version: 1, generatedAt: new Date().toISOString(), violations: [] }),

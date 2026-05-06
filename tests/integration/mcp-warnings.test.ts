@@ -18,10 +18,10 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const TEMPLATE_FIXTURE = join(
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const TEMPLATE_FIXTURE = posixJoin(
   PROJECT_ROOT,
   "tests",
   "fixtures",
@@ -29,8 +29,8 @@ const TEMPLATE_FIXTURE = join(
   "template-directives",
   "source",
 );
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
-const BAD_ALT_FILE = join(BAD_ALT_DIR, "img-no-alt.html");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const BAD_ALT_FILE = posixJoin(BAD_ALT_DIR, "img-no-alt.html");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -127,7 +127,7 @@ describe("scan_project emits top-level `warnings` for silent-failure modes", () 
     // the discriminator is exercised honestly.
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
-    const empty = mkdtempSync(join(tmpdir(), "ra11y-empty-"));
+    const empty = mkdtempSync(posixJoin(tmpdir(), "ra11y-empty-"));
     try {
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: empty })]);
       const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
@@ -246,7 +246,7 @@ describe("checklist emits top-level `warnings` for silent-failure modes", () => 
   // untargetedCriteria: 0 }` reads as "clean codebase" when the tool
   // actually never saw parseable input.
   it("scanned_zero_files fires on a nonexistent cwd", async () => {
-    const bogus = join("/path/that/does/not/exist", "ra11y-checklist-no-such-dir");
+    const bogus = posixJoin("/path/that/does/not/exist", "ra11y-checklist-no-such-dir");
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: bogus })]);
     const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
     expect(Array.isArray(body.warnings)).toBe(true);
@@ -321,7 +321,7 @@ describe("checklist meta + warnings parity with scan_project on the same input",
 
 describe("coverage emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires on a nonexistent cwd", async () => {
-    const bogus = join("/path/that/does/not/exist", "ra11y-coverage-no-such-dir");
+    const bogus = posixJoin("/path/that/does/not/exist", "ra11y-coverage-no-such-dir");
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: bogus })]);
     const body = bodyOf(responses[1]) as { warnings?: readonly string[] };
     expect(Array.isArray(body.warnings)).toBe(true);
@@ -331,7 +331,7 @@ describe("coverage emits top-level `warnings` for silent-failure modes", () => {
 
 describe("review_candidates emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires on a nonexistent cwd", async () => {
-    const bogus = join("/path/that/does/not/exist", "ra11y-review-cand-no-such-dir");
+    const bogus = posixJoin("/path/that/does/not/exist", "ra11y-review-cand-no-such-dir");
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "review_candidates", { cwd: bogus }),
@@ -401,7 +401,7 @@ describe("scan emits top-level `warnings` for silent-failure modes", () => {
     // `scanned_zero_files` soft signal.
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
-    const empty = mkdtempSync(join(tmpdir(), "ra11y-empty-"));
+    const empty = mkdtempSync(posixJoin(tmpdir(), "ra11y-empty-"));
     try {
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [empty] })]);
       const body = bodyOf(responses[1]) as { warnings?: readonly string[] };

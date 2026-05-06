@@ -13,9 +13,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -66,9 +66,9 @@ function body<T>(resp: JsonRpcResponse): T {
 }
 
 async function makeFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-cov-check-consistency-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cov-check-consistency-"));
   await writeFile(
-    join(dir, "page.html"),
+    posixJoin(dir, "page.html"),
     `<html><body><img src="a.png"><video src="x.mp4"></video><p>hi</p></body></html>`,
   );
   return dir;
@@ -83,7 +83,7 @@ async function makeFixture(): Promise<string> {
  * regardless of the metadata automatable flag.
  */
 async function makeManualCriterionFailureFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-manual-criterion-failure-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-manual-criterion-failure-"));
   // `.text-danger` is Bootstrap's "paint the text red as a status"
   // utility. The visible text ("Access denied") names no status word
   // and the element has no icon / aria-label / role=alert / sr-only
@@ -93,7 +93,7 @@ async function makeManualCriterionFailureFixture(): Promise<string> {
   // shape; we inline it here so the fixture stays self-describing
   // next to the invariant it proves.
   await writeFile(
-    join(dir, "page.html"),
+    posixJoin(dir, "page.html"),
     `<!DOCTYPE html>
 <html lang="en"><body><main>
   <span class="text-danger">Access denied</span>
@@ -337,7 +337,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // (zero parseable files → zero grounded candidates, regardless of
     // finder behavior). `checklist` then cross-points at `coverage`
     // per ADR 0010 branch 1 on the checklist side.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-to-coverage-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-checklist-to-coverage-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
     if (checklist.summary.actionable.criteria !== 0) {
@@ -363,7 +363,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // so agents discover them without a separate prompts/list call.
     // Structured still points at `coverage` (the companion MCP tool) —
     // the prompt names live in prose only per CLAUDE.md §1.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-prompt-link-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-checklist-prompt-link-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
     if (checklist.summary.actionable.criteria !== 0) {

@@ -30,9 +30,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -85,13 +85,13 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 describe("scan_file vs scan_project: build-artifact lane parity", () => {
   it("classifies a minified vendor stylesheet under the buildArtifact lane on both surfaces", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scan-file-lane-parity-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-file-lane-parity-"));
     try {
       // Minified vendor stylesheet — `.min.` infix is the canonical
       // path-deterministic minified marker the classifier reads as
       // `definite-min-infix`. Carries one contrast violation so both
       // surfaces have a finding to route into the per-kind lane.
-      const vendorPath = join(root, "bootstrap.min.css");
+      const vendorPath = posixJoin(root, "bootstrap.min.css");
       writeFileSync(vendorPath, ".faded { color: #444444; background-color: #5a5a5a; }\n");
       const responses = await mcpSession([
         initMsg(1),
@@ -153,7 +153,7 @@ describe("scan_file vs scan_project: build-artifact lane parity", () => {
   });
 
   it("ships plan.violationsByScanKind deterministically on scan_file when the file is not a build artifact (buildArtifact reads 0)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scan-file-lane-clean-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-file-lane-clean-"));
     try {
       // Authored CSS with a contrast violation — no build-artifact
       // signal in the path or content. Per the deterministic-headline
@@ -162,7 +162,7 @@ describe("scan_file vs scan_project: build-artifact lane parity", () => {
       // tally. Mirrors the `scan_project` no-artifacts assertion in
       // `mcp-scan-project-violations-by-scan-kind.test.ts` so both
       // surfaces share the deterministic-headline contract.
-      const sourcePath = join(root, "site.css");
+      const sourcePath = posixJoin(root, "site.css");
       writeFileSync(sourcePath, ".muted { color: #555555; background-color: #4a4a4a; }\n");
       const responses = await mcpSession([
         initMsg(1),

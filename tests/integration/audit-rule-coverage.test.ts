@@ -31,9 +31,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -91,12 +91,12 @@ interface NextStepStructured {
 
 describe("audit_rule_coverage: deterministic eligibility + emission probe", () => {
   it("reports fired=true when the rule emits a finding on the file", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-audit-rule-coverage-fired-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-audit-rule-coverage-fired-"));
     try {
       // An <img> with no alt attribute reliably trips
       // `media/alt-text-missing` on HTML — the canonical mechanical-fix
       // case for the canonical text-source extension.
-      const filePath = join(root, "page.html");
+      const filePath = posixJoin(root, "page.html");
       writeFileSync(filePath, '<html><body><img src="x.png"></body></html>\n');
 
       const responses = await mcpSession([
@@ -131,14 +131,14 @@ describe("audit_rule_coverage: deterministic eligibility + emission probe", () =
   });
 
   it("reports predicateMissed=true when the rule is eligible but emits nothing", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-audit-rule-coverage-missed-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-audit-rule-coverage-missed-"));
     try {
       // Clean HTML — no accessibility issues. `media/alt-text-missing`
       // is eligible by extension (.html ∈ rule.appliesTo.fileExtensions)
       // but emits no finding because the file is clean. The
       // `predicateMissed` axis exists exactly for this case: the agent
       // can now distinguish "rule never ran" from "rule ran clean."
-      const filePath = join(root, "page.html");
+      const filePath = posixJoin(root, "page.html");
       writeFileSync(
         filePath,
         '<html lang="en"><head><title>OK</title></head><body><main>hi</main></body></html>\n',
@@ -176,13 +176,13 @@ describe("audit_rule_coverage: deterministic eligibility + emission probe", () =
   });
 
   it("reports eligibleByExtension=false when the rule's extension gate excludes the file", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-audit-rule-coverage-extmiss-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-audit-rule-coverage-extmiss-"));
     try {
       // `.css` file paired with an HTML-scoped rule. The rule's
       // `appliesTo.fileExtensions` excludes `.css` outright, so the
       // tool reports `eligibleByExtension: false` without any
       // false-negative implication — there's nothing to investigate.
-      const filePath = join(root, "styles.css");
+      const filePath = posixJoin(root, "styles.css");
       writeFileSync(filePath, ".btn { color: red; }\n");
 
       const responses = await mcpSession([
@@ -215,9 +215,9 @@ describe("audit_rule_coverage: deterministic eligibility + emission probe", () =
   });
 
   it("returns rule-not-found for an unknown ruleId rather than a silent zero-result envelope", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-audit-rule-coverage-unknown-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-audit-rule-coverage-unknown-"));
     try {
-      const filePath = join(root, "page.html");
+      const filePath = posixJoin(root, "page.html");
       writeFileSync(filePath, "<html><body></body></html>\n");
 
       const responses = await mcpSession([
@@ -238,13 +238,13 @@ describe("audit_rule_coverage: deterministic eligibility + emission probe", () =
   });
 
   it("returns file-not-found when the file path does not exist on disk", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-audit-rule-coverage-missing-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-audit-rule-coverage-missing-"));
     try {
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "audit_rule_coverage", {
           ruleId: "media/alt-text-missing",
-          file: join(root, "nope.html"),
+          file: posixJoin(root, "nope.html"),
           cwd: root,
         }),
       ]);

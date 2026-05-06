@@ -32,9 +32,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -93,23 +93,23 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 function buildSmallDemoCatalog(root: string, count: number): void {
   for (let i = 0; i < count; i += 1) {
     const dir = `example-${String(i + 1).padStart(2, "0")}`;
-    mkdirSync(join(root, dir));
+    mkdirSync(posixJoin(root, dir));
     // Each sub-project carries a (broken) image so the scan emits at
     // least one finding per sibling — rules need real findings to
     // exercise the routing decision (`nextStep` falls through to a
     // clean-scan branch on zero findings).
     writeFileSync(
-      join(root, dir, "index.html"),
+      posixJoin(root, dir, "index.html"),
       `<html><body><img src="hero-${i + 1}.png"></body></html>\n`,
     );
-    writeFileSync(join(root, dir, "style.css"), `body { color: black; }\n`);
-    writeFileSync(join(root, dir, "script.js"), `console.log("example ${i + 1}");\n`);
+    writeFileSync(posixJoin(root, dir, "style.css"), `body { color: black; }\n`);
+    writeFileSync(posixJoin(root, dir, "script.js"), `console.log("example ${i + 1}");\n`);
   }
 }
 
 describe("scan_project: small_demo_catalog → groupBy firstChildDir nextStep proposal", () => {
   it("proposes groupBy: firstChildDir on a 30-sibling small-demo catalog", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-small-demo-catalog-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-small-demo-catalog-"));
     try {
       buildSmallDemoCatalog(root, 30);
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -147,7 +147,7 @@ describe("scan_project: small_demo_catalog → groupBy firstChildDir nextStep pr
   });
 
   it("does not echo groupBy when the caller already passed groupBy: firstChildDir", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-small-demo-catalog-callergroupby-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-small-demo-catalog-callergroupby-"));
     try {
       buildSmallDemoCatalog(root, 30);
       const responses = await mcpSession([

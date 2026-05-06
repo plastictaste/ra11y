@@ -29,9 +29,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../src/mcp/tools.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -93,9 +93,9 @@ const TEMPLATE_PAGE_CONTENT = [
  */
 function seedTemplatedPages(dir: string, copies: number): void {
   for (let i = 0; i < copies; i += 1) {
-    const sub = join(dir, `site-${String(i).padStart(2, "0")}`);
+    const sub = posixJoin(dir, `site-${String(i).padStart(2, "0")}`);
     mkdirSync(sub, { recursive: true });
-    writeFileSync(join(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
+    writeFileSync(posixJoin(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
   }
 }
 
@@ -173,7 +173,7 @@ describe("checklist tool: cross-file repeated-candidate collapse", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "ra11y-vendor-iframe-collapse-"));
+    dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-vendor-iframe-collapse-"));
   });
 
   afterEach(() => {
@@ -207,9 +207,9 @@ describe("checklist tool: cross-file repeated-candidate collapse", () => {
     // see each row separately so the per-file evidence stays visible.
     const COPIES = 3;
     for (let i = 0; i < COPIES; i += 1) {
-      const sub = join(dir, `site-${i}`);
+      const sub = posixJoin(dir, `site-${i}`);
       mkdirSync(sub, { recursive: true });
-      writeFileSync(join(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
+      writeFileSync(posixJoin(sub, "index.html"), TEMPLATE_PAGE_CONTENT);
     }
     const tool = findTool("checklist");
     const session = new McpSession();

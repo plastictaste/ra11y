@@ -34,9 +34,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -89,22 +89,25 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 describe("scan_project: violations split by scan kind", () => {
   it("emits plan.violationsByScanKind when the scan includes a build artifact alongside authored source", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-violations-by-scan-kind-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-violations-by-scan-kind-"));
     try {
       // Authored HTML with a real WCAG 1.1.1 violation — `<img>`
       // without `alt`. Lands in the `source` lane.
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      writeFileSync(
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
       // Authored CSS with a contrast violation — black on dark grey
       // fails 1.4.3 AA. Lands in the `source` lane.
       writeFileSync(
-        join(root, "site.css"),
+        posixJoin(root, "site.css"),
         ".muted { color: #555555; background-color: #4a4a4a; }\n",
       );
       // Build artifact with the same kind of contrast violation — the
       // `.min.` infix is the canonical pre-minified bundle marker that
       // routes the file into the `buildArtifact` lane.
       writeFileSync(
-        join(root, "vendor.min.css"),
+        posixJoin(root, "vendor.min.css"),
         ".faded { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -172,14 +175,17 @@ describe("scan_project: violations split by scan kind", () => {
   // the assertion locks against the cheaper of the two minified
   // predicate paths in `classifyBuildArtifact`.
   it("emits warnings[scanned_minified_file] + warningsDetails.scanned_minified_file when the scan touches a .min file", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scanned-minified-warning-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scanned-minified-warning-"));
     try {
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      writeFileSync(
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
       // Build artifact with the canonical `.min.` infix — classifier
       // returns `classification: "definite-min-infix"`,
       // `signal: { kind: "min-infix", … }`.
       writeFileSync(
-        join(root, "vendor.min.css"),
+        posixJoin(root, "vendor.min.css"),
         ".faded { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -217,15 +223,18 @@ describe("scan_project: violations split by scan kind", () => {
   // label without the narrower one — pin that per-reason narrowing so
   // the warning code doesn't silently fire on every artifact regime.
   it("does NOT emit warnings[scanned_minified_file] when the only artifact is a non-minified path-predicate hit", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scanned-minified-negative-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scanned-minified-negative-"));
     try {
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      writeFileSync(
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
       // Hand-shaped CSS with a content-hash basename — the classifier
       // emits the path-anchored `likely-hashed-bundle` classification
       // (8+ hex segment between dots). The broader presence code still
       // fires; the narrower minified code must not.
       writeFileSync(
-        join(root, "app.a1b2c3d4.css"),
+        posixJoin(root, "app.a1b2c3d4.css"),
         ".icon { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -247,7 +256,7 @@ describe("scan_project: violations split by scan kind", () => {
   });
 
   it("ships plan.violationsByScanKind deterministically on a scan with no build artifacts (buildArtifact reads 0)", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-violations-by-scan-kind-clean-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-violations-by-scan-kind-clean-"));
     try {
       // Authored HTML with one violation, no build artifacts in the
       // tree. Per the deterministic-headline doctrine — a missing
@@ -256,7 +265,7 @@ describe("scan_project: violations split by scan kind", () => {
       // scan_project response, including no-vendor scans where
       // `buildArtifact` reads 0. The honest signal is "axis tallied,
       // found zero artifact-side findings," not "field clipped."
-      writeFileSync(join(root, "page.html"), '<html><body><img src="x.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "page.html"), '<html><body><img src="x.png"></body></html>\n');
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);

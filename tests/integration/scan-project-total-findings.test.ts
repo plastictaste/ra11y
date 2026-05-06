@@ -25,9 +25,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -85,11 +85,14 @@ interface Lane {
 
 describe("scan_project: deterministic per-kind violation headline", () => {
   it("ships plan.violationsByScanKind on a no-vendor scan with buildArtifact: 0", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scan-project-total-findings-clean-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-project-total-findings-clean-"));
     try {
       // Authored HTML with a real WCAG 1.1.1 violation — `<img>`
       // without `alt`. No build artifacts in the tree.
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      writeFileSync(
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       expect(scan).toBeDefined();
@@ -113,19 +116,22 @@ describe("scan_project: deterministic per-kind violation headline", () => {
   });
 
   it("plan.violationsByScanKind sums match bootstrap.scan.violationsCount on identical cwd", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-scan-project-bootstrap-parity-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-project-bootstrap-parity-"));
     try {
       // Mix of authored source files and a build artifact so both
       // lanes carry findings — the cross-surface equality holds
       // regardless of how they distribute across `source` and
       // `buildArtifact`.
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
       writeFileSync(
-        join(root, "site.css"),
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
+      writeFileSync(
+        posixJoin(root, "site.css"),
         ".muted { color: #555555; background-color: #4a4a4a; }\n",
       );
       writeFileSync(
-        join(root, "vendor.min.css"),
+        posixJoin(root, "vendor.min.css"),
         ".faded { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([
