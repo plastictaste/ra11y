@@ -765,9 +765,9 @@ export const coverageTool: McpTool = {
         // for the same truncation event. Spread only the
         // `analysisCoverage` block; the truncation bit is already
         // routed through the `metaArrayTruncatedFields` payload above.
-        ...(analysisCoverageField.analysisCoverage !== undefined
-          ? { analysisCoverage: analysisCoverageField.analysisCoverage }
-          : {}),
+        ...(analysisCoverageField.analysisCoverage === undefined
+          ? {}
+          : { analysisCoverage: analysisCoverageField.analysisCoverage }),
         ...metaField,
         ...selectScanTimeWireFields(scanTime),
       };
