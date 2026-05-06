@@ -37,6 +37,7 @@
  * the one place that consults the session's wrapper config.
  */
 
+import { dirname } from "node:path";
 import { walkJsxElements } from "../engine/ast-helpers.ts";
 import type { Ast } from "../types/ast.ts";
 import type { McpSession } from "./session.ts";
@@ -129,9 +130,13 @@ export function buildInheritedHintExplanation(
  * fallback). Mirrors the precedence used by `tool-scan-file.ts`.
  */
 function deriveConfigSearchBase(filePath: string): string {
-  const lastSlash = filePath.lastIndexOf("/");
-  if (lastSlash <= 0) return process.cwd();
-  return filePath.slice(0, lastSlash);
+  // Use `path.dirname` so the predicate works on both POSIX and
+  // Windows (backslash) separators — a forward-slash-only `lastIndexOf`
+  // returns -1 on a backslash-separated absolute and silently
+  // routes the search at `process.cwd()`.
+  const dir = dirname(filePath);
+  if (!dir || dir === filePath || dir === "." || dir === "/") return process.cwd();
+  return dir;
 }
 
 /**

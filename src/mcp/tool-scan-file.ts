@@ -14,7 +14,7 @@
  * `configSource`, `configSearchedFrom`, `nextStep`).
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { filterPerRuleCoverageForSingleFile } from "../engine/per-rule-coverage.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
@@ -188,8 +188,10 @@ export const scanFileTool: McpTool = {
     const absFilePath = isAbsolute(filePath)
       ? filePath
       : resolve(scanFileCwd ?? process.cwd(), filePath);
-    const configSearchBase =
-      scanFileCwd ?? (absFilePath.slice(0, absFilePath.lastIndexOf("/")) || process.cwd());
+    // Compute the directory name from the absolute path. `dirname`
+    // handles both POSIX and Windows separators, so this works
+    // regardless of which separator `absFilePath` uses.
+    const configSearchBase = scanFileCwd ?? dirname(absFilePath) ?? process.cwd();
     const projectConfig = await session.loadProjectConfig(configSearchBase);
     // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the walk-up range the
     // config loader searched so the warning gate distinguishes
