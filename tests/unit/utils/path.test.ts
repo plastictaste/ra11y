@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { dirname, join, relative, resolve } from "node:path";
 import {
   extensionMatches,
   hasParseableExtension,
   isStorybookStoryFile,
   isTestFilePath,
+  posixDirname,
+  posixJoin,
+  posixRelative,
+  posixResolve,
+  toPosix,
 } from "../../../src/utils/path.ts";
 
 describe("extensionMatches", () => {
@@ -234,5 +240,98 @@ describe("isTestFilePath", () => {
     expect(isTestFilePath("src/integrationtests.tsx")).toBe(false);
     // `mytests/` is also not a segment match — only the literal `tests` segment matches.
     expect(isTestFilePath("src/mytests/foo.ts")).toBe(false);
+  });
+});
+
+describe("toPosix", () => {
+  test("converts backslashes to forward slashes", () => {
+    expect(toPosix("src\\app\\page.tsx")).toBe("src/app/page.tsx");
+    expect(toPosix("C:\\repo\\src\\Button.tsx")).toBe("C:/repo/src/Button.tsx");
+  });
+
+  test("idempotent on POSIX paths", () => {
+    expect(toPosix("src/app/page.tsx")).toBe("src/app/page.tsx");
+    expect(toPosix("/repo/src/Button.tsx")).toBe("/repo/src/Button.tsx");
+    expect(toPosix("./relative/file.ts")).toBe("./relative/file.ts");
+  });
+
+  test("handles mixed separators", () => {
+    expect(toPosix("src\\app/page.tsx")).toBe("src/app/page.tsx");
+    expect(toPosix("src/app\\page.tsx")).toBe("src/app/page.tsx");
+  });
+
+  test("handles edge cases", () => {
+    expect(toPosix("")).toBe("");
+    expect(toPosix("a")).toBe("a");
+    expect(toPosix("\\")).toBe("/");
+    expect(toPosix("\\\\")).toBe("//");
+  });
+});
+
+describe("posixJoin", () => {
+  test("returns POSIX path on POSIX-only systems (matches native semantics)", () => {
+    // `node:path` `join` already produces POSIX on POSIX hosts; the
+    // wrapper is a no-op there. The added value is the Windows path —
+    // since we can't rely on the host OS in tests, we instead pin that
+    // the wrapper's output equals `toPosix(join(...))` for any input.
+    expect(posixJoin("src", "app", "page.tsx")).toBe(toPosix(join("src", "app", "page.tsx")));
+    expect(posixJoin("/repo", "src")).toBe(toPosix(join("/repo", "src")));
+  });
+
+  test("collapses .. segments like native join", () => {
+    expect(posixJoin("src", "app", "..", "page.tsx")).toBe("src/page.tsx");
+  });
+
+  test("output never contains a backslash regardless of input", () => {
+    expect(posixJoin("src\\foo", "bar")).not.toContain("\\");
+    expect(posixJoin("a", "b\\c", "d")).not.toContain("\\");
+  });
+});
+
+describe("posixResolve", () => {
+  test("returns POSIX absolute path with no backslashes", () => {
+    expect(posixResolve("src", "app")).not.toContain("\\");
+    expect(posixResolve("/repo", "src")).toBe("/repo/src");
+  });
+
+  test("matches toPosix(resolve(...)) semantics", () => {
+    expect(posixResolve("src", "app")).toBe(toPosix(resolve("src", "app")));
+    expect(posixResolve("/repo")).toBe(toPosix(resolve("/repo")));
+  });
+});
+
+describe("posixRelative", () => {
+  test("returns POSIX-shaped relative path", () => {
+    expect(posixRelative("/repo/src", "/repo/src/app/page.tsx")).toBe("app/page.tsx");
+    expect(posixRelative("/repo", "/repo/src/app")).toBe("src/app");
+  });
+
+  test("matches toPosix(relative(...)) semantics", () => {
+    expect(posixRelative("/repo/src", "/repo/src/app/page.tsx")).toBe(
+      toPosix(relative("/repo/src", "/repo/src/app/page.tsx")),
+    );
+  });
+
+  test("output never contains a backslash", () => {
+    expect(posixRelative("/repo/src", "/repo/src/a/b/c.ts")).not.toContain("\\");
+  });
+});
+
+describe("posixDirname", () => {
+  test("returns POSIX-shaped parent directory", () => {
+    expect(posixDirname("src/app/page.tsx")).toBe("src/app");
+    expect(posixDirname("/repo/src/app/page.tsx")).toBe("/repo/src/app");
+  });
+
+  test("matches toPosix(dirname(...)) semantics", () => {
+    expect(posixDirname("src/app/page.tsx")).toBe(toPosix(dirname("src/app/page.tsx")));
+  });
+
+  test("output never contains a backslash even on backslash input", () => {
+    // `node:path` `dirname` on POSIX treats backslashes as part of the
+    // basename, so the wrapper's normalization is what produces the
+    // POSIX shape. Pinning the no-backslash invariant rather than the
+    // exact return string keeps the test cross-platform-honest.
+    expect(posixDirname("src\\app\\page.tsx")).not.toContain("\\");
   });
 });
