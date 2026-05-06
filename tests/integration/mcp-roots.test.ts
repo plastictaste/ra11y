@@ -148,6 +148,8 @@ describe("MCP roots: graceful degradation", () => {
     expect(meta.rootsOverlapNote).toBeUndefined();
   });
 
+  // Falls through to scanning PROJECT_ROOT — CI runners need more
+  // headroom than the 5s default.
   it("non-file:// roots (e.g. opaque URIs) do not block scan_project falling through to spawn cwd", async () => {
     const responses = await mcpSession([
       initWithRoots(1, [{ uri: "opaque://project/my-app" }]),
@@ -160,7 +162,7 @@ describe("MCP roots: graceful degradation", () => {
     // root still appears in meta as telemetry.
     expect(meta.hostDeclaredRoots).toEqual(["opaque://project/my-app"]);
     expect(meta.scanned).toEqual({ mode: "project", root: PROJECT_ROOT });
-  });
+  }, 30_000);
 });
 
 describe("MCP roots: notifications/roots push", () => {
