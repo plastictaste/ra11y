@@ -44,7 +44,10 @@ import {
   irrelevanceReason,
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
-import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
+import {
+  collectVerifyTokenViolationCriteria,
+  tallyManualCriteriaFromCoverage,
+} from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import {
   requireBooleanParam,
@@ -961,6 +964,26 @@ function buildChecklistReviewCandidatePrompts(args: {
  * complexity ceiling and so the conditional-skip-set spread (the
  * only branch on this seam) lives next to the helper call.
  */
+/**
+ * Q15-LANDMARK-MAIN: builds the verify-token violation criteria set
+ * the checklist handler threads through `bucketChecklistItems` and
+ * the actionable/untargeted partition. Walks every coverage entry's
+ * `criteria[]` once to build the in-scope union, then collects
+ * verify-token violation criteria gated by that union. Extracted so
+ * the handler closure stays under the lint's cognitive-complexity
+ * ceiling.
+ */
+function collectChecklistVerifyTokenCriteria(
+  coverage: readonly PerStandardCoverage[],
+  violations: readonly Violation[],
+): ReadonlySet<string> {
+  const inScopeCriteria = new Set<string>();
+  for (const c of coverage) {
+    for (const cc of c.criteria) inScopeCriteria.add(cc.criterionId);
+  }
+  return collectVerifyTokenViolationCriteria(violations, inScopeCriteria, undefined);
+}
+
 function computeChecklistSummaryTally(
   coverage: readonly PerStandardCoverage[],
   applicability: Applicability,
@@ -975,7 +998,10 @@ function computeChecklistSummaryTally(
   // invariant requires checklist's `summary.actionable.criteria` to
   // agree with `scan_project.plan.actionableManualItems` and
   // `coverage[].manualWithCandidates.length` on identical input.
-  const filters: { readonly skipCriteria?: ReadonlySet<string>; readonly violations: readonly Violation[] } = {
+  const filters: {
+    readonly skipCriteria?: ReadonlySet<string>;
+    readonly violations: readonly Violation[];
+  } = {
     ...(skipSet === undefined ? {} : { skipCriteria: skipSet }),
     violations,
   };
@@ -1207,6 +1233,20 @@ export const checklistTool: McpTool = {
     // identifiers must be addressable, not collision-prone" + "Per-tool
     // review-candidate shape must agree across surfaces."
     const criteriaUnionByPosition = buildCandidateCriteriaUnion(reportCandidates);
+    // Q15-LANDMARK-MAIN: collect verify-token violation criteria so
+    // `appendPartialCriterionItems` emits a checklist item for
+    // partial-automatable criteria whose only actionable signal lives
+    // on the violation axis (canonical case: `landmark-main` shipped
+    // at severity `info` with `couldBeWrongBecause:
+    // ["isolated_component_demo_page"]`). Without this thread,
+    // `coverage.manualWithCandidates` includes the criterion (via
+    // Q15's union in `tool-coverage.ts`) but `checklist.items[]` does
+    // not — the cross-surface invariant pinned by the consistency
+    // suite breaks.
+    const verifyTokenViolationCriteria = collectChecklistVerifyTokenCriteria(
+      coverage,
+      result.violations,
+    );
     const { needsReview, likelyIrrelevant } = bucketChecklistItems(
       coverage,
       reportCandidates,
@@ -1218,6 +1258,7 @@ export const checklistTool: McpTool = {
       buildArtifactPaths,
       criteriaUnionByPosition,
       cwd,
+      verifyTokenViolationCriteria,
     );
     // Actionable items (concrete candidates) stay in `items`; criteria
     // the finders couldn't ground in code move to `untargeted`. Keeping
@@ -1246,8 +1287,23 @@ export const checklistTool: McpTool = {
       criteriaUnionByPosition,
       cwd,
     );
-    const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
-    const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
+    // Q15-LANDMARK-MAIN: a checklist item is "actionable" when the
+    // response carries an actionable signal for its criterion —
+    // either a grounded review candidate (the historical predicate)
+    // OR a low-confidence verify-token violation (the rule said
+    // "please verify in source"). Without the verify-token branch,
+    // the cross-surface invariant `coverage.manualWithCandidates ===
+    // checklist.items[].criteria` breaks on the canonical
+    // isolated-component-demo fixture: coverage's `withCandidates`
+    // includes `wcag22:1.3.1` via the union; checklist's actionable
+    // filter would have routed the candidate-less item to
+    // `untargeted` and dropped the criterion from `items[]`. Items
+    // covered by neither signal stay in `untargeted` — the bare
+    // criterion-prompt subset.
+    const itemHasActionableSignal = (i: ChecklistItemOut): boolean =>
+      i.candidates.length > 0 || i.criteria.some((id) => verifyTokenViolationCriteria.has(id));
+    const actionable = annotatedNeedsReview.filter((i) => itemHasActionableSignal(i) && keep(i));
+    const untargeted = annotatedNeedsReview.filter((i) => !itemHasActionableSignal(i) && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
     // pagination over the candidate stream. The
     // scan still evaluates every criterion — this caps response size
@@ -2351,6 +2407,7 @@ function bucketChecklistItems(
   buildArtifactPaths: ReadonlySet<string>,
   criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
   scanRoot: string,
+  verifyTokenViolationCriteria: ReadonlySet<string>,
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
@@ -2397,6 +2454,7 @@ function bucketChecklistItems(
     emittedCriterionIds,
     needsReview,
     likelyIrrelevant,
+    verifyTokenViolationCriteria,
   );
   const rank: Readonly<Record<ChecklistPriority, number>> = { high: 0, medium: 1, low: 2 };
   needsReview.sort((a, b) => rank[a.priority] - rank[b.priority]);
@@ -2487,16 +2545,25 @@ function appendPartialCriterionItems(
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
   likelyIrrelevant: ChecklistItemOut[],
+  verifyTokenViolationCriteria: ReadonlySet<string>,
 ): void {
-  const candidateCriterionIds = new Set<string>();
-  for (const c of candidates) candidateCriterionIds.add(c.criterionId);
+  // Q15-LANDMARK-MAIN: union grounded review-candidate criteria with
+  // low-confidence verify-token violation criteria so the checklist
+  // emits an item for `wcag22:1.3.1` (and similar partial-automatable
+  // criteria) when only the violation axis carries the actionable
+  // signal. Without this union, `coverage.manualWithCandidates`
+  // includes the criterion but `checklist.items[]` does not — the
+  // cross-surface invariant pinned by the consistency suite breaks.
+  const actionableCriterionIds = new Set<string>();
+  for (const c of candidates) actionableCriterionIds.add(c.criterionId);
+  for (const id of verifyTokenViolationCriteria) actionableCriterionIds.add(id);
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
     appendPartialItemsFromEntry(
       entry,
       standard,
-      candidateCriterionIds,
+      actionableCriterionIds,
       builderArgs,
       emittedCriterionIds,
       needsReview,

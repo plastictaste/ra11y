@@ -343,24 +343,49 @@ export function collectVerifyTokenViolationCriteria(
 ): ReadonlySet<string> {
   const out = new Set<string>();
   for (const v of violations) {
-    if (!VERIFY_TOKEN_SEVERITY_GATE.has(v.severity)) continue;
-    const reasons = v.couldBeWrongBecause;
-    if (reasons === undefined || reasons.length === 0) continue;
-    let hasVerifyToken = false;
-    for (const r of reasons) {
-      if (VERIFY_IN_SOURCE_TOKENS.has(r)) {
-        hasVerifyToken = true;
-        break;
-      }
-    }
-    if (!hasVerifyToken) continue;
-    for (const id of v.criteria) {
-      if (!inScopeCriteria.has(id)) continue;
-      if (skipCriteria?.has(id)) continue;
-      out.add(id);
-    }
+    if (!isVerifyTokenViolation(v)) continue;
+    addInScopeCriteria(out, v.criteria, inScopeCriteria, skipCriteria);
   }
   return out;
+}
+
+/**
+ * Predicate: is this violation a low-confidence verify-token finding?
+ * Severity must be in {@link VERIFY_TOKEN_SEVERITY_GATE} (info) AND at
+ * least one entry on `couldBeWrongBecause` must be in
+ * {@link VERIFY_IN_SOURCE_TOKENS}. Extracted so
+ * {@link collectVerifyTokenViolationCriteria} stays under the lint's
+ * cognitive-complexity ceiling and so the predicate can be reused
+ * elsewhere if a future caller needs to gate on the same shape.
+ */
+function isVerifyTokenViolation(v: Violation): boolean {
+  if (!VERIFY_TOKEN_SEVERITY_GATE.has(v.severity)) return false;
+  const reasons = v.couldBeWrongBecause;
+  if (reasons === undefined || reasons.length === 0) return false;
+  for (const r of reasons) {
+    if (VERIFY_IN_SOURCE_TOKENS.has(r)) return true;
+  }
+  return false;
+}
+
+/**
+ * Adds each criterion from `criteria` to `out` when it clears the
+ * in-scope gate AND is not in `skipCriteria`. Extracted so the
+ * verify-token collector stays under the lint's cognitive-complexity
+ * ceiling; the inner per-criterion gate is the same shape used by
+ * {@link collectCandidateCriteria} on the candidate axis.
+ */
+function addInScopeCriteria(
+  out: Set<string>,
+  criteria: readonly string[],
+  inScopeCriteria: ReadonlySet<string>,
+  skipCriteria: ReadonlySet<string> | undefined,
+): void {
+  for (const id of criteria) {
+    if (!inScopeCriteria.has(id)) continue;
+    if (skipCriteria?.has(id)) continue;
+    out.add(id);
+  }
 }
 
 /**
@@ -423,10 +448,7 @@ export function tallyManualCriteriaFromCoverage(
  * unchanged when the second is empty (no-op fast path) — the common
  * case (zero verify-token findings) pays nothing.
  */
-function unionCriteria(
-  a: ReadonlySet<string>,
-  b: ReadonlySet<string>,
-): ReadonlySet<string> {
+function unionCriteria(a: ReadonlySet<string>, b: ReadonlySet<string>): ReadonlySet<string> {
   if (b.size === 0) return a;
   const out = new Set<string>(a);
   for (const id of b) out.add(id);

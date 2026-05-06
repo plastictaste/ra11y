@@ -214,25 +214,11 @@ export const coverageTool: McpTool = {
     // axis alongside grounded review candidates so the cross-surface
     // count invariant holds: `scan.plan.actionableManualItems ===
     // checklist.summary.actionable.criteria === sum of
-    // coverage[].manualWithCandidates.length` on identical cwd. The
-    // shared in-scope set is `coverage[i].criteria` per entry; the
-    // helper takes a single in-scope set, so we union all entries'
-    // criteria once at the outer scope and gate the verify-token
-    // collection on that union. Per-entry `withCandidates` then takes
-    // the intersection of `actionableCriteria` (candidates ∪
-    // verify-token criteria) with this entry's `c.criteria`.
-    const allInScopeCriteria = new Set<string>();
-    for (const c of coverage) {
-      for (const cc of c.criteria) allInScopeCriteria.add(cc.criterionId);
-    }
-    const verifyTokenViolationCriteria = collectVerifyTokenViolationCriteria(
-      result.violations,
-      allInScopeCriteria,
-      undefined,
-    );
-    const actionableCriteria = unionCoverageCriteria(
+    // coverage[].manualWithCandidates.length` on identical cwd.
+    const actionableCriteria = buildActionableCriteriaSet(
+      coverage,
       candidateCriteria,
-      verifyTokenViolationCriteria,
+      result.violations,
     );
     const entries = coverage.map((c) => {
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
@@ -1340,6 +1326,33 @@ function unionCoverageCriteria(
   const out = new Set<string>(candidateCriteria);
   for (const id of verifyTokenCriteria) out.add(id);
   return out;
+}
+
+/**
+ * Q15-LANDMARK-MAIN: builds the actionable-criteria set the per-entry
+ * `withCandidates` / `untargeted` derivations consume. Walks every
+ * coverage entry's `criteria[]` once to build the in-scope union,
+ * collects verify-token violation criteria gated by that union, then
+ * unions with the grounded review-candidate set. Extracted from the
+ * handler closure so its cognitive-complexity score stays under the
+ * lint cap as scan-confidence telemetry accretes on the response
+ * shape.
+ */
+function buildActionableCriteriaSet(
+  coverage: ReadonlyArray<{ readonly criteria: ReadonlyArray<{ readonly criterionId: string }> }>,
+  candidateCriteria: ReadonlySet<string>,
+  violations: readonly Violation[],
+): ReadonlySet<string> {
+  const allInScopeCriteria = new Set<string>();
+  for (const c of coverage) {
+    for (const cc of c.criteria) allInScopeCriteria.add(cc.criterionId);
+  }
+  const verifyTokenViolationCriteria = collectVerifyTokenViolationCriteria(
+    violations,
+    allInScopeCriteria,
+    undefined,
+  );
+  return unionCoverageCriteria(candidateCriteria, verifyTokenViolationCriteria);
 }
 
 /**

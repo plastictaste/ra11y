@@ -1546,7 +1546,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const untargetedIds = body.untargetedCriteriaList as readonly unknown[];
     expect(untargetedIds.every((id) => typeof id === "string")).toBe(true);
     expect(untargetedIds.length).toBe(body.summary.untargetedCriteria);
-    expect(body.items.every((i) => i.candidates.length > 0)).toBe(true);
+    // Q15-LANDMARK-MAIN: an actionable item carries either a grounded
+    // review candidate (the historical predicate) OR a low-confidence
+    // verify-token violation (the rule said "please verify in
+    // source"). Both axes contribute actionable signal that lands in
+    // `items[]`; the test asserts the union, not just the candidate
+    // axis. The bare-criterion-prompt subset (no grounded candidate
+    // AND no verify-token violation) lives in `untargetedCriteria`.
+    expect(body.items.length).toBeGreaterThan(0);
     expect(body.summary.actionable.criteria).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
     // The previous composite `manualReviewRequired = actionable +
