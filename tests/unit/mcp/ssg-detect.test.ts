@@ -444,6 +444,134 @@ describe("detectSsgFramework: empty repo", () => {
   });
 });
 
+describe("detectSsgFramework: sentinelless Jekyll path (no _config.yml)", () => {
+  // The closure for the silent-miss case where a corpus has unambiguous
+  // Jekyll evidence (`_layouts/`, `_includes/`, frontmatter fences,
+  // Liquid/ERB tokens) but `_config.yml` is absent. The prior closure
+  // returned `null` and silently dropped the framework signal; per
+  // `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is signal,
+  // not clutter," the corroborating evidence the scanner has access to
+  // must reach the framework label rather than be ignored. The
+  // sentinelless path requires BOTH `_layouts/` AND `_includes/` at
+  // root (the conservative discriminator — Hugo uses `layouts/` without
+  // an underscore; single-directory matches are too weak to fingerprint
+  // Jekyll on). Confidence stays bounded at `medium` because no
+  // sentinel filename was observed.
+
+  it('surfaces confidence: "low" for _layouts/ + _includes/ alone with no corpus evidence', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      expect(detectSsgFramework(dir)).toEqual({
+        name: "jekyll",
+        buildOutput: "_site/",
+        buildCommand: "bundle exec jekyll build",
+        confidence: "low",
+      });
+    });
+  });
+
+  it('lifts to confidence: "medium" with _layouts/ + _includes/ + frontmatter fence corpus signal', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const result = detectSsgFramework(dir, { hasFrontmatterFence: true });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it('lifts to confidence: "medium" with _layouts/ + _includes/ + Liquid/ERB token corpus signal', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const result = detectSsgFramework(dir, { hasLiquidOrErbTokens: true });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it("stays bounded at medium even with both corpus signals present (no sentinel was observed)", async () => {
+    // The sentinelless path caps at `medium` per the doctrine that
+    // sentinel-bearing matches reach `high` because the filename
+    // presence is independent evidence; a sentinelless match stays
+    // one step shy so the agent reading `confidence: "medium"` knows
+    // to verify the absence of `_config.yml` rather than treating
+    // the classification as fully grounded.
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const result = detectSsgFramework(dir, {
+        hasFrontmatterFence: true,
+        hasLiquidOrErbTokens: true,
+      });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it("returns null when only _layouts/ is present (single-corroborator predicate is too weak)", async () => {
+    // Hugo uses `layouts/` (no underscore) and various templating
+    // tools ship a `_layouts/` directory in isolation; demanding the
+    // pair is the conservative discriminator that keeps single-
+    // directory matches from misclassifying.
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      expect(detectSsgFramework(dir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("returns null when only _includes/ is present (single-corroborator predicate is too weak)", async () => {
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_includes"));
+      expect(detectSsgFramework(dir, { hasLiquidOrErbTokens: true })).toBeNull();
+    });
+  });
+
+  it("returns null when _layouts is a regular file (Jekyll requires the directory shape)", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_layouts"), "not a directory\n");
+      await mkdir(join(dir, "_includes"));
+      expect(detectSsgFramework(dir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("does NOT walk up to ancestor directories looking for the dir pair", async () => {
+    // Sub-scope inheritance invariant: the sentinelless path probes
+    // EXACTLY at `root`. A sub-tree without its own `_layouts/` +
+    // `_includes/` returns `null` even when an ancestor has both —
+    // pairs with the no-walk-up rule on the sentinel-bearing path.
+    await withScratch(async (dir) => {
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const subDir = join(dir, "templates", "site-42");
+      await mkdir(subDir, { recursive: true });
+      // Parent resolves on the sentinelless path; sub-tree does not.
+      expect(detectSsgFramework(dir)?.name).toBe("jekyll");
+      expect(detectSsgFramework(subDir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("the real config-marker path takes precedence over the sentinelless path", async () => {
+    // When both `_config.yml` AND the dir pair exist, the
+    // sentinel-bearing Jekyll path runs first and the corroboration
+    // count includes the dir pair — so the result reaches `high`
+    // rather than the sentinelless cap of `medium`. Documents the
+    // ordering invariant.
+    await withScratch(async (dir) => {
+      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await mkdir(join(dir, "_layouts"));
+      await mkdir(join(dir, "_includes"));
+      const result = detectSsgFramework(dir, {
+        hasFrontmatterFence: true,
+        hasLiquidOrErbTokens: true,
+      });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("high");
+    });
+  });
+});
+
 describe("ssgHint", () => {
   // Guards the wire-level shape. Agents reading the hint prose may
   // key off the framework tag and the additionalPaths argument, so

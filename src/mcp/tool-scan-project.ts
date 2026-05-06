@@ -551,7 +551,23 @@ export const scanProjectTool: McpTool = {
     // advice. Additive surface only — no findings are filtered or
     // downgraded by the detection (CLAUDE.md §1 "Surface, don't
     // suppress").
-    const detectedFramework = detectSsgFramework(root);
+    //
+    // Corpus evidence (frontmatter fences, Liquid/ERB tokens) lifted
+    // off `analysisCoverage` feeds the sentinelless Jekyll fallback:
+    // when `_config.yml` is absent at root but `_layouts/` +
+    // `_includes/` are present, the corpus signals raise the
+    // calibrated confidence one step each. Closes the silent-miss
+    // case where a corpus with unambiguous Jekyll evidence (336
+    // frontmatter files, `_layouts/`, `_includes/`, Liquid+ERB
+    // tokens) but no `_config.yml` shipped `detectedFramework: null`.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Verbose meta
+    // is signal, not clutter" — the corroborating evidence the
+    // scanner has access to must reach the framework label, not be
+    // ignored.
+    const detectedFramework = detectSsgFramework(
+      root,
+      ssgCorpusEvidenceFromMeta(formattedMetaWithVendor),
+    );
     // probe the scan root for the
     // "catalog of stand-alone sibling site dirs" shape (e.g. a 174-
     // template website-templates dump). When detected, the per-subdir
@@ -1989,6 +2005,70 @@ function readHintsArray(fragment: Record<string, unknown>): readonly Hint[] {
     const record = h as Record<string, unknown>;
     return typeof record["code"] === "string" && typeof record["text"] === "string";
   });
+}
+
+/**
+ * Lifts the two corpus-evidence flags the SSG detector consumes off
+ * the formatted meta block. The meta payload already carries
+ * `analysisCoverage.hasFrontmatterFence` (set by the per-file
+ * accumulator on every parsed HTML-family file whose source opens
+ * with `^---\n…\n---\n`) and
+ * `analysisCoverage.templateInterpolationFound[]` (per-token
+ * occurrence counts including Liquid `{%x%}` / ERB `<%x%>` literals).
+ * A separate `analysisCoverage.erbIslandsUnrendered` boolean fires
+ * when a parsed `.erb` file carried an island opener — that flag is
+ * a second route to the Liquid/ERB signal and OR's into the same
+ * gate.
+ *
+ * Returns `undefined` when the meta block has no `analysisCoverage`
+ * sub-object (file-mode scans, mocked envelopes) so the SSG detector
+ * call site can pass through unconditionally — `detectSsgFramework`
+ * treats `undefined` evidence as "no corpus signals available" and
+ * the sentinelless Jekyll path falls back to dir-corroborators only.
+ *
+ * Pure over its input; no I/O. Lives next to {@link readHintsArray}
+ * because both helpers extract a focused sub-shape off the same
+ * `analysisCoverage` payload, and co-locating keeps the lifting
+ * patterns visible at one site.
+ */
+function ssgCorpusEvidenceFromMeta(
+  meta: Record<string, unknown>,
+): import("./ssg-detect.ts").SsgCorpusEvidence | undefined {
+  const coverage = meta["analysisCoverage"];
+  if (typeof coverage !== "object" || coverage === null) return undefined;
+  const record = coverage as Record<string, unknown>;
+  const hasFrontmatterFence = record["hasFrontmatterFence"] === true;
+  const hasLiquidOrErbTokens =
+    record["erbIslandsUnrendered"] === true ||
+    templateInterpolationContainsLiquidOrErb(record["templateInterpolationFound"]);
+  if (!(hasFrontmatterFence || hasLiquidOrErbTokens)) return undefined;
+  return {
+    ...(hasFrontmatterFence ? { hasFrontmatterFence: true } : {}),
+    ...(hasLiquidOrErbTokens ? { hasLiquidOrErbTokens: true } : {}),
+  };
+}
+
+/**
+ * True when `analysisCoverage.templateInterpolationFound[]` carries
+ * an entry whose `token` literal is `{%x%}` (Liquid / Jinja
+ * control-block) or `<%x%>` (ERB / EJS scriptlet). These literals are
+ * higher-confidence Jekyll/Ruby substrate signals than `{{x}}` (bare
+ * interpolation), which is shared with Handlebars / Mustache / Vue /
+ * Angular and would mis-label non-Jekyll corpora.
+ *
+ * Pure helper extracted from {@link ssgCorpusEvidenceFromMeta} so the
+ * parent stays inside the noComplexity lint cap. Tolerant of hostile
+ * shapes — hands back `false` rather than throwing on anything that
+ * isn't an array of `{ token: string }`-shaped records.
+ */
+function templateInterpolationContainsLiquidOrErb(input: unknown): boolean {
+  if (!Array.isArray(input)) return false;
+  for (const entry of input) {
+    if (entry === null || typeof entry !== "object") continue;
+    const tokenRaw = (entry as Record<string, unknown>)["token"];
+    if (tokenRaw === "{%x%}" || tokenRaw === "<%x%>") return true;
+  }
+  return false;
 }
 
 /**

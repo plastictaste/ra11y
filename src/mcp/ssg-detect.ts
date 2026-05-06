@@ -289,6 +289,57 @@ const HUGO_LEGACY_CONFIG_MAX_BYTES = 16 * 1024;
 const HUGO_MARKUP_SECTION_RE = /^\[markup\]/m;
 
 /**
+ * Optional corpus-evidence the caller has already gathered from the
+ * scanned file set. When present, the detector can fall back to a
+ * sentinelless Jekyll classification on corroborator-only evidence —
+ * the "no `_config.yml` at root, but `_layouts/` + `_includes/` +
+ * frontmatter fences in 336 files + Liquid/ERB tokens" shape
+ * (Q15-CONFIG-SOURCE-AND-DETECTED-FRAMEWORK-NULL-ON-CLEAR-SSG-EVIDENCE).
+ *
+ * The closure follows the AI-first doctrine "Verbose meta is signal,
+ * not clutter": when the scanner has evidence the corpus is
+ * Jekyll-shaped, returning `null` reads as "we looked and found
+ * nothing" while suppressing the corroborating signal it actually
+ * has. The honest move is to surface `detectedFramework` at calibrated
+ * confidence so the agent sees the framework pointer plus the
+ * weakness of the evidence that produced it.
+ *
+ * Conservative discriminator: the sentinelless path requires BOTH
+ * `_layouts/` AND `_includes/` directories at the scan root (the
+ * canonical Jekyll layout convention; Hugo uses `layouts/` without
+ * the underscore, and Eleventy + Gatsby ship with their own config
+ * file). Corpus-side signals (`hasFrontmatterFence`,
+ * `hasLiquidOrErbTokens`) raise confidence but never substitute for
+ * the directory pair — single-signal evidence is too weak to
+ * fingerprint a framework on (per "Heuristic-mislabeled meta
+ * sub-fields are dishonest").
+ */
+export interface SsgCorpusEvidence {
+  /**
+   * True when the scanner observed at least one parsed HTML-family
+   * file whose source opened with a YAML frontmatter fence
+   * (`^---\n…\n---\n`). Lifts directly off
+   * `analysisCoverage.hasFrontmatterFence`. The fence is a Jekyll /
+   * Hugo / Eleventy / Astro post header — it cannot disambiguate
+   * the framework on its own, but combined with the dir-pair
+   * predicate it raises Jekyll confidence by one step.
+   */
+  readonly hasFrontmatterFence?: boolean;
+  /**
+   * True when the scanner observed at least one parsed HTML-family
+   * file carrying Liquid (`{% ... %}` / `{{ ... }}` keyword tokens),
+   * ERB (`<% ... %>`), or related Ruby-templating tokens. Lifts off
+   * `analysisCoverage.templateInterpolationFound[]` (the caller
+   * checks for entries whose token literal matches `{%x%}` or
+   * `<%x%>`) or off `analysisCoverage.erbIslandsUnrendered`. Liquid
+   * is Jekyll's templating engine; ERB ships in Jekyll's plugin
+   * ecosystem — both raise Jekyll confidence by one step when
+   * combined with the dir-pair predicate.
+   */
+  readonly hasLiquidOrErbTokens?: boolean;
+}
+
+/**
  * Returns the detected SSG's descriptor (with `confidence`), or `null`
  * when no recognized marker resolves at the given root. Resolution
  * order, with the first match winning:
@@ -305,17 +356,33 @@ const HUGO_MARKUP_SECTION_RE = /^\[markup\]/m;
  *      is the corroborator that distinguishes Hugo from generic
  *      TOML configs (Cargo workspaces, etc.); a positive match is
  *      `confidence: "high"`.
+ *   4. Sentinelless Jekyll: when no config-file sentinel resolved
+ *      AND BOTH `_layouts/` AND `_includes/` directories sit at the
+ *      scan root, surface `jekyll` at corroborator-only confidence.
+ *      Corpus-side signals on `evidence` (frontmatter fences,
+ *      Liquid/ERB tokens) raise the calibrated confidence one step
+ *      each. Closes the silent-miss case where a corpus with
+ *      unambiguous Jekyll evidence (336 frontmatter files,
+ *      `_layouts/`, `_includes/`, Liquid+ERB tokens) but no
+ *      `_config.yml` shipped `detectedFramework: null` per the
+ *      sentinelless-detection rule. See
+ *      {@link detectJekyllWithoutSentinel}.
  *
  * Jekyll runs first to preserve the documented declaration-order
  * tie-break (a hypothetical migration repo with both Jekyll and Astro
- * markers still resolves to Jekyll).
+ * markers still resolves to Jekyll). The sentinelless Jekyll path
+ * runs LAST so a real config marker always beats corroborator-only
+ * evidence.
  *
  * Sub-scope inheritance: this function probes EXACTLY `root`. There
  * is no walk-up to ancestor directories, so a sub-tree without its
- * own `_config.yml` (or other SSG sentinel) returns `null`. The
- * caller then conditional-spreads `detectedFramework` away — the
- * parent scope's framework label does NOT propagate down into a
- * narrower scan. This matters when the agent runs `scan_project` with
+ * own `_config.yml` (or other SSG sentinel) returns `null` UNLESS
+ * its own tree carries the sentinelless Jekyll predicate
+ * (`_layouts/` + `_includes/` at the scanned root). The parent
+ * scope's framework label does NOT propagate down into a narrower
+ * scan; the sentinelless path adds a corroboration mode that the
+ * scanned tree itself satisfies, never via inheritance from an
+ * ancestor. This matters when the agent runs `scan_project` with
  * an explicit `cwd` pointing at a sub-template directory inside a
  * 174-template dump: the per-sub-tree response carries
  * `detectedFramework` only when the sub-tree itself corroborates,
@@ -327,8 +394,16 @@ const HUGO_MARKUP_SECTION_RE = /^\[markup\]/m;
  *
  * @param root Absolute path to the project root. Caller is responsible
  *             for path resolution; this module never re-resolves.
+ * @param evidence Optional corpus-evidence the caller has already
+ *                 gathered from the scanned file set. When omitted,
+ *                 the sentinelless Jekyll path falls back to
+ *                 directory-corroborators only and surfaces at
+ *                 `confidence: "low"`.
  */
-export function detectSsgFramework(root: string): DetectedFramework | null {
+export function detectSsgFramework(
+  root: string,
+  evidence?: SsgCorpusEvidence,
+): DetectedFramework | null {
   const jekyll = detectJekyllWithGradedConfidence(root);
   if (jekyll !== null) return jekyll;
   for (const descriptor of SSG_DESCRIPTORS) {
@@ -343,7 +418,9 @@ export function detectSsgFramework(root: string): DetectedFramework | null {
       }
     }
   }
-  return detectHugoLegacyConfigToml(root);
+  const hugoLegacy = detectHugoLegacyConfigToml(root);
+  if (hugoLegacy !== null) return hugoLegacy;
+  return detectJekyllWithoutSentinel(root, evidence);
 }
 
 /**
@@ -472,6 +549,82 @@ function detectHugoLegacyConfigToml(root: string): DetectedFramework | null {
 }
 
 /**
+ * Sentinelless Jekyll path: when no config-file marker resolved at
+ * `root` but the directory layout matches Jekyll's canonical shape
+ * (`_layouts/` + `_includes/` at root, both directories), surface the
+ * framework at corroborator-only confidence so the agent has the
+ * pointer plus the calibrated weakness of the evidence.
+ *
+ * The conservative discriminator requires BOTH directory names —
+ * Hugo uses `layouts/` (no underscore) and Eleventy ships with its
+ * own config file plus a flexible `_includes/`-without-`_layouts/`
+ * convention, so demanding the pair keeps single-corroborator
+ * directories from misclassifying. Per the AI-first doctrine
+ * "Heuristic-mislabeled meta sub-fields are dishonest", a single
+ * `_includes/` directory or a stray `_layouts/` is too weak to
+ * fingerprint Jekyll on its own.
+ *
+ * Confidence grading on this path is bounded at `medium` because no
+ * sentinel was observed:
+ *
+ *   - Both directories present, no corpus evidence available =
+ *     `confidence: "low"`.
+ *   - Both directories + 1 corpus signal (frontmatter fence OR
+ *     Liquid/ERB tokens) = `confidence: "medium"`.
+ *   - Both directories + ≥2 corpus signals (frontmatter fence AND
+ *     Liquid/ERB tokens) = `confidence: "medium"`.
+ *
+ * The cap at `medium` is doctrine-correct: sentinel-bearing matches
+ * (the file `_config.yml` plus corroborators) reach `high` because
+ * the filename presence is independent evidence; a sentinelless match
+ * stays one step shy of `high` so the agent reading
+ * `confidence: "medium"` knows to verify the absence of `_config.yml`
+ * rather than treating the classification as fully grounded.
+ *
+ * Sub-scope inheritance: probes ONLY at `root`. The detector never
+ * walks up to look for `_layouts/` or `_includes/` in an ancestor
+ * directory. A sub-tree without its own dir-pair returns `null` —
+ * the parent scope's Jekyll shape does NOT propagate down. Pairs
+ * with the no-walk-up rule on {@link detectJekyllWithGradedConfidence}.
+ *
+ * Returns `null` when at least one of the required directories is
+ * missing, when either path is a non-directory, or when any I/O
+ * failure occurs — the probe never throws so {@link detectSsgFramework}
+ * can stay total.
+ */
+function detectJekyllWithoutSentinel(
+  root: string,
+  evidence: SsgCorpusEvidence | undefined,
+): DetectedFramework | null {
+  if (!hasJekyllDirectory(root, "_layouts")) return null;
+  if (!hasJekyllDirectory(root, "_includes")) return null;
+  let corpusSignals = 0;
+  if (evidence?.hasFrontmatterFence === true) corpusSignals += 1;
+  if (evidence?.hasLiquidOrErbTokens === true) corpusSignals += 1;
+  // Cap at `medium` on the sentinelless path — see the docblock for
+  // the doctrine rationale (no sentinel observed → never `high`).
+  const confidence: DetectedFrameworkConfidence = corpusSignals >= 1 ? "medium" : "low";
+  return jekyllDescriptor(confidence);
+}
+
+/**
+ * True when `<root>/<name>` exists and is a directory. A regular file
+ * with the same name returns false — Jekyll resolves layouts and
+ * includes by walking the children of the directories, so a stray
+ * file with the conventional name is not corroboration. Any I/O
+ * failure (permission error, race) returns false.
+ */
+function hasJekyllDirectory(root: string, name: string): boolean {
+  const path = join(root, name);
+  if (!existsSync(path)) return false;
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Builds the structured hint appended to `analysisCoverage.hints` when
  * an SSG resolves. Carries `code: "ssg_build_output_hint"` so agents
  * branch on the discriminator without substring-matching
@@ -539,6 +692,13 @@ export function withSsgHint(
  * `scan_project` handler can spread one call's worth of fields rather
  * than reconstruct the hint at every empty-result exit — and the
  * scan_project handler stays under the file-lines limit.
+ *
+ * The empty-files branch has no scanned corpus to inspect, so corpus-
+ * evidence is omitted and the sentinelless Jekyll path falls back to
+ * directory-corroborators only (`confidence: "low"`). On a Jekyll
+ * source tree with `_layouts/` + `_includes/` but no `_config.yml`
+ * and no parseable files, the `low`-confidence pointer still surfaces
+ * so the agent has the build command + emit dir inline.
  */
 export function ssgEmptyResultMetaFields(root: string): Record<string, unknown> {
   const framework = detectSsgFramework(root);
