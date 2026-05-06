@@ -1212,3 +1212,53 @@ const BULK_VENDOR_MIN_INVENTORY = 50;
  * grouped list ships in meta regardless.
  */
 const BULK_VENDOR_GLOB_HINT_LIMIT = 5;
+
+/**
+ * Builds the `groupBy: "firstChildDir"` proposal `nextStep` for the
+ * `small_demo_catalog` regime: the bulk-catalog detector found ≥30
+ * sibling subdirs sharing the same per-dir basename signature (e.g.
+ * each `<sibling>/` carrying `index.html` + `style.css` + `script.js`),
+ * but no vendor-classified files — so the bulk-vendor scope-down lane
+ * doesn't fire. The catalog shape IS the canonical case for the
+ * existing `groupBy: "firstChildDir"` aggregator: one whole-tree scan
+ * answers the per-sub-project question without paging through
+ * `files[]` and re-aggregating by directory, and without N round-trips
+ * with `additionalPaths` per sub-project.
+ *
+ * Reroute target: the existing `scan_project` `groupBy` parameter.
+ * Per the AI-first doctrine "Don't duplicate capability the agent
+ * already has," this routes the agent at an existing capability —
+ * the `byGroup` rollup already handles per-sub-project aggregation,
+ * and the override only ensures the agent discovers it on the canonical
+ * corpus shape rather than paging file-by-file. Per "One tool call
+ * should answer 'what next?'", the `nextStepStructured` field names
+ * the alternative narrowing path explicitly so an agent reading the
+ * paginated default never has to know about the `groupBy` capability
+ * out-of-band.
+ *
+ * Prose names the sibling shape (count + signature) as concrete
+ * evidence the agent can verify before committing to the re-scan,
+ * plus the example sub-project basenames the detector already
+ * surfaces on `warningsDetails.bulk_catalog_detected.siblingShape`,
+ * so the response carries the "why this proposal" alongside the
+ * proposal itself. The structured args carry `cwd` when supplied so
+ * the re-scan stays scoped to the same root the agent already
+ * targeted (avoiding the silent drift where the second call resolves
+ * to a different `cwd` than the first).
+ */
+export function smallDemoCatalogGroupByNextStep(args: {
+  readonly siblingCount: number;
+  readonly signature: readonly string[];
+  readonly exampleSiblings: readonly string[];
+  readonly cwd?: string;
+}): NextStepResult {
+  const { siblingCount, signature, exampleSiblings, cwd } = args;
+  const signatureList = signature.map((s) => `\`${s}\``).join(", ");
+  const examplePreview = exampleSiblings.slice(0, 3).join(", ");
+  const callArgs: Record<string, unknown> = { groupBy: "firstChildDir" };
+  if (cwd !== undefined) callArgs["cwd"] = cwd;
+  return {
+    prose: `${siblingCount} sibling sub-project subdirs share the same per-dir file shape (${signatureList}); examples: ${examplePreview}. Re-call \`scan_project\` with \`groupBy: "firstChildDir"\` for one response that aggregates findings per sub-project (\`plan.byGroup\`) instead of paging through every file. Alternative: \`additionalPaths: ["${exampleSiblings[0] ?? ""}"]\` to scope to one example sub-project.`,
+    structured: { tool: "scan_project", args: callArgs },
+  };
+}

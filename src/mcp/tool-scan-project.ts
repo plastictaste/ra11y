@@ -41,8 +41,10 @@ import { metaModeSchema } from "./meta-cache.ts";
 import {
   buildNextStep,
   bulkVendorScopeDownNextStep,
+  type NextStepResult,
   type NextStepStructured,
   shouldRerouteToBulkVendorScopeDown,
+  smallDemoCatalogGroupByNextStep,
 } from "./next-step.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
@@ -463,6 +465,19 @@ export const scanProjectTool: McpTool = {
     const pageParams = readPageParams(params);
     const page = paginateFiles(formatted.files, pageParams);
     const willBeTruncated = page.paginationFields.truncated === true;
+    // hoist bulk-catalog detection above `nextStep` so the
+    // `small_demo_catalog` trigger can drive the `groupBy:
+    // "firstChildDir"` proposal alongside the existing
+    // `warningsDetails.bulk_catalog_detected` payload. Single
+    // `detectBulkCatalog` call serves both surfaces — the warning
+    // pipeline below reuses this same value rather than re-detecting.
+    const bulkCatalogDetection = detectBulkCatalog({
+      durationMs: readMetaNumber(formatted.meta, "durationMs"),
+      filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
+      buildArtifacts: buildArtifacts.entries,
+      parsedFilePaths: files.map((f) => f.filePath),
+      root,
+    });
     const baseNextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
@@ -502,11 +517,34 @@ export const scanProjectTool: McpTool = {
     // per-file action. Standard nextStep stays when either threshold
     // fails — the override is additive routing for the bulk-vendor
     // pathology, not a suppression of the standard hint.
-    const nextStep = applyBulkVendorScopeDownOverride({
+    const afterBulkVendorOverride = applyBulkVendorScopeDownOverride({
       baseNextStep,
       buildArtifacts,
       totalFilesWithFindings: formatted.files.length,
       files: formatted.files,
+    });
+    // when the bulk-catalog detector classified the corpus as
+    // `small_demo_catalog` (≥30 sibling subdirs sharing the same per-
+    // dir basename signature, no vendor-classified files), the catalog
+    // shape IS the canonical case for `groupBy: "firstChildDir"`. The
+    // override proposes that re-call so the agent gets one whole-tree
+    // scan with per-sub-project aggregation rather than paging
+    // file-by-file or running N round-trips with `additionalPaths`.
+    // Per the AI-first doctrine "One tool call should answer 'what
+    // next?'", `nextStepStructured` names the alternative narrowing
+    // path explicitly so the agent never has to discover the existing
+    // `groupBy` capability out-of-band.
+    //
+    // Skipped when the caller already passed `groupBy` (the proposal
+    // would echo their own parameter), when the bulk-vendor override
+    // already replaced the structured target (vendor exclude is the
+    // first lever per `bulk-catalog.ts` precedence), or when the
+    // detector didn't fire `small_demo_catalog`.
+    const nextStep = applySmallDemoCatalogGroupByOverride({
+      baseNextStep: afterBulkVendorOverride,
+      bulkCatalogDetection,
+      callerGroupBy: groupByStrategy,
+      cwd: root,
     });
     // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
@@ -676,13 +714,7 @@ export const scanProjectTool: McpTool = {
       restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
       configSearchSawProjectMarker,
       scssUnresolvedVariableFiles,
-      bulkCatalogDetection: detectBulkCatalog({
-        durationMs: readMetaNumber(formatted.meta, "durationMs"),
-        filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
-        buildArtifacts: buildArtifacts.entries,
-        parsedFilePaths: files.map((f) => f.filePath),
-        root,
-      }),
+      bulkCatalogDetection,
       jsInnerHtmlDeclinedCount,
       jsInnerHtmlPatternSamples,
       codeDemoPropMatches,
@@ -1711,6 +1743,63 @@ export function applyBulkVendorScopeDownOverride(args: {
     prose: overridden.prose,
     structured: { tool: "scan_project", args: { restrictToPaths: [narrowing] } },
   };
+}
+
+/**
+ * Layered nextStep override for the `small_demo_catalog` regime: when
+ * the bulk-catalog detector classified the corpus as a parallel-
+ * sibling-subprojects layout (≥30 sibling subdirs sharing the same
+ * per-dir basename signature, no vendor-classified files), proposes
+ * `groupBy: "firstChildDir"` as the canonical narrowing path. The
+ * catalog shape IS the canonical case for that aggregator: one whole-
+ * tree scan with per-sub-project rollup beats N round-trips with
+ * `additionalPaths` per sub-project AND beats paging through `files[]`
+ * file-by-file.
+ *
+ * Per the AI-first doctrine "One tool call should answer 'what
+ * next?'", the override ensures `nextStepStructured` names the
+ * alternative narrowing path explicitly so the agent never has to
+ * discover the existing `groupBy` capability out-of-band.
+ *
+ * Skipped when:
+ *   - The detector didn't fire `small_demo_catalog` (no bulk-catalog
+ *     detection at all, or the vendor-heavy paths fired instead — the
+ *     `applyBulkVendorScopeDownOverride` already handles those).
+ *   - The caller already passed a `groupBy` parameter (proposing the
+ *     same value would echo their own input; proposing a different
+ *     one would be presumptuous).
+ *   - The bulk-vendor override already replaced the structured target
+ *     (vendor exclude is the first lever per `bulk-catalog.ts`
+ *     precedence). Detected by checking whether `baseNextStep`'s
+ *     structured `tool` field is `propose_config` (the bulk-vendor
+ *     fallback) — if it is, the agent's first lever is the config
+ *     emit, not the groupBy proposal.
+ *
+ * Returns `baseNextStep` unchanged on every skip path so the
+ * downstream assembly carries the standard hint untouched.
+ */
+export function applySmallDemoCatalogGroupByOverride(args: {
+  readonly baseNextStep: NextStepResult;
+  readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
+  readonly callerGroupBy: string | undefined;
+  readonly cwd: string;
+}): NextStepResult {
+  const { baseNextStep, bulkCatalogDetection, callerGroupBy, cwd } = args;
+  if (bulkCatalogDetection?.trigger !== "small_demo_catalog") return baseNextStep;
+  if (callerGroupBy !== undefined) return baseNextStep;
+  // The bulk-vendor override routes the agent at `propose_config` for
+  // the structural exclude — when that fires, the catalog shape may
+  // still look small-demo on the file-shape axis, but the vendor
+  // footprint dominates the routing. Defer to the bulk-vendor lane.
+  if (baseNextStep.structured?.tool === "propose_config") return baseNextStep;
+  const siblingShape = bulkCatalogDetection.siblingShape;
+  if (siblingShape === undefined) return baseNextStep;
+  return smallDemoCatalogGroupByNextStep({
+    siblingCount: siblingShape.siblingCount,
+    signature: siblingShape.signature,
+    exampleSiblings: siblingShape.exampleSiblings,
+    cwd,
+  });
 }
 
 /**

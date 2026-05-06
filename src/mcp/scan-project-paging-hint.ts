@@ -93,6 +93,22 @@ export function applyPagingHintToNextStep(args: {
   // `explain_rule` on the dominant rule — paging would re-recommend
   // the degenerate ~totalFilesWithFindings loop the reroute escapes.
   if (response["pageClipReason"] === "token_density") return response;
+  // Defer to the small-demo-catalog `groupBy: "firstChildDir"`
+  // override when it was already in place. The override proposes a
+  // fundamentally different call shape (one whole-tree scan with
+  // per-sub-project rollup) that returns the entire catalog in one
+  // response without paging — strictly more narrowing than the
+  // `offset: N` continuation. Demoting it into
+  // `nextStepStructuredAlternatives[]` would route the agent at the
+  // less-narrow paging call when the catalog-shape lever is the
+  // canonical answer for this corpus shape.
+  const priorForCatalogCheck = readNextStepStructured(response);
+  if (
+    priorForCatalogCheck?.tool === "scan_project" &&
+    priorForCatalogCheck.args?.["groupBy"] === "firstChildDir"
+  ) {
+    return response;
+  }
   const filesReturned = files.length;
   const totalFilesWithFindings = readTotalFilesWithFindings(response, filesReturned);
   const remaining = Math.max(0, totalFilesWithFindings - filesReturned);
