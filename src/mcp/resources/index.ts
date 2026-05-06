@@ -22,7 +22,6 @@
  */
 
 import { readdir, readFile } from "node:fs/promises";
-import { sep } from "node:path";
 import { posixJoin, posixRelative, posixResolve } from "../../utils/path.ts";
 
 const URI_SCHEME = "ra11y-kb://";
@@ -69,7 +68,8 @@ export async function loadKbResources(cwd: string): Promise<McpResource[]> {
   const files = await walkMarkdown(kbRoot).catch(() => [] as string[]);
   const resources: McpResource[] = [];
   for (const abs of files) {
-    const rel = posixRelative(kbRoot, abs).split(sep).join("/");
+    // posixRelative already returns POSIX; the prior split/join was a no-op cosmetic.
+    const rel = posixRelative(kbRoot, abs);
     const uri = `${URI_SCHEME}${rel}`;
     const source = await readFile(abs, "utf8").catch(() => "");
     const { name, description } = extractMeta(source, rel);
@@ -109,7 +109,8 @@ export async function readKbResource(cwd: string, uri: string): Promise<McpResou
   }
   const kbRoot = posixResolve(cwd, KB_SUBDIR);
   const target = posixResolve(kbRoot, rel);
-  const rooted = target === kbRoot || target.startsWith(kbRoot + sep);
+  // kbRoot and target both come from posixResolve, so the separator is "/".
+  const rooted = target === kbRoot || target.startsWith(`${kbRoot}/`);
   if (!rooted) {
     throw new ResourceError(INVALID_RESOURCE_URI, `Path escapes KB root: ${uri}`);
   }

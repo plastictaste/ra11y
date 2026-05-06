@@ -32,7 +32,7 @@
  * replacement.
  */
 
-import { extname, sep } from "node:path";
+import { extname } from "node:path";
 import { posixRelative } from "../utils/path.ts";
 /**
  * Canonical {@link GroupBy} param values. Schema-enforced at the
@@ -110,7 +110,8 @@ export function groupKeyFor(path: string, root: string, strategy: GroupBy): stri
   // the regime explicitly.
   if (rel.startsWith("..")) return "<external>";
   if (rel === "" || rel === ".") return ".";
-  const segments = rel.split(sep).filter((s) => s.length > 0);
+  // rel is POSIX from posixRelative; split on "/" not native sep.
+  const segments = rel.split("/").filter((s) => s.length > 0);
   if (segments.length === 0) return ".";
   if (strategy === "firstChildDir") {
     // Single-segment paths (file directly at root) bucket under "."
