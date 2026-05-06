@@ -92,6 +92,15 @@ interface ScanProjectBody {
   };
 }
 
+/**
+ * Build a POSIX-shaped expected absolute path. Mirrors `join(dir, ...segments)`
+ * but normalizes the result so it matches the POSIX-shaped paths the
+ * scanner emits on Windows.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [dir.split(/[\\/]/).join("/"), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 async function makeFixtureWithDistBundle(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-q11-dist-"));
   await writeFile(join(dir, "page.html"), "<html><body><p>authored source</p></body></html>");
@@ -125,7 +134,7 @@ describe("scan_project default-excluded artifact paths", () => {
     expect(payload).toBeDefined();
     expect(payload?.count).toBe(1);
     const distEntry = payload?.paths[0];
-    expect(distEntry?.path).toBe(join(cwd, "dist"));
+    expect(distEntry?.path).toBe(posixJoin(cwd, "dist"));
     // Four parseable files (.html, two .js, .css). PNG excluded.
     expect(distEntry?.fileCount).toBe(4);
     // Up to three sample files surfaced — agent uses these to
@@ -133,7 +142,7 @@ describe("scan_project default-excluded artifact paths", () => {
     expect(distEntry?.sampleFiles.length).toBeGreaterThan(0);
     expect(distEntry?.sampleFiles.length).toBeLessThanOrEqual(3);
     for (const sample of distEntry?.sampleFiles ?? []) {
-      expect(sample.startsWith(join(cwd, "dist"))).toBe(true);
+      expect(sample.startsWith(posixJoin(cwd, "dist"))).toBe(true);
     }
 
     // Mirrored on meta.analysisCoverage so cross-surface consumers can
@@ -142,6 +151,6 @@ describe("scan_project default-excluded artifact paths", () => {
     const metaList = result.meta?.analysisCoverage?.defaultExcludedArtifactPaths;
     expect(metaList).toBeDefined();
     expect(metaList?.length).toBe(1);
-    expect(metaList?.[0]?.path).toBe(join(cwd, "dist"));
+    expect(metaList?.[0]?.path).toBe(posixJoin(cwd, "dist"));
   }, 30000);
 });

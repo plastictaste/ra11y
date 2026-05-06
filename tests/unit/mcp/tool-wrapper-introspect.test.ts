@@ -51,6 +51,15 @@ interface IntrospectResponse {
   readonly nextStepStructured: { readonly tool: string; readonly args: Record<string, unknown> };
 }
 
+/**
+ * Build a POSIX-shaped expected absolute path. The scanner returns
+ * `definitionFile` POSIX-normalized on Windows; the test-side temp dir is
+ * native, so we normalize the prefix before joining the basename.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [dir.split(/[\\/]/).join("/"), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-wrapper-introspect-"));
   try {
@@ -119,31 +128,31 @@ describe("wrapper_introspect: classification by observedRoot", () => {
 
       expect(byName.get("ButtonWrap")).toEqual({
         name: "ButtonWrap",
-        definitionFile: join(dir, "ButtonWrap.tsx"),
+        definitionFile: posixJoin(dir, "ButtonWrap.tsx"),
         observedRoot: "button",
         confidence: "confirmed",
       });
       expect(byName.get("LinkWrap")).toEqual({
         name: "LinkWrap",
-        definitionFile: join(dir, "LinkWrap.tsx"),
+        definitionFile: posixJoin(dir, "LinkWrap.tsx"),
         observedRoot: "a",
         confidence: "confirmed",
       });
       expect(byName.get("TextField")).toEqual({
         name: "TextField",
-        definitionFile: join(dir, "TextField.tsx"),
+        definitionFile: posixJoin(dir, "TextField.tsx"),
         observedRoot: "input",
         confidence: "confirmed",
       });
       expect(byName.get("DivWrap")).toEqual({
         name: "DivWrap",
-        definitionFile: join(dir, "DivWrap.tsx"),
+        definitionFile: posixJoin(dir, "DivWrap.tsx"),
         observedRoot: "div",
         confidence: "assumed",
       });
       expect(byName.get("OpaqueWrap")).toEqual({
         name: "OpaqueWrap",
-        definitionFile: join(dir, "OpaqueWrap.tsx"),
+        definitionFile: posixJoin(dir, "OpaqueWrap.tsx"),
         observedRoot: "opaque",
         confidence: "assumed",
       });
@@ -171,7 +180,7 @@ describe("wrapper_introspect: classification by observedRoot", () => {
       expect(body.records).toEqual([
         {
           name: "NoRender",
-          definitionFile: join(dir, "NoRender.tsx"),
+          definitionFile: posixJoin(dir, "NoRender.tsx"),
           observedRoot: "unknown",
           confidence: "assumed",
         },

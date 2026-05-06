@@ -35,6 +35,15 @@ function posixDir(dir: string): string {
   return dir.split(/[\\/]/).join("/");
 }
 
+/**
+ * Build a POSIX-shaped expected absolute path. Mirrors `join(dir, ...segments)`
+ * but normalizes the result so it matches the POSIX-shaped paths
+ * `discoverFilesWithDiagnostics` returns on Windows.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [posixDir(dir), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 /** Marks a directory as a git repo root without actually initializing git. */
 function markGitRoot(dir: string): void {
   mkdirSync(join(dir, ".git"), { recursive: true });
@@ -518,8 +527,8 @@ describe("discoverFilesWithDiagnostics", () => {
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.skippedByExtension).toEqual({ ".svelte": 1 });
     expect(result.diagnostics.sourcemapFiles).toEqual([
-      join(dir, "assets/app.css.map"),
-      join(dir, "assets/vendor.js.map"),
+      posixJoin(dir, "assets/app.css.map"),
+      posixJoin(dir, "assets/vendor.js.map"),
     ]);
   });
 
@@ -535,9 +544,9 @@ describe("discoverFilesWithDiagnostics", () => {
 
     const result = await discoverFilesWithDiagnostics([dir]);
     expect(result.diagnostics.sourcemapFiles).toEqual([
-      join(dir, "a.css.map"),
-      join(dir, "m.css.map"),
-      join(dir, "z.css.map"),
+      posixJoin(dir, "a.css.map"),
+      posixJoin(dir, "m.css.map"),
+      posixJoin(dir, "z.css.map"),
     ]);
   });
 
@@ -568,16 +577,16 @@ describe("discoverFilesWithDiagnostics", () => {
 
     const result = await discoverFilesWithDiagnostics([dir]);
     const paths = result.diagnostics.defaultExcludedArtifactPaths;
-    expect(paths.map((e) => e.path)).toEqual([join(dir, ".next"), join(dir, "dist")]);
-    const distEntry = paths.find((e) => e.path === join(dir, "dist"));
+    expect(paths.map((e) => e.path)).toEqual([posixJoin(dir, ".next"), posixJoin(dir, "dist")]);
+    const distEntry = paths.find((e) => e.path === posixJoin(dir, "dist"));
     expect(distEntry?.fileCount).toBe(2);
     expect(distEntry?.sampleFiles.length).toBeGreaterThan(0);
     expect(distEntry?.sampleFiles.length).toBeLessThanOrEqual(3);
     for (const sample of distEntry?.sampleFiles ?? []) {
-      expect(sample.startsWith(join(dir, "dist"))).toBe(true);
+      expect(sample.startsWith(posixJoin(dir, "dist"))).toBe(true);
     }
     // Universal cache dirs stay out of the surfaced subset by design.
-    expect(paths.find((e) => e.path === join(dir, "node_modules"))).toBeUndefined();
+    expect(paths.find((e) => e.path === posixJoin(dir, "node_modules"))).toBeUndefined();
   });
 
   it("drops default-excluded directories that contain no parseable files", async () => {
@@ -603,6 +612,6 @@ describe("discoverFilesWithDiagnostics", () => {
 
     const result = await discoverFilesWithDiagnostics([dir]);
     const paths = result.diagnostics.defaultExcludedArtifactPaths.map((e) => e.path);
-    expect(paths).toEqual([join(dir, "build"), join(dir, "dist"), join(dir, "out")]);
+    expect(paths).toEqual([posixJoin(dir, "build"), posixJoin(dir, "dist"), posixJoin(dir, "out")]);
   });
 });

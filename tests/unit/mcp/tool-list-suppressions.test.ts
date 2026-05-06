@@ -52,6 +52,15 @@ async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Build a POSIX-shaped expected absolute path. Mirrors `join(dir, ...segments)`
+ * but normalizes the result so it matches the POSIX-shaped paths the
+ * scanner emits on Windows.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [dir.split(/[\\/]/).join("/"), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 async function callTool(dir: string): Promise<SuppressionResponse> {
   const session = new McpSession();
   const result = await listSuppressionsTool.handler({ cwd: dir }, session);
@@ -109,7 +118,7 @@ describe("list_suppressions: bare pragma shape", () => {
       expect(entry.criterionId).toBeNull();
       expect(entry.wildcard).toBe(false);
       expect(entry.line).toBe(1);
-      expect(entry.file).toBe(join(dir, "page.html"));
+      expect(entry.file).toBe(posixJoin(dir, "page.html"));
       // nextStep must call out the bare pragma for follow-up.
       expect(body.nextStep).toContain("missing a reason");
       expect(body.nextStep).toContain("review_candidates");
@@ -215,11 +224,11 @@ describe("list_suppressions: deterministic ordering", () => {
       );
       const body = await callTool(dir);
       expect(body.suppressions.length).toBe(3);
-      expect(body.suppressions[0]?.file).toBe(join(dir, "a-first.html"));
+      expect(body.suppressions[0]?.file).toBe(posixJoin(dir, "a-first.html"));
       expect(body.suppressions[0]?.line).toBe(1);
-      expect(body.suppressions[1]?.file).toBe(join(dir, "a-first.html"));
+      expect(body.suppressions[1]?.file).toBe(posixJoin(dir, "a-first.html"));
       expect(body.suppressions[1]?.line).toBe(3);
-      expect(body.suppressions[2]?.file).toBe(join(dir, "z-second.html"));
+      expect(body.suppressions[2]?.file).toBe(posixJoin(dir, "z-second.html"));
     });
   });
 });
