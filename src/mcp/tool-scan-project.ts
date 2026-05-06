@@ -1473,9 +1473,16 @@ function resolveProcessesForScan(
 ): readonly import("../types/config.ts").Process[] {
   if (processes.length === 0) return processes;
   const base = configSourcePath === null ? root : dirname(configSourcePath);
+  // POSIX-normalize the resolved page paths so they compare on the same
+  // separator as `ProjectFile.filePath` (the discovery walker emits
+  // POSIX absolute paths even on Windows). Without normalization,
+  // `path.resolve` returns native (backslash) on Windows, which the
+  // process-aware finders' `fileByAbsPath.get(pagePath)` lookup misses.
   return processes.map((p) => ({
     ...p,
-    pages: p.pages.map((pagePath) => (isAbsolute(pagePath) ? pagePath : resolve(base, pagePath))),
+    pages: p.pages.map((pagePath) =>
+      (isAbsolute(pagePath) ? pagePath : resolve(base, pagePath)).split(/[\\/]/).join("/"),
+    ),
   }));
 }
 
@@ -2271,7 +2278,13 @@ function intersectFilesWithRestrictPaths<T extends { readonly filePath: string }
   restrictToPaths: readonly string[],
   root: string,
 ): readonly T[] {
-  const absRestricts = restrictToPaths.map((p) => (isAbsolute(p) ? p : resolve(root, p)));
+  // POSIX-normalize the resolved restrict paths so they compare on the
+  // same separator as `f.filePath` — the discovery walker now emits
+  // forward-slash absolute paths even on Windows, but `path.resolve`
+  // returns native (backslash) form there.
+  const absRestricts = restrictToPaths.map((p) =>
+    (isAbsolute(p) ? p : resolve(root, p)).split(/[\\/]/).join("/"),
+  );
   return files.filter((f) => {
     for (const r of absRestricts) {
       if (f.filePath === r) return true;

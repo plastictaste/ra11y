@@ -392,9 +392,15 @@ export function isInsideHunk(
   // On Windows, the keys are POSIX-shaped (parseDiffOutput normalizes);
   // normalize the lookup path to match so backslash-vs-slash drift
   // between caller input and our key shape doesn't break the lookup.
+  // The realpath fallback also needs POSIX normalization on Windows —
+  // `realpathSync` returns native-separator output (`C:\Users\...`)
+  // even when given a forward-slash input, so without normalization
+  // the third lookup key shape disagrees with the POSIX hunk keys when
+  // Windows short-name expansion (`RUNNER~1` → `runneradmin`) is the
+  // only diff between caller path and git's view.
   const posix = filePath.split(/[\\/]/).join("/");
-  const ranges =
-    hunksByFile.get(posix) ?? hunksByFile.get(filePath) ?? hunksByFile.get(safeRealpath(filePath));
+  const realposix = safeRealpath(filePath).split(/[\\/]/).join("/");
+  const ranges = hunksByFile.get(posix) ?? hunksByFile.get(filePath) ?? hunksByFile.get(realposix);
   if (ranges === undefined) return false;
   for (const r of ranges) {
     if (line >= r.start && line <= r.end) return true;
