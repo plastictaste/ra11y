@@ -35,15 +35,7 @@ import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustme
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
-import {
-  buildParsedThroughLineMap,
-  enrichFindingsBeyondPartialParseBoundary,
-} from "./per-finding-beyond-parse-boundary.ts";
-import {
-  buildPerRuleLimitationMap,
-  buildSubstrateFiles,
-  enrichFindingsWithPerRuleLimitations,
-} from "./per-finding-confidence-parity.ts";
+import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-parse-boundary.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
@@ -55,7 +47,6 @@ import {
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
-  partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
@@ -818,43 +809,18 @@ export async function runScanAndFormat(
     activeRules,
     cwd,
   );
-  // Per-finding confidence parity with per-rule coverage limitations.
-  // When a rule's adjusted `coverageConfidence !== "high"`, propagate
-  // the structured reason code into every per-finding
-  // `couldBeWrongBecause` for that rule so the per-rule and per-finding
-  // layers don't ship contradictory attention-budget signals in the
-  // same response. Doctrine source:
-  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
-  // must reflect per-rule coverage limitations." Additive — per-finding
-  // `confidence` stays whatever the rule emitted; the cross-file caveat
-  // the agent needs to triage with rides on the `couldBeWrongBecause`
-  // axis. No-op fast path when no rule is degraded.
-  const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  // File-scoped gate: substrate codes (`file_parse_error`,
-  // `partial_parse`, `fragment_input_no_document_envelope`) attach
-  // only to findings on files in the named substrate set, so per-rule
-  // and per-finding layers stay honest about the same file. The
-  // `fragment` set mirrors `analysisCoverage.fragmentFiles[]` (shared
-  // classifier in `src/engine/layout-partial.ts`) so a finding on a
-  // full `.html` document never inherits the fragment code.
-  const fileEntriesAfterPerRule = enrichFindingsWithPerRuleLimitations(
+  // Per-finding confidence parity passes (per-rule limitations + the
+  // per-line beyond-parse-boundary sibling). See
+  // {@link enrichFindingsWithFullPerFileSubstrate} for the doctrine
+  // pointers — the legacy call site routes through the bundled helper
+  // so the file stays under its effective-line budget.
+  const enrichedFileEntries = enrichFindingsWithFullPerFileSubstrate({
     fileEntries,
-    perRuleLimitations,
-    buildSubstrateFiles(partitionParseStateFiles(files, violationFilePaths), fragmentFiles),
-  );
-  // Per-LINE granularity sibling of the per-rule pass above: when the
-  // parser stamped a 1-based head-error line on a partial-parse file,
-  // findings emitted at lines past the boundary live in source the
-  // structured parser could not reach. Tag with
-  // `beyond_partial_parse_boundary` and downgrade `confidence` to
-  // `"low"`. Doctrine source: docs/kb/architecture/ai-first-consumer.md
-  // "Parser-failure invalidates per-file confidence" — extended one
-  // level deeper. Closure picks downgrade-not-drop per "Surface, don't
-  // suppress."
-  const enrichedFileEntries = enrichFindingsBeyondPartialParseBoundary(
-    fileEntriesAfterPerRule,
-    buildParsedThroughLineMap(files),
-  );
+    adjustedPerRuleCoverage,
+    files,
+    violationFilePaths,
+    fragmentFiles,
+  });
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan

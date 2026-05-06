@@ -102,9 +102,7 @@ describe("per-finding beyond_partial_parse_boundary propagation", () => {
     const path = "fixtures/partial.html";
     const aboveBoundary = [263, 399, 405, 408, 412];
     const atOrBelow = [200];
-    const files = [
-      buildPartialParseHtmlFixture(path, 221, [...atOrBelow, ...aboveBoundary]),
-    ];
+    const files = [buildPartialParseHtmlFixture(path, 221, [...atOrBelow, ...aboveBoundary])];
 
     const { result, perRuleCoverage } = runScan({
       standards: [wcag22],
@@ -159,10 +157,9 @@ describe("per-finding beyond_partial_parse_boundary propagation", () => {
       const f = findings.find((x) => x.line === line);
       expect(f, `finding at line ${line} should exist`).toBeDefined();
       expect(f!.confidence, `finding at line ${line} confidence`).toBe("low");
-      expect(
-        f!.couldBeWrongBecause ?? [],
-        `finding at line ${line} couldBeWrongBecause`,
-      ).toContain("beyond_partial_parse_boundary");
+      expect(f!.couldBeWrongBecause ?? [], `finding at line ${line} couldBeWrongBecause`).toContain(
+        "beyond_partial_parse_boundary",
+      );
     }
 
     // Findings at-or-below the boundary do NOT carry the new code

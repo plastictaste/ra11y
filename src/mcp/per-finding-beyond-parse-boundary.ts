@@ -46,7 +46,14 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { AgentFinding, Confidence } from "../output/agent-response/types.ts";
-import type { FindingBucket } from "./per-finding-confidence-parity.ts";
+import type { PerRuleCoverage } from "../types/violation.ts";
+import {
+  buildPerRuleLimitationMap,
+  buildSubstrateFiles,
+  enrichFindingsWithPerRuleLimitations,
+  type FindingBucket,
+} from "./per-finding-confidence-parity.ts";
+import { partitionParseStateFiles } from "./parse-error-adjustment.ts";
 
 /**
  * Structured `couldBeWrongBecause` token propagated when the finding's
@@ -184,4 +191,40 @@ function confidenceRank(c: Confidence): number {
   if (c === "medium") return 2;
   if (c === "low") return 1;
   return 0;
+}
+
+/**
+ * Composed per-finding enrichment: runs the per-rule limitation pass
+ * and the per-line beyond-parse-boundary pass in order. Returns the
+ * input array reference unchanged when neither pass mutates anything
+ * (preserving the upstream no-op fast paths).
+ *
+ * Bundled here so the legacy `runScanAndFormat` call site in
+ * `tools-helpers.ts` stays under the file-line budget; the
+ * response-assembler call site already has the two passes inline
+ * because it threads additional substrate sets (parser-bail-route,
+ * code-demo-prop) between and after them.
+ */
+export function enrichFindingsWithFullPerFileSubstrate<T extends FindingBucket>(args: {
+  readonly fileEntries: readonly T[];
+  readonly adjustedPerRuleCoverage: readonly PerRuleCoverage[];
+  readonly files: readonly ParsedFile[];
+  readonly violationFilePaths: ReadonlySet<string>;
+  readonly fragmentFiles: readonly string[];
+}): readonly T[] {
+  const { fileEntries, adjustedPerRuleCoverage, files, violationFilePaths, fragmentFiles } = args;
+  const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
+  const substrate = buildSubstrateFiles(
+    partitionParseStateFiles(files, violationFilePaths),
+    fragmentFiles,
+  );
+  const perRuleEnriched = enrichFindingsWithPerRuleLimitations(
+    fileEntries,
+    perRuleLimitations,
+    substrate,
+  );
+  return enrichFindingsBeyondPartialParseBoundary(
+    perRuleEnriched,
+    buildParsedThroughLineMap(files),
+  );
 }
