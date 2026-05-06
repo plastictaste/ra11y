@@ -139,7 +139,11 @@ export function buildAttestationSurface(
 
 function scopedFilePath(record: AttestationRecord): string | null {
   if (record.scope === "file" || record.scope === "line") {
-    return record.location?.filePath ?? null;
+    const filePath = record.location?.filePath;
+    if (!filePath) return null;
+    // Normalize to POSIX so the Set lookup against `changedFilesBetween`
+    // (also normalized) agrees on separator regardless of host OS.
+    return filePath.split(/[\\/]/).join("/");
   }
   return null;
 }

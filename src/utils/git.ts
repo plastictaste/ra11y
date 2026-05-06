@@ -183,11 +183,17 @@ export function filesChangedSince(ref: string, cwd: string = process.cwd()): str
 }
 
 function parseFileList(stdout: string, root: string): string[] {
+  // Normalize to POSIX so the changed-set keys agree with the
+  // attestation-record `filePath` shape produced by the discovery layer
+  // (which also normalizes). Windows runs on `git rev-parse
+  // --show-toplevel` output (forward slashes) intermixed with
+  // `path.resolve` (backslashes); without one canonical form the
+  // staleness probe's `Set.has()` lookup misses on Windows.
   return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((rel) => resolve(root, rel));
+    .map((rel) => resolve(root, rel).split(/[\\/]/).join("/"));
 }
 
 // ─── Hunk-intersection mode ────────────────────────────────────────────────
@@ -285,7 +291,11 @@ export function parseDiffOutput(
         current = null;
       } else {
         const post = raw.slice(idx + 3);
-        current = resolve(repoRoot, post);
+        // Keep keys POSIX-shaped. `resolve(...)` on Windows returns a
+        // backslash path even though the diff body is POSIX; the
+        // caller's lookup path comes from `discoverFiles` which now
+        // emits POSIX too, so both sides agree on one separator.
+        current = posixResolve(repoRoot, post);
       }
       continue;
     }
@@ -298,6 +308,19 @@ export function parseDiffOutput(
     }
   }
   return byFile;
+}
+
+/**
+ * Like `path.resolve` but normalizes the result to forward slashes so
+ * the hunk-key shape stays in lock-step with the POSIX paths emitted by
+ * the discovery layer. Node's `fs` accepts forward-slash absolute paths
+ * on Windows, so the normalization has no observable downstream effect
+ * other than making the cross-platform string comparison honest.
+ */
+function posixResolve(...segments: readonly string[]): string {
+  return resolve(...segments)
+    .split(/[\\/]/)
+    .join("/");
 }
 
 /**
@@ -366,7 +389,12 @@ export function isInsideHunk(
   // between caller-supplied cwd and `git rev-parse --show-toplevel`
   // output. The hunk map keys are already in canonical space (the
   // helper call site canonicalized the repo root before joining).
-  const ranges = hunksByFile.get(filePath) ?? hunksByFile.get(safeRealpath(filePath));
+  // On Windows, the keys are POSIX-shaped (parseDiffOutput normalizes);
+  // normalize the lookup path to match so backslash-vs-slash drift
+  // between caller input and our key shape doesn't break the lookup.
+  const posix = filePath.split(/[\\/]/).join("/");
+  const ranges =
+    hunksByFile.get(posix) ?? hunksByFile.get(filePath) ?? hunksByFile.get(safeRealpath(filePath));
   if (ranges === undefined) return false;
   for (const r of ranges) {
     if (line >= r.start && line <= r.end) return true;
