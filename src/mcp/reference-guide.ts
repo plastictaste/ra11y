@@ -839,3 +839,89 @@ export function repairResponseDangling(
   if (!changed) return response;
   return { ...response, files: repaired };
 }
+
+/**
+ * Prunes a `FixDescriptions` map to the (ruleId, hash) pairs actually
+ * referenced by the given findings. Returns a new map containing only
+ * entries whose hash appears in some surviving finding's
+ * `fix.descriptionRef.hash` under the same ruleId; omits whole ruleId
+ * buckets that lose every entry; returns `undefined` when no entry
+ * survives so callers can drop the surrounding `referenceGuide`
+ * `fixDescriptions` field rather than ship an empty object (the
+ * canonical "Ambiguous field shapes are dishonest" failure for
+ * containers).
+ *
+ * Used by the `scan_file` budget pass after `limit` / `offset`
+ * pagination clips the flat findings list — the upstream hoist computed
+ * `fixDescriptions` over the full pre-paging inventory, but the response
+ * ships only the page slice. Without this prune, an agent reading the
+ * map sees N entries when only K ≤ N findings survived (canonical
+ * regression: 22 panel-id-keyed entries under
+ * `aria/tab-controls-missing` while `limit: 5` returned 5 findings —
+ * 17 dangling map entries with no on-page reference).
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest": the `fixDescriptions[ruleId]` map size is a
+ * per-rule headline; an agent budgets attention against it. When the
+ * map is wider than the surviving findings reference, the headline
+ * lies. Path B from the closure options on the bullet's per-finding
+ * extension: ship descriptions only for findings on the page.
+ *
+ * Pure: never mutates the input map. Returns `undefined` when input is
+ * `undefined`. Identity-preserving when no entry was pruned (the input
+ * map is returned by reference) so callers can short-circuit on the
+ * no-op path.
+ */
+export function pruneFixDescriptionsToReferenced<T extends AgentFinding>(
+  fixDescriptions: FixDescriptions | undefined,
+  findings: readonly T[],
+): FixDescriptions | undefined {
+  if (fixDescriptions === undefined) return undefined;
+  // Build the (ruleId, hash) reachability set from surviving findings.
+  // Findings carrying inline `fix.description` (singletons that
+  // bypassed the per-rule hoist) contribute nothing to the map and so
+  // contribute nothing to this set — their prose stays inline by
+  // construction.
+  const referenced = new Map<string, Set<string>>();
+  for (const f of findings) {
+    const hash = f.fix?.descriptionRef?.hash;
+    if (hash === undefined) continue;
+    let bucket = referenced.get(f.ruleId);
+    if (bucket === undefined) {
+      bucket = new Set<string>();
+      referenced.set(f.ruleId, bucket);
+    }
+    bucket.add(hash);
+  }
+  // Walk the input map; emit only the (ruleId, hash) pairs the
+  // reachability set named. Track whether any entry was dropped so
+  // we can return the input map by reference on the no-op path.
+  const pruned: Record<string, Record<string, string>> = {};
+  let droppedAny = false;
+  for (const [ruleId, byHash] of Object.entries(fixDescriptions)) {
+    const referencedHashes = referenced.get(ruleId);
+    if (referencedHashes === undefined || referencedHashes.size === 0) {
+      droppedAny = true;
+      continue;
+    }
+    const bucket: Record<string, string> = {};
+    let bucketDropped = false;
+    for (const [hash, description] of Object.entries(byHash)) {
+      if (referencedHashes.has(hash)) {
+        bucket[hash] = description;
+      } else {
+        bucketDropped = true;
+      }
+    }
+    const keptCount = Object.keys(bucket).length;
+    if (keptCount === 0) {
+      droppedAny = true;
+      continue;
+    }
+    if (bucketDropped) droppedAny = true;
+    pruned[ruleId] = bucket;
+  }
+  if (!droppedAny) return fixDescriptions;
+  if (Object.keys(pruned).length === 0) return undefined;
+  return pruned;
+}
