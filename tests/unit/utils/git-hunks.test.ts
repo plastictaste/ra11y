@@ -127,6 +127,21 @@ describe("parseDiffOutput", () => {
     expect(byFile.get(posixResolve(REPO_ROOT, "a.ts"))).toEqual([{ start: 1, end: 1 }]);
     expect(byFile.get(posixResolve(REPO_ROOT, "b.ts"))).toEqual([{ start: 2, end: 2 }]);
   });
+
+  it("tolerates CRLF line endings (Windows `git diff` output with `core.autocrlf=true`)", () => {
+    // Git-for-Windows ships with `core.autocrlf=true` by default, which
+    // makes `git diff` emit CRLF-terminated lines. Without the trailing-
+    // `\r` strip, the `diff --git ... b/<path>` line produces a key with
+    // a literal `\r` suffix and every `isInsideHunk` lookup against the
+    // un-suffixed file path misses. Mirror the LF case exactly so the
+    // CRLF input lands the same key shape.
+    const lfDiff = ["diff --git a/src/a.ts b/src/a.ts", "@@ -3,1 +3,1 @@", "+line3"].join("\n");
+    const crlfDiff = lfDiff.replace(/\n/g, "\r\n");
+    const byFile = parseDiffOutput(crlfDiff, REPO_ROOT);
+    const expectedKey = posixResolve(REPO_ROOT, "src/a.ts");
+    expect(byFile.has(expectedKey)).toBe(true);
+    expect(byFile.get(expectedKey)).toEqual([{ start: 3, end: 3 }]);
+  });
 });
 
 describe("isInsideHunk", () => {

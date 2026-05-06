@@ -278,25 +278,21 @@ export function parseDiffOutput(
   stdout: string,
   repoRoot: string,
 ): ReadonlyMap<string, readonly HunkRange[]> {
+  // Pre-split into LF-terminated logical lines. Strip a trailing `\r`
+  // up-front so CRLF diff output (the default shape on Windows when
+  // `core.autocrlf=true`, which git-for-windows ships by default)
+  // parses identically to LF input. The `@@` regex doesn't anchor to
+  // end-of-string so the hunk header matched either way before this
+  // strip — but the `diff --git a/<pre> b/<post>` line would otherwise
+  // produce a key with a literal `\r` suffix, and every downstream
+  // `isInsideHunk` lookup against the un-suffixed file path would miss.
+  // Idempotent on POSIX-ending input.
+  const lines = stdout.split("\n").map(stripTrailingCarriageReturn);
   const byFile = new Map<string, HunkRange[]>();
   let current: string | null = null;
-  for (const raw of stdout.split("\n")) {
+  for (const raw of lines) {
     if (raw.startsWith("diff --git ")) {
-      // Parse post-image path: `diff --git a/<pre> b/<post>`. We match
-      // the trailing ` b/<post>` so a filename containing spaces still
-      // resolves — git quotes paths with spaces, but even without that
-      // guard the `b/` prefix is unambiguous at the end.
-      const idx = raw.lastIndexOf(" b/");
-      if (idx === -1) {
-        current = null;
-      } else {
-        const post = raw.slice(idx + 3);
-        // Keep keys POSIX-shaped. `resolve(...)` on Windows returns a
-        // backslash path even though the diff body is POSIX; the
-        // caller's lookup path comes from `discoverFiles` which now
-        // emits POSIX too, so both sides agree on one separator.
-        current = posixResolve(repoRoot, post);
-      }
+      current = parsePostImagePath(raw, repoRoot);
       continue;
     }
     if (raw.startsWith("@@ ") && current !== null) {
@@ -308,6 +304,30 @@ export function parseDiffOutput(
     }
   }
   return byFile;
+}
+
+/** Drops a single trailing `\r` (CRLF → LF-only). Idempotent on LF input. */
+function stripTrailingCarriageReturn(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+/**
+ * Parses the post-image path from a `diff --git a/<pre> b/<post>` line.
+ * Returns the POSIX-shaped absolute path resolved against `repoRoot`,
+ * or null when the line has no `b/<post>` segment to anchor on. We
+ * match the trailing ` b/<post>` so a filename containing spaces still
+ * resolves — git quotes paths with spaces, but even without that guard
+ * the `b/` prefix is unambiguous at the end.
+ */
+function parsePostImagePath(line: string, repoRoot: string): string | null {
+  const idx = line.lastIndexOf(" b/");
+  if (idx === -1) return null;
+  const post = line.slice(idx + 3);
+  // Keep keys POSIX-shaped. `resolve(...)` on Windows returns a
+  // backslash path even though the diff body is POSIX; the caller's
+  // lookup path comes from `discoverFiles` which now emits POSIX too,
+  // so both sides agree on one separator.
+  return posixResolve(repoRoot, post);
 }
 
 /**
