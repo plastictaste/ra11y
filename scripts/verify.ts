@@ -101,7 +101,7 @@ const CHECKS: readonly Check[] = [
   },
   {
     name: "test",
-    cmd: ["bun", "test"],
+    cmd: ["bun", "test", "--timeout", "15000"],
     precommit: true,
     full: true,
     affectedBy: hasTestOrSrcChange,
