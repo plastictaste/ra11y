@@ -10,14 +10,16 @@
  * same shape as "Reason text and severity must agree" but at a different
  * layer of the response.
  *
- * Closure path (option b — additive, smaller blast radius): when a rule
- * is degraded at the per-rule level, propagate the degradation reason
- * into each finding's `couldBeWrongBecause` array. Per-finding
- * `confidence` stays whatever the rule emitted; the cross-file caveat
- * the agent needs to triage with is now present at every layer it might
- * read. Conditional spread on emission so empty `couldBeWrongBecause`
- * arrays never reach the wire (CLAUDE.md §1 "Ambiguous field shapes are
- * dishonest").
+ * Closure: when a rule is degraded at the per-rule level, propagate the
+ * degradation reason into each finding's `couldBeWrongBecause` array
+ * (path b — additive, doesn't move attention-budget signal) AND
+ * downgrade the per-finding `confidence` to match the per-rule label
+ * (path a — keeps the attention-budget channel honest). Both paths
+ * close the contradiction at different layers; doing both gives the
+ * agent a uniform read regardless of whether it pivots on
+ * `couldBeWrongBecause` or `confidence`. Conditional spread on emission
+ * so empty `couldBeWrongBecause` arrays never reach the wire (CLAUDE.md
+ * §1 "Ambiguous field shapes are dishonest").
  *
  * Doctrine source: docs/kb/architecture/ai-first-consumer.md
  *   "Per-finding confidence must reflect per-rule coverage limitations."
@@ -44,8 +46,31 @@
  * search the array for a code don't see duplicates.
  */
 
-import type { AgentFinding } from "../output/agent-response/types.ts";
+import type { AgentFinding, Confidence } from "../output/agent-response/types.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
+
+/**
+ * Per-rule limitation entry. The `code` is the snake_case reason
+ * propagated into per-finding `couldBeWrongBecause`; the
+ * `targetConfidence` is the per-rule scalar the per-finding
+ * `confidence` should be downgraded to match (per the Q15 closure of
+ * "Per-finding confidence must reflect per-rule coverage limitations").
+ *
+ * `targetConfidence` is `"medium" | "low"` only — never `"high"`,
+ * because a rule whose aggregate stayed `"high"` does not need
+ * downgrading at the per-finding layer. For aggregate-degraded rules
+ * the value mirrors the per-rule scalar. For per-file-degraded rules
+ * (aggregate stays `"high"`, `byFile` non-empty), the value is the
+ * worst per-file confidence in `byFile`. The downstream
+ * {@link FILE_SCOPED_SUBSTRATE_CODES} gate then attaches the
+ * downgrade only to findings whose path is in the parse-state sets,
+ * so clean-file findings on the same rule keep their original
+ * confidence — matching the per-file-not-corpus-wide invariant.
+ */
+export interface PerRuleLimitation {
+  readonly code: string;
+  readonly targetConfidence: "medium" | "low";
+}
 
 /**
  * Minimal per-file bucket shape the helper writes through. Covers both
@@ -87,12 +112,17 @@ export interface FindingBucket {
  */
 export function buildPerRuleLimitationMap(
   rows: readonly PerRuleCoverage[],
-): ReadonlyMap<string, string> {
-  const out = new Map<string, string>();
+): ReadonlyMap<string, PerRuleLimitation> {
+  const out = new Map<string, PerRuleLimitation>();
   for (const row of rows) {
     if (row.coverageConfidence !== "high") {
       const code = resolveReasonCode(row);
-      if (code !== undefined) out.set(row.ruleId, code);
+      if (code !== undefined) {
+        out.set(row.ruleId, {
+          code,
+          targetConfidence: row.coverageConfidence,
+        });
+      }
       continue;
     }
     // Aggregate stays high — but the rule may carry per-file
@@ -110,9 +140,36 @@ export function buildPerRuleLimitationMap(
       : hasPartialParse
         ? "partial_parse"
         : "parse_bailed_non_jsx_in_tsx_route";
-    out.set(row.ruleId, code);
+    // Worst per-file confidence in `byFile` — for aggregate-clean rules
+    // with file-scoped degradation, findings on those files still need
+    // to downgrade per-finding confidence to match the per-file label
+    // the agent sees on `byFile[i].confidence`. The {@link
+    // FILE_SCOPED_SUBSTRATE_CODES} gate ensures only findings on the
+    // affected file get the downgrade; clean-file findings keep their
+    // original confidence per the per-file-not-corpus-wide invariant.
+    const worstByFile = pickWorstByFileConfidence(row.byFile);
+    out.set(row.ruleId, { code, targetConfidence: worstByFile });
   }
   return out;
+}
+
+/**
+ * Picks the worst (lowest-trust) confidence in a `byFile` list. The
+ * type contract restricts entries to `"high" | "medium" | "low"` — but
+ * a `byFile` entry would never carry `"high"` (the file is in the
+ * degraded set), so this always returns `"medium"` or `"low"`. Defensive
+ * fallback to `"medium"` if every entry's confidence is `"high"`
+ * (degenerate but type-permissible).
+ */
+function pickWorstByFileConfidence(
+  entries: readonly { readonly confidence: "high" | "medium" | "low" }[],
+): "medium" | "low" {
+  let worst: "medium" | "low" = "medium";
+  for (const entry of entries) {
+    if (entry.confidence === "low") return "low";
+    if (entry.confidence === "medium") worst = "medium";
+  }
+  return worst;
 }
 
 /**
@@ -305,7 +362,7 @@ export function buildSubstrateFiles(
  */
 export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
   fileEntries: readonly T[],
-  perRuleLimitations: ReadonlyMap<string, string>,
+  perRuleLimitations: ReadonlyMap<string, PerRuleLimitation>,
   parseStateFiles?: ParseStateFiles,
 ): readonly T[] {
   if (perRuleLimitations.size === 0) return fileEntries;
@@ -313,23 +370,13 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
   const out = fileEntries.map((file) => {
     let bucketMutated = false;
     const findings = file.findings.map((finding) => {
-      const code = perRuleLimitations.get(finding.ruleId);
-      if (code === undefined) return finding;
-      // File-scoped gate: codes named in `FILE_SCOPED_SUBSTRATE_CODES`
-      // attach only to findings whose file path is in the named
-      // substrate set. Other codes (corpus-level evidence limitations)
-      // propagate unconditionally.
-      if (!isFileInSubstrateSetForCode(file.path, code, parseStateFiles)) {
-        return finding;
-      }
-      const existing = finding.couldBeWrongBecause;
-      if (existing?.includes(code)) return finding;
-      bucketMutated = true;
-      const next: AgentFinding = {
-        ...finding,
-        couldBeWrongBecause:
-          existing === undefined || existing.length === 0 ? [code] : [...existing, code],
-      };
+      const next = applyPerRuleLimitationToFinding(
+        finding,
+        file.path,
+        perRuleLimitations,
+        parseStateFiles,
+      );
+      if (next !== finding) bucketMutated = true;
       return next;
     });
     if (!bucketMutated) return file;
@@ -337,6 +384,89 @@ export function enrichFindingsWithPerRuleLimitations<T extends FindingBucket>(
     return { ...file, findings };
   });
   return mutatedAny ? out : fileEntries;
+}
+
+/**
+ * Per-finding adjuster — extracts the limitation-propagation logic into a
+ * dedicated helper so the per-bucket walker stays under Biome's cognitive-
+ * complexity ceiling. Returns the input `finding` reference unchanged when
+ * no propagation applies (no limitation, file-scoped gate denies, or both
+ * the code and confidence are already at-or-past their targets).
+ *
+ * Per-finding confidence downgrade: when the rule's per-rule label dropped
+ * below `"high"`, every per-finding emission from that rule shipping at
+ * `confidence: "high"` contradicts the per-rule label and forces the agent
+ * to reconcile silently. Downgrade to match the per-rule scalar. Don't
+ * override already-degraded findings (`"medium"` / `"low"`) — they're
+ * already at-or-below the target. Don't override `"inherited"` — it
+ * carries special wrapper-derived semantics per ADR 0012.
+ */
+function applyPerRuleLimitationToFinding(
+  finding: AgentFinding,
+  filePath: string,
+  perRuleLimitations: ReadonlyMap<string, PerRuleLimitation>,
+  parseStateFiles: ParseStateFiles | undefined,
+): AgentFinding {
+  const limitation = perRuleLimitations.get(finding.ruleId);
+  if (limitation === undefined) return finding;
+  const { code, targetConfidence } = limitation;
+  // File-scoped gate: codes named in `FILE_SCOPED_SUBSTRATE_CODES` attach
+  // only to findings whose file path is in the named substrate set. Other
+  // codes (corpus-level evidence limitations) propagate unconditionally.
+  if (!isFileInSubstrateSetForCode(filePath, code, parseStateFiles)) return finding;
+  const existing = finding.couldBeWrongBecause;
+  const codeAlreadyPresent = existing?.includes(code) === true;
+  const confidenceNeedsDowngrade =
+    finding.confidence === "high" &&
+    confidenceRank(targetConfidence) < confidenceRank(finding.confidence);
+  if (codeAlreadyPresent && !confidenceNeedsDowngrade) return finding;
+  const nextCouldBeWrongBecause = computeNextCouldBeWrongBecause(
+    existing,
+    code,
+    codeAlreadyPresent,
+  );
+  return {
+    ...finding,
+    ...(nextCouldBeWrongBecause === undefined
+      ? {}
+      : { couldBeWrongBecause: nextCouldBeWrongBecause }),
+    ...(confidenceNeedsDowngrade ? { confidence: targetConfidence } : {}),
+  };
+}
+
+/**
+ * Helper: compute the new `couldBeWrongBecause` array for a finding that
+ * needs propagation. Returns the existing array unchanged when the code
+ * is already present; otherwise appends the code (or seeds a fresh array
+ * when the field was empty/absent). Returning `undefined` is impossible
+ * here — every branch produces a defined array — but the caller's spread
+ * still uses the conditional shape so the wire shape stays honest if
+ * future call sites widen the contract.
+ */
+function computeNextCouldBeWrongBecause(
+  existing: readonly string[] | undefined,
+  code: string,
+  codeAlreadyPresent: boolean,
+): readonly string[] | undefined {
+  if (codeAlreadyPresent) return existing;
+  if (existing === undefined || existing.length === 0) return [code];
+  return [...existing, code];
+}
+
+/**
+ * Numeric rank for `Confidence` values along the trust axis. Higher
+ * rank = more trust ({@link Confidence} `"high"` is `3`). Used to gate
+ * the per-finding downgrade: a finding at `"high"` must downgrade to
+ * `"medium"` or `"low"` when the per-rule label is degraded; a finding
+ * already at `"medium"` or `"low"` stays put. `"inherited"` returns
+ * `0` so the gate never targets it for downgrade — its wrapper-derived
+ * semantics are out of scope for this propagation (ADR 0012).
+ */
+function confidenceRank(c: Confidence): number {
+  if (c === "high") return 3;
+  if (c === "medium") return 2;
+  if (c === "low") return 1;
+  return 0;
 }
 
 /**
@@ -363,12 +493,10 @@ function isFileInSubstrateSetForCode(
   if (setName === undefined) return true;
   if (parseStateFiles === undefined) return true;
   if (setName === "fragment") {
-    return parseStateFiles.fragment !== undefined && parseStateFiles.fragment.has(path);
+    return parseStateFiles.fragment?.has(path) === true;
   }
   if (setName === "parserBailRoute") {
-    return (
-      parseStateFiles.parserBailRoute !== undefined && parseStateFiles.parserBailRoute.has(path)
-    );
+    return parseStateFiles.parserBailRoute?.has(path) === true;
   }
   if (setName === "parseError") return parseStateFiles.parseError.has(path);
   return parseStateFiles.partialParse.has(path);
