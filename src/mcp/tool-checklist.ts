@@ -32,6 +32,7 @@ import {
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
+import { collapseAcrossFilesByReason } from "./checklist-cross-file-reason-collapse.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
 import { collapseRepeatedAcrossFiles } from "./checklist-vendor-collapse.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -2252,7 +2253,24 @@ function buildChecklistItem(
   // already-collapsed list (cohort representatives surface or fall
   // last by their canonical path's vendor classification).
   const mappedCollapsed = collapseRepeatedAcrossFiles(mappedRaw);
-  const mapped = partitionVendorCandidatesLast(mappedCollapsed, buildArtifactPaths);
+  // Cross-file SAME-REASON fold — sibling pass to the line-keyed
+  // collapse above. When the same `reason` text fires across N > 20
+  // distinct file paths within this criterion at *varying* lines
+  // (canonical case: 528 sub-site `index.html` files all firing
+  // `wcag22:2.4.5` with byte-identical reason "Likely root layout has
+  // no search/sitemap/breadcrumb" but at different line numbers), the
+  // line-keyed pass partitions every candidate into its own cohort
+  // and never collapses. This pass keys on `reason` alone — line-
+  // agnostic — and folds residual templated fan-outs to ONE row
+  // carrying `occurrences: N` + `samplePaths: [up-to-5]`. Per AI-first
+  // doctrine "Composite headline counts are dishonest" extended to
+  // per-row volume; "Labeled buckets are suppression too" satisfied
+  // because the predicate ("same reason, N>20 distinct files") is
+  // provable from the code. Pre-collapsed rows from the line-keyed
+  // pass are skipped (they already represent a folded cohort and
+  // refolding would lose the line precision the earlier pass earned).
+  const mappedCollapsedByReason = collapseAcrossFilesByReason(mappedCollapsed);
+  const mapped = partitionVendorCandidatesLast(mappedCollapsedByReason, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
   // "low" confidence — by definition the scanner has no specific

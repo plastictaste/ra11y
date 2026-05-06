@@ -631,7 +631,6 @@ Tool-orchestration / new tool surfaces:
 
 Catalog-scale perf / scoping:
 
-- [ ] **V1-REVIEW-CANDIDATE-CROSS-FILE-REPETITION-COLLAPSE** Website-templates' 528 HTML files trigger the same 2.4.5 candidate with byte-identical reason "Likely root layout has no search/sitemap/breadcrumb" on each `index.html`; `uniquePerCriterion` doesn't help because every candidate anchors to a different file path. V1-CHECKLIST-CRITERION-CANDIDATE-DEDUPE-ACROSS-IDS covers the same-candidate-across-criteria axis; V1-CHECKLIST-VENDOR-IFRAME-OCCURRENCES-COLLAPSE covers the vendor-file same-path axis. This item is the cross-file cross-template pattern-repetition axis. Fix: when the same `(ruleId, reasonHash)` fires on N files with N > threshold (e.g. 20), collapse to one top-level entry with `{pattern, occurrences: N, sampleFiles: [top-5-paths], totalFiles: N}` and elide the rest; the agent gets the signal once + sample coverage + the total without 528 near-identical rows. Doctrine: labeled buckets honest when the label is provable — "same-reason pattern fires on N files" is a deterministic fact.
 
 
 ### v1.0.0 — orchestrator follow-ups
