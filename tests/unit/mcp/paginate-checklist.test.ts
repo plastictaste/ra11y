@@ -1,14 +1,25 @@
 /**
  * Unit tests for the `checklist` tool's pagination.
  *
- * Two orthogonal axes are under test:
+ * Two orthogonal clip axes drive the response:
  *   - limit / offset paginate the flattened candidate stream across
- *     all items; `truncated: true` + `nextOffset` flip on when the
- *     global limit clips the list.
+ *     all items; the global limit clip emits `nextOffset` as the
+ *     resume token for the flat stream.
  *   - maxCandidatesPerCriterion clips each item independently;
  *     `perCriterionClipped: true` flips on when any single item was
- *     clipped. Orthogonal to truncation — either, both, or neither
- *     may be set on a response.
+ *     clipped, and `nextCursor` is the resume token for the per-
+ *     criterion tail.
+ *
+ * `truncated: true` is the canonical "this response is partial — the
+ * agent must page" boolean. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+ * must reconcile across warnings", `truncated: true` fires whenever
+ * ANY axis clipped (global OR per-criterion); `pageClipReason`
+ * discriminates the axis (`per_criterion_cap` | `end_of_results`),
+ * and the warning channel's `seeAlso` cross-links to it. The clip
+ * axes themselves stay orthogonal — `nextOffset` and `nextCursor`
+ * each ship only when their own axis fired — but the canonical
+ * boolean rolls them up into one consistent signal.
  *
  * We exercise the pure helpers directly (rather than through an MCP
  * subprocess) so the contract is testable without staging fixtures
@@ -183,7 +194,7 @@ describe("paginateChecklistItems — limit / offset axis", () => {
 });
 
 describe("paginateChecklistItems — maxCandidatesPerCriterion axis", () => {
-  it("clips a noisy criterion and flags perCriterionClipped", () => {
+  it("clips a noisy criterion and flags perCriterionClipped + canonical truncated", () => {
     // One criterion with 30 candidates, capped at 5.
     const items = [makeItem("wcag22:2.4.5", 30)];
     const page = paginateChecklistItems(items, fullParams({ maxCandidatesPerCriterion: 5 }));
@@ -193,10 +204,18 @@ describe("paginateChecklistItems — maxCandidatesPerCriterion axis", () => {
     // how much was elided.
     expect(page.totalCandidates).toBe(30);
     expect(page.paginationFields.perCriterionClipped).toBe(true);
-    // Per-criterion clip does NOT trigger `truncated` — that's the
-    // different axis. (Here post-clip total is 5 which fits in 200.)
-    expect(page.paginationFields.truncated).toBeUndefined();
+    // Per-criterion clip fires the canonical `truncated: true` boolean
+    // (per ai-first-consumer.md "Truncation reporters must reconcile
+    // across warnings") so the agent has one boolean to predicate
+    // partial-response on regardless of which axis clipped.
+    expect(page.paginationFields.truncated).toBe(true);
+    // `nextOffset` stays gated to the global-limit axis — it's the
+    // resume token for the flat stream. The per-criterion-clip resume
+    // token is `nextCursor` (validated separately).
     expect(page.paginationFields.nextOffset).toBeUndefined();
+    // Axis discriminator names the regime so callers branch on
+    // `pageClipReason` rather than on shape.
+    expect(page.paginationFields.pageClipReason).toBe("per_criterion_cap");
   });
 
   it("leaves perCriterionClipped absent when no item exceeds the cap", () => {
@@ -302,12 +321,14 @@ describe("paginateChecklistItems — Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE effecti
 
   it("emits pageClipReason: 'per_criterion_cap' when per-criterion clipping brought the page below the ask", () => {
     // 1 criterion × 30 candidates, cap 5 (post-clip total = 5),
-    // limit 10, offset 0 → returned 5, not truncated (5 < 10 fits),
-    // perCriterionClipped true. `effectiveLimit: 5 < requestedLimit:
-    // 10`, so pageClipReason fires as `per_criterion_cap` — the
-    // proximate cause is the per-criterion cap, not the end of the
-    // inventory (the inventory has 30 total). Same three-regime
-    // vocabulary as scan_project.
+    // limit 10, offset 0 → returned 5, perCriterionClipped true.
+    // `effectiveLimit: 5 < requestedLimit: 10`, so pageClipReason
+    // fires as `per_criterion_cap` — the proximate cause is the
+    // per-criterion cap, not the end of the inventory (the inventory
+    // has 30 total). Same three-regime vocabulary as scan_project.
+    // `truncated: true` is the canonical "this is partial" boolean
+    // and fires whenever any axis clipped (per ai-first-consumer.md
+    // "Truncation reporters must reconcile across warnings").
     const items = [makeItem("wcag22:2.4.5", 30)];
     const page = paginateChecklistItems(
       items,
@@ -315,7 +336,7 @@ describe("paginateChecklistItems — Q-SHARED-LIMIT-REQUEST-VS-EFFECTIVE effecti
     );
     expect(page.items.length).toBe(1);
     expect(page.items[0].candidates.length).toBe(5);
-    expect(page.paginationFields.truncated).toBeUndefined();
+    expect(page.paginationFields.truncated).toBe(true);
     expect(page.paginationFields.perCriterionClipped).toBe(true);
     expect(page.paginationFields.requestedLimit).toBe(10);
     expect(page.paginationFields.effectiveLimit).toBe(5);

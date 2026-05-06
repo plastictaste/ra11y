@@ -1795,6 +1795,17 @@ function buildChecklistWarnings(args: {
             clippedAt: args.nextCursorClipDetails.clippedAt,
             totalAvailable: args.nextCursorClipDetails.totalAvailable,
             nextCursor: args.nextCursor,
+            // Cross-link to the canonical truncation reporter on the
+            // top-level pagination block. Per
+            // `docs/kb/architecture/ai-first-consumer.md` "Truncation
+            // reporters must reconcile across warnings": multiple
+            // truncation signals (the warning code here, the
+            // `truncated: true` boolean, the `pageClipReason`
+            // discriminator) must reconcile by reference rather than
+            // by independent enumeration. The agent following the
+            // warning channel reads `seeAlso` and finds the canonical
+            // axis discriminator without parsing the warning name.
+            seeAlso: "pageClipReason",
           },
         }
       : {}),
@@ -2865,7 +2876,7 @@ export function paginateChecklistItems(
       candidates: item.candidates.slice(sliceStart, sliceEnd),
     });
   }
-  const truncated = rangeEnd < postClipTotal;
+  const globalClipped = rangeEnd < postClipTotal;
   // hint = min(largest
   // uncapped count, MAX_MAX_PER_CRITERION). Only meaningful when at
   // least one criterion clipped — otherwise the caller already saw
@@ -2882,7 +2893,7 @@ export function paginateChecklistItems(
       offset,
       pageItems,
       rangeEnd,
-      truncated,
+      globalClipped,
       perCriterionClipped: firstClippedCursor !== undefined,
       ...(firstClippedCursor
         ? {
@@ -3042,6 +3053,15 @@ function paginateChecklistResume(
     items: pageItems,
     totalCandidates,
     paginationFields: {
+      // Resume mode: when more candidates remain on the named criterion,
+      // the response is partial — emit the canonical `truncated: true`
+      // boolean (per `docs/kb/architecture/ai-first-consumer.md`
+      // "Truncation reporters must reconcile across warnings"). Pair
+      // `pageClipReason: "per_criterion_cap"` so axis discrimination
+      // matches the non-cursor branch's shape.
+      ...(nextCursor
+        ? { truncated: true as const, pageClipReason: "per_criterion_cap" as const }
+        : {}),
       ...(nextCursor ? { nextCursor } : {}),
       ...(nextCursorClipDetails ? { nextCursorClipDetails } : {}),
       ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
@@ -3062,13 +3082,29 @@ function paginateChecklistResume(
  * truncation, non-zero offset, or per-criterion clip), `pageClipReason`
  * names the regime when `effectiveLimit < requestedLimit`. Cross-
  * surface consumers read the same vocabulary on both tools.
+ *
+ * `truncated: true` is the canonical "this response is partial — the
+ * agent must page" boolean. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Truncation reporters must reconcile across warnings", a partial
+ * response shaped like `{ pageClipReason: "per_criterion_cap", warnings:
+ * ["results_truncated_use_nextcursor"], <no truncated key> }` ships three
+ * concurrent truncation signals while the canonical boolean is missing —
+ * the agent reading top-down sees `pageClipReason` and the warning but
+ * has no boolean to predicate "is this partial" against. Closure path (a)
+ * from doctrine: one canonical reporter — `truncated: true` — fires
+ * whenever ANY axis clipped (global limit OR per-criterion cap), and the
+ * warning's `seeAlso` cross-links to `pageClipReason` for the axis
+ * discrimination. `nextOffset` stays gated to the global-limit axis (it's
+ * the resume token for the flat stream); the per-criterion-clip resume
+ * token is `nextCursor`. `pageClipReason` discriminates the axis so
+ * callers branch on a discriminator, not on shape.
  */
 function buildChecklistPaginationFields(args: {
   readonly limit: number;
   readonly offset: number;
   readonly pageItems: readonly ChecklistItemOut[];
   readonly rangeEnd: number;
-  readonly truncated: boolean;
+  readonly globalClipped: boolean;
   readonly perCriterionClipped: boolean;
   readonly nextCursor?: ChecklistCursor;
   readonly nextCursorClipDetails?: NonNullable<
@@ -3081,7 +3117,7 @@ function buildChecklistPaginationFields(args: {
     offset,
     pageItems,
     rangeEnd,
-    truncated,
+    globalClipped,
     perCriterionClipped,
     nextCursor,
     nextCursorClipDetails,
@@ -3092,17 +3128,22 @@ function buildChecklistPaginationFields(args: {
   // both the global limit AND per-criterion clip.
   let pageCandidateCount = 0;
   for (const item of pageItems) pageCandidateCount += item.candidates.length;
+  // Canonical "this response is partial" boolean. Fires on any clip
+  // axis (global OR per-criterion) so the agent has one boolean to
+  // predicate on; axis discrimination lives on `pageClipReason`.
+  const truncated = globalClipped || perCriterionClipped;
   // Pagination is active when the response carries any non-trivial
   // paging state. Trivial "whole inventory fit, nothing clipped"
   // pages omit the triple entirely — there's no ambiguity to resolve.
-  const paginationActive = truncated || offset > 0 || perCriterionClipped;
+  const paginationActive = truncated || offset > 0;
   const pageClipReason = computeChecklistPageClipReason({
-    truncated,
+    globalClipped,
     perCriterionClipped,
     pageIsShort: pageCandidateCount < limit,
   });
   return {
-    ...(truncated ? { truncated: true as const, nextOffset: rangeEnd } : {}),
+    ...(truncated ? { truncated: true as const } : {}),
+    ...(globalClipped ? { nextOffset: rangeEnd } : {}),
     ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
     ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
     ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
@@ -3116,18 +3157,20 @@ function buildChecklistPaginationFields(args: {
  * Pure tri-state reducer — returns `undefined` when nothing clipped
  * below the ask, or the `PageClipReason`-aligned token when a single-
  * axis regime fired:
- *   - `per_criterion_cap` — per-criterion clip AND no further trunc.
+ *   - `per_criterion_cap` — per-criterion clip (regardless of further
+ *     global truncation; the per-criterion axis is the more specific
+ *     diagnosis since `nextCursor` is the resume token the agent needs).
  *   - `end_of_results` — tail ran out, no per-criterion involvement.
  * Mid-page full pages (effective === requested) carry no reason.
  */
 function computeChecklistPageClipReason(args: {
-  readonly truncated: boolean;
+  readonly globalClipped: boolean;
   readonly perCriterionClipped: boolean;
   readonly pageIsShort: boolean;
 }): "end_of_results" | "per_criterion_cap" | undefined {
-  if (!args.pageIsShort) return undefined;
-  if (args.truncated) return undefined;
   if (args.perCriterionClipped) return "per_criterion_cap";
+  if (!args.pageIsShort) return undefined;
+  if (args.globalClipped) return undefined;
   return "end_of_results";
 }
 
