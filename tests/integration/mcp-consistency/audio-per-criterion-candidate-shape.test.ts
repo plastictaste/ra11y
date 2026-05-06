@@ -153,7 +153,7 @@ describe("MCP invariant: bare <audio> ships per-criterion review candidates (no 
     }
   });
 
-  it("no review candidate ships a `\" | \"`-joined reason on the bare audio fixture", async () => {
+  it('no review candidate ships a `" | "`-joined reason on the bare audio fixture', async () => {
     const { page } = await makeBareAudioFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: page })]);
     const scanFile = bodyOf<ScanFileBody>(responses[1]);

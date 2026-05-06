@@ -1,46 +1,41 @@
 /**
- * Dedupes review candidates across enabled standards AND across
- * sibling finders that emit at the same `(filePath, line, column)`.
+ * Dedupes review candidates across enabled standards at the same
+ * `(filePath, line, column, reason)` — the within-finder cross-standard
+ * fold.
  *
- * Two collapse passes run in sequence:
- *
- * Pass 1 — within-finder cross-standard fold. A single finder (e.g.
- * `review/images-of-text`) declares many `criterionIds` across the
- * WCAG 2.2 / 2.1 / Section 508 / EN 301 549 matrix and emits one
- * candidate per criterion at the same `(filePath, line, column)` so
- * the scanner doesn't drop cross-standard coverage. Reason text is
- * identical across these copies (the finder builds it once per
- * element). Group key: `(filePath, line, column, reason)`. This
- * preserves the rare per-criterion-reason signal: the images-of-text
- * finder, for example, appends a logotype-exemption hint on
- * 1.4.5-family criteria that 1.4.9 doesn't carry — different reason =
+ * A single finder (e.g. `review/images-of-text`) declares many
+ * `criterionIds` across the WCAG 2.2 / 2.1 / Section 508 / EN 301 549
+ * matrix and emits one candidate per criterion at the same
+ * `(filePath, line, column)` so the scanner doesn't drop cross-standard
+ * coverage. Reason text is identical across these copies (the finder
+ * builds it once per element). Group key: `(filePath, line, column,
+ * reason)`. This preserves the rare per-criterion-reason signal: the
+ * images-of-text finder, for example, appends a logotype-exemption hint
+ * on 1.4.5-family criteria that 1.4.9 doesn't carry — different reason =
  * different advice to verify even if the line is the same.
  *
- * Pass 2 — cross-finder positional fold. Two distinct finders may
- * emit at the same `(filePath, line, column)` for genuinely different
- * criteria (canonical case: `<input type="password">` triggers both
- * `review/identify-purpose` for `wcag22:1.3.6` AND
- * `review/password-inputs` for `wcag22:3.3.8` at the same byte
- * position). Pre-fold these surfaced as N separate entries in
- * `scan_file.reviewCandidates`; `checklist.items[].candidates` already
- * annotates the cross-criterion sharing via `criteria: [...]` on every
- * instance per `annotateSharedCandidates`. The asymmetric shape forced
- * the agent to walk the same line under N different reasons in one
- * tool and under one merged badge in the other. Pass 2 closes the
- * drift: candidates sharing the post-Pass-1 `(filePath, line, column)`
- * key collapse to the first-seen entry, with `criteria` widened to the
- * union and reason text concatenated (separator `" | "`) so each
- * finder's WCAG-specific guidance survives the fold. The agent reads
- * one entry whose `criteria` carries every owning standard ID and
- * whose `reason` carries every finder's framing — same logical model
- * checklist's annotation surface ships, just collapsed instead of
- * annotated because `scan_file.reviewCandidates` is a flat list, not
- * a per-criterion grouped tree.
+ * Cross-finder coincidences at the same `(filePath, line, column)` with
+ * DISTINCT reason text stay as separate entries — the helper does NOT
+ * fold them. Pre-Q15 closure, a "Pass 2" cross-finder positional fold
+ * concatenated their reasons via `" | "` and unioned their criteria
+ * into one entry; post-closure each finder's per-criterion framing
+ * surfaces as its own entry. Per `docs/kb/architecture/ai-first-
+ * consumer.md` extension to "Composite headline counts are dishonest"
+ * — composite *reason text* across distinct criteria is also dishonest:
+ * a single entry whose reason braids four criteria's framing forces the
+ * agent to dismiss the union, and a `findingId` hashed over the union
+ * cannot be suppressed for one criterion alone. The canonical trigger
+ * was a bare `<audio>` element fanning out to `wcag22:1.2.1` (via
+ * `review/media-alternatives`) plus `wcag22:1.2.8` / `wcag22:1.2.9` /
+ * `wcag22:1.4.7` (via `review/media-variants`) at the same byte
+ * position with four distinct framing reasons; per-criterion review
+ * candidates ship as separate entries so per-criterion suppression /
+ * verdict has a stable address.
  *
- * `actionableManualItems` (counter-not-list) is unaffected by either
- * pass — both surfaces compute it via `tallyManualCriteria{,FromCoverage}`
- * over the original (un-folded) candidate set, keyed on `criterionId`.
- * The fold operates on the response surface only.
+ * `actionableManualItems` (counter-not-list) is unaffected — both
+ * surfaces compute it via `tallyManualCriteria{,FromCoverage}` over the
+ * original (un-folded) candidate set, keyed on `criterionId`. The fold
+ * operates on the response surface only.
  */
 
 import type {
@@ -278,19 +273,17 @@ interface DedupAcc {
 
 /**
  * Folds review candidates so the response surface ships one entry per
- * unique `(filePath, line, column)` even when N distinct finders emit
- * at the same byte position for different criteria. Two passes:
+ * unique `(filePath, line, column, reason)` — the within-finder cross-
+ * standard fold. Cross-finder coincidences at the same byte position
+ * with DISTINCT reason text remain as separate entries; concatenating
+ * their reasons via `" | "` would erase per-criterion addressability
+ * (per AI-first doctrine, composite reason text is the per-finding
+ * analogue of composite headline counts).
  *
- *   Pass 1 keys on `(filePath, line, column, reason)` so per-criterion
- *   copies a single finder emits across standards collapse without
- *   erasing the rare per-criterion reason signal (e.g. images-of-text's
- *   logotype hint on 1.4.5 vs the bare reason on 1.4.9).
- *
- *   Pass 2 keys on `(filePath, line, column)` to fold cross-finder
- *   coincidences (canonical case: `<input type="password">` gets
- *   `review/identify-purpose` (1.3.6) AND `review/password-inputs`
- *   (3.3.8) at the same position). Reasons concatenate with `" | "`
- *   so each finder's framing survives; `criteria` carries the union.
+ * Group key: `(filePath, line, column, reason)`. Per-criterion copies
+ * a single finder emits across standards collapse without erasing the
+ * rare per-criterion reason signal (e.g. images-of-text's logotype
+ * hint on 1.4.5 vs. the bare reason on 1.4.9).
  *
  * Input is sorted by the scanner; first-seen order is preserved so
  * the response is deterministic across runs.
@@ -302,7 +295,6 @@ export function dedupeReviewCandidatesForSingleFile(
   scanRoot?: string,
 ): readonly DedupedReviewCandidate[] {
   const byReasonKey = passOneCollectByReasonKey(candidates);
-  const byPositionKey = passTwoCollectByPosition(byReasonKey);
   // Primary sort: scanner-emitted `order` (file alphabetic, line, column)
   // — preserves the deterministic-shape contract callers depend on.
   // Secondary partition: float non-vendor candidates ahead of vendor
@@ -316,7 +308,7 @@ export function dedupeReviewCandidatesForSingleFile(
   // "NextStep prioritization on truncated/bulk responses must avoid
   // first-by-filename routing." Stable: ties (within a vendor group or
   // within the non-vendor group) preserve `order`.
-  const ordered = [...byPositionKey.values()].sort((a, b) => a.order - b.order);
+  const ordered = [...byReasonKey.values()].sort((a, b) => a.order - b.order);
   if (buildArtifactPaths.size > 0) {
     const indexed = ordered.map((acc, idx) => ({
       acc,
@@ -337,9 +329,9 @@ export function dedupeReviewCandidatesForSingleFile(
 }
 
 /**
- * Builds a `(filePath \x00 line \x00 column) → sorted-criteria-union`
- * lookup from the raw {@link ReviewCandidate} stream. Mirrors the
- * post-pass-2 position-keyed criteria union that
+ * Builds a `(filePath \x00 line \x00 column \x00 reason) →
+ * sorted-criteria-union` lookup from the raw {@link ReviewCandidate}
+ * stream. Mirrors the within-finder cross-standard fold key that
  * {@link dedupeReviewCandidatesForSingleFile} hashes into the per-
  * deduped-candidate `findingId`, exposed as a free-standing helper so
  * checklist's per-criterion mapper can hash with the same union.
@@ -350,20 +342,29 @@ export function dedupeReviewCandidatesForSingleFile(
  * conceptual candidate must produce the same `findingId` across
  * `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
  * and `checklist.items[].candidates[]`. Without this lookup checklist
- * hashes `[criterionId]` (per-item singleton) while scan_file hashes
- * the cross-criterion / cross-standard union — divergent ids on the
- * same conceptual logo / form input across surfaces.
+ * hashes `[criterionId]` (per-item singleton) while the per-position
+ * surfaces hash the within-finder cross-standard union — divergent
+ * ids on the same conceptual logo / form input across surfaces.
  *
- * Position key matches the post-pass-2 dedup key (no reason axis) so
- * cross-finder coincidences at the same byte position fold into one
- * union — same hash slot scan_file uses.
+ * Reason axis included in the key so cross-finder coincidences at the
+ * same byte position with DISTINCT reason text stay distinct entries
+ * (per AI-first doctrine, composite reason text across criteria is
+ * dishonest at the per-finding level too — the canonical regression
+ * was a `<audio>` element fanning out to four criteria with four
+ * framing reasons that the prior position-keyed union folded into one
+ * findingId). Each finder's per-criterion entry now owns its own id.
  */
 export function buildCandidateCriteriaUnion(
   candidates: readonly ReviewCandidate[],
 ): ReadonlyMap<string, readonly string[]> {
   const byKey = new Map<string, Set<string>>();
   for (const c of candidates) {
-    const key = `${c.location.filePath}\x00${c.location.line}\x00${c.location.column}`;
+    const key = candidateCriteriaUnionKey(
+      c.location.filePath,
+      c.location.line,
+      c.location.column,
+      c.reason,
+    );
     const existing = byKey.get(key);
     if (existing) {
       existing.add(c.criterionId);
@@ -378,9 +379,14 @@ export function buildCandidateCriteriaUnion(
   return out;
 }
 
-/** Composes the position key consumed by {@link buildCandidateCriteriaUnion}. */
-export function candidateCriteriaUnionKey(filePath: string, line: number, column: number): string {
-  return `${filePath}\x00${line}\x00${column}`;
+/** Composes the per-reason key consumed by {@link buildCandidateCriteriaUnion}. */
+export function candidateCriteriaUnionKey(
+  filePath: string,
+  line: number,
+  column: number,
+  reason: string,
+): string {
+  return `${filePath}\x00${line}\x00${column}\x00${reason}`;
 }
 
 /**
@@ -651,7 +657,7 @@ function passOneCollectByReasonKey(candidates: readonly ReviewCandidate[]): Map<
   const byKey = new Map<string, DedupAcc>();
   let nextOrder = 0;
   for (const c of candidates) {
-    const key = `${c.location.filePath} ${c.location.line} ${c.location.column} ${c.reason}`;
+    const key = `${c.location.filePath} ${c.location.line} ${c.location.column} ${c.reason}`;
     const existing = byKey.get(key);
     if (existing) {
       existing.criteria.add(c.criterionId);
@@ -715,114 +721,6 @@ function passOneCollectByReasonKey(candidates: readonly ReviewCandidate[]): Map<
     });
   }
   return byKey;
-}
-
-/**
- * Pass 2: fold cross-finder duplicates that share `(filePath, line,
- * column)` after the within-finder pass. Reasons concatenate with
- * `" | "`; criteria union; structured per-finder evidence
- * (`vendorPathHint`, `durationLiteralMs`, `siblingOccurrences`,
- * `sourceCount`, `matchOffset`/`matchLength`, `snippet`) preserves
- * first-seen and back-fills missing fields from the second finder
- * because subsequent finders are observing the same element and their
- * inferred evidence is either equivalent or complementary in a way
- * the agent will reconcile by reading the file. Idempotent
- * identity-reason guard prevents `"r | r"` if a fragment already
- * matches the existing reason.
- */
-function passTwoCollectByPosition(byReasonKey: Map<string, DedupAcc>): Map<string, DedupAcc> {
-  const byPos = new Map<string, DedupAcc>();
-  for (const acc of byReasonKey.values()) {
-    // Position key: drop the reason suffix the within-finder pass
-    // used. This is the seam where cross-finder coincidences fold.
-    const posKey = positionKey(acc);
-    const existing = byPos.get(posKey);
-    if (existing === undefined) {
-      byPos.set(posKey, acc);
-      continue;
-    }
-    mergeIntoExisting(existing, acc);
-  }
-  return byPos;
-}
-
-/**
- * Builds the position-only key used in pass 2. Path is implied by the
- * single-file caller (every candidate in a `dedupeReviewCandidatesFor
- * SingleFile` call shares a filePath by construction); `(line, column)`
- * suffices.
- */
-function positionKey(acc: DedupAcc): string {
-  return `${acc.line} ${acc.column}`;
-}
-
-/**
- * Merges `acc` into `existing` for the cross-finder fold. Criteria
- * union; reason concatenation with idempotency guard; structured
- * evidence back-fills missing fields only.
- */
-function mergeIntoExisting(existing: DedupAcc, acc: DedupAcc): void {
-  for (const id of acc.criteria) existing.criteria.add(id);
-  if (acc.reason !== existing.reason && !hasReasonFragment(existing.reason, acc.reason)) {
-    existing.reason = `${existing.reason} | ${acc.reason}`;
-  }
-  // Pass-2 fold across distinct finders: the union takes the highest
-  // confidence the cross-finder evidence supports, mirroring the per-
-  // item rollup `highestConfidence` in `tool-checklist.ts`.
-  for (const conf of acc.confidences) existing.confidences.push(conf);
-  backfillStructuredEvidence(existing, acc);
-}
-
-/**
- * Back-fills the structured-evidence sub-fields on `existing` from
- * `acc` for any field `existing` left undefined. Extracted so
- * {@link mergeIntoExisting}'s cognitive complexity stays under the
- * lint cap as new evidence sub-fields accrete on
- * {@link DedupedReviewCandidate}. Each field-pair is the same shape
- * — `existing.X === undefined && acc.X !== undefined` → copy — and a
- * data-driven loop both shrinks the function and removes the
- * branch-per-field repetition that would otherwise compound.
- *
- * Type-erased to `Record<string, unknown>` at the seam: the keys are
- * structurally typed on {@link DedupAcc} above, and the shared shape
- * means a correctness regression here would also fire on the
- * compile-time {@link DedupedReviewCandidate} surface — the typed
- * accessors stay public; this internal helper is the de-duplication
- * implementation.
- */
-function backfillStructuredEvidence(existing: DedupAcc, acc: DedupAcc): void {
-  const keys: ReadonlyArray<keyof DedupAcc> = [
-    "siblingOccurrences",
-    "vendorPathHint",
-    "vendorContext",
-    "predicateConceded",
-    "durationLiteralMs",
-    "durationExpression",
-    "sourceCount",
-    "matchOffset",
-    "matchLength",
-    "snippet",
-    "handlerFunctionName",
-    "dismissalKey",
-    "couldBeWrongBecause",
-  ];
-  const e = existing as unknown as Record<string, unknown>;
-  const a = acc as unknown as Record<string, unknown>;
-  for (const k of keys) {
-    if (e[k] === undefined && a[k] !== undefined) e[k] = a[k];
-  }
-}
-
-/**
- * Idempotency guard for pass-2 reason concatenation: if the candidate
- * reason already appears as a `" | "`-separated fragment of the
- * existing one, skip the append. Lets the helper run multiple times
- * over the same data without growing the reason string.
- */
-function hasReasonFragment(existing: string, candidate: string): boolean {
-  if (existing === candidate) return true;
-  const parts = existing.split(" | ");
-  return parts.includes(candidate);
 }
 
 /**

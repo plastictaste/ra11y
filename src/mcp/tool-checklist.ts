@@ -1994,22 +1994,24 @@ function mapOneCandidate(
   // CLAUDE.md §1 — this is identity-like metadata, not an
   // optional enrichment, so it is always present.
   // `findingId` is the per-emission address — hashed from the
-  // position-keyed cross-criterion / cross-finder union the raw
-  // `ReviewCandidate[]` stream carries at this `(filePath, line,
-  // column)`. The union matches what scan_file's deduped surface
-  // hashes (post-pass-2 fold), so the same conceptual candidate
-  // produces ONE `findingId` across `scan_file.reviewCandidates[]`,
-  // `scan_project.reviewCandidates[]`, and `checklist.items[]
-  // .candidates[]`. Per `docs/kb/architecture/ai-first-consumer.md`
-  // "Per-finding identifiers must be addressable, not collision-
-  // prone" + "Per-tool review-candidate shape must agree across
-  // surfaces." Falls back to `[criterionId]` only when the position
-  // lookup is empty (defensive: every emitted candidate is in the
-  // union since the union is built from the same stream).
+  // per-`(filePath, line, column, reason)` within-finder cross-
+  // standard union the raw `ReviewCandidate[]` stream carries at
+  // this byte position. Matches what scan_file's deduped surface
+  // hashes (post-Pass-1, no cross-finder positional fold) so the
+  // same conceptual candidate produces ONE `findingId` across
+  // `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+  // and `checklist.items[].candidates[]`. Per `docs/kb/architecture/
+  // ai-first-consumer.md` "Per-finding identifiers must be
+  // addressable, not collision-prone" + "Per-tool review-candidate
+  // shape must agree across surfaces." Falls back to `[criterionId]`
+  // only when the per-reason lookup is empty (defensive: every
+  // emitted candidate is in the union since the union is built from
+  // the same stream).
   const positionKey = candidateCriteriaUnionKey(
     c.location.filePath,
     c.location.line,
     c.location.column,
+    c.reason,
   );
   const criteria = criteriaUnionByPosition.get(positionKey) ?? [criterionId];
   const findingId = computeCandidateFindingId({
@@ -2208,7 +2210,7 @@ function annotateSharedCandidates(
       // Per AI-first doctrine "Per-tool review-candidate shape must
       // agree across surfaces."
       const column = byColumn.get(key) ?? c.line;
-      const positionKey = candidateCriteriaUnionKey(c.path, c.line, column);
+      const positionKey = candidateCriteriaUnionKey(c.path, c.line, column, c.reason);
       const criteriaUnion = criteriaUnionByPosition.get(positionKey);
       const criteria = criteriaUnion === undefined ? [...ids].sort() : [...criteriaUnion];
       const findingId = computeCandidateFindingId({

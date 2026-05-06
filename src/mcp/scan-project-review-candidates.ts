@@ -113,17 +113,14 @@ export function buildScanProjectReviewCandidates(args: {
 }): readonly ScanProjectReviewCandidate[] {
   const { candidates, manualIds, limit, scanRoot } = args;
   if (candidates.length === 0 || limit <= 0) return [];
-  // Position-keyed cross-criterion / cross-finder union — built off
-  // the FULL raw candidate stream (not the manual-filtered subset)
-  // so the union matches what `scan_file.reviewCandidates[]` and
-  // `checklist.items[].candidates[]` hash. Without this, a logo
-  // candidate satisfying both wcag22:1.4.5 + wcag22:1.4.9 (different
-  // per-criterion reason text → different pass-1 keys here) hashes a
-  // narrower criteria union than scan_file's pass-2 fold — divergent
-  // ids on the same conceptual candidate per "Per-tool review-
-  // candidate shape must agree across surfaces." Manual-id filtering
-  // still gates which entries SHIP; it just no longer narrows the
-  // hashed criteria slot.
+  // Per-`(file, line, column, reason)` within-finder cross-standard
+  // union — built off the FULL raw candidate stream (not the manual-
+  // filtered subset) so the union matches what `scan_file.review
+  // Candidates[]` and `checklist.items[].candidates[]` hash. The
+  // shared key shape means each finder's per-criterion entry produces
+  // its own `findingId`, addressable independently. Manual-id
+  // filtering still gates which entries SHIP; it just no longer
+  // narrows the hashed criteria slot.
   const criteriaUnionByPosition = buildCandidateCriteriaUnion(candidates);
   const byKey = new Map<string, GroupEntry>();
   let nextOrder = 0;
@@ -153,12 +150,13 @@ export function buildScanProjectReviewCandidates(args: {
   return capped.map((g) => {
     // Local (per-reason) fold for the `criteria` field on the wire —
     // preserves the existing per-reason cardinality that downstream
-    // consumers and tests pin against. The findingId hash, however,
-    // uses the position-keyed union so it matches scan_file /
-    // checklist on the same conceptual candidate regardless of
-    // per-criterion reason variance.
+    // consumers and tests pin against. The findingId hash uses the
+    // per-`(file, line, column, reason)` within-finder cross-standard
+    // union — same key the dedup helper hashes on so the same
+    // conceptual candidate produces ONE `findingId` across scan_file,
+    // scan_project, and checklist.
     const criteria = [...g.criteria].sort();
-    const positionKey = `${g.file}\x00${g.line}\x00${g.column}`;
+    const positionKey = `${g.file}\x00${g.line}\x00${g.column}\x00${g.reason}`;
     const hashCriteria = criteriaUnionByPosition.get(positionKey) ?? criteria;
     return {
       // Per-emission address shared with the same conceptual candidate
