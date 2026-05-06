@@ -753,7 +753,21 @@ export const coverageTool: McpTool = {
         // of how `analysisCoverage` already escapes the meta block on
         // this tool.
         scanned: scannedProject(cwd),
-        ...analysisCoverageField,
+        // Per `docs/kb/architecture/ai-first-consumer.md` "Truncation
+        // reporters must reconcile across warnings": the canonical
+        // truncation channel is `warningsDetails.response_meta_truncated`
+        // (driven by `metaArrayTruncatedFields` above). The bare
+        // `metaArrayTruncated: true` scalar `buildAnalysisCoverage`
+        // returns is an internal signal — spreading the full helper
+        // result onto the response wire-shape would leak it as an
+        // orphan third reporter alongside the warning channel,
+        // forcing the agent to reconcile three competing narratives
+        // for the same truncation event. Spread only the
+        // `analysisCoverage` block; the truncation bit is already
+        // routed through the `metaArrayTruncatedFields` payload above.
+        ...(analysisCoverageField.analysisCoverage !== undefined
+          ? { analysisCoverage: analysisCoverageField.analysisCoverage }
+          : {}),
         ...metaField,
         ...selectScanTimeWireFields(scanTime),
       };

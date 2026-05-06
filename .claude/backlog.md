@@ -511,7 +511,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### Truncation reporters disagree
 
-- [ ] **Q15-COVERAGE-METAARRAY-TRUNCATED-AS-THIRD-REPORTER** `coverage` ships top-level scalar `metaArrayTruncated: true` AND `warnings: ["response_meta_truncated"]` AND `warningsDetails.response_meta_truncated.fields: ["analysisCoverage.fragmentFiles"]` — three concurrent reporters describing one truncation event. Closure: drop the orphan top-level `metaArrayTruncated` scalar; canonical truncation reporter is the `warningsDetails.<truncation_code>` channel; if a top-level scalar is genuinely useful it must point at the warning via `seeAlso` rather than enumerate independently. Per AI-first doctrine "Truncation reporters must reconcile across warnings."
 - [ ] **Q15-CHECKLIST-PAGECLIPREASON-VS-WARNING-MISSING-TRUNCATED-BOOLEAN** `checklist` ships `pageClipReason: "per_criterion_cap"` AND `warnings: ["results_truncated_use_nextcursor"]` AND `truncated` is omitted from response keys entirely. Three concurrent truncation signals; the canonical `truncated: boolean` is the missing one. Closure: pick one canonical (`truncated: true` OR `pageClipReason`) and cross-link from the warning's `seeAlso`. Per AI-first doctrine "Truncation reporters must reconcile across warnings."
 
 ### Bootstrap response shape
