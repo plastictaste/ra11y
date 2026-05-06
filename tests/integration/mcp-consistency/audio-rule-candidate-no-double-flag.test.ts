@@ -176,9 +176,7 @@ describe("MCP invariant: <audio> rule emission elides same-criterion review cand
     // a guard rail against a future finder being added that does emit
     // a 1.1.1 candidate at the same location — which would re-introduce
     // the double-flag the Q14 dedup mechanism closes.
-    const sameLine = (scanFile.reviewCandidates ?? []).filter(
-      (c) => c.line === audioFinding.line,
-    );
+    const sameLine = (scanFile.reviewCandidates ?? []).filter((c) => c.line === audioFinding.line);
     for (const c of sameLine) {
       for (const id of c.criteria) {
         expect(RULE_SATISFIES).not.toContain(id);
@@ -210,9 +208,7 @@ describe("MCP invariant: <audio> rule emission elides same-criterion review cand
     // at the audio's line. The criterion is not in the rule's
     // `satisfies` set, so the dedup predicate does not fire — the agent
     // gets a prompt to verify the prerecorded-audio transcript path.
-    const sameLine = (scanFile.reviewCandidates ?? []).filter(
-      (c) => c.line === audioFinding.line,
-    );
+    const sameLine = (scanFile.reviewCandidates ?? []).filter((c) => c.line === audioFinding.line);
     const has121 = sameLine.some((c) => c.criteria.includes("wcag22:1.2.1"));
     expect(has121).toBe(true);
 

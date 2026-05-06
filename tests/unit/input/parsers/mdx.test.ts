@@ -728,7 +728,7 @@ describe("parseMdx — <Example code={`…`}/> template-literal extractor", () =
     expect(findElement(root.jsxElements, "input")).toBeUndefined();
   });
 
-  it("skips template literals that contain ${…} substitutions", () => {
+  it("skips template literals that contain interpolation substitutions", () => {
     // A template-literal with a substitution cannot be statically
     // resolved — we refuse to parse a partial body and the extractor
     // bails, leaving the <input> unseen by downstream rules. Honest
