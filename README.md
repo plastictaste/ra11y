@@ -12,9 +12,7 @@ That doesn't make it agent-only. ra11y ships a CLI with terminal output, multipl
 
 ## Status
 
-**Public beta — `1.0.0-beta.1`, not yet on npm.**
-
-The rule engine, plugin API, multi-standard registry, output formatters, reports (coverage, checklist, VPAT, certification), and MCP server are all in tree and exercised by the test suite. The MCP response shapes are under active hardening against multi-corpus field tests; expect breaking changes to MCP tool response field shapes before `1.0.0`. CLI and rule logic are stable.
+The rule engine, plugin API, multi-standard registry, output formatters, reports (coverage, checklist, VPAT, certification), and MCP server are all in tree and exercised by the test suite.
 
 Known gaps the maintainers are tracking — none are silent failures, but worth knowing if you're integrating today:
 
@@ -49,24 +47,19 @@ A scan with `--standard section508` activates the same `contrast/minimum` rule a
 
 Architecture deep-dive: [`docs/architecture.md`](./docs/architecture.md). Rule authoring: [`docs/kb/patterns/writing-a-rule.md`](./docs/kb/patterns/writing-a-rule.md). Three-layer model: [`docs/kb/architecture/three-layer-model.md`](./docs/kb/architecture/three-layer-model.md).
 
-## Install (from source)
-
-Until the npm package publishes, install from the cloned repo:
+## Install
 
 ```sh
-git clone https://github.com/<owner>/ra11y.git
-cd ra11y
-bun install
-bun run build
+npm install --save-dev @ra11y/core
+# or
+bun add -d @ra11y/core
 ```
 
-Then either invoke the CLI directly:
+Or run without installing:
 
 ```sh
-bun run src/cli.ts src/
+npx @ra11y/core src/
 ```
-
-…or wire the MCP server into your agent (see below). Once `@ra11y/core` is on npm, `npx @ra11y/core` will work the same way.
 
 ## CLI
 
@@ -95,7 +88,7 @@ Full reference: [`docs/cli.md`](./docs/cli.md).
 
 ra11y ships a built-in [MCP](https://modelcontextprotocol.io) server so AI coding agents (Claude Code, Cursor, Zed, Continue) can scan, explain, and fix accessibility issues interactively.
 
-**Setup** — add this to your project's `.mcp.json` (once `@ra11y/core` is on npm; for now point at your local clone):
+**Setup** — add this to your project's `.mcp.json`:
 
 ```jsonc
 {
@@ -108,7 +101,7 @@ ra11y ships a built-in [MCP](https://modelcontextprotocol.io) server so AI codin
 }
 ```
 
-Or start the server directly from a clone: `bun run src/cli.ts --mcp`
+Or, from a clone: `bun run src/cli.ts --mcp`.
 
 **What the server exposes** — a couple dozen tools spanning scan (`scan_project`, `scan_file`, `scan_diff`, `scan`), triage (`checklist`, `coverage`, `review_candidates`, `suggest_fix`, `apply_fix`, `explain_rule`, `explain_standard`), onboarding (`bootstrap`, `detect_native_wrappers`, `propose_config`, `propose_baseline`), conformance (`vpat`, `attest`, `verdict_candidate`, `conformance_statement`, `draft_vpat_narrative`, `list_attestations`, `audit`), and lifecycle (`list_rules`, `list_suppressions`, `suppress`, `baseline`, `sessionConfigure`). Canonical inventory: call `tools/list` on the server, or read [`src/mcp/`](./src/mcp/).
 
@@ -231,7 +224,7 @@ Authoring guides: [`docs/plugins/authoring-a-rule.md`](./docs/plugins/authoring-
 
 ## Feedback
 
-Bug reports + reproductions welcome via GitHub issues. The maintainers aren't accepting external pull requests during the beta — the response-shape doctrine ([`docs/kb/architecture/ai-first-consumer.md`](./docs/kb/architecture/ai-first-consumer.md)) is still hardening and merging external work would slow that loop. Once `1.0.0` ships, contribution norms will land in `CONTRIBUTING.md`.
+Bug reports + reproductions welcome via GitHub issues. Contribution norms — including the response-shape doctrine ([`docs/kb/architecture/ai-first-consumer.md`](./docs/kb/architecture/ai-first-consumer.md)) — live in `CONTRIBUTING.md`.
 
 If you're using ra11y on a real codebase and the MCP responses surface something dishonest (counts that don't reconcile across surfaces, ambiguous-empty fields, oversize without an envelope, fix descriptions that contradict the rule's severity), open an issue with the response payload — those reports drive the doctrine work directly.
 
