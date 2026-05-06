@@ -36,6 +36,10 @@ import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import {
+  buildParsedThroughLineMap,
+  enrichFindingsBeyondPartialParseBoundary,
+} from "./per-finding-beyond-parse-boundary.ts";
+import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
@@ -833,10 +837,23 @@ export async function runScanAndFormat(
   // `fragment` set mirrors `analysisCoverage.fragmentFiles[]` (shared
   // classifier in `src/engine/layout-partial.ts`) so a finding on a
   // full `.html` document never inherits the fragment code.
-  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
+  const fileEntriesAfterPerRule = enrichFindingsWithPerRuleLimitations(
     fileEntries,
     perRuleLimitations,
     buildSubstrateFiles(partitionParseStateFiles(files, violationFilePaths), fragmentFiles),
+  );
+  // Per-LINE granularity sibling of the per-rule pass above: when the
+  // parser stamped a 1-based head-error line on a partial-parse file,
+  // findings emitted at lines past the boundary live in source the
+  // structured parser could not reach. Tag with
+  // `beyond_partial_parse_boundary` and downgrade `confidence` to
+  // `"low"`. Doctrine source: docs/kb/architecture/ai-first-consumer.md
+  // "Parser-failure invalidates per-file confidence" — extended one
+  // level deeper. Closure picks downgrade-not-drop per "Surface, don't
+  // suppress."
+  const enrichedFileEntries = enrichFindingsBeyondPartialParseBoundary(
+    fileEntriesAfterPerRule,
+    buildParsedThroughLineMap(files),
   );
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative

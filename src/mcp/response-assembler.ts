@@ -67,6 +67,10 @@ import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { collectParserBailedRouteFiles } from "./parser-bail-route-adjustment.ts";
+import {
+  buildParsedThroughLineMap,
+  enrichFindingsBeyondPartialParseBoundary,
+} from "./per-finding-beyond-parse-boundary.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
@@ -861,6 +865,28 @@ export function assembleScanFamilyResponse(
   const buildArtifactEntries = collectBuildArtifacts(parsedFiles);
   const buildArtifactPaths = new Set<string>(buildArtifactEntries.map((e) => e.path));
   fileEntries = enrichFindingsWithBuildArtifactPath(fileEntries, buildArtifactPaths);
+  // Per-finding propagation for the per-LINE axis on partial-parse
+  // files: when the parser stamped a 1-based head-error line
+  // (`parsedThroughLine`) on a `partialParseFiles[]` entry, findings
+  // emitted at lines past the boundary live in source the structured
+  // parser could not reach. The companion partial-parse helper above
+  // already attached `partial_parse` to every finding on the file
+  // (file-scoped, file-wide); this pass adds one level of granularity
+  // by tagging the slice past the boundary with
+  // `beyond_partial_parse_boundary` AND downgrading those findings'
+  // `confidence` to `"low"`. Doctrine source: docs/kb/architecture/
+  // ai-first-consumer.md "Parser-failure invalidates per-file
+  // confidence" — extended one level deeper. Closure picks downgrade-
+  // not-drop per "Surface, don't suppress": the finding stays in the
+  // response (regex finders that emit despite the AST bail are still
+  // potentially correct); the agent reads the additive caveat and
+  // decides. No-op fast path when no parsed file recorded a
+  // meaningful head-error line (object identity stable on the
+  // common case — clean-scan corpora pay no walk).
+  fileEntries = enrichFindingsBeyondPartialParseBoundary(
+    fileEntries,
+    buildParsedThroughLineMap(parsedFiles),
+  );
   // Per-finding propagation for the per-LOCATION axis: a finding's
   // `(filePath, line)` falls inside a recorded MDX code-demo prop's
   // template-literal body the parser descended into. Companion to the

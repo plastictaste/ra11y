@@ -488,8 +488,6 @@ Field-test follow-ups from a 4-corpus blind probe (CSS-framework + dist build, S
 
 ### Heuristic-mislabeled meta sub-fields
 
-- [ ] **Q15-FINDINGS-EMITTED-BEYOND-PARTIAL-PARSE-BOUNDARY** `scan_file` on a partial-parsed HTML reports `limitations[].reason: "partial_parse"`, `parsedThroughLine: 221`, but ships 229 findings — many at lines 263, 399, 405, 408, 412 (well beyond the parse boundary). Findings beyond `parsedThroughLine` should either be impossible or must downgrade. Closure: drop findings emitted beyond `parsedThroughLine`, OR tag with `confidence: "low"` + `couldBeWrongBecause: ["beyond_partial_parse_boundary"]`; integration test pinning that no finding's `line > parsedThroughLine` on a partial-parse response without the downgrade. Per AI-first doctrine "Parser-failure invalidates per-file confidence."
-
 ### Heuristic emission (rule false-positive on speculative composition)
 
 - [ ] **Q15-AUDIO-DOUBLE-FLAGGED-FINDING-AND-CANDIDATE-SAME-LINE** Same `<audio>` element ships as a finding (`media/audio-controls-or-transcript-missing`, `severity: error`) AND as a review candidate (criteria 1.2.1/1.2.8/1.2.9/1.4.7, `priority: high`) with overlapping but non-identical `findingId`s. Two channels narrate the same element. Closure: when a rule emission already covers an element/criterion, the criterion's review candidate elides for that file:line. Pairs with Q14-REVIEW-CANDIDATE-DUPLICATES-FINDING-SAME-LINE — extends the dedup invariant from `aria/expanded-on-disclosure` to media-element rules. Per AI-first doctrine "Surface, don't suppress" inverse — signal redundancy without dedup is its own dishonesty.
