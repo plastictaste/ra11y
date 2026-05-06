@@ -209,7 +209,7 @@ export function buildBulkCatalogWorkflowRecommendation(inputs: BulkCatalogWorkfl
     "",
     `// Bulk-catalog workflow recommendation (trigger: ${trigger})`,
     "// The scan classified this corpus as a parallel-sub-project / vendor-heavy catalog.",
-    '// Beyond the severity tuning above, the per-call workflow has two scope-down levers:',
+    "// Beyond the severity tuning above, the per-call workflow has two scope-down levers:",
     '//   - scan_project({ groupBy: "firstChildDir" }) — one whole-tree scan with',
     "//     per-sub-project rollup (`plan.byGroup`), no paging through every file.",
     `//   - scan_project({ ${restrictToPathsExample} }) — scope to one sub-project at a time;`,

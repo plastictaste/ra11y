@@ -167,10 +167,7 @@ describe("bootstrap: bulk-catalog → suggestedConfig workflow recommendation", 
     // recommendation comment must NOT appear on `suggestedConfig`.
     const root = mkdtempSync(join(tmpdir(), "ra11y-bootstrap-no-catalog-"));
     try {
-      writeFileSync(
-        join(root, "index.html"),
-        `<html><body><img src="hero.png"></body></html>\n`,
-      );
+      writeFileSync(join(root, "index.html"), `<html><body><img src="hero.png"></body></html>\n`);
       const responses = await mcpSession([initMsg(1), toolCall(2, "bootstrap", { cwd: root })]);
       const bootstrapResp = responses.find((r) => r.id === 2);
       const body = bodyOf(bootstrapResp as JsonRpcResponse);
