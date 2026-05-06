@@ -107,17 +107,11 @@ const CROSS_FILE_BOUND_REASONS: Readonly<Record<string, string>> = {
   // stylesheet `var(--fg)`s against" rather than a generic "ran but
   // bounded" message.
   "contrast/minimum": "cross_file_custom_property_resolution_not_attempted_by_rule",
-  // `aria/live-region-missing-on-innerhtml-target` is project-scoped and
-  // walks both halves (HTML host element + sibling JS innerHTML
-  // mutation site) when both are present in `ctx.files`. Single-file
-  // substrates (`scan_file` on HTML alone or JS alone) render the rule
-  // structurally unable to fire — silent-miss when the rule reports
-  // `coverageConfidence: "high"` on a half-input scan. Named so the
-  // agent's next-read triage routes to "check whether the JS file
-  // mutating innerHTML on the host element is in the scan path" rather
-  // than a generic "ran but bounded" message.
-  "aria/live-region-missing-on-innerhtml-target":
-    "cross_file_innerhtml_target_resolution_not_attempted_by_rule",
+  // `aria/live-region-missing-on-innerhtml-target` walks both halves
+  // (HTML host + sibling JS innerHTML site) in `afterProject` but is
+  // structurally bounded on single-file substrates (`scan_file`).
+  // biome-ignore format: keep on one line — file effective-line budget
+  "aria/live-region-missing-on-innerhtml-target": "cross_file_innerhtml_target_resolution_not_attempted_by_rule",
 };
 
 const CROSS_FILE_BOUND_REASON_FALLBACK = "cross_file_evidence_bounded_not_attempted_by_rule";
@@ -404,8 +398,7 @@ function computeConcentration(
   findingsEmitted: number,
   densest: { file: string; count: number } | undefined,
 ): { file: string; count: number } | undefined {
-  if (findingsEmitted <= RULE_CONCENTRATION_MIN_TOTAL) return undefined;
-  if (densest === undefined) return undefined;
+  if (findingsEmitted <= RULE_CONCENTRATION_MIN_TOTAL || densest === undefined) return undefined;
   const share = densest.count / findingsEmitted;
   if (share <= RULE_CONCENTRATION_MIN_SHARE) return undefined;
   return { file: densest.file, count: densest.count };
