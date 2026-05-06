@@ -877,11 +877,36 @@ export function pruneFixDescriptionsToReferenced<T extends AgentFinding>(
   findings: readonly T[],
 ): FixDescriptions | undefined {
   if (fixDescriptions === undefined) return undefined;
-  // Build the (ruleId, hash) reachability set from surviving findings.
-  // Findings carrying inline `fix.description` (singletons that
-  // bypassed the per-rule hoist) contribute nothing to the map and so
-  // contribute nothing to this set — their prose stays inline by
-  // construction.
+  const referenced = collectReferencedHashes(findings);
+  const pruned: Record<string, Record<string, string>> = {};
+  let droppedAny = false;
+  for (const [ruleId, byHash] of Object.entries(fixDescriptions)) {
+    const referencedHashes = referenced.get(ruleId);
+    if (referencedHashes === undefined || referencedHashes.size === 0) {
+      droppedAny = true;
+      continue;
+    }
+    const filtered = filterByReferencedHashes(byHash, referencedHashes);
+    if (Object.keys(filtered.bucket).length === 0) {
+      droppedAny = true;
+      continue;
+    }
+    if (filtered.bucketDropped) droppedAny = true;
+    pruned[ruleId] = filtered.bucket;
+  }
+  if (!droppedAny) return fixDescriptions;
+  if (Object.keys(pruned).length === 0) return undefined;
+  return pruned;
+}
+
+/**
+ * Builds the `(ruleId, hash)` reachability set surviving findings name
+ * via `fix.descriptionRef`. Inline-description singletons contribute
+ * nothing here by construction.
+ */
+function collectReferencedHashes<T extends AgentFinding>(
+  findings: readonly T[],
+): Map<string, Set<string>> {
   const referenced = new Map<string, Set<string>>();
   for (const f of findings) {
     const hash = f.fix?.descriptionRef?.hash;
@@ -893,35 +918,27 @@ export function pruneFixDescriptionsToReferenced<T extends AgentFinding>(
     }
     bucket.add(hash);
   }
-  // Walk the input map; emit only the (ruleId, hash) pairs the
-  // reachability set named. Track whether any entry was dropped so
-  // we can return the input map by reference on the no-op path.
-  const pruned: Record<string, Record<string, string>> = {};
-  let droppedAny = false;
-  for (const [ruleId, byHash] of Object.entries(fixDescriptions)) {
-    const referencedHashes = referenced.get(ruleId);
-    if (referencedHashes === undefined || referencedHashes.size === 0) {
-      droppedAny = true;
-      continue;
+  return referenced;
+}
+
+/**
+ * Filters one rule's hash→description map down to the hashes named in
+ * `referencedHashes`. `bucketDropped` reports whether any entry was
+ * filtered out, so the caller can keep its `droppedAny` invariant
+ * without re-walking.
+ */
+function filterByReferencedHashes(
+  byHash: Record<string, string>,
+  referencedHashes: ReadonlySet<string>,
+): { bucket: Record<string, string>; bucketDropped: boolean } {
+  const bucket: Record<string, string> = {};
+  let bucketDropped = false;
+  for (const [hash, description] of Object.entries(byHash)) {
+    if (referencedHashes.has(hash)) {
+      bucket[hash] = description;
+    } else {
+      bucketDropped = true;
     }
-    const bucket: Record<string, string> = {};
-    let bucketDropped = false;
-    for (const [hash, description] of Object.entries(byHash)) {
-      if (referencedHashes.has(hash)) {
-        bucket[hash] = description;
-      } else {
-        bucketDropped = true;
-      }
-    }
-    const keptCount = Object.keys(bucket).length;
-    if (keptCount === 0) {
-      droppedAny = true;
-      continue;
-    }
-    if (bucketDropped) droppedAny = true;
-    pruned[ruleId] = bucket;
   }
-  if (!droppedAny) return fixDescriptions;
-  if (Object.keys(pruned).length === 0) return undefined;
-  return pruned;
+  return { bucket, bucketDropped };
 }
