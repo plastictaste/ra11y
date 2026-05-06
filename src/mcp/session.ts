@@ -441,8 +441,16 @@ function fileUriToPath(uri: string): string | null {
   if (uri.length === 0) return null;
   if (uri.startsWith("file://")) {
     const rest = uri.slice("file://".length);
-    // file:///abs/path → /abs/path; file://host/path → reject (remote)
-    if (rest.startsWith("/")) return decodeURIComponent(rest);
+    // file:///abs/path → /abs/path; file://host/path → reject (remote).
+    // On Windows, hosts may also send `file:///C:/foo`, `file://C:/foo`,
+    // or `file://C:\foo` — tolerate the drive-letter form even when no
+    // leading slash is present.
+    if (rest.startsWith("/")) {
+      const tail = rest.slice(1);
+      if (isAbsolute(tail)) return decodeURIComponent(tail);
+      return decodeURIComponent(rest);
+    }
+    if (isAbsolute(rest)) return decodeURIComponent(rest);
     return null;
   }
   if (isAbsolute(uri)) return uri;
