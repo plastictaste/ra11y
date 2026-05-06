@@ -47,13 +47,13 @@
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { AgentFinding, Confidence } from "../output/agent-response/types.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
+import { partitionParseStateFiles } from "./parse-error-adjustment.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
   type FindingBucket,
 } from "./per-finding-confidence-parity.ts";
-import { partitionParseStateFiles } from "./parse-error-adjustment.ts";
 
 /**
  * Structured `couldBeWrongBecause` token propagated when the finding's

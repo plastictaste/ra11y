@@ -129,10 +129,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
     const buckets: readonly FindingBucket[] = [
       bucket("partial.html", [finding({ findingId: "above-1", line: 263 })]),
     ];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out).not.toBe(buckets);
     expect(out).toHaveLength(1);
@@ -147,10 +144,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
     const buckets: readonly FindingBucket[] = [
       bucket("partial.html", [finding({ findingId: "at-boundary", line: 221 })]),
     ];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out).toBe(buckets);
     expect(out[0]!.findings[0]!.confidence).toBe("high");
@@ -164,10 +158,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
         finding({ findingId: "below-2", line: 100 }),
       ]),
     ];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out).toBe(buckets);
   });
@@ -177,17 +168,12 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       bucket("partial.html", [finding({ findingId: "above-on-partial", line: 300 })]),
       bucket("clean.html", [finding({ findingId: "above-line-on-clean", line: 999 })]),
     ];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     // Affected file: downgraded.
     const affected = out.find((b) => b.path === "partial.html")!;
     expect(affected.findings[0]!.confidence).toBe("low");
-    expect(affected.findings[0]!.couldBeWrongBecause).toContain(
-      "beyond_partial_parse_boundary",
-    );
+    expect(affected.findings[0]!.couldBeWrongBecause).toContain("beyond_partial_parse_boundary");
     // Clean file: untouched even at very-high line numbers.
     const clean = out.find((b) => b.path === "clean.html")!;
     expect(clean.findings[0]!.confidence).toBe("high");
@@ -209,10 +195,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       finding({ findingId: "f-405", line: 405 }),
     ];
     const buckets: readonly FindingBucket[] = [bucket("partial.html", findings)];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     const got = out[0]!.findings;
     expect(got[0]!.confidence).toBe("high"); // line 50
@@ -237,10 +220,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       couldBeWrongBecause: ["partial_parse"],
     });
     const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out[0]!.findings[0]!.couldBeWrongBecause).toEqual([
       "partial_parse",
@@ -256,10 +236,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       couldBeWrongBecause: ["beyond_partial_parse_boundary"],
     });
     const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out).toBe(buckets);
   });
@@ -274,14 +251,9 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       confidence: "medium",
     });
     const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
-    const out = enrichFindingsBeyondPartialParseBoundary(
-      buckets,
-      new Map([["partial.html", 221]]),
-    );
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out[0]!.findings[0]!.confidence).toBe("low");
-    expect(out[0]!.findings[0]!.couldBeWrongBecause).toContain(
-      "beyond_partial_parse_boundary",
-    );
+    expect(out[0]!.findings[0]!.couldBeWrongBecause).toContain("beyond_partial_parse_boundary");
   });
 });
