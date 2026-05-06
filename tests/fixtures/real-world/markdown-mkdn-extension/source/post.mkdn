@@ -1,0 +1,16 @@
+---
+title: A markdown post
+layout: default
+---
+
+# Top-level heading
+
+Some prose with a paragraph and a list.
+
+### Skipped a level deliberately
+
+This file uses ATX headings. When parsed as raw HTML, `# Top-level heading`
+is text content inside a `<body>` shell — heading-hierarchy never sees it.
+When parsed as markdown-html-residue, the harness strips the ATX residue
+the same way `.md` and `.markdown` already do, and the rule downgrades
+its evidence model accordingly.
