@@ -20,9 +20,9 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { scanDiffTool } from "../../../src/mcp/tool-scan-diff.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ErrorBody {
   readonly error: string;
@@ -43,7 +43,7 @@ interface HunksBody {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-diff-hunks-unit-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-diff-hunks-unit-"));
   try {
     return await fn(dir);
   } finally {
@@ -81,7 +81,7 @@ function git(cwd: string, args: readonly string[]): void {
 }
 
 async function writeBadImg(dir: string, name = "index.html"): Promise<void> {
-  await writeFile(join(dir, name), '<html><body><img src="/logo.png"></body></html>\n');
+  await writeFile(posixJoin(dir, name), '<html><body><img src="/logo.png"></body></html>\n');
 }
 
 function initRepo(dir: string): void {
@@ -157,7 +157,7 @@ describe("scan_diff hunks mode: errors", () => {
       git(origin, ["commit", "-q", "-m", "second"]);
 
       await withScratch(async (clone) => {
-        const cloneDir = join(clone, "shallow");
+        const cloneDir = posixJoin(clone, "shallow");
         const r = spawnSync("git", ["clone", "--depth", "1", `file://${origin}`, cloneDir, "-q"], {
           stdio: "pipe",
           encoding: "utf8",
@@ -260,7 +260,7 @@ describe("scan_diff hunks mode: happy path + warnings", () => {
   it("returns the empty-files hunks response with a warning when the ref has no hunks and no files parse", async () => {
     await withScratch(async (dir) => {
       initRepo(dir);
-      await writeFile(join(dir, "README"), "not a parseable file\n");
+      await writeFile(posixJoin(dir, "README"), "not a parseable file\n");
       git(dir, ["add", "."]);
       git(dir, ["commit", "-q", "-m", "seed"]);
       const { body, raw } = await callHandler(new McpSession(), {

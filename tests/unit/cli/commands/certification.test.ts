@@ -7,10 +7,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runCertification } from "../../../../src/cli/commands/certification.ts";
+import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-cert-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cert-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -33,7 +33,7 @@ describe("runCertification", () => {
   it("emits a markdown scorecard for a clean project at exit 0", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -48,7 +48,7 @@ describe("runCertification", () => {
   it("reports blocking issues for a project with a failing criterion", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "bad.html"),
+      posixJoin(dir, "bad.html"),
       '<!doctype html><html><body><img src="x"></body></html>',
     );
     chdir(dir);
@@ -63,11 +63,11 @@ describe("runCertification", () => {
   it("credits manual reviews recorded in .ra11y-manual.json", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     await writeFile(
-      join(dir, ".ra11y-manual.json"),
+      posixJoin(dir, ".ra11y-manual.json"),
       JSON.stringify({ "wcag22:1.2.1": { reviewed: true, status: "supports" } }),
     );
     chdir(dir);
@@ -83,10 +83,10 @@ describe("runCertification", () => {
   it("tolerates a malformed .ra11y-manual.json without throwing", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
-    await writeFile(join(dir, ".ra11y-manual.json"), "{ not json");
+    await writeFile(posixJoin(dir, ".ra11y-manual.json"), "{ not json");
     chdir(dir);
 
     const r = await runCertification(parseCliArgs([]));
@@ -98,7 +98,7 @@ describe("runCertification", () => {
   it("respects --standard when filtering scorecard standards", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -112,7 +112,7 @@ describe("runCertification", () => {
   it("respects --level AAA by widening the target criterion set", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -125,9 +125,9 @@ describe("runCertification", () => {
 
   it("skips unparseable files without aborting the report", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "notes.md"), "# not parseable as tsx or html");
+    await writeFile(posixJoin(dir, "notes.md"), "# not parseable as tsx or html");
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);

@@ -19,15 +19,15 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   detectForeignEcosystem,
   type ForeignEcosystem,
   foreignEcosystemWarning,
 } from "../../../src/mcp/ecosystem-detect.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-ecosystem-detect-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-ecosystem-detect-"));
   try {
     return await fn(dir);
   } finally {
@@ -50,7 +50,7 @@ describe("detectForeignEcosystem: single-marker repos", () => {
   for (const { marker, language, body } of cases) {
     it(`returns "${language}" when ${marker} is present and package.json is absent`, async () => {
       await withScratch(async (dir) => {
-        await writeFile(join(dir, marker), body);
+        await writeFile(posixJoin(dir, marker), body);
         expect(detectForeignEcosystem(dir)).toBe(language);
       });
     });
@@ -64,8 +64,8 @@ describe("detectForeignEcosystem: package.json short-circuits", () => {
   // warning that would be wrong in context.
   it("returns null when package.json is present alongside Gemfile", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       expect(detectForeignEcosystem(dir)).toBeNull();
     });
   });
@@ -75,9 +75,9 @@ describe("detectForeignEcosystem: package.json short-circuits", () => {
   // foreign-ecosystem label.
   it("returns null when package.json is present alongside pyproject.toml and Cargo.toml", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "pyproject.toml"), "[project]\nname = 'x'\n");
-      await writeFile(join(dir, "Cargo.toml"), '[package]\nname = "x"\n');
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "pyproject.toml"), "[project]\nname = 'x'\n");
+      await writeFile(posixJoin(dir, "Cargo.toml"), '[package]\nname = "x"\n');
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       expect(detectForeignEcosystem(dir)).toBeNull();
     });
   });
@@ -87,7 +87,7 @@ describe("detectForeignEcosystem: package.json short-circuits", () => {
   // returning null here closes the ambiguous-shape failure mode.
   it("returns null for a plain Node project (package.json only)", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       expect(detectForeignEcosystem(dir)).toBeNull();
     });
   });
@@ -112,14 +112,14 @@ describe("foreignEcosystemWarning", () => {
   // full literal rather than a substring check.
   it("returns the wire-level warning string `foreign_ecosystem_detected: <language>` when a foreign ecosystem resolves", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "go.mod"), "module x\n");
+      await writeFile(posixJoin(dir, "go.mod"), "module x\n");
       expect(foreignEcosystemWarning(dir)).toBe("foreign_ecosystem_detected: go");
     });
   });
 
   it("returns null in a plain Node project so the caller conditional-spreads `warnings` away", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       expect(foreignEcosystemWarning(dir)).toBeNull();
     });
   });

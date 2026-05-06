@@ -18,9 +18,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -29,11 +29,11 @@ function findTool(name: string) {
 }
 
 function mkTmp(): string {
-  return mkdtempSync(join(tmpdir(), "ra11y-coverage-"));
+  return mkdtempSync(posixJoin(tmpdir(), "ra11y-coverage-"));
 }
 
 function write(path: string, content: string): void {
-  mkdirSync(join(path, ".."), { recursive: true });
+  mkdirSync(posixJoin(path, ".."), { recursive: true });
   writeFileSync(path, content);
 }
 
@@ -111,10 +111,10 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // `.vue`, `.py` are not in the parser set). Without the forwarding
     // pattern this fix lands, the coverage response reads as a clean
     // pass rate while the scanner never looked at the source files.
-    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
-    write(join(dir, "Button.svelte"), "<button>Go</button>\n");
-    write(join(dir, "app.vue"), "<template><div /></template>\n");
-    write(join(dir, "manage.py"), "# noop\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(posixJoin(dir, "Button.svelte"), "<button>Go</button>\n");
+    write(posixJoin(dir, "app.vue"), "<template><div /></template>\n");
+    write(posixJoin(dir, "manage.py"), "# noop\n");
 
     const tool = findTool("coverage");
     const session = new McpSession();
@@ -158,12 +158,12 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     //     (both are text), but only `.vue` lands in
     //     `parserRoutableExtensions` (its format spec defines an HTML
     //     surface; `.json` is data-only).
-    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
-    write(join(dir, "Component.vue"), "<template><div /></template>\n");
-    write(join(dir, "config.json"), '{"a":1}\n');
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(posixJoin(dir, "Component.vue"), "<template><div /></template>\n");
+    write(posixJoin(dir, "config.json"), '{"a":1}\n');
     // Any file content suffices; the discovery walker partitions
     // by extension, not by byte content.
-    write(join(dir, "fixtures.db"), "binary-fixture-content");
+    write(posixJoin(dir, "fixtures.db"), "binary-fixture-content");
 
     const tool = findTool("coverage");
     const session = new McpSession();
@@ -205,8 +205,8 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // re-introduction: that code used to ride unconditionally on
     // every coverage response and forced this branch to ship a
     // single-element array.
-    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
-    write(join(dir, "styles.css"), "main { color: black; }\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    write(posixJoin(dir, "styles.css"), "main { color: black; }\n");
 
     const tool = findTool("coverage");
     const session = new McpSession();
@@ -268,7 +268,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // Counterpart guard: the zero-file omission must not regress the
     // normal happy path. A file-bearing scan still ships the rate so
     // an agent dashboard can trend it.
-    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     const tool = findTool("coverage");
     const session = new McpSession();
     const result = await tool.handler({ cwd: dir }, session);
@@ -286,7 +286,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // `scanned` pointer `scan_project({ cwd })` returns — otherwise
     // the agent has to fire a second `scan_project` call just to
     // confirm what `coverage` actually looked at.
-    write(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
 
     const session = new McpSession();
     const coverageResult = await findTool("coverage").handler({ cwd: dir }, session);
@@ -316,8 +316,8 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // skippedByExtension or dropped the warning, the follow-up
     // coverage call would green-light a scan scan_project had already
     // flagged as partial.
-    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
-    write(join(dir, "Widget.svelte"), "<button>Go</button>\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(posixJoin(dir, "Widget.svelte"), "<button>Go</button>\n");
 
     const session = new McpSession();
     const coverageResult = await findTool("coverage").handler({ cwd: dir }, session);
@@ -356,7 +356,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // The same response shape ships from `coverage` so the cross-
     // surface count invariant holds (every project-rooted tool exposes
     // the counters uniformly).
-    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
 
     const session = new McpSession();
     const scanResult = await findTool("scan_project").handler({ cwd: dir }, session);
@@ -410,7 +410,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     // variables list rides on
     // `warningsDetails.scss_unresolved_variables.files[]` already; the
     // raw entries list is internal-only and never reaches the wire.
-    write(join(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
+    write(posixJoin(dir, "page.tsx"), "export default function Page() { return <div />; }\n");
 
     const tool = findTool("coverage");
     const session = new McpSession();

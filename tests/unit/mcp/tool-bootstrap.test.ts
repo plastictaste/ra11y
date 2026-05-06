@@ -20,11 +20,11 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { bootstrapTool } from "../../../src/mcp/tool-bootstrap.ts";
 import { detectNativeWrappersTool } from "../../../src/mcp/tool-detect-wrappers.ts";
 import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface BootstrapResponse {
   readonly wrappers: { readonly candidates: readonly unknown[] };
@@ -55,7 +55,7 @@ interface BootstrapResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-bootstrap-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-bootstrap-"));
   try {
     return await fn(dir);
   } finally {
@@ -81,7 +81,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   it("returns wrappers, suggestedConfig, scan, baseline:null, ciSnippet on a clean codebase", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const { response, isError } = await callBootstrap({ cwd: dir });
@@ -121,7 +121,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       expect(response.ciSnippet).toContain("baseline check");
       expect(response.meta.scanned).toEqual({ mode: "project", root: dir });
       expect(response.meta.writeBaseline).toBe(false);
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(false);
     });
   });
 
@@ -134,7 +134,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   it("forwards plan.limitations prose from scan_project onto scan.limitations", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>x</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -162,7 +162,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   it("routes forward to scan_project on dirty dry-run (not a self-loop into bootstrap)", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -193,7 +193,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
   it("routes to detect_native_wrappers on dirty dry-run when wrapper candidates exist", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "app.tsx"),
+        posixJoin(dir, "app.tsx"),
         [
           "export function App() {",
           "  return (",
@@ -206,7 +206,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
         ].join("\n"),
       );
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -231,7 +231,7 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
       // `img` without `alt` is a violation — at least one mechanical
       // remediation lane should be populated.
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -282,7 +282,7 @@ describe("bootstrap: writeBaseline opt-in", () => {
   it("writes .ra11y-baseline.json at the scan root and reports the path", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response, isError } = await callBootstrap({ cwd: dir, writeBaseline: true });
@@ -290,7 +290,7 @@ describe("bootstrap: writeBaseline opt-in", () => {
       expect(response.baseline).toBeDefined();
       expect(response.baseline?.written).toBe(true);
       expect(response.baseline?.path).toContain(".ra11y-baseline.json");
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(true);
       expect(response.meta.writeBaseline).toBe(true);
       // writeBaseline:true must NOT emit `baseline_dry_run` — that
       // code is the dry-run discriminator only.
@@ -318,12 +318,12 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
   it("emits a create-first prelude when dry-run and no baseline on disk", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.baseline).toBeUndefined();
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(false);
       // Create step precedes check step — ordering is the contract.
       // Match the yaml `- run:` lines, not just the substring, so the
       // comment line (which names both commands) doesn't confuse the
@@ -346,12 +346,12 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
   it("emits a commit-first reminder when this call just wrote the baseline", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir, writeBaseline: true });
       expect(response.baseline?.written).toBe(true);
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(true);
       const snippet = response.ciSnippet;
       // `baseline check` is the only baseline step — no create prelude
       // needed because this call just wrote the file.
@@ -371,15 +371,15 @@ describe("bootstrap: ciSnippet honesty gates on baseline-existence", () => {
     await withScratch(async (dir) => {
       // Pre-seed the baseline file so the tool sees it on entry.
       await writeFile(
-        join(dir, ".ra11y-baseline.json"),
+        posixJoin(dir, ".ra11y-baseline.json"),
         JSON.stringify({ version: 1, violations: [] }),
       );
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(true);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(true);
       const snippet = response.ciSnippet;
       expect(snippet).toContain("--baseline check");
       expect(snippet).not.toContain("--baseline create");
@@ -405,9 +405,9 @@ describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ec
 
   it("emits the foreign-ecosystem preface for a Ruby root (Gemfile present, no package.json)", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(posixJoin(dir, "Gemfile"), "source 'https://rubygems.org'\n");
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -432,9 +432,9 @@ describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ec
 
   it("emits the foreign-ecosystem preface for a Python root (pyproject.toml present, no package.json)", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "pyproject.toml"), '[project]\nname = "x"\nversion = "0"\n');
+      await writeFile(posixJoin(dir, "pyproject.toml"), '[project]\nname = "x"\nversion = "0"\n');
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -449,10 +449,10 @@ describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ec
       // Mixed stack: Node toolchain short-circuits the foreign-ecosystem
       // predicate even with Gemfile present (matches
       // `detectForeignEcosystem`'s `package.json` short-circuit).
-      await writeFile(join(dir, "package.json"), '{ "name": "x" }\n');
-      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(posixJoin(dir, "package.json"), '{ "name": "x" }\n');
+      await writeFile(posixJoin(dir, "Gemfile"), "source 'https://rubygems.org'\n");
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><p>ok</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -471,9 +471,9 @@ describe("bootstrap: ciSnippet clarifies node-setup is ra11y-only for foreign ec
 
   it("emits the foreign-ecosystem preface on a Go root when writeBaseline lands the file", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "go.mod"), "module x\n\ngo 1.22\n");
+      await writeFile(posixJoin(dir, "go.mod"), "module x\n\ngo 1.22\n");
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir, writeBaseline: true });
@@ -511,7 +511,7 @@ describe("bootstrap: partial failure (sub-handler rejects)", () => {
   it("returns scan + suggestedConfig and emits bootstrap_detect_failed warning when detect rejects", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const { response, isError } = await callBootstrap({ cwd: dir });
@@ -549,7 +549,7 @@ describe("bootstrap: suggestedConfig null-case", () => {
   it("omits suggestedConfig when propose_config leg rejects", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const { response, isError } = await callBootstrap({ cwd: dir });
@@ -577,7 +577,7 @@ describe("bootstrap: empty project edge case", () => {
       // Scratch directory with no parseable files. `.md` is parseable
       // under ADR 0025 (markdown Option B), so use `.txt` — a truly
       // unsupported extension — to ensure the scan finds no input.
-      await writeFile(join(dir, "NOTES.txt"), "nothing to scan\n");
+      await writeFile(posixJoin(dir, "NOTES.txt"), "nothing to scan\n");
       const { response, isError } = await callBootstrap({ cwd: dir });
       expect(isError).toBeUndefined();
       expect(response.scan.filesScanned).toBe(0);
@@ -650,7 +650,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   it("ships warningsDetails with baseline_dry_run as a binary-presence marker on a clean dry-run", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -670,7 +670,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   it("every code in warnings[] resolves to a warningsDetails.<code> entry", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -699,7 +699,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
       // index.html keeps `filesScanned > 0` so `scanned_zero_files`
       // doesn't fire (which would shadow the case under test).
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body><p>x</p></body></html>\n',
       );
       const { response } = await callBootstrap({ cwd: dir });
@@ -725,7 +725,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   // the upstream scan was empty.
   it("forwards scanned_zero_files onto warningsDetails when the scan parses nothing", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "NOTES.txt"), "nothing to scan\n");
+      await writeFile(posixJoin(dir, "NOTES.txt"), "nothing to scan\n");
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.warnings).toContain("scanned_zero_files");
       expect(response.warningsDetails?.["scanned_zero_files"]).toBeDefined();
@@ -754,7 +754,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
     try {
       await withScratch(async (dir) => {
         await writeFile(
-          join(dir, "index.html"),
+          posixJoin(dir, "index.html"),
           '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
         );
         const { response } = await callBootstrap({ cwd: dir });

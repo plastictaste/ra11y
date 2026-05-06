@@ -10,9 +10,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -41,8 +41,8 @@ const CLEAN_WITH_FINDINGS = `<!DOCTYPE html>
 
 describe("scan_file: parse-error limitations", () => {
   it("emits top-level limitations with reason='parse_error' when the file parsed with errors and produced zero findings", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-limitations-scan-file-"));
-    const layoutPath = join(dir, "default.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-limitations-scan-file-"));
+    const layoutPath = posixJoin(dir, "default.html");
     await writeFile(layoutPath, LAYOUT_SOURCE);
 
     const tool = findTool("scan_file");
@@ -84,8 +84,8 @@ describe("scan_file: parse-error limitations", () => {
   });
 
   it("omits the limitations field when the file parsed cleanly", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-limitations-clean-"));
-    const cleanPath = join(dir, "page.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-limitations-clean-"));
+    const cleanPath = posixJoin(dir, "page.html");
     await writeFile(cleanPath, CLEAN_WITH_FINDINGS);
 
     const tool = findTool("scan_file");
@@ -109,11 +109,11 @@ describe("scan_project: per-file limitations on mixed scans", () => {
     // Mixed tree: one clean file (produces findings), one parse-errored
     // file with embedded alt-missing (so rules fire on the recovered
     // slice → `partial_parse`).
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-limitations-scan-project-"));
-    await writeFile(join(dir, "clean.html"), CLEAN_WITH_FINDINGS);
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-limitations-scan-project-"));
+    await writeFile(posixJoin(dir, "clean.html"), CLEAN_WITH_FINDINGS);
     // Parse-errored file that ALSO has a missing-alt finding the
     // recovery path still sees. Unbalanced root + img-no-alt.
-    await writeFile(join(dir, "broken.html"), '<div><img src="x.png"></div></section>\n');
+    await writeFile(posixJoin(dir, "broken.html"), '<div><img src="x.png"></div></section>\n');
 
     const tool = findTool("scan_project");
     const session = new McpSession();
@@ -152,10 +152,10 @@ describe("scan_project: per-file limitations on mixed scans", () => {
   });
 
   it("emits no limitations on a fully-clean scan", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-limitations-scan-project-clean-"));
-    await writeFile(join(dir, "one.html"), CLEAN_WITH_FINDINGS);
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-limitations-scan-project-clean-"));
+    await writeFile(posixJoin(dir, "one.html"), CLEAN_WITH_FINDINGS);
     await writeFile(
-      join(dir, "two.html"),
+      posixJoin(dir, "two.html"),
       '<!DOCTYPE html><html><body><img src="y.jpg"></body></html>\n',
     );
 

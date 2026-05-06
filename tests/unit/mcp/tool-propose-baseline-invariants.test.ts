@@ -10,9 +10,9 @@ import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { proposeBaselineTool } from "../../../src/mcp/tool-propose-baseline.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ProposeBaselineResponse {
   readonly proposed: readonly {
@@ -49,7 +49,7 @@ interface ProposeBaselineResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-propose-baseline-inv-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-propose-baseline-inv-"));
   try {
     return await fn(dir);
   } finally {
@@ -70,10 +70,10 @@ async function callTool(
 describe("propose_baseline: precedence + invariants", () => {
   it("applies legacy-route precedence over design-system-internal", async () => {
     await withScratch(async (dir) => {
-      const p = join(dir, "shared", "widget");
+      const p = posixJoin(dir, "shared", "widget");
       await mkdir(p, { recursive: true });
       await writeFile(
-        join(p, "item.html"),
+        posixJoin(p, "item.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir, {
@@ -88,11 +88,11 @@ describe("propose_baseline: precedence + invariants", () => {
   it("keeps `proposed.length` equal to the sum of per-reason counts", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       await writeFile(
-        join(dir, "bundle.min.js"),
+        posixJoin(dir, "bundle.min.js"),
         'var x = 1; document.body.innerHTML = "<img>";\n',
       );
       const body = await callTool(dir);
@@ -109,18 +109,18 @@ describe("propose_baseline: precedence + invariants", () => {
   it("does NOT write .ra11y-baseline.json or any other file to disk", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       await callTool(dir);
-      expect(existsSync(join(dir, ".ra11y-baseline.json"))).toBe(false);
+      expect(existsSync(posixJoin(dir, ".ra11y-baseline.json"))).toBe(false);
     });
   });
 
   it("routes to `baseline` with mode: create via nextStepStructured", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -132,7 +132,7 @@ describe("propose_baseline: precedence + invariants", () => {
   it("populates a non-empty findingGroupId on every proposed entry", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -147,7 +147,7 @@ describe("propose_baseline: precedence + invariants", () => {
   it("populates scanned, filesScanned, and rulesEvaluated on every response", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);

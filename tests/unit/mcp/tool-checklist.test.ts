@@ -25,9 +25,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -36,7 +36,7 @@ function findTool(name: string) {
 }
 
 function mkTmp(): string {
-  return mkdtempSync(join(tmpdir(), "ra11y-checklist-"));
+  return mkdtempSync(posixJoin(tmpdir(), "ra11y-checklist-"));
 }
 
 interface CoverageGloss {
@@ -115,7 +115,10 @@ describe("checklist tool: automated-coverage shape", () => {
     // an agent budgets against. The split below replaces the composite
     // with two non-overlapping counters; the dropped headline must not
     // resurface alongside them.
-    writeFileSync(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    writeFileSync(
+      posixJoin(dir, "page.tsx"),
+      "export default function Page() { return <main />; }\n",
+    );
     const tool = findTool("checklist");
     const session = new McpSession();
     const result = await tool.handler({ cwd: dir }, session);
@@ -136,7 +139,10 @@ describe("checklist tool: automated-coverage shape", () => {
     // eligibility but the scan saw no applicable input — the canonical
     // Tailwind-pre-build / vendor-bundle shape (maps to coverage
     // report's `untestable`). Both are non-negative integers.
-    writeFileSync(join(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
+    writeFileSync(
+      posixJoin(dir, "page.tsx"),
+      "export default function Page() { return <main />; }\n",
+    );
     const tool = findTool("checklist");
     const session = new McpSession();
     const result = await tool.handler({ cwd: dir }, session);
@@ -266,8 +272,8 @@ describe("checklist tool: input bound validation", () => {
   });
 });
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
 
 describe("checklist tool: summary.actionable structured headline shape", () => {
   // Doctrine reference: docs/kb/architecture/ai-first-consumer.md
@@ -375,7 +381,7 @@ function makeMultiCandidateFixture(fileCount: number): string {
   const dir = mkTmp();
   for (let i = 0; i < fileCount; i++) {
     writeFileSync(
-      join(dir, `page${i}.html`),
+      posixJoin(dir, `page${i}.html`),
       `<!doctype html><html lang="en"><head><title>x</title></head><body><main><form><input type="password" name="p${i}"></form><img src="x${i}.png"><video src="v${i}.mp4"></video><audio src="a${i}.mp3"></audio></main></body></html>`,
     );
   }

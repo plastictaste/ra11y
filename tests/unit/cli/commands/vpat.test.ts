@@ -6,10 +6,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runVpat } from "../../../../src/cli/commands/vpat.ts";
+import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-vpat-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-vpat-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -32,7 +32,7 @@ describe("runVpat", () => {
   it("renders a VPAT 2.5 Rev markdown report for a clean project at exit 0", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -48,7 +48,7 @@ describe("runVpat", () => {
   it("includes WCAG 2.2 section with the conformance table", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -62,7 +62,7 @@ describe("runVpat", () => {
   it("emits 'Does Not Support' when a rule fires", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "bad.html"),
+      posixJoin(dir, "bad.html"),
       '<!doctype html><html><body><img src="x"></body></html>',
     );
     chdir(dir);
@@ -76,7 +76,7 @@ describe("runVpat", () => {
   it("honors RA11Y_FIXED_TIMESTAMP-derived Generated field shape", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -90,7 +90,7 @@ describe("runVpat", () => {
   it("filters sections to wcag21 when --standard wcag21 is passed", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -103,9 +103,9 @@ describe("runVpat", () => {
 
   it("ignores files that can't be parsed as TSX or HTML", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "data.csv"), "a,b,c\n1,2,3\n");
+    await writeFile(posixJoin(dir, "data.csv"), "a,b,c\n1,2,3\n");
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -119,7 +119,7 @@ describe("runVpat", () => {
   it("surfaces 'Not Applicable' for media SCs when scan has no <audio>/<video>", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -135,7 +135,7 @@ describe("runVpat", () => {
   it("threads RA11Y_VPAT_PRODUCT_NAME / _VERSION env vars into the header", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);

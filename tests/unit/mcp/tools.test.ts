@@ -7,15 +7,15 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
 import { defineRule } from "../../../src/api/plugin.ts";
 import { createRegistry } from "../../../src/engine/registry/registry.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
-const FIXTURE_DIR = join(import.meta.dir, "..", "..", "fixtures");
-const BAD_ALT = join(FIXTURE_DIR, "bad", "alt-text-missing", "img-no-alt.html");
-const GOOD_ALT = join(FIXTURE_DIR, "good", "alt-text-missing", "img-with-alt.html");
+const FIXTURE_DIR = posixJoin(import.meta.dir, "..", "..", "fixtures");
+const BAD_ALT = posixJoin(FIXTURE_DIR, "bad", "alt-text-missing", "img-no-alt.html");
+const GOOD_ALT = posixJoin(FIXTURE_DIR, "good", "alt-text-missing", "img-with-alt.html");
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -3255,7 +3255,7 @@ describe("MCP tool: audit", () => {
     const tool = findTool("audit");
     const session = new McpSession();
     const result = await tool.handler(
-      { cwd: join(FIXTURE_DIR, "good", "alt-text-missing") },
+      { cwd: posixJoin(FIXTURE_DIR, "good", "alt-text-missing") },
       session,
     );
 
@@ -3291,7 +3291,7 @@ describe("MCP tool: audit", () => {
     const tool = findTool("audit");
     const session = new McpSession();
     const result = await tool.handler(
-      { cwd: join(FIXTURE_DIR, "good", "alt-text-missing"), autoDetectWrappers: true },
+      { cwd: posixJoin(FIXTURE_DIR, "good", "alt-text-missing"), autoDetectWrappers: true },
       session,
     );
 

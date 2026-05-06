@@ -22,15 +22,15 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   type AdditionalPathSkip,
   additionalPathsScannedField,
   classifyAdditionalPathSkips,
 } from "../../../src/mcp/additional-paths-classifier.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function makeRoot(): string {
-  return mkdtempSync(join(tmpdir(), "ra11y-additional-paths-classifier-"));
+  return mkdtempSync(posixJoin(tmpdir(), "ra11y-additional-paths-classifier-"));
 }
 
 describe("classifyAdditionalPathSkips", () => {
@@ -42,15 +42,15 @@ describe("classifyAdditionalPathSkips", () => {
 
   it("emits `unsupported-extension` for a file whose extension has no parser", () => {
     const root = makeRoot();
-    writeFileSync(join(root, "notes.txt"), "plain text");
+    writeFileSync(posixJoin(root, "notes.txt"), "plain text");
     const out = classifyAdditionalPathSkips(["notes.txt"], root, []);
     expect(out).toEqual([{ path: "notes.txt", reason: "unsupported-extension" }]);
   });
 
   it("emits `excluded-by-glob` when a path matches a configured exclude pattern", () => {
     const root = makeRoot();
-    mkdirSync(join(root, "generated"), { recursive: true });
-    writeFileSync(join(root, "generated", "out.css"), ".foo {}");
+    mkdirSync(posixJoin(root, "generated"), { recursive: true });
+    writeFileSync(posixJoin(root, "generated", "out.css"), ".foo {}");
     const out = classifyAdditionalPathSkips(["generated"], root, ["generated/**", "generated"]);
     expect(out).toEqual([{ path: "generated", reason: "excluded-by-glob" }]);
   });
@@ -65,10 +65,10 @@ describe("classifyAdditionalPathSkips", () => {
   // the path, (b) request parser coverage, or (c) drop the flag.
   it("emits `no-parseable-files` with an extension histogram when a directory holds only unparseable files", () => {
     const root = makeRoot();
-    mkdirSync(join(root, "rake"), { recursive: true });
-    writeFileSync(join(root, "rake", "tasks.rb"), "task :foo do; end");
-    writeFileSync(join(root, "rake", "helpers.rb"), "module Helpers; end");
-    writeFileSync(join(root, "rake", "README"), "docs");
+    mkdirSync(posixJoin(root, "rake"), { recursive: true });
+    writeFileSync(posixJoin(root, "rake", "tasks.rb"), "task :foo do; end");
+    writeFileSync(posixJoin(root, "rake", "helpers.rb"), "module Helpers; end");
+    writeFileSync(posixJoin(root, "rake", "README"), "docs");
 
     const out = classifyAdditionalPathSkips(["rake/"], root, []);
     expect(out).toHaveLength(1);
@@ -86,9 +86,9 @@ describe("classifyAdditionalPathSkips", () => {
 
   it("recurses into nested directories when counting extensions", () => {
     const root = makeRoot();
-    mkdirSync(join(root, "rake", "lib", "tasks"), { recursive: true });
-    writeFileSync(join(root, "rake", "lib", "tasks", "deploy.rb"), "# deploy");
-    writeFileSync(join(root, "rake", "lib", "tasks", "build.rb"), "# build");
+    mkdirSync(posixJoin(root, "rake", "lib", "tasks"), { recursive: true });
+    writeFileSync(posixJoin(root, "rake", "lib", "tasks", "deploy.rb"), "# deploy");
+    writeFileSync(posixJoin(root, "rake", "lib", "tasks", "build.rb"), "# build");
 
     const out = classifyAdditionalPathSkips(["rake"], root, []);
     const entry = out[0];
@@ -100,9 +100,9 @@ describe("classifyAdditionalPathSkips", () => {
 
   it("does NOT emit `no-parseable-files` when the directory contains at least one parseable file", () => {
     const root = makeRoot();
-    mkdirSync(join(root, "mixed"), { recursive: true });
-    writeFileSync(join(root, "mixed", "app.tsx"), "export const App = () => null;");
-    writeFileSync(join(root, "mixed", "script.rb"), "# ruby");
+    mkdirSync(posixJoin(root, "mixed"), { recursive: true });
+    writeFileSync(posixJoin(root, "mixed", "app.tsx"), "export const App = () => null;");
+    writeFileSync(posixJoin(root, "mixed", "script.rb"), "# ruby");
 
     const out = classifyAdditionalPathSkips(["mixed"], root, []);
     // The directory contributed (or at least could contribute) a
@@ -113,7 +113,7 @@ describe("classifyAdditionalPathSkips", () => {
 
   it("does NOT emit `no-parseable-files` for an empty directory", () => {
     const root = makeRoot();
-    mkdirSync(join(root, "empty"), { recursive: true });
+    mkdirSync(posixJoin(root, "empty"), { recursive: true });
     const out = classifyAdditionalPathSkips(["empty"], root, []);
     // Empty directory: totalFiles === 0, so the "≥1 file but none
     // parseable" predicate is false. No skip entry. `filesAdded: 0`
@@ -124,10 +124,10 @@ describe("classifyAdditionalPathSkips", () => {
 
   it("preserves caller order across a mix of skip reasons", () => {
     const root = makeRoot();
-    writeFileSync(join(root, "app.tsx"), "export const App = () => null;");
-    mkdirSync(join(root, "rake"), { recursive: true });
-    writeFileSync(join(root, "rake", "tasks.rb"), "task :foo");
-    writeFileSync(join(root, "notes.txt"), "plain");
+    writeFileSync(posixJoin(root, "app.tsx"), "export const App = () => null;");
+    mkdirSync(posixJoin(root, "rake"), { recursive: true });
+    writeFileSync(posixJoin(root, "rake", "tasks.rb"), "task :foo");
+    writeFileSync(posixJoin(root, "notes.txt"), "plain");
 
     const out = classifyAdditionalPathSkips(
       ["does-not-exist", "rake/", "notes.txt", "app.tsx"],
@@ -176,7 +176,7 @@ describe("additionalPathsScannedField", () => {
 
   it("omits `skipped` when every path contributed (per-path resolution, not caller count)", () => {
     const root = makeRoot();
-    writeFileSync(join(root, "app.tsx"), "export const App = () => null;");
+    writeFileSync(posixJoin(root, "app.tsx"), "export const App = () => null;");
     const field = additionalPathsScannedField({
       additionalPaths: ["app.tsx"],
       filesAdded: 1,
@@ -194,12 +194,12 @@ describe("additionalPathsScannedField", () => {
   // prevent.
   it("invariant: every additionalPaths entry resolves to filesAdded>0 OR a skipped[] entry", () => {
     const root = makeRoot();
-    writeFileSync(join(root, "app.tsx"), "export const App = () => null;");
-    mkdirSync(join(root, "rake"), { recursive: true });
-    writeFileSync(join(root, "rake", "tasks.rb"), "task :foo");
-    writeFileSync(join(root, "notes.txt"), "plain text");
-    mkdirSync(join(root, "generated"), { recursive: true });
-    writeFileSync(join(root, "generated", "out.css"), ".foo {}");
+    writeFileSync(posixJoin(root, "app.tsx"), "export const App = () => null;");
+    mkdirSync(posixJoin(root, "rake"), { recursive: true });
+    writeFileSync(posixJoin(root, "rake", "tasks.rb"), "task :foo");
+    writeFileSync(posixJoin(root, "notes.txt"), "plain text");
+    mkdirSync(posixJoin(root, "generated"), { recursive: true });
+    writeFileSync(posixJoin(root, "generated", "out.css"), ".foo {}");
 
     const paths = [
       "does-not-exist", // not-found

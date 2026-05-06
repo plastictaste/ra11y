@@ -15,13 +15,13 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 describe("McpSession.parseFile: .xhtml routes through parseHtml", () => {
   it("parses an XHTML 1.0 document with `<?xml ... ?>` prologue and self-closing tags", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-parse-xhtml-"));
-    const filePath = join(dir, "page.xhtml");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-parse-xhtml-"));
+    const filePath = posixJoin(dir, "page.xhtml");
     const xhtml = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
@@ -55,8 +55,8 @@ describe("McpSession.parseFile: .xhtml routes through parseHtml", () => {
 
 describe("McpSession.parseFile: .mkdn routes through parseMarkdown", () => {
   it("parses a `.mkdn` document and tags the AST as html-shape", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-parse-mkdn-"));
-    const filePath = join(dir, "README.mkdn");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-parse-mkdn-"));
+    const filePath = posixJoin(dir, "README.mkdn");
     const mkdn = `# Title
 
 A paragraph.

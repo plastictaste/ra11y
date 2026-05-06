@@ -113,48 +113,7 @@ const SRC_ALLOWLIST: ReadonlySet<string> = new Set<string>([
  * native-`path.join`-built expected strings. Migration agent
  * replaces each with `posixJoin` from `tests/helpers/path.ts`.
  */
-const TEST_ALLOWLIST: ReadonlySet<string> = new Set<string>([
-  // MIGRATION: unit tests (CLI commands, config loader/processes,
-  // input discover, MCP tool/protocol/extension/scan-* helpers,
-  // review pointer-input) — to remove after tests/ migration
-  "tests/unit/cli/commands/certification.test.ts",
-  "tests/unit/cli/commands/checklist.test.ts",
-  "tests/unit/cli/commands/coverage.test.ts",
-  "tests/unit/cli/commands/doctor.test.ts",
-  "tests/unit/cli/commands/init.test.ts",
-  "tests/unit/cli/commands/vpat.test.ts",
-  "tests/unit/config/loader.test.ts",
-  "tests/unit/config/processes.test.ts",
-  "tests/unit/input/discover.test.ts",
-  "tests/unit/mcp/additional-paths-classifier.test.ts",
-  "tests/unit/mcp/build-provenance.test.ts",
-  "tests/unit/mcp/catalog-detect.test.ts",
-  "tests/unit/mcp/config-search-marker.test.ts",
-  "tests/unit/mcp/cwd-containment.test.ts",
-  "tests/unit/mcp/ecosystem-detect.test.ts",
-  "tests/unit/mcp/extension-presence-probe.test.ts",
-  "tests/unit/mcp/parser-routing-xhtml-mkdn.test.ts",
-  "tests/unit/mcp/rules-evaluated-ssot.test.ts",
-  "tests/unit/mcp/scan-file-extension-filter.test.ts",
-  "tests/unit/mcp/scan-limitations.test.ts",
-  "tests/unit/mcp/ssg-detect.test.ts",
-  "tests/unit/mcp/tool-apply-fix-edges.test.ts",
-  "tests/unit/mcp/tool-apply-fix.test.ts",
-  "tests/unit/mcp/tool-bootstrap.test.ts",
-  "tests/unit/mcp/tool-checklist.test.ts",
-  "tests/unit/mcp/tool-conformance-statement.test.ts",
-  "tests/unit/mcp/tool-coverage.test.ts",
-  "tests/unit/mcp/tool-list-suppressions.test.ts",
-  "tests/unit/mcp/tool-propose-baseline-invariants.test.ts",
-  "tests/unit/mcp/tool-propose-baseline.test.ts",
-  "tests/unit/mcp/tool-propose-config.test.ts",
-  "tests/unit/mcp/tool-scan-diff-hunks.test.ts",
-  "tests/unit/mcp/tool-scan-diff.test.ts",
-  "tests/unit/mcp/tool-suppress.test.ts",
-  "tests/unit/mcp/tool-wrapper-introspect.test.ts",
-  "tests/unit/mcp/tools.test.ts",
-  "tests/unit/review/pointer-input.test.ts",
-]);
+const TEST_ALLOWLIST: ReadonlySet<string> = new Set<string>([]);
 
 /** Names from `node:path` whose return value is a path string. */
 const NATIVE_PATH_FNS: readonly string[] = ["join", "resolve", "relative", "dirname"];

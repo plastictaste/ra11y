@@ -16,9 +16,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ProposeConfigResponse {
   readonly suggestedConfig: string;
@@ -46,7 +46,7 @@ interface ProposeConfigResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-propose-config-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-propose-config-"));
   try {
     return await fn(dir);
   } finally {
@@ -73,7 +73,7 @@ describe("propose_config: clean scan → minimal config", () => {
       // title, and a labeled image. Using a minimal but compliant page
       // so no rule trips.
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hello</title></head><body><p>content</p></body></html>\n',
       );
       const body = await callTool(dir);
@@ -101,13 +101,13 @@ describe("propose_config: wrappers only", () => {
   it("emits nativeWrappers with only confirmed auto-detected components", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "Button.tsx"),
+        posixJoin(dir, "Button.tsx"),
         "export function Button(props: { onClick: () => void; children: unknown }) {\n" +
           "  return <button onClick={props.onClick}>{props.children}</button>;\n" +
           "}\n",
       );
       await writeFile(
-        join(dir, "App.tsx"),
+        posixJoin(dir, "App.tsx"),
         "import { Button } from './Button';\n" +
           "export const App = () => <Button onClick={() => {}}>hi</Button>;\n",
       );
@@ -138,7 +138,7 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
   it("emits exclude entries for every definite-classified build artifact", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "Button.tsx"),
+        posixJoin(dir, "Button.tsx"),
         "export function Button(props: { onClick: () => void; children: unknown }) {\n" +
           "  return <button onClick={props.onClick}>{props.children}</button>;\n" +
           "}\n",
@@ -146,7 +146,7 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
       // `.min.` infix in the basename → definite-min-infix.
       // Provable from the path alone, so the entry is paste-safe in
       // the live `exclude: [...]` array.
-      await writeFile(join(dir, "vendor.min.js"), "// minified vendor bundle\n");
+      await writeFile(posixJoin(dir, "vendor.min.js"), "// minified vendor bundle\n");
       const body = await callTool(dir);
       expect(body.meta.buildArtifactsIncluded).toBeGreaterThanOrEqual(1);
       expect(body.suggestedConfig).toContain("exclude: [");
@@ -163,7 +163,7 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
     // scan-host filesystem into a committed artifact. Relative-only
     // is the honest, portable shape.
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "vendor.min.js"), "// minified bundle\n");
+      await writeFile(posixJoin(dir, "vendor.min.js"), "// minified bundle\n");
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain("vendor.min.js");
       expect(body.suggestedConfig).not.toContain(dir);
@@ -181,11 +181,11 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
     // regression the heuristic-vs-definite split fixes.
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "assets"), { recursive: true });
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
       // Three `.min.`-infix files → all definite-min-infix.
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain('"assets/**"');
       // Individual entries must NOT appear once the collapse fires —
@@ -204,9 +204,9 @@ describe("propose_config: wrappers + build-artifact excludes", () => {
     // config.
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain('"assets/a.min.js"');
       expect(body.suggestedConfig).toContain('"assets/b.min.js"');
@@ -241,15 +241,15 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
     // PLUS a high-median-line-length corroborator across siblings.
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "js", "components"), { recursive: true });
+      await mkdir(posixJoin(dir, "js", "components"), { recursive: true });
       // A long, single-line JS file that crosses the heuristic
       // threshold for `likely-minified-by-line-stats`. Three such
       // files in a directory previously triggered the `js/**`
       // collapse.
       const long = `const data = ${JSON.stringify("x".repeat(800))};`;
-      await writeFile(join(dir, "js", "components", "a.js"), long);
-      await writeFile(join(dir, "js", "components", "b.js"), long);
-      await writeFile(join(dir, "js", "components", "c.js"), long);
+      await writeFile(posixJoin(dir, "js", "components", "a.js"), long);
+      await writeFile(posixJoin(dir, "js", "components", "b.js"), long);
+      await writeFile(posixJoin(dir, "js", "components", "c.js"), long);
       const body = await callTool(dir);
       // The live `exclude: [...]` array must NOT contain `js/**`
       // or any individual `js/components/*.js` entry — they are
@@ -271,9 +271,9 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
   it("routes heuristic classifications to the commented `// likelyBuildPaths` block", async () => {
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "js", "components"), { recursive: true });
+      await mkdir(posixJoin(dir, "js", "components"), { recursive: true });
       const long = `const data = ${JSON.stringify("x".repeat(800))};`;
-      await writeFile(join(dir, "js", "components", "Foo.js"), long);
+      await writeFile(posixJoin(dir, "js", "components", "Foo.js"), long);
       const body = await callTool(dir);
       // Hint preamble + commented array marker must both land.
       expect(body.suggestedConfig).toContain("likely-build-paths");
@@ -311,7 +311,7 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
     // walk skips it; place the `.min.` file at the repo root so
     // the labeller sees it.
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "library.min.js"), "// vendor bundle\n");
+      await writeFile(posixJoin(dir, "library.min.js"), "// vendor bundle\n");
       const body = await callTool(dir);
       // Live exclude must carry the `.min.` path. Either as the
       // single entry or via collapse — but the path-substring must
@@ -336,13 +336,13 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
       // walk skips it; use `public/` which is a build-dir marker
       // but not in the default-excluded set, so the file reaches
       // the labeller.
-      await mkdir(join(dir, "public"), { recursive: true });
+      await mkdir(posixJoin(dir, "public"), { recursive: true });
       await writeFile(
-        join(dir, "public", "page.html"),
+        posixJoin(dir, "public", "page.html"),
         "<!doctype html><html><body></body></html>\n",
       );
       // Add a definite-min-infix file at the repo root.
-      await writeFile(join(dir, "lib.min.js"), "// minified\n");
+      await writeFile(posixJoin(dir, "lib.min.js"), "// minified\n");
       const body = await callTool(dir);
       // Definite path lands in live exclude.
       const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
@@ -374,7 +374,7 @@ describe("propose_config: wrappers + findings → commented rules stub", () => {
       //   - page-titled: no <title>
       //   - alt-text-missing: multiple <img> without alt
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         "<!DOCTYPE html><html><head></head><body>" +
           '<img src="/a.png"><img src="/b.png"><img src="/c.png">' +
           "</body></html>\n",
@@ -424,11 +424,11 @@ describe("propose_config: wrappers + findings → commented rules stub", () => {
       // break rule — rule ID ascending — orders
       // `document/lang-attribute` before `document/page-titled`.
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html lang="en"><head></head><body><p>no title</p></body></html>\n',
       );
       await writeFile(
-        join(dir, "b.html"),
+        posixJoin(dir, "b.html"),
         "<!DOCTYPE html><html><head><title>x</title></head><body><p>no lang</p></body></html>\n",
       );
       const body = await callTool(dir);
@@ -457,7 +457,7 @@ describe("propose_config: zero wrappers, zero build artifacts, zero findings", (
       // A tsx module with no JSX at all — parses, contributes to the
       // scan count, produces no findings and no wrapper candidates.
       await writeFile(
-        join(dir, "util.ts"),
+        posixJoin(dir, "util.ts"),
         "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
       );
       const body = await callTool(dir);
@@ -487,12 +487,12 @@ describe("propose_config: foreign-ecosystem detection", () => {
   for (const { marker, tag } of cases) {
     it(`emits \`foreign_ecosystem_detected: ${tag}\` when ${marker} is present and package.json is absent`, async () => {
       await withScratch(async (dir) => {
-        await writeFile(join(dir, marker), "# minimal stub\n");
+        await writeFile(posixJoin(dir, marker), "# minimal stub\n");
         // A trivially-parseable source file so the scan has teeth —
         // otherwise filesScanned: 0 would trip a separate silent-
         // success concern, not the foreign-ecosystem axis under test.
         await writeFile(
-          join(dir, "util.ts"),
+          posixJoin(dir, "util.ts"),
           "export function add(a: number, b: number): number { return a + b; }\n",
         );
         const body = await callTool(dir);
@@ -517,10 +517,10 @@ describe("propose_config: foreign-ecosystem detection", () => {
   // fire on every Rails-plus-webpacker monorepo.
   it("does NOT fire the warning when package.json is present alongside Gemfile", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Gemfile"), "source 'https://rubygems.org'\n");
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       await writeFile(
-        join(dir, "util.ts"),
+        posixJoin(dir, "util.ts"),
         "export function add(a: number, b: number): number { return a + b; }\n",
       );
       const body = await callTool(dir);
@@ -536,7 +536,7 @@ describe("propose_config: foreign-ecosystem detection", () => {
   it("omits the warnings field entirely on a clean repo with no foreign markers", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "util.ts"),
+        posixJoin(dir, "util.ts"),
         "export function add(a: number, b: number): number { return a + b; }\n",
       );
       const body = await callTool(dir);
@@ -553,7 +553,7 @@ describe("propose_config: meta telemetry", () => {
   it("populates scanned, filesScanned, and rulesEvaluated on every response", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
@@ -602,7 +602,7 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
   it("does NOT collapse to docs/** when docs/ contains files with grounded findings", async () => {
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "docs"), { recursive: true });
+      await mkdir(posixJoin(dir, "docs"), { recursive: true });
       // Three `.min.`-infix files under docs/ — all
       // `definite-min-infix`. Without the gate these would collapse
       // to `docs/**` and silence everything authored under docs/.
@@ -610,16 +610,16 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
       // the long-form comment in `src/input/discover.ts`, so the
       // minified files live directly under `docs/` to ensure the
       // labeller sees them and exercises the gate.)
-      await writeFile(join(dir, "docs", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "docs", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "docs", "c.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "docs", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "docs", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "docs", "c.min.js"), "// min\n");
       // Several authored HTML pages under docs/ that fire grounded
       // findings (no <title>, no lang on <html>, missing alt). The
       // gate must observe finding-bearing files in docs/ and
       // refuse the collapse.
       for (const name of ["intro.html", "guide.html", "faq.html"]) {
         await writeFile(
-          join(dir, "docs", name),
+          posixJoin(dir, "docs", name),
           "<!DOCTYPE html><html><head></head><body>" + '<img src="/x.png">' + "</body></html>\n",
         );
       }
@@ -652,7 +652,7 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
       // fire on the contents. The classifier still sees `.min.` in
       // the basename and labels it `definite-min-infix`.
       await writeFile(
-        join(dir, "page.min.html"),
+        posixJoin(dir, "page.min.html"),
         "<!DOCTYPE html><html><head></head><body>" + '<img src="/x.png">' + "</body></html>\n",
       );
       const body = await callTool(dir);
@@ -682,10 +682,10 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
       // (vendor IS in that set, so the discovery walk would skip it
       // before the labeller saw the files). `assets/` reaches the
       // labeller.
-      await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
       const body = await callTool(dir);
       // Glob collapse fires — three `definite-min-infix` paths,
       // no findings, gate is a no-op for this topdir.
@@ -701,16 +701,16 @@ describe("propose_config: finding-bearing-directory exclude gate", () => {
   it("itemizes survivors when topdir has findings: keeps minified entries that don't fire findings", async () => {
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "docs"), { recursive: true });
+      await mkdir(posixJoin(dir, "docs"), { recursive: true });
       // Two minified files under docs/ — below the collapse
       // threshold so they would itemize anyway. The gate keeps
       // both (neither fires a finding) and refuses any topdir
       // glob.
-      await writeFile(join(dir, "docs", "lib.min.js"), "// min\n");
-      await writeFile(join(dir, "docs", "ui.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "docs", "lib.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "docs", "ui.min.js"), "// min\n");
       // An authored page that fires findings.
       await writeFile(
-        join(dir, "docs", "intro.html"),
+        posixJoin(dir, "docs", "intro.html"),
         "<!DOCTYPE html><html><head></head><body><img></body></html>\n",
       );
       const body = await callTool(dir);
@@ -753,10 +753,10 @@ describe("propose_config: per-entry excludesRationale", () => {
       // entry — the cardinality is per-emitted-glob, not per-input-
       // path.
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.suggestedConfig).toContain('"assets/**"');
       expect(body.meta.excludesRationale).toBeDefined();
@@ -774,11 +774,11 @@ describe("propose_config: per-entry excludesRationale", () => {
   it("every itemized exclude entry below the collapse threshold has a rationale", async () => {
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
-      await mkdir(join(dir, "assets"), { recursive: true });
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
       // Two files — below the collapse threshold, so both ride
       // itemized. Both must have rationale entries.
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.meta.excludesRationale).toBeDefined();
       expect(body.meta.excludesRationale?.length).toBe(2);
@@ -801,11 +801,11 @@ describe("propose_config: per-entry excludesRationale", () => {
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
       // Mixed corpus: collapsed topdir + itemized root-level file.
-      await mkdir(join(dir, "assets"), { recursive: true });
-      await writeFile(join(dir, "assets", "a.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "b.min.js"), "// min\n");
-      await writeFile(join(dir, "assets", "c.min.js"), "// min\n");
-      await writeFile(join(dir, "lib.min.js"), "// min\n");
+      await mkdir(posixJoin(dir, "assets"), { recursive: true });
+      await writeFile(posixJoin(dir, "assets", "a.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "b.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "assets", "c.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "lib.min.js"), "// min\n");
       const body = await callTool(dir);
       const excludeBlockMatch = body.suggestedConfig.match(/exclude: \[([\s\S]*?)\]/);
       expect(excludeBlockMatch).not.toBeNull();
@@ -833,7 +833,7 @@ describe("propose_config: per-entry excludesRationale", () => {
       "heuristic",
     ]);
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "vendor.min.js"), "// min\n");
+      await writeFile(posixJoin(dir, "vendor.min.js"), "// min\n");
       const body = await callTool(dir);
       expect(body.meta.excludesRationale).toBeDefined();
       for (const entry of body.meta.excludesRationale ?? []) {
@@ -853,7 +853,7 @@ describe("propose_config: per-entry excludesRationale", () => {
       // zero build-artifact classifications. The live exclude is
       // absent; the rationale must be too.
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Hi</title></head><body><p>x</p></body></html>\n',
       );
       const body = await callTool(dir);

@@ -19,7 +19,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   __resetBuildProvenance,
   __setBundlePathOverride,
@@ -27,6 +26,7 @@ import {
   getBuildProvenance,
 } from "../../../src/mcp/build-provenance.ts";
 import type { McpToolResult } from "../../../src/mcp/tools-helpers.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 const PKG_JSON_URL = new URL("../../../package.json", import.meta.url);
 
@@ -45,11 +45,11 @@ describe("getBuildProvenance", () => {
   });
 
   it("omits commitHash when the bundle path has no .git ancestor", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "ra11y-prov-nogit-"));
+    const tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-nogit-"));
     try {
       // Fake bundle file with no .git anywhere up the walk — /tmp has
       // no .git ancestor on any supported platform.
-      const bundlePath = join(tmp, "fake-bundle.js");
+      const bundlePath = posixJoin(tmp, "fake-bundle.js");
       writeFileSync(bundlePath, "// synthetic bundle\n", "utf8");
       __setBundlePathOverride(bundlePath);
       const prov = getBuildProvenance();
@@ -62,20 +62,20 @@ describe("getBuildProvenance", () => {
   });
 
   it("resolves commitHash from a synthetic .git with symbolic HEAD + loose ref", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "ra11y-prov-git-"));
+    const tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-git-"));
     try {
       // Build a minimal git repo layout with a symbolic HEAD pointing
       // to a loose ref file. No real git commands required — the
       // resolver reads the filesystem directly.
-      const gitDir = join(tmp, ".git");
-      mkdirSync(join(gitDir, "refs", "heads"), { recursive: true });
-      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/main\n", "utf8");
+      const gitDir = posixJoin(tmp, ".git");
+      mkdirSync(posixJoin(gitDir, "refs", "heads"), { recursive: true });
+      writeFileSync(posixJoin(gitDir, "HEAD"), "ref: refs/heads/main\n", "utf8");
       const sha = "0123456789abcdef0123456789abcdef01234567";
-      writeFileSync(join(gitDir, "refs", "heads", "main"), `${sha}\n`, "utf8");
+      writeFileSync(posixJoin(gitDir, "refs", "heads", "main"), `${sha}\n`, "utf8");
       // Place the bundle inside the fake repo so the walk finds .git.
-      const bundleDir = join(tmp, "src", "mcp");
+      const bundleDir = posixJoin(tmp, "src", "mcp");
       mkdirSync(bundleDir, { recursive: true });
-      const bundlePath = join(bundleDir, "fake-bundle.js");
+      const bundlePath = posixJoin(bundleDir, "fake-bundle.js");
       writeFileSync(bundlePath, "// synthetic bundle\n", "utf8");
       __setBundlePathOverride(bundlePath);
       const prov = getBuildProvenance();
@@ -86,18 +86,18 @@ describe("getBuildProvenance", () => {
   });
 
   it("resolves commitHash from a packed-refs entry when the loose ref is absent", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "ra11y-prov-packed-"));
+    const tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-packed-"));
     try {
-      const gitDir = join(tmp, ".git");
+      const gitDir = posixJoin(tmp, ".git");
       mkdirSync(gitDir, { recursive: true });
-      writeFileSync(join(gitDir, "HEAD"), "ref: refs/heads/feature\n", "utf8");
+      writeFileSync(posixJoin(gitDir, "HEAD"), "ref: refs/heads/feature\n", "utf8");
       const sha = "abcdef0123456789abcdef0123456789abcdef01";
       writeFileSync(
-        join(gitDir, "packed-refs"),
+        posixJoin(gitDir, "packed-refs"),
         `# pack-refs with: peeled fully-peeled sorted\n${sha} refs/heads/feature\n`,
         "utf8",
       );
-      const bundlePath = join(tmp, "bundle.js");
+      const bundlePath = posixJoin(tmp, "bundle.js");
       writeFileSync(bundlePath, "//\n", "utf8");
       __setBundlePathOverride(bundlePath);
       const prov = getBuildProvenance();
@@ -111,24 +111,24 @@ describe("getBuildProvenance", () => {
     // Two temp dirs: the "main repo" (where refs live) and the
     // "worktree" (where .git is a file pointing at the main repo's
     // per-worktree gitdir).
-    const main = mkdtempSync(join(tmpdir(), "ra11y-prov-wt-main-"));
-    const worktree = mkdtempSync(join(tmpdir(), "ra11y-prov-wt-tree-"));
+    const main = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-wt-main-"));
+    const worktree = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-wt-tree-"));
     try {
-      const mainGit = join(main, ".git");
-      const wtGitDir = join(mainGit, "worktrees", "feature");
-      mkdirSync(join(mainGit, "refs", "heads"), { recursive: true });
+      const mainGit = posixJoin(main, ".git");
+      const wtGitDir = posixJoin(mainGit, "worktrees", "feature");
+      mkdirSync(posixJoin(mainGit, "refs", "heads"), { recursive: true });
       mkdirSync(wtGitDir, { recursive: true });
       const sha = "1111222233334444555566667777888899990000";
       // Main repo has the ref on disk.
-      writeFileSync(join(mainGit, "refs", "heads", "feature"), `${sha}\n`, "utf8");
+      writeFileSync(posixJoin(mainGit, "refs", "heads", "feature"), `${sha}\n`, "utf8");
       // Worktree gitdir has its own HEAD + commondir pointer back to
       // the main repo's .git.
-      writeFileSync(join(wtGitDir, "HEAD"), "ref: refs/heads/feature\n", "utf8");
-      writeFileSync(join(wtGitDir, "commondir"), `${mainGit}\n`, "utf8");
+      writeFileSync(posixJoin(wtGitDir, "HEAD"), "ref: refs/heads/feature\n", "utf8");
+      writeFileSync(posixJoin(wtGitDir, "commondir"), `${mainGit}\n`, "utf8");
       // Worktree `.git` is a file with `gitdir:` pointing at the
       // per-worktree gitdir.
-      writeFileSync(join(worktree, ".git"), `gitdir: ${wtGitDir}\n`, "utf8");
-      const bundlePath = join(worktree, "bundle.js");
+      writeFileSync(posixJoin(worktree, ".git"), `gitdir: ${wtGitDir}\n`, "utf8");
+      const bundlePath = posixJoin(worktree, "bundle.js");
       writeFileSync(bundlePath, "//\n", "utf8");
       __setBundlePathOverride(bundlePath);
       const prov = getBuildProvenance();
@@ -140,9 +140,9 @@ describe("getBuildProvenance", () => {
   });
 
   it("returns bundleMtime as a valid ISO-8601 timestamp", () => {
-    const tmp = mkdtempSync(join(tmpdir(), "ra11y-prov-mtime-"));
+    const tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-mtime-"));
     try {
-      const bundlePath = join(tmp, "bundle.js");
+      const bundlePath = posixJoin(tmp, "bundle.js");
       writeFileSync(bundlePath, "//\n", "utf8");
       // Pin mtime to a known instant so the assertion is deterministic.
       const when = new Date("2024-03-15T12:34:56.000Z");
@@ -169,9 +169,9 @@ describe("getBuildProvenance", () => {
     // Canonical shape for the npm-install path: bundle lives under
     // `node_modules/@ra11y/core/dist/cli.js`, there's no `.git` on the
     // walk, and the conditional-spread drops the field entirely.
-    const tmp = mkdtempSync(join(tmpdir(), "ra11y-prov-npm-"));
+    const tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-prov-npm-"));
     try {
-      const bundlePath = join(tmp, "cli.js");
+      const bundlePath = posixJoin(tmp, "cli.js");
       writeFileSync(bundlePath, "//\n", "utf8");
       __setBundlePathOverride(bundlePath);
       const prov = getBuildProvenance();
