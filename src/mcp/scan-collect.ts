@@ -178,6 +178,17 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
     scanResult: result,
     applicability: detectApplicability(files),
     candidates: rawCandidates,
+    // Q15-LANDMARK-MAIN: thread the raw violation stream so the
+    // helper unions low-confidence verify-token findings' criteria
+    // into the actionable count. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant" — every project-rooted surface tallies off
+    // the same raw set the parser-error and per-rule coverage
+    // splits derive from. The wrapper-noise / severity /
+    // criterion-skip filters that produce `filtered` below are
+    // consumer-facing display shapes; the headline tally inputs
+    // upstream of those filters.
+    violations: result.violations,
   });
   const actionableManual = tally.actionable;
   const untargetedCriteria = tally.untargeted;

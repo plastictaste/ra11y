@@ -17,6 +17,7 @@ import { applyCoverageBudget } from "./coverage-budget.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
+import { collectVerifyTokenViolationCriteria } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import {
@@ -206,6 +207,33 @@ export const coverageTool: McpTool = {
       activeRules,
       level,
     );
+    // Q15-LANDMARK-MAIN: low-confidence verify-token findings (severity
+    // `info` paired with a code from `VERIFY_IN_SOURCE_TOKENS` on
+    // `couldBeWrongBecause`) are the rule's way of saying "please
+    // verify this in source." Their criteria union into the actionable
+    // axis alongside grounded review candidates so the cross-surface
+    // count invariant holds: `scan.plan.actionableManualItems ===
+    // checklist.summary.actionable.criteria === sum of
+    // coverage[].manualWithCandidates.length` on identical cwd. The
+    // shared in-scope set is `coverage[i].criteria` per entry; the
+    // helper takes a single in-scope set, so we union all entries'
+    // criteria once at the outer scope and gate the verify-token
+    // collection on that union. Per-entry `withCandidates` then takes
+    // the intersection of `actionableCriteria` (candidates ∪
+    // verify-token criteria) with this entry's `c.criteria`.
+    const allInScopeCriteria = new Set<string>();
+    for (const c of coverage) {
+      for (const cc of c.criteria) allInScopeCriteria.add(cc.criterionId);
+    }
+    const verifyTokenViolationCriteria = collectVerifyTokenViolationCriteria(
+      result.violations,
+      allInScopeCriteria,
+      undefined,
+    );
+    const actionableCriteria = unionCoverageCriteria(
+      candidateCriteria,
+      verifyTokenViolationCriteria,
+    );
     const entries = coverage.map((c) => {
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
       // Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE:
@@ -233,9 +261,20 @@ export const coverageTool: McpTool = {
       // appear when the caller scopes to `level: "AA"` — matches the
       // helper's level-filter scope and the checklist `items[]`
       // build that iterates `manualCriteria` (also level-filtered).
+      // Q15-LANDMARK-MAIN: `actionableCriteria` is candidates ∪
+      // verify-token violation criteria — see the outer-scope helper
+      // call for the doctrine pointer. `withCandidates` is the per-
+      // entry intersection so cross-surface count agreement holds
+      // (`scan.plan.actionableManualItems === sum of
+      // coverage[].manualWithCandidates.length`). For a verify-token-
+      // only criterion, this entry's `candidates: []` rides empty
+      // because the actionable item lives on the violations axis
+      // (`files[].findings[]`), not the review-candidate axis — the
+      // agent reads the violations stream for that criterion's
+      // grounded location.
       const withCandidates = c.criteria
         .map((cc) => cc.criterionId)
-        .filter((id) => candidateCriteria.has(id));
+        .filter((id) => actionableCriteria.has(id));
       // Candidate-level total scoped to the same in-scope, level-
       // filtered criteria `withCandidates` is computed from.
       // `withCandidates.length` / `actionableManualItems` is the
@@ -247,12 +286,14 @@ export const coverageTool: McpTool = {
       // naming the same concept must use one shape"). Cross-surface
       // invariant: agrees with `checklist.totalCandidates` and
       // `checklist.summary.actionable.candidatesUncapped` on identical
-      // cwd.
+      // cwd. Verify-token-only criteria contribute zero to this count
+      // because they have no review-candidate entries — the
+      // candidate-axis sum stays anchored to the candidate stream.
       const manualCandidatesTotal = sumCandidatesAcrossCriteria(
         withCandidates,
         candidateCountByCriterion,
       );
-      const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
+      const untargeted = applicable.filter((id) => !actionableCriteria.has(id));
       const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
         c.failingCriteria,
         criteriaWithErrorViolations,
@@ -1047,10 +1088,19 @@ const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
  * filter); this helper only attaches the existing candidates surface.
  *
  * Falls back to `candidates: []` when the criterion has no grounded
- * deduped entries — defensive only; `withCandidates` is built from
- * `candidateCriteria` upstream so every criterion in the input list IS
- * grounded by ≥1 candidate. Empty arrays here would be the dishonest
- * shape per CLAUDE.md §1; the upstream filter prevents the case.
+ * deduped entries. Q15 widened the upstream filter (`withCandidates`)
+ * to include verify-token violation criteria — those criteria appear
+ * in the actionable axis on the violations stream
+ * (`files[].findings[]`) rather than the review-candidate axis, so the
+ * per-entry `candidates: []` shape is honest signal: "the actionable
+ * item lives elsewhere in the response." The agent reads
+ * `meta.findingsByRule` / the violations stream for that criterion's
+ * grounded location. Pre-Q15 this was a defensive-only fallback the
+ * upstream filter prevented; post-Q15 it can fire on a verify-token-
+ * only criterion. The candidate-axis sibling
+ * (`manualCandidatesTotal`) stays anchored to the review-candidate
+ * stream and reads zero for these entries — the criteria-axis vs.
+ * candidate-axis split is preserved.
  */
 function withTitlesAndCandidates(
   criterionIds: readonly string[],
@@ -1268,6 +1318,28 @@ function sumCandidatesAcrossCriteria(
     total += candidateCountByCriterion.get(id) ?? 0;
   }
   return total;
+}
+
+/**
+ * Q15-LANDMARK-MAIN: union of grounded review-candidate criteria with
+ * low-confidence verify-token violation criteria. Drives the per-
+ * entry `withCandidates` membership test and the `untargeted`
+ * complement, so a `landmark-main` finding shipped at `confidence:
+ * "low"` with `couldBeWrongBecause: ["isolated_component_demo_page"]`
+ * pulls its criterion (`wcag22:1.3.1`) into the `actionableManualItems`
+ * count even though no review candidate was emitted on the candidate
+ * axis. Returns the first input reference unchanged when the second
+ * is empty (no-op fast path) — the common case (zero verify-token
+ * findings) pays nothing.
+ */
+function unionCoverageCriteria(
+  candidateCriteria: ReadonlySet<string>,
+  verifyTokenCriteria: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (verifyTokenCriteria.size === 0) return candidateCriteria;
+  const out = new Set<string>(candidateCriteria);
+  for (const id of verifyTokenCriteria) out.add(id);
+  return out;
 }
 
 /**

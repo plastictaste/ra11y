@@ -717,6 +717,13 @@ export async function runScanAndFormat(
     scanResult: result,
     applicability: detectApplicability(files),
     candidates: report.candidates ?? [],
+    // Q15-LANDMARK-MAIN: union low-confidence verify-token findings'
+    // criteria (e.g. landmark-main on an isolated-component-demo body
+    // shape) into the actionable count. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant" — every project-rooted surface tallies off the
+    // same raw violation set.
+    violations: result.violations,
   });
   const actionableManual = tally.actionable;
   const untargetedCriteria = tally.untargeted;

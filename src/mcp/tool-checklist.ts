@@ -22,6 +22,7 @@ import type {
   ReviewCandidateVendorContext,
   ReviewConfidence,
 } from "../types/review.ts";
+import type { Violation } from "../types/violation.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
 import {
   buildSnippetForReason,
@@ -965,13 +966,20 @@ function computeChecklistSummaryTally(
   applicability: Applicability,
   candidates: readonly ReviewCandidate[],
   skipSet: ReadonlySet<string> | undefined,
+  violations: readonly Violation[],
 ): { readonly actionable: number; readonly untargeted: number } {
-  if (skipSet === undefined) {
-    return tallyManualCriteriaFromCoverage(coverage, applicability, candidates);
-  }
-  return tallyManualCriteriaFromCoverage(coverage, applicability, candidates, {
-    skipCriteria: skipSet,
-  });
+  // Q15-LANDMARK-MAIN: thread the raw violation stream so verify-token
+  // findings (severity `info` + a code from VERIFY_IN_SOURCE_TOKENS on
+  // `couldBeWrongBecause`) contribute their criteria to the actionable
+  // count alongside grounded review candidates. Cross-surface count
+  // invariant requires checklist's `summary.actionable.criteria` to
+  // agree with `scan_project.plan.actionableManualItems` and
+  // `coverage[].manualWithCandidates.length` on identical input.
+  const filters: { readonly skipCriteria?: ReadonlySet<string>; readonly violations: readonly Violation[] } = {
+    ...(skipSet === undefined ? {} : { skipCriteria: skipSet }),
+    violations,
+  };
+  return tallyManualCriteriaFromCoverage(coverage, applicability, candidates, filters);
 }
 
 /**
@@ -1350,6 +1358,7 @@ export const checklistTool: McpTool = {
       applicability,
       reportCandidates,
       skipSet,
+      result.violations,
     );
     // Q-doctrine (composite headline counts are dishonest, ai-first-consumer.md):
     // the prior `summary.actionable: number` headline counted *criteria* with
