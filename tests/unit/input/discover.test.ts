@@ -25,6 +25,16 @@ function mkTmp(): string {
   return mkdtempSync(join(tmpdir(), "ra11y-discover-"));
 }
 
+/**
+ * `discoverFiles` returns POSIX-normalized absolute paths so cross-
+ * platform string comparisons stay honest. Tests still hold the temp-
+ * dir prefix in native form (from `mkdtempSync`), so we normalize the
+ * prefix to POSIX before slicing it off the discovered path.
+ */
+function posixDir(dir: string): string {
+  return dir.split(/[\\/]/).join("/");
+}
+
 /** Marks a directory as a git repo root without actually initializing git. */
 function markGitRoot(dir: string): void {
   mkdirSync(join(dir, ".git"), { recursive: true });
@@ -73,7 +83,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(dir, "src", "app", "dist", "nested", "more.tsx"));
 
     const found = await discoverFiles([join(dir, "src", "app")]);
-    const rel = found.map((p) => p.slice(dir.length + 1));
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1));
 
     expect(rel).toEqual(["src/app/page.tsx"]);
   });
@@ -85,7 +95,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(dir, "dist", "bundle.tsx"));
 
     const fromRoot = await discoverFiles([dir]);
-    const relFromRoot = fromRoot.map((p) => p.slice(dir.length + 1)).sort();
+    const relFromRoot = fromRoot.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     // Sanity: `dist/` excluded by root .gitignore, page.tsx kept.
     expect(relFromRoot).toEqual(["src/app/page.tsx"]);
@@ -93,7 +103,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     // And a subpath scan under the same tree agrees on the files that
     // overlap — invariant the walk-up is meant to deliver.
     const fromSubpath = await discoverFiles([join(dir, "src", "app")]);
-    const relFromSubpath = fromSubpath.map((p) => p.slice(dir.length + 1)).sort();
+    const relFromSubpath = fromSubpath.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(relFromSubpath).toEqual(["src/app/page.tsx"]);
   });
 
@@ -103,7 +113,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(dir, "src", "app", "dist", "bundle.tsx"));
 
     const found = await discoverFiles([join(dir, "src", "app")]);
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     // Both surface — no .gitignore anywhere, nothing to exclude. `dist`
     // is a DEFAULT_IGNORED_DIRS entry, so the directory walker skips it.
@@ -129,7 +139,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(scanRoot, "logs", "trace.tsx"));
 
     const found = await discoverFiles([scanRoot]);
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     expect(rel).toEqual(["packages/web/src/app/app.tsx", "packages/web/src/page.tsx"]);
   });
@@ -145,7 +155,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(scanRoot, "other-pkg", "file.tsx"));
 
     const found = await discoverFiles([scanRoot]);
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     expect(rel).toEqual(["web/other-pkg/file.tsx", "web/page.tsx"]);
   });
@@ -165,7 +175,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(scanRoot, "nested", "generated", "side.tsx"));
 
     const found = await discoverFiles([scanRoot]);
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     // Only repo/web/generated is excluded; a deeper unrelated
     // `generated` dir isn't, because the anchor was at
@@ -183,7 +193,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(scanRoot, "nested", "custom-dir", "bundle.tsx"));
 
     const found = await discoverFiles([scanRoot]);
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     expect(rel).toEqual(["web/page.tsx"]);
   });
@@ -196,7 +206,7 @@ describe("discoverFiles .gitignore walk-up", () => {
     write(join(scanRoot, "dist", "gen.tsx"));
 
     const found = await discoverFiles([scanRoot], { respectGitignore: false });
-    const rel = found.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = found.map((p) => p.slice(posixDir(dir).length + 1)).sort();
 
     // `dist` is still excluded by DEFAULT_IGNORED_DIRS — that's the
     // directory-walker behavior, not the gitignore. So we assert on
@@ -241,7 +251,7 @@ describe("discoverFilesWithDiagnostics", () => {
     write(join(dir, "README"));
 
     const result = await discoverFilesWithDiagnostics([dir]);
-    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = result.files.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(rel).toEqual(["page.tsx"]);
     // README surfaces under its canonical filename rather than lumping
     // into `(no-ext)` so an agent triaging coverage can tell source-
@@ -267,7 +277,7 @@ describe("discoverFilesWithDiagnostics", () => {
     write(join(dir, "weird-blob")); // residual no-ext bucket
 
     const result = await discoverFilesWithDiagnostics([dir]);
-    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = result.files.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(rel).toEqual(["page.tsx"]);
     expect(result.diagnostics.skippedByExtension).toEqual({
       "(no-ext)": 1,
@@ -463,7 +473,7 @@ describe("discoverFilesWithDiagnostics", () => {
     write(join(dir, "__mocks__", "fs.ts"));
 
     const result = await discoverFilesWithDiagnostics([dir]);
-    const rel = result.files.map((p) => p.slice(dir.length + 1)).sort();
+    const rel = result.files.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(rel).toEqual([
       "__tests__/Form.tsx",
       "dev-tools/panel.tsx",
@@ -484,11 +494,11 @@ describe("discoverFilesWithDiagnostics", () => {
     write(join(dir, "__mocks__", "fs.ts"));
 
     const defaultRun = await discoverFiles([dir]);
-    const defaultRel = defaultRun.map((p) => p.slice(dir.length + 1)).sort();
+    const defaultRel = defaultRun.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(defaultRel).toEqual(["page.tsx"]);
 
     const includeRun = await discoverFiles([dir], { includeTests: true });
-    const includeRel = includeRun.map((p) => p.slice(dir.length + 1)).sort();
+    const includeRel = includeRun.map((p) => p.slice(posixDir(dir).length + 1)).sort();
     expect(includeRel).toEqual(["__mocks__/fs.ts", "page.tsx"]);
   });
 

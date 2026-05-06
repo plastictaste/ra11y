@@ -112,7 +112,7 @@ export async function discoverExplicitPaths(
     }
     if (info.isFile()) {
       if (hasParseableExtension(absRoot) && !userMatcher.matches(toRel(absRoot, absRoot))) {
-        out.add(absRoot);
+        out.add(toPosix(absRoot));
       }
       continue;
     }
@@ -123,7 +123,7 @@ export async function discoverExplicitPaths(
         hasParseableExtension(filePath) && !userMatcher.matches(toRel(filePath, absRoot)),
       EXPLICIT_PATH_IGNORED_DIRS,
     );
-    for (const f of found) out.add(f);
+    for (const f of found) out.add(toPosix(f));
   }
   return [...out].sort();
 }
@@ -412,7 +412,7 @@ export async function discoverFilesWithDiagnostics(
       sourcemapFiles,
       ignoredArtifactDirs,
     );
-    for (const f of found) out.add(f);
+    for (const f of found) out.add(toPosix(f));
   }
 
   // Walk each surfaced ignored-artifact-dir shallowly to count parseable
@@ -483,9 +483,9 @@ async function summarizeIgnoredArtifactDir(
   if (accumulator.fileCount === 0) return null;
   accumulator.samples.sort();
   return {
-    path: dirPath,
+    path: toPosix(dirPath),
     fileCount: accumulator.fileCount,
-    sampleFiles: accumulator.samples,
+    sampleFiles: accumulator.samples.map(toPosix),
   };
 }
 
@@ -586,7 +586,7 @@ function recordExtensionSkip(
 ): void {
   const ext = extension(filePath);
   if (ext === SOURCEMAP_EXTENSION) {
-    sourcemapFiles.add(filePath);
+    sourcemapFiles.add(toPosix(filePath));
     return;
   }
   const key = ext === "" ? noExtensionKey(filePath) : ext;
@@ -986,6 +986,22 @@ async function discoverOne(
 /** Path we compare against patterns — POSIX `/` and relative to the scan root. */
 function toRel(filePath: string, root: string): string {
   return relative(root, filePath).split(/[\\/]/).join("/");
+}
+
+/**
+ * Normalizes an absolute filesystem path to POSIX form (forward slashes)
+ * so downstream consumers — tests, glob matchers, MCP response shapes,
+ * cross-surface invariants — see one separator regardless of platform.
+ *
+ * Node's `fs` accepts forward-slash paths on Windows for every read/write
+ * operation, so applying this at the discovery output boundary is safe
+ * for downstream filesystem use. It also closes the cross-surface count
+ * invariant: paths emitted into `meta.scannedBuildArtifacts`,
+ * `analysisCoverage.fragmentFiles`, and `files[]` arrays match the
+ * shape an agent expects regardless of which OS the scan ran on.
+ */
+function toPosix(absPath: string): string {
+  return absPath.split(/[\\/]/).join("/");
 }
 
 /** Joins a root and a relative sub-path. Exported for tests. */
