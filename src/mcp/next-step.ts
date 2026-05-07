@@ -786,40 +786,16 @@ function findSameRuleIdNonVendorFinding(
 }
 
 /**
- * Tallies finding counts per `ruleId` over non-vendor files only,
- * picks the rule with the highest count, then returns the densest
- * non-vendor file for that rule (file, line, ruleId) — i.e. the file
- * with the most occurrences of the dominant rule, matching
+ * Picks the dominant non-vendor rule and returns the densest non-
+ * vendor file for that rule (file, line, ruleId) — matching
  * `topRules[0].topFile` semantics from `src/mcp/scan-assembly.ts`.
- * Used by the dominant-rule reroute lane in {@link pickFirstFinding}
- * when no same-`ruleId` non-vendor sibling exists, and by the
- * truncation reroute when the alphabetical-first pick on a paged
- * corpus is a low-impact target (visual-regression fixture, scaffold
- * dir, underscore-prefixed template).
- *
- * Why densest-file rather than first-by-filename match: per the
- * AI-first doctrine "NextStep prioritization on truncated/bulk
- * responses must avoid first-by-filename routing," routing to the
- * alphabetically-first file containing the dominant rule reproduces
- * the exact bug the doctrine warns against — observed on a vanilla-
- * stack catalog where the dominant rule's topFile carried 43 fires
- * but nextStep landed on a sibling file with 1 fire because that
- * sibling sorted alphabetically earlier. The densest-file pick
- * matches `topRules[0].topFile` so the agent's first action lands on
- * the file with the broadest authored impact for the dominant rule.
- *
- * Tiebreaks (deterministic across runs):
- *   - Multiple rules tied at the top count → pick the alphabetically
- *     smallest ruleId, matching `withTopRules`'s
- *     `b.count - a.count || a.ruleId.localeCompare(b.ruleId)` sort
- *     (`src/mcp/scan-assembly.ts`). This way the reroute's pick
- *     equals `topRules[0].topFile` even on ties.
- *   - Multiple files tied at the densest count for the chosen rule →
- *     pick the alphabetically smallest path, matching `pickDensestFile`
- *     in `src/mcp/scan-assembly.ts`.
- *
- * Returns `null` only when every finding on every file sits in
- * `vendorPaths` (the all-vendor signal — caller routes to scope-down).
+ * Per AI-first doctrine "NextStep prioritization on truncated/bulk
+ * responses must avoid first-by-filename routing": pre-fix the
+ * picker walked files alphabetically and landed on the first sibling
+ * containing the dominant rule (1 fire) instead of the densest file
+ * (43 fires). Rule tie-break = alphabetical ruleId; file tie-break =
+ * alphabetical path; both mirror `withTopRules` / `pickDensestFile`.
+ * Returns `null` only when every finding sits in `vendorPaths`.
  */
 function pickHighestFiringNonVendorFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
@@ -832,12 +808,10 @@ function pickHighestFiringNonVendorFinding(
 }
 
 /**
- * Picks the dominant ruleId from a non-empty count map: highest count
- * wins; alphabetical ruleId tiebreak when two rules tie at the top.
- * Mirrors `withTopRules`'s sort key in `src/mcp/scan-assembly.ts`
- * (`b.count - a.count || a.ruleId.localeCompare(b.ruleId)`) so the
- * reroute target equals `topRules[0]` on the same input. Caller has
- * already verified `counts.size > 0`.
+ * Picks the dominant ruleId from a non-empty count map: highest
+ * count wins; alphabetical ruleId tiebreak. Mirrors `withTopRules`'s
+ * sort in `src/mcp/scan-assembly.ts` so the reroute target equals
+ * `topRules[0]` on the same input.
  */
 function pickDominantRuleId(counts: ReadonlyMap<string, number>): string {
   let topRuleId = "";
@@ -852,89 +826,59 @@ function pickDominantRuleId(counts: ReadonlyMap<string, number>): string {
 }
 
 /**
- * Walks non-vendor files, tallies how many findings each one carries
- * for `targetRuleId`, picks the densest file (alphabetical tiebreak
- * matching `pickDensestFile` in `src/mcp/scan-assembly.ts`), then
- * returns the first finding line for that rule in that file. The
- * "densest file for the dominant rule" pick equals
- * `topRules[0].topFile` semantically — agents reading the headline
- * `topRules[0]` slot get the same target the next-step reroute names.
- *
- * Returns `null` only when no non-vendor file carries the rule (the
- * all-vendor signal — caller routes to scope-down). The caller's
- * outer flow has already established `counts.size > 0`, so this
- * branch is defensive against the degenerate input where the chosen
- * rule's findings all sit on vendor files (impossible because
- * `countNonVendorFindingsByRuleId` only tallies non-vendor — kept for
- * type safety).
+ * Picks the densest non-vendor file for `targetRuleId` (alphabetical
+ * tiebreak matching `pickDensestFile` in `src/mcp/scan-assembly.ts`),
+ * tracking the first matching line in one pass. Returns `null` when
+ * no non-vendor file carries the rule.
  */
 function densestFileFindingForRule(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
   vendorPaths: ReadonlySet<string>,
   targetRuleId: string,
 ): FirstFinding | null {
-  const densestPath = pickDensestNonVendorPathForRule(files, vendorPaths, targetRuleId);
-  if (densestPath === undefined) return null;
-  return firstFindingForRuleInFile(files, densestPath, targetRuleId);
-}
-
-/**
- * Walks non-vendor files, computing the per-file count of findings
- * for `targetRuleId`, and returns the path of the file with the
- * highest count (alphabetical tiebreak when two files tie). Returns
- * `undefined` when no non-vendor file carries the rule. Extracted
- * from {@link densestFileFindingForRule} so the orchestrator stays
- * inside the cognitive-complexity lint cap; the densest-pick phase
- * is conceptually distinct from the first-finding-lookup phase that
- * follows it and reads better as a separate function.
- */
-function pickDensestNonVendorPathForRule(
-  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
-  vendorPaths: ReadonlySet<string>,
-  targetRuleId: string,
-): string | undefined {
-  let densestPath: string | undefined;
-  let densestCount = -1;
+  let densest: { path: string; line: number; count: number } | undefined;
   for (const file of files) {
     if (vendorPaths.has(file.path)) continue;
-    const count = countFindingsForRuleInFile(file.findings, targetRuleId);
-    if (count === 0) continue;
-    if (isDensestPick(count, densestCount, file.path, densestPath)) {
-      densestPath = file.path;
-      densestCount = count;
+    const tally = tallyRuleFindingsInFile(file.findings, targetRuleId);
+    if (tally === undefined) continue;
+    if (densestPickWins(tally.count, densest?.count ?? -1, file.path, densest?.path)) {
+      densest = { path: file.path, line: tally.firstLine, count: tally.count };
     }
   }
-  return densestPath;
+  return densest === undefined
+    ? null
+    : { path: densest.path, line: densest.line, ruleId: targetRuleId };
 }
 
 /**
- * Tallies findings carrying `targetRuleId` on a single file's
- * findings array. Extracted from {@link densestFileFindingForRule}
- * to keep its loop body shallow enough for the cognitive-complexity
- * lint cap. Skips findings whose shape doesn't expose a string
- * `ruleId` — same defensive narrowing as
- * {@link readFindingRuleIdAndLine}.
+ * Tallies `targetRuleId` findings on a single file's findings array
+ * and returns `{ count, firstLine }` or `undefined` when no match.
+ * Skips findings whose shape doesn't expose a string `ruleId` (same
+ * defensive narrowing as {@link readFindingRuleIdAndLine}).
  */
-function countFindingsForRuleInFile(findings: readonly unknown[], targetRuleId: string): number {
+function tallyRuleFindingsInFile(
+  findings: readonly unknown[],
+  targetRuleId: string,
+): { readonly count: number; readonly firstLine: number } | undefined {
   let count = 0;
+  let firstLine = -1;
   for (const raw of findings) {
     const extracted = readFindingRuleIdAndLine(raw);
     if (extracted === null) continue;
-    if (extracted.ruleId === targetRuleId) count += 1;
+    if (extracted.ruleId !== targetRuleId) continue;
+    if (firstLine < 0) firstLine = extracted.line;
+    count += 1;
   }
-  return count;
+  if (count === 0) return undefined;
+  return { count, firstLine };
 }
 
 /**
- * Decides whether `(count, path)` should replace the running
- * `(currentCount, currentPath)` densest pick — strictly higher count
- * wins; on a tie, alphabetically earlier path wins (matching
- * `pickDensestFile` in `src/mcp/scan-assembly.ts`). Extracted so the
- * tie-break predicate is testable in isolation and the loop body in
- * {@link pickDensestNonVendorPathForRule} stays inside the cognitive-
- * complexity lint cap.
+ * Returns true when `count` is strictly higher than `currentCount`,
+ * OR equal-but-alphabetically-earlier path. Mirrors `pickDensestFile`
+ * in `src/mcp/scan-assembly.ts`.
  */
-function isDensestPick(
+function densestPickWins(
   count: number,
   currentCount: number,
   path: string,
@@ -943,31 +887,6 @@ function isDensestPick(
   if (count > currentCount) return true;
   if (count !== currentCount) return false;
   return currentPath !== undefined && path < currentPath;
-}
-
-/**
- * Pulls the first (line, ruleId) for `targetRuleId` in the file at
- * `targetPath`. Used by {@link densestFileFindingForRule} after the
- * densest file has been chosen — the line itself is just the first
- * occurrence on that file (the agent navigates from there). Returns
- * `null` only when the file or the matching finding can't be located,
- * a degenerate path the caller short-circuits before reaching.
- */
-function firstFindingForRuleInFile(
-  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
-  targetPath: string,
-  targetRuleId: string,
-): FirstFinding | null {
-  for (const file of files) {
-    if (file.path !== targetPath) continue;
-    for (const raw of file.findings) {
-      const extracted = readFindingRuleIdAndLine(raw);
-      if (extracted === null) continue;
-      if (extracted.ruleId !== targetRuleId) continue;
-      return { path: file.path, ...extracted };
-    }
-  }
-  return null;
 }
 
 /**
