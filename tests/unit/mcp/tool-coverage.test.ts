@@ -18,10 +18,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import type { ScanProjectReviewCandidate } from "../../../src/mcp/scan-project-review-candidates.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { withTitles, withTitlesAndCandidates } from "../../../src/mcp/tool-coverage.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
-import type { ScanProjectReviewCandidate } from "../../../src/mcp/scan-project-review-candidates.ts";
 import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
