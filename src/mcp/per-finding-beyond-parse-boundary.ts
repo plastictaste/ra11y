@@ -27,8 +27,14 @@
  * Closure path picked: downgrade-not-drop. Per AI-first doctrine
  *   "Surface, don't suppress" the finding stays in the response with
  *   its full message + line + column — dropping would deny the agent
- *   the lookup point. The downgrade rides the same `confidence` axis
- *   the per-rule and build-artifact passes already use, and the
+ *   the lookup point. The downgrade rides BOTH the `confidence` axis
+ *   the per-rule and build-artifact passes already use AND the
+ *   `severity` axis (downgrades to `"info"`) so the attention-budget
+ *   signal matches the conceded uncertainty per AI-first doctrine
+ *   "Reason text and severity must agree" — a finding shipping
+ *   `confidence: "low"` while `severity: "error"` keeps the agent's
+ *   attention budget pinned to the rule's pre-downgrade verdict,
+ *   contradicting the hedged reason code on the same finding. The
  *   structured reason code joins the same `couldBeWrongBecause` axis
  *   so an agent pivoting on either field gets the consistent read.
  *
@@ -46,7 +52,7 @@
 
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { AgentFinding, Confidence } from "../output/agent-response/types.ts";
-import type { PerRuleCoverage } from "../types/violation.ts";
+import type { PerRuleCoverage, Severity } from "../types/violation.ts";
 import { partitionParseStateFiles } from "./parse-error-adjustment.ts";
 import {
   buildPerRuleLimitationMap,
@@ -155,15 +161,27 @@ export function enrichFindingsBeyondPartialParseBoundary<T extends FindingBucket
 
 /**
  * Per-finding adjuster. Returns the input `finding` reference
- * unchanged when both the propagated code is already present AND
- * the confidence is already at-or-below `"low"` — idempotent re-
- * application is safe and the array shape stays dedup-stable.
+ * unchanged when the propagated code is already present AND the
+ * confidence is already at-or-below `"low"` AND severity is already
+ * at `"info"` — idempotent re-application is safe and the array
+ * shape stays dedup-stable.
+ *
+ * Both axes downgrade together because the AI-first doctrine
+ * "Reason text and severity must agree" requires the
+ * attention-budget signal (`severity`) and the confidence label to
+ * point the same direction. A finding emitted past the parser's
+ * recovered slice has structurally weaker static evidence than the
+ * rule's normal substrate; surfacing it at `severity: "error"` while
+ * the same finding ships `confidence: "low"` and a `couldBeWrongBecause`
+ * tag asking the agent to verify is the canonical contradiction the
+ * doctrine names.
  */
 function applyBeyondBoundaryToFinding(finding: AgentFinding): AgentFinding {
   const existing = finding.couldBeWrongBecause;
   const codeAlreadyPresent = existing?.includes(BEYOND_BOUNDARY_REASON_CODE) === true;
-  const needsDowngrade = confidenceRank(finding.confidence) > confidenceRank("low");
-  if (codeAlreadyPresent && !needsDowngrade) return finding;
+  const needsConfidenceDowngrade = confidenceRank(finding.confidence) > confidenceRank("low");
+  const needsSeverityDowngrade = severityRank(finding.severity) > severityRank("info");
+  if (codeAlreadyPresent && !needsConfidenceDowngrade && !needsSeverityDowngrade) return finding;
   const nextCouldBeWrongBecause = codeAlreadyPresent
     ? existing
     : existing === undefined || existing.length === 0
@@ -174,7 +192,8 @@ function applyBeyondBoundaryToFinding(finding: AgentFinding): AgentFinding {
     ...(nextCouldBeWrongBecause === undefined
       ? {}
       : { couldBeWrongBecause: nextCouldBeWrongBecause }),
-    ...(needsDowngrade ? { confidence: "low" as const } : {}),
+    ...(needsConfidenceDowngrade ? { confidence: "low" as const } : {}),
+    ...(needsSeverityDowngrade ? { severity: "info" as const } : {}),
   };
 }
 
@@ -191,6 +210,20 @@ function confidenceRank(c: Confidence): number {
   if (c === "medium") return 2;
   if (c === "low") return 1;
   return 0;
+}
+
+/**
+ * Numeric rank for `Severity` values along the attention-budget axis.
+ * Higher rank = more urgent. The downgrade gate fires when a finding's
+ * current severity outranks `"info"`, sliding `"error"` (rank 3) and
+ * `"warning"` (rank 2) down to `"info"` (rank 1) so the surfacing
+ * pressure matches the conceded uncertainty captured in the
+ * `couldBeWrongBecause` tag and the downgraded confidence label.
+ */
+function severityRank(s: Severity): number {
+  if (s === "error") return 3;
+  if (s === "warning") return 2;
+  return 1;
 }
 
 /**

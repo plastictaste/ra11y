@@ -25,15 +25,20 @@
  * location is past `parsedThroughLine`, OR move the candidate to
  * the review-candidate channel at `info` severity, OR downgrade
  * per-finding `confidence` AND `severity` so the attention-budget
- * signal matches the conceded uncertainty. Whichever closure lands,
- * the document-shaped rules stop appearing in `findings[]` at
- * error/warning on this fixture's source — the assertions below
- * use `no-violation` because they pass under any of the three.
+ * signal matches the conceded uncertainty. The closure that landed
+ * is the third (downgrade-not-drop) at the per-finding pass in
+ * `src/mcp/per-finding-beyond-parse-boundary.ts`: findings emitted
+ * past `parsedThroughLine` slide to `confidence: "low"` AND
+ * `severity: "info"` and gain
+ * `couldBeWrongBecause: ["beyond_partial_parse_boundary"]`.
  *
- * This fixture is RED-first per CLAUDE.md §7's bug-fix workflow:
- * `todo: true` keeps the integration test pending until the closure
- * lands. Remove the flag in the same commit that fixes the rule
- * branch and the test turns green permanently.
+ * This fixture also pins the routing precondition: the document-
+ * shaped rules' extension gates (`.html` / `.htm`) do not match
+ * `.md` — so the `Violation[]` engine stream stays empty regardless
+ * of the per-finding helper. The `no-violation` rows below pin
+ * that engine-level absence; combined with the per-finding helper
+ * at the MCP layer, the agent reads no document-envelope claim on
+ * a markdown-residue substrate from any surface.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -60,10 +65,6 @@ export const assertions: FixtureAssertions = {
   toolInput: {
     verboseMeta: true,
   },
-  // Intentionally RED — remove this flag once the rule branch
-  // for parseModeByExtension === "markdown-html-residue" stops
-  // emitting at error/warning severity on this fixture's source.
-  todo: true,
   expectations: [
     // Sanity: the source classifies as markdown-html-residue. If the
     // routing ever changes, the rest of the assertions stop being
@@ -74,12 +75,18 @@ export const assertions: FixtureAssertions = {
       predicate: { equals: "markdown-html-residue" },
     },
 
-    // The four document-shaped rules must not appear in `findings[]`
-    // at error/warning severity. The closure may pick: skip emission
-    // entirely, OR move to review-candidate channel at info severity,
-    // OR downgrade severity to info — `no-violation` passes under
-    // any of the three closures (review candidates and info-severity
-    // findings ride a different surface than per-finding violations).
+    // The four document-shaped rules must not appear in the engine's
+    // `Violation[]` stream on this fixture's `.md` source. The
+    // structural reason is the rules' `appliesTo.fileExtensions`
+    // gate (`.html` / `.htm`) — `.md` is filtered before per-file
+    // dispatch, so even a markdown-residue substrate that exposes
+    // narrative `<html>` / `<head>` / `<title>` mentions to the HTML
+    // parser gets no rule emission. The `no-violation` predicate
+    // reads raw `Violation[]` from the engine; combined with the
+    // per-finding helper at the MCP layer (which separately downgrades
+    // any post-boundary finding's `confidence` + `severity`), no
+    // document-envelope claim reaches the agent on any surface for
+    // a `.md` source.
     { kind: "no-violation", ruleId: "document/page-titled" },
     { kind: "no-violation", ruleId: "document/lang-attribute" },
     { kind: "no-violation", ruleId: "document/charset-first-1024-bytes" },

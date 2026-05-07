@@ -8,11 +8,15 @@
  * Invariants guarded here:
  *
  *   - A finding whose line is strictly greater than the file's
- *     `parsedThroughLine` drops `confidence` to `"low"` AND gains
+ *     `parsedThroughLine` drops `confidence` to `"low"`, drops
+ *     `severity` to `"info"`, AND gains
  *     `couldBeWrongBecause: ["beyond_partial_parse_boundary"]`. This is
  *     the canonical case: the structured parser bailed at line N and
  *     anything emitted at line > N was either dragged in by a regex
  *     finder or scoped from raw text rather than a recovered AST node.
+ *     Both axes downgrade together so the attention-budget signal
+ *     (`severity`) and the confidence label point the same direction
+ *     per AI-first doctrine "Reason text and severity must agree."
  *   - A finding at OR below the boundary rides through unchanged — the
  *     structured parser visited those lines before failing, so the
  *     evidence model is no weaker than usual at-or-below the boundary
@@ -29,7 +33,8 @@
  *   - Existing `couldBeWrongBecause` entries are preserved; the
  *     propagated code is appended without duplication.
  *   - Idempotent re-application: a finding already carrying the code
- *     AND already at `confidence: "low"` rides through unchanged.
+ *     AND already at `confidence: "low"` AND `severity: "info"` rides
+ *     through unchanged.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -125,7 +130,7 @@ describe("buildParsedThroughLineMap", () => {
 });
 
 describe("enrichFindingsBeyondPartialParseBoundary", () => {
-  it("downgrades a finding emitted past the boundary to confidence:low and adds the structured reason code", () => {
+  it("downgrades a finding emitted past the boundary to confidence:low + severity:info and adds the structured reason code", () => {
     const buckets: readonly FindingBucket[] = [
       bucket("partial.html", [finding({ findingId: "above-1", line: 263 })]),
     ];
@@ -135,7 +140,29 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
     expect(out).toHaveLength(1);
     const got = out[0]!.findings[0]!;
     expect(got.confidence).toBe("low");
+    // Severity tracks confidence per AI-first doctrine "Reason text
+    // and severity must agree" — a finding past the parser's recovered
+    // slice has structurally weaker static evidence, so the surfacing
+    // pressure must match the conceded uncertainty.
+    expect(got.severity).toBe("info");
     expect(got.couldBeWrongBecause).toEqual(["beyond_partial_parse_boundary"]);
+  });
+
+  it("downgrades severity from `warning` to `info` when the boundary fires (warning-rank case)", () => {
+    // The severity downgrade is rank-monotone — `error` and `warning`
+    // both slide to `info`, never the other way. Pins the warning-rank
+    // entry point so a future refactor can't silently keep `warning`
+    // in place when the predicate fires.
+    const buckets: readonly FindingBucket[] = [
+      bucket("partial.html", [
+        finding({ findingId: "warn-above", line: 300, severity: "warning", confidence: "medium" }),
+      ]),
+    ];
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
+
+    expect(out[0]!.findings[0]!.severity).toBe("info");
+    expect(out[0]!.findings[0]!.confidence).toBe("low");
+    expect(out[0]!.findings[0]!.couldBeWrongBecause).toContain("beyond_partial_parse_boundary");
   });
 
   it("leaves a finding AT the boundary unchanged (the parser visited that line)", () => {
@@ -148,6 +175,7 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
 
     expect(out).toBe(buckets);
     expect(out[0]!.findings[0]!.confidence).toBe("high");
+    expect(out[0]!.findings[0]!.severity).toBe("error");
     expect(out[0]!.findings[0]!.couldBeWrongBecause).toBeUndefined();
   });
 
@@ -170,13 +198,15 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
     ];
     const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
-    // Affected file: downgraded.
+    // Affected file: downgraded on both confidence + severity axes.
     const affected = out.find((b) => b.path === "partial.html")!;
     expect(affected.findings[0]!.confidence).toBe("low");
+    expect(affected.findings[0]!.severity).toBe("info");
     expect(affected.findings[0]!.couldBeWrongBecause).toContain("beyond_partial_parse_boundary");
     // Clean file: untouched even at very-high line numbers.
     const clean = out.find((b) => b.path === "clean.html")!;
     expect(clean.findings[0]!.confidence).toBe("high");
+    expect(clean.findings[0]!.severity).toBe("error");
     expect(clean.findings[0]!.couldBeWrongBecause).toBeUndefined();
   });
 
@@ -199,13 +229,19 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
 
     const got = out[0]!.findings;
     expect(got[0]!.confidence).toBe("high"); // line 50
+    expect(got[0]!.severity).toBe("error");
     expect(got[0]!.couldBeWrongBecause).toBeUndefined();
     expect(got[1]!.confidence).toBe("high"); // line 220
+    expect(got[1]!.severity).toBe("error");
     expect(got[2]!.confidence).toBe("high"); // line 221 == boundary
+    expect(got[2]!.severity).toBe("error");
     expect(got[3]!.confidence).toBe("low"); // line 263
+    expect(got[3]!.severity).toBe("info");
     expect(got[3]!.couldBeWrongBecause).toEqual(["beyond_partial_parse_boundary"]);
     expect(got[4]!.confidence).toBe("low"); // line 399
+    expect(got[4]!.severity).toBe("info");
     expect(got[5]!.confidence).toBe("low"); // line 405
+    expect(got[5]!.severity).toBe("info");
   });
 
   it("returns the input array reference unchanged when the boundary map is empty (no-op fast path)", () => {
@@ -227,12 +263,14 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
       "beyond_partial_parse_boundary",
     ]);
     expect(out[0]!.findings[0]!.confidence).toBe("low");
+    expect(out[0]!.findings[0]!.severity).toBe("info");
   });
 
-  it("is idempotent when the finding already carries the code AND confidence is low (re-runs cause no churn)", () => {
+  it("is idempotent when the finding already carries the code AND confidence is low AND severity is info (re-runs cause no churn)", () => {
     const f = finding({
       line: 300,
       confidence: "low",
+      severity: "info",
       couldBeWrongBecause: ["beyond_partial_parse_boundary"],
     });
     const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
@@ -241,19 +279,44 @@ describe("enrichFindingsBeyondPartialParseBoundary", () => {
     expect(out).toBe(buckets);
   });
 
+  it("downgrades severity even when the finding already carries the code and confidence:low (severity-only catch-up case)", () => {
+    // Pre-Q17 vintage: a finding accumulated `confidence: "low"` and
+    // the boundary code from an earlier helper invocation but kept its
+    // original `severity: "error"`. The new severity-axis pass must
+    // bring it back into agreement on a re-run rather than silently
+    // ride past the idempotency check (which would otherwise short-
+    // circuit on `codeAlreadyPresent && !needsConfidenceDowngrade`).
+    const f = finding({
+      line: 300,
+      confidence: "low",
+      severity: "error",
+      couldBeWrongBecause: ["beyond_partial_parse_boundary"],
+    });
+    const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
+    const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
+
+    expect(out).not.toBe(buckets);
+    expect(out[0]!.findings[0]!.severity).toBe("info");
+    expect(out[0]!.findings[0]!.confidence).toBe("low");
+    expect(out[0]!.findings[0]!.couldBeWrongBecause).toEqual(["beyond_partial_parse_boundary"]);
+  });
+
   it("does not bump a `medium` confidence back up when the predicate fires (rank-monotone — only weakening allowed)", () => {
-    // The downgrade only fires when the existing rank exceeds `low`.
-    // A finding at `medium` past the boundary still lacks the structured
-    // code, so the helper appends the code AND drops to `low` — both
-    // moves are weakening, never strengthening.
+    // The downgrade only fires when the existing rank exceeds `low` /
+    // `info`. A finding at `medium` confidence + `warning` severity
+    // past the boundary still lacks the structured code, so the helper
+    // appends the code AND slides confidence to `low` AND severity to
+    // `info` — every move is weakening, never strengthening.
     const f = finding({
       line: 300,
       confidence: "medium",
+      severity: "warning",
     });
     const buckets: readonly FindingBucket[] = [bucket("partial.html", [f])];
     const out = enrichFindingsBeyondPartialParseBoundary(buckets, new Map([["partial.html", 221]]));
 
     expect(out[0]!.findings[0]!.confidence).toBe("low");
+    expect(out[0]!.findings[0]!.severity).toBe("info");
     expect(out[0]!.findings[0]!.couldBeWrongBecause).toContain("beyond_partial_parse_boundary");
   });
 });
