@@ -334,12 +334,16 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
     await withScratch(async (dir) => {
       const { mkdir } = await import("node:fs/promises");
       // `dist/` is in DEFAULT_EXCLUDED_PATTERNS so the discovery
-      // walk skips it; use `public/` which is a build-dir marker
-      // but not in the default-excluded set, so the file reaches
-      // the labeller.
-      await mkdir(posixJoin(dir, "public"), { recursive: true });
+      // walk skips it; `public/` was previously a build-dir marker
+      // but is now treated as a static-assets convention (per
+      // `docs/kb/architecture/ai-first-consumer.md` "Heuristic-
+      // mislabeled meta sub-fields are dishonest"). Use
+      // `static/assets/` here — it's a build-dir marker that the
+      // discovery walk does NOT skip, so the file reaches the
+      // labeller and earns `likely-bundler-output-dir`.
+      await mkdir(posixJoin(dir, "static", "assets"), { recursive: true });
       await writeFile(
-        posixJoin(dir, "public", "page.html"),
+        posixJoin(dir, "static", "assets", "page.html"),
         "<!doctype html><html><body></body></html>\n",
       );
       // Add a definite-min-infix file at the repo root.
@@ -354,10 +358,10 @@ describe("propose_config: heuristic vs definite split — paste-safe `exclude`",
         /\/\/ likelyBuildPaths: \[([\s\S]*?)\/\/ \],/,
       );
       expect(hintBlockMatch).not.toBeNull();
-      expect(hintBlockMatch?.[1]).toContain("public/");
+      expect(hintBlockMatch?.[1]).toContain("static/assets/");
       // The likely path must NOT appear inside the live exclude
       // block.
-      expect(excludeBlockMatch?.[1]).not.toContain("public/");
+      expect(excludeBlockMatch?.[1]).not.toContain("static/assets/");
     });
   });
 });

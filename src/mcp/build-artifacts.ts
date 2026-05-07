@@ -86,14 +86,16 @@
  *      that residual uncertainty.
  *   3. `likely-bundler-output-dir`. The path includes a canonical
  *      bundler-output directory segment — `dist/`, `build/`,
- *      `_site/`, `public/`, `node_modules/`, plus framework-specific
- *      output trees like `.next/`, `.svelte-kit/`, `.output/`, and
+ *      `_site/`, `node_modules/`, plus framework-specific output
+ *      trees like `.next/`, `.svelte-kit/`, `.output/`, and
  *      `static/assets/`. A trailing `/` is required so a root-level
  *      file literally named `dist.ts` cannot confound the match.
  *      Authored projects do sometimes use these directory names for
- *      hand-authored source (a `dist/` of vendored deps, a `public/`
- *      of authored static assets a framework happens to serve), so
- *      the verdict is `likely-`, not `definite-`.
+ *      hand-authored source (a `dist/` of vendored deps), so the
+ *      verdict is `likely-`, not `definite-`. `public/` is
+ *      deliberately excluded — it's a static-assets convention
+ *      (Astro/Vite/Next/Nuxt) where user-authored files live; see
+ *      {@link BUILD_DIR_MARKERS} for the rationale.
  *   4. `likely-compiled-tailwind`. A `.css` / `.scss` source whose
  *      text contains an escape-bracket Tailwind utility selector
  *      (`\[400px\]`, `\:focus-visible:`, `\[--…]`). These are
@@ -283,16 +285,32 @@ const TAILWIND_ESCAPED_SELECTOR =
  * A bare filename like `dist.ts` at the repo root stays unmatched —
  * the probe requires a trailing `/` to confirm it's a directory
  * segment, not a filename prefix. `_site/` is Jekyll's default
- * output directory; `public/` is a generated-output directory for
- * several frameworks (Hugo, Gatsby, Nuxt's `.output/public/`, Vite's
- * `public/` when used as a build target); `node_modules/` is the
- * packaged-dependency tree by definition.
+ * output directory; `node_modules/` is the packaged-dependency tree
+ * by definition.
+ *
+ * `public/` is deliberately NOT in this list. Astro / Vite / Next /
+ * Nuxt all treat `public/` as a *static-assets* convention — the
+ * directory holds user-authored files (favicons, brand marks, hero
+ * images) copied as-is to the build root. An authored `hero.jpg` /
+ * `brand-mark.svg` / `favicon.png` under `public/` would mis-classify
+ * as `likely-bundler-output-dir` and silently land under
+ * `scannedBuildArtifacts`, which downstream tools treat as
+ * "not user-fixable." The framework-specific generated trees that
+ * happen to nest a `public/` segment (Nuxt's `.output/public/`,
+ * Hugo / Eleventy with a `_site/` rendered output) are still
+ * classified via the framework markers themselves (`.output/`,
+ * `_site/`) so the cases where `public/` sits under a generated
+ * tree continue to fire. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+ * meta sub-fields are dishonest" — `public/ → bundler-output` was a
+ * false predicate on the general case, so the marker is dropped.
+ * The deterministic vendor signals (`.min.` infix, hashed filename,
+ * sourcemap-sibling) still classify when applicable.
  */
 const BUILD_DIR_MARKERS = [
   "dist/",
   "build/",
   "_site/",
-  "public/",
   "node_modules/",
   ".next/",
   ".svelte-kit/",
