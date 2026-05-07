@@ -7207,9 +7207,7 @@ function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown>
  * `topExtension` + `topCount` mirror the same pivot at the scalar
  * level for one-read triage.
  */
-function summarizeTextSourceExcludedByDefaultPattern(
-  coverage: Record<string, unknown> | undefined,
-):
+function summarizeTextSourceExcludedByDefaultPattern(coverage: Record<string, unknown> | undefined):
   | {
       readonly extensions: readonly string[];
       readonly perExtensionCounts?: Readonly<Record<string, number>>;
