@@ -105,7 +105,14 @@ function rollupTopReasons(
   entries: readonly ParseErrorEntry[],
 ): readonly { readonly reason: string; readonly count: number }[] {
   const counts = new Map<string, number>();
-  for (const entry of entries) counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+  // Entries with no `reason` (parser recorded a position but no message
+  // string) skip the rollup — bucketing them under `undefined` or `""`
+  // would re-introduce the ambiguous-empty-string shape the per-entry
+  // omission was added to avoid.
+  for (const entry of entries) {
+    if (entry.reason === undefined) continue;
+    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+  }
   return [...counts.entries()]
     .sort(([aReason, aCount], [bReason, bCount]) =>
       bCount === aCount ? aReason.localeCompare(bReason) : bCount - aCount,

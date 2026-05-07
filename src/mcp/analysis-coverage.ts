@@ -1408,11 +1408,19 @@ function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void
   // dishonest").
   const natural = naturalParserFor(file.filePath);
   const naturalParser = natural !== null && natural !== parserAttempted ? natural : undefined;
+  // `reason` is present-when-meaningful: when the head parse error has
+  // no message string (parser recorded a position but no prose), the
+  // field is omitted entirely rather than shipping `reason: ""` — per
+  // the AI-first consumer model's rule against ambiguous field shapes,
+  // an empty string is indistinguishable from "truncated to zero
+  // chars" or "parser had no message," and the agent's downstream
+  // mistake is silent.
+  const reasonText = headError?.message ? truncateParseErrorReason(headError.message) : undefined;
   acc.parseErrorEntries.push({
     path: file.filePath,
     parserAttempted,
     ...(naturalParser === undefined ? {} : { naturalParser }),
-    reason: truncateParseErrorReason(headError?.message ?? ""),
+    ...(reasonText === undefined ? {} : { reason: reasonText }),
     ...(triggerToken === undefined ? {} : { triggerToken }),
     ...(parsedThroughLine && parsedThroughLine > 0 ? { parsedThroughLine } : {}),
   });

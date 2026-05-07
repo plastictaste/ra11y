@@ -1857,6 +1857,52 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(Object.hasOwn(entries?.[0] ?? {}, "triggerToken")).toBe(false);
     });
 
+    it("omits reason when the parser records no message (present-when-meaningful, no empty-string sentinel)", () => {
+      // Per the AI-first consumer model's "Ambiguous field shapes are
+      // dishonest" rule: a parse-error entry whose head error has no
+      // human-readable message must omit the `reason` field entirely
+      // rather than ship `reason: ""`. An agent reading `reason: ""`
+      // cannot distinguish "parser had no message" from "parser
+      // truncated to zero chars," and the silent-miss failure mode is
+      // identical to the canonical empty-string sentinel.
+      const noMessage: ParsedFile = {
+        filePath: "noisy.html",
+        source: "",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "",
+              position: { line: 3, column: 1, offset: 0 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage([noMessage], [], NO_RULES, true);
+      const entries = analysisCoverage?.["parseErrorFiles"] as
+        | {
+            path: string;
+            parserAttempted: string;
+            naturalParser?: string;
+            reason?: string;
+            triggerToken?: string;
+          }[]
+        | undefined;
+      expect(entries?.[0]?.path).toBe("noisy.html");
+      expect(entries?.[0]?.reason).toBeUndefined();
+      expect(Object.hasOwn(entries?.[0] ?? {}, "reason")).toBe(false);
+    });
+
     it("names the underlying parser honestly even when the extension disguises it (e.g. .mdx parses through the TSX bridge)", () => {
       // `file.ast.language` is the source of truth for `parser`: an
       // `.mdx` path routed through the MDX → TSX bridge emits
