@@ -4,8 +4,18 @@
  * the surface narrow.
  */
 
-/** WCAG 2.2 SC 2.5.8 minimum target size in CSS pixels. */
-export const MIN_TARGET_PX = 24;
+/** WCAG 2.2 SC 2.5.8 (AA) minimum target size in CSS pixels. */
+export const MIN_TARGET_PX_AA = 24;
+
+/** WCAG 2.2 SC 2.5.5 (AAA) enhanced target size in CSS pixels. */
+export const MIN_TARGET_PX_AAA = 44;
+
+/**
+ * Back-compat alias. Existing callers (and tests) imported `MIN_TARGET_PX`
+ * meaning the AA threshold; keep the name so downstream tests don't churn
+ * while the shared scanner accepts an explicit `minPx` parameter.
+ */
+export const MIN_TARGET_PX = MIN_TARGET_PX_AA;
 
 /** 1rem assumption — Tailwind's default base font size, matches browsers. */
 const REM_TO_PX = 16;
@@ -180,11 +190,11 @@ export interface BoxResult {
   readonly classes: string;
 }
 
-export function finalizeBox(box: BoxAccumulator, source: string): BoxResult | null {
+export function finalizeBox(box: BoxAccumulator, source: string, minPx: number): BoxResult | null {
   if (box.widthPx === null && box.heightPx === null) return null;
   const widthEff = box.widthPx === null ? Number.POSITIVE_INFINITY : box.widthPx + box.padH * 2;
   const heightEff = box.heightPx === null ? Number.POSITIVE_INFINITY : box.heightPx + box.padV * 2;
-  if (widthEff >= MIN_TARGET_PX && heightEff >= MIN_TARGET_PX) return null;
+  if (widthEff >= minPx && heightEff >= minPx) return null;
   return {
     widthPx: box.widthPx,
     heightPx: box.heightPx,

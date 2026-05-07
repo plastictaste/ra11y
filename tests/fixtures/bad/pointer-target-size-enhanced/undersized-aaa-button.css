@@ -1,0 +1,17 @@
+/* Buttons sized below the 44x44 AAA threshold — fails WCAG 2.1 SC 2.5.5
+   Target Size (Enhanced). All three would satisfy SC 2.5.8 (AA, 24x24)
+   but fail the AAA-grade enhanced bar. */
+.icon-btn {
+  width: 32px;
+  height: 32px;
+}
+
+button.compact {
+  min-width: 30px;
+  min-height: 30px;
+}
+
+input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+}

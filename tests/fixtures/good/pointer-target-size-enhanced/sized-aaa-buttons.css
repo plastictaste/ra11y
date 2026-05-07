@@ -1,0 +1,17 @@
+/* Buttons meet the WCAG 2.1 SC 2.5.5 44x44 enhanced threshold. */
+.icon-button {
+  width: 44px;
+  height: 44px;
+}
+
+button.compact {
+  min-width: 48px;
+  min-height: 48px;
+}
+
+/* Padding compensates for an undersized inner box: 24px + 10px*2 = 44px. */
+.toolbar-btn {
+  width: 24px;
+  height: 24px;
+  padding: 10px;
+}

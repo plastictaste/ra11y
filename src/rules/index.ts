@@ -99,6 +99,7 @@ import { rule as dragAlternative } from "./pointer/drag-alternative.ts";
 import { rule as draggableNoKeyboardAlt } from "./pointer/draggable-no-keyboard-alt.ts";
 import { rule as stretchedLinkMultipleInContainer } from "./pointer/stretched-link-multiple-in-container.ts";
 import { rule as targetSize } from "./pointer/target-size.ts";
+import { rule as targetSizeEnhanced } from "./pointer/target-size-enhanced.ts";
 import { rule as buttonName } from "./semantics/button-name.ts";
 import { rule as duplicateLandmarkUnlabeled } from "./semantics/duplicate-landmark-unlabeled.ts";
 import { rule as emptyHeading } from "./semantics/empty-heading.ts";
@@ -228,6 +229,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   tabWidgetRoles,
   tablistOnNonTabContainer,
   targetSize,
+  targetSizeEnhanced,
   textSpacing,
   tooltipDismissable,
   validAttr,
@@ -345,6 +347,7 @@ export {
   tablistOnNonTabContainer,
   tabWidgetRoles,
   targetSize,
+  targetSizeEnhanced,
   textSpacing,
   tooltipDismissable,
   validAttr,
