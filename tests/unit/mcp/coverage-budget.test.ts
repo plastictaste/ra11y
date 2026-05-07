@@ -183,23 +183,18 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     expect(meta.cwd).toBe("/tmp/example-project");
   });
 
-  it("routes nextStep to propose_config (scope-narrowing tool) when the slim guard fires", () => {
-    // Cycle-break invariant per
-    // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
-    // must terminate at a narrowing tool, never form a cycle between
-    // transport-failing siblings": pointing at the sibling
-    // project-rooted `checklist` tool (the previous routing) on a
-    // bulk-vendor / oversize corpus would echo the same scope-
-    // classifier and re-trigger `checklist`'s own slim guard — the
-    // canonical circular handoff with no narrowing path. The slim
-    // envelope's structured next-call routes to `propose_config`
-    // (deterministic exclude-block emission from the build-artifact
-    // classifier), so the next `scan_project` call after the agent
-    // applies the proposed excludes traverses a narrower file set by
-    // construction.
+  it("falls back to propose_config({}) when neither narrowingDir nor cwd is supplied", () => {
+    // Last-resort fallback per Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW:
+    // when no scope evidence flowed through to the helper, the slim
+    // envelope routes at `propose_config` with empty args — propose_config
+    // resolves its own scan root from the spawn directory. Still cycle-
+    // safe (NOT routed at the sibling `checklist`/`coverage` that would
+    // re-trigger the slim guard) but acknowledged as the worst routing
+    // decision available. The call site is expected to supply `cwd`
+    // (and ideally a `narrowingDir`) so this branch fires only on
+    // helper-direct invocations without context.
     const response = buildSyntheticCoverageResponse(10, {
       metaBloat: true,
-      cwd: "/tmp/example-project",
     });
     const result = applyCoverageBudget({ response });
     const slim = result.response as Record<string, unknown>;
@@ -211,31 +206,66 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     };
     expect(structured).toBeDefined();
     expect(structured.tool).toBe("propose_config");
-    // `propose_config` resolves its own scan root; including the cwd
-    // would echo the same scope that just produced the oversize
-    // envelope. Empty args is the honest shape per the doctrine
-    // bullet "never echo the parameters that just produced the
-    // truncation."
     expect(structured.args).toEqual({});
-    // Cycle-break: must NOT route to either project-rooted sibling
-    // that ships from the same scope-classifier.
     expect(structured.tool).not.toBe("coverage");
     expect(structured.tool).not.toBe("checklist");
   });
 
-  it("ships empty args even when meta carries cwd (cycle-break invariant)", () => {
-    // The cycle-break routing is unconditional — including the cwd
-    // would re-echo the scope that produced the truncation.
-    const response = buildSyntheticCoverageResponse(10, { metaBloat: true });
-    (response.meta as Record<string, unknown>).cwd = undefined;
-    const result = applyCoverageBudget({ response });
-    const slim = result.response as Record<string, unknown>;
-    const structured = slim.nextStepStructured as {
+  it("routes to propose_config({cwd}) when only cwd is supplied (no narrowing dir)", () => {
+    // Q16 closure step 2: when the caller's `cwd` is known but no
+    // dominant non-vendor top-level directory was honestly derivable
+    // (every top dir vendor-classified, files all sit at root, top-
+    // dir tally ties), the slim envelope routes to `propose_config`
+    // WITH cwd. Strictly narrower than `propose_config({})` — the
+    // agent gets a deterministic re-scan target without re-deriving
+    // cwd.
+    const response = buildSyntheticCoverageResponse(10, {
+      metaBloat: true,
+    });
+    const result = applyCoverageBudget({
+      response,
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
       tool: string;
       args: Record<string, unknown>;
     };
     expect(structured.tool).toBe("propose_config");
-    expect(structured.args).toEqual({});
+    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
+  });
+
+  it("routes to scan_project({restrictToPaths,cwd}) when narrowingDir + cwd are supplied", () => {
+    // Q16 closure step 1: when the call site identified a dominant
+    // non-vendor top-level directory in the corpus, the slim envelope
+    // routes the agent at `scan_project({restrictToPaths:
+    // [narrowingDir], cwd})` directly — the most direct scope-
+    // narrowing call available. Skips the `propose_config` round-
+    // trip entirely. Mirrors `scan_project`'s bulk-vendor scope-down
+    // override so the slim envelope's recovery path stays identical
+    // across project-rooted tools per "Per-tool lane and warning-set
+    // classification must agree."
+    const response = buildSyntheticCoverageResponse(10, {
+      metaBloat: true,
+    });
+    const result = applyCoverageBudget({
+      response,
+      narrowingDir: "src",
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("scan_project");
+    expect(structured.args).toEqual({
+      restrictToPaths: ["src"],
+      cwd: "/tmp/example-project",
+    });
+    // Cycle-break invariant still holds.
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 });
 

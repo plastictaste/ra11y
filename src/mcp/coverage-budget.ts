@@ -130,6 +130,44 @@ interface ApplyCoverageBudgetArgs {
   readonly response: Record<string, unknown>;
   /** Optional override for the hard ceiling — tests pass a smaller cap. */
   readonly hardCeilingChars?: number;
+  /**
+   * Pre-computed narrowing pivot for the slim envelope's structured
+   * nextStep. When present, the slim guard routes
+   * `nextStepStructured` to `scan_project({restrictToPaths:
+   * [narrowingDir], cwd})` so the agent's recovery call traverses a
+   * deterministically narrower file set rather than the
+   * `propose_config({})` fallback (which carries no narrowing args —
+   * `propose_config` only accepts `cwd`, so empty args echo the same
+   * scope that just produced the oversize envelope).
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+   * must terminate at a narrowing tool, never form a cycle between
+   * transport-failing siblings": when the scan classifier identifies a
+   * dominant non-vendor top-level directory in the corpus, routing the
+   * agent at that subtree directly skips the `propose_config` round-
+   * trip entirely. The propose_config fallback stays in place when no
+   * dominant authored subtree is honestly derivable (every top dir is
+   * vendor-classified, the inventory ties on count, files all sit at
+   * the root with no subdirectory) — fabricating a narrowing dir on
+   * weaker evidence is the symmetric twin of heuristic suppression.
+   *
+   * Computed at the call site via {@link pickNonVendorNarrowingDirFromPaths}
+   * over the parsed-file relative paths and the same vendor predicate
+   * the `meta.scannedBuildArtifacts` field carries.
+   */
+  readonly narrowingDir?: string;
+  /**
+   * The caller's resolved `cwd` (the scanned root). Echoed onto the
+   * structured next-call args alongside `narrowingDir` so the
+   * `scan_project({restrictToPaths: [narrowingDir], cwd})` re-scan
+   * resolves to the same scan root the agent just queried — without
+   * `cwd`, `restrictToPaths` would resolve relative to wherever the
+   * MCP server happened to spawn, silently shifting scope. Also feeds
+   * the `propose_config({cwd})` fallback when no narrowing dir is
+   * available — `propose_config` accepts `cwd` (its only arg) and
+   * passing it explicitly avoids the implicit-default ambiguity.
+   */
+  readonly cwd?: string;
 }
 
 export interface ApplyCoverageBudgetResult {
@@ -153,7 +191,7 @@ export interface ApplyCoverageBudgetResult {
  * the same `arrayKey` knob `oversize-envelope.ts` exposes.
  */
 export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverageBudgetResult {
-  const { response, hardCeilingChars } = args;
+  const { response, hardCeilingChars, narrowingDir, cwd } = args;
   // Per-rule-coverage rows are the canonical bloat surface — count
   // them as the "files dropped" denominator so the warning payload
   // stays comparable to scan_project's counter framing on bulk
@@ -173,6 +211,8 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
         original: response,
         reason,
         perRuleCoverageCount,
+        ...(narrowingDir === undefined ? {} : { narrowingDir }),
+        ...(cwd === undefined ? {} : { cwd }),
       }),
   });
   // The helper's `droppedFileCountFromRequestedLimit` field reads off
@@ -206,8 +246,10 @@ function buildSlimCoverageEnvelope(args: {
   readonly original: Record<string, unknown>;
   readonly reason: OversizeEnvelopeReason;
   readonly perRuleCoverageCount: number;
+  readonly narrowingDir?: string;
+  readonly cwd?: string;
 }): Record<string, unknown> {
-  const { original, reason } = args;
+  const { original, reason, narrowingDir, cwd } = args;
   const slimMeta = buildSlimCoverageMeta(original);
   const originalMeta = readMeta(original);
   const metaFieldsDropped =
@@ -240,7 +282,10 @@ function buildSlimCoverageEnvelope(args: {
   const slim: Record<string, unknown> = {
     ...original,
     nextStep: SLIM_NEXT_STEP_PROSE,
-    nextStepStructured: buildSlimNextStepStructured(original),
+    nextStepStructured: buildSlimNextStepStructured({
+      ...(narrowingDir === undefined ? {} : { narrowingDir }),
+      ...(cwd === undefined ? {} : { cwd }),
+    }),
     warnings: merged.warnings,
     warningsDetails: merged.warningsDetails,
     meta: slimMeta,
@@ -369,26 +414,67 @@ const SLIM_NEXT_STEP_PROSE =
   'Do NOT re-call `checklist` on the same cwd — that surface ships the same scope-classifier and will transport-fail the same way (per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs must terminate at a narrowing tool").';
 
 /**
- * Structured nextStep for the slim envelope. Routes to `propose_config`
- * — a deterministic scope-narrowing tool — instead of the sibling
- * project-rooted `checklist` tool. Per
- * `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs must
- * terminate at a narrowing tool, never form a cycle between
- * transport-failing siblings," routing the agent at `checklist` on
- * the same cwd would echo the parameters that just produced the
- * oversize envelope: `checklist` ships the same scope-classifier and
- * its own slim guard fires on the same corpus. `propose_config`
- * consumes the `scannedBuildArtifacts` evidence to emit an `exclude`
- * block — the next call after the agent applies that block runs over
- * a narrower file set by construction. Args ship empty per
- * "Ambiguous field shapes are dishonest" — `propose_config` resolves
- * its own scan root, and fabricating a `cwd` here would lock the
- * agent into the same too-large scope.
+ * Structured nextStep for the slim envelope. Three routing arms close
+ * the matrix per `docs/kb/architecture/ai-first-consumer.md` "NextStep
+ * handoffs must terminate at a narrowing tool, never form a cycle
+ * between transport-failing siblings":
+ *
+ *   1. **Dominant non-vendor top-level dir derivable** → `scan_project`
+ *      with `args: { restrictToPaths: [narrowingDir], cwd }`. The most
+ *      direct scope-narrowing call available — the next response
+ *      traverses the named subtree alone, sized far below the oversize
+ *      envelope that just fired. Skips the `propose_config` round-trip
+ *      entirely since the narrowing target is already known. Mirrors
+ *      `scan_project`'s bulk-vendor scope-down override
+ *      ({@link applyBulkVendorScopeDownOverride} in
+ *      `tool-scan-project.ts`) so the slim envelope's recovery path
+ *      stays identical across project-rooted tools per "Per-tool lane
+ *      and warning-set classification must agree."
+ *
+ *   2. **`cwd` known but no narrowing dir** → `propose_config` with
+ *      `args: { cwd }`. `propose_config` accepts only `cwd` as input
+ *      (its inputSchema in `tool-propose-config.ts`); passing the
+ *      caller's `cwd` explicitly avoids the implicit-default ambiguity
+ *      where `propose_config` would resolve to the MCP server's spawn
+ *      directory rather than the scope the agent just queried. The
+ *      agent applies the proposed `exclude` block from the build-
+ *      artifact classifier, then re-runs `scan_project` over the
+ *      narrowed file set.
+ *
+ *   3. **Neither `cwd` nor narrowing dir** → `propose_config` with
+ *      `args: {}`. Last-resort fallback when no scope evidence flowed
+ *      through to the helper. `propose_config` then resolves its own
+ *      scan root from the spawn directory, matching the legacy shape.
+ *
+ * Cycle-break invariant: arm 1 routes at `scan_project` (NOT a
+ * project-rooted sibling that ships from the same scope-classifier);
+ * arms 2 and 3 route at `propose_config` (a deterministic narrowing
+ * tool, not the sibling `checklist` that would re-trigger the slim
+ * guard on the same corpus). Per backlog Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW
+ * the empty-args propose_config route is the worst routing decision —
+ * it implies "rerun on same cwd" with no scope reduction; arms 1 and
+ * 2 close that asymmetry.
  */
-function buildSlimNextStepStructured(_original: Record<string, unknown>): {
+function buildSlimNextStepStructured(args: {
+  readonly narrowingDir?: string;
+  readonly cwd?: string;
+}): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
+  const { narrowingDir, cwd } = args;
+  if (narrowingDir !== undefined && cwd !== undefined) {
+    return {
+      tool: "scan_project",
+      args: { restrictToPaths: [narrowingDir], cwd },
+    };
+  }
+  if (cwd !== undefined) {
+    return {
+      tool: "propose_config",
+      args: { cwd },
+    };
+  }
   return {
     tool: "propose_config",
     args: {},

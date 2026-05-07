@@ -11,6 +11,7 @@ import { buildCoverageReport } from "../reports/coverage.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
+import { posixRelative } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { applyCoverageBudget } from "./coverage-budget.ts";
@@ -19,12 +20,14 @@ import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
 import { collectVerifyTokenViolationCriteria } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { pickNonVendorNarrowingDirFromPaths } from "./narrowing-dir-from-paths.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import {
   buildSharedPerRuleCoverageMeta,
   type SharedPerRuleCoverageMetaResult,
 } from "./per-rule-coverage-shared.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { buildVendorPredicate } from "./scan-project-budget.ts";
 import {
   buildScanProjectReviewCandidates,
   type ScanProjectReviewCandidate,
@@ -849,7 +852,21 @@ export const coverageTool: McpTool = {
       // helper. Extracted into a helper so the handler stays under the
       // lint's cognitive-complexity cap. Mirrors `scan_file`'s
       // `maxBytes` knob and `checklist`'s parallel knob.
-      const budgeted = applyCoverageBudgetWithMaxBytes(fullResponse, params);
+      // Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW: thread the
+      // pre-computed dominant non-vendor top-level directory (and the
+      // resolved cwd) so the slim envelope routes
+      // `nextStepStructured` to `scan_project({restrictToPaths:
+      // [narrowingDir], cwd})` rather than the legacy
+      // `propose_config({})` fallback. The vendor predicate uses the
+      // same `meta.scannedBuildArtifacts` evidence that already rides
+      // on the response so the lane classification stays in agreement
+      // with `scan_project` per "Per-tool lane and warning-set
+      // classification must agree."
+      const budgeted = applyCoverageBudgetWithMaxBytes(fullResponse, params, {
+        files,
+        cwd,
+        buildArtifactsMetaField: scanTime.buildArtifactsMetaField,
+      });
       return textResult(budgeted.response);
     }
     return textResult(entries);
@@ -875,12 +892,62 @@ export const coverageTool: McpTool = {
 function applyCoverageBudgetWithMaxBytes(
   response: Record<string, unknown>,
   params: Record<string, unknown>,
+  routingInputs: {
+    readonly files: readonly ParsedFile[];
+    readonly cwd: string;
+    readonly buildArtifactsMetaField: { readonly scannedBuildArtifacts?: unknown };
+  },
 ): { readonly response: Record<string, unknown>; readonly truncated: boolean } {
   const maxBytes = numParam(params, "maxBytes");
+  const narrowingDir = pickCoverageNarrowingDir(
+    routingInputs.files,
+    routingInputs.cwd,
+    routingInputs.buildArtifactsMetaField,
+  );
   return applyCoverageBudget({
     response,
     ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+    ...(narrowingDir === undefined ? {} : { narrowingDir }),
+    cwd: routingInputs.cwd,
   });
+}
+
+/**
+ * Computes the dominant non-vendor top-level directory for the slim
+ * envelope's structured nextStep. Uses the
+ * `scanTime.buildArtifactsMetaField` already in scope to derive the
+ * vendor predicate (mirroring `scan_project`'s
+ * {@link buildVendorPredicate} so the lane classification agrees
+ * across surfaces) and delegates to
+ * {@link pickNonVendorNarrowingDirFromPaths} for the tally + tie-break
+ * logic.
+ *
+ * Returns `undefined` when no dominant subtree is honestly derivable —
+ * the slim helper then falls back to `propose_config({cwd})` per the
+ * Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW closure: explicit `cwd`
+ * is still narrower than the legacy `propose_config({})` because the
+ * implicit-default ambiguity is resolved.
+ *
+ * Extracted so the handler stays under the lint's cognitive-complexity
+ * cap and the conversion shape stays parallel to
+ * `tool-checklist.ts.pickChecklistNarrowingDir` per AI-first doctrine
+ * "Per-tool lane and warning-set classification must agree."
+ */
+function pickCoverageNarrowingDir(
+  files: readonly ParsedFile[],
+  cwd: string,
+  buildArtifactsMetaField: { readonly scannedBuildArtifacts?: unknown },
+): string | undefined {
+  // The shared vendor predicate keys off `scannedBuildArtifacts`
+  // entries' `path` field, which is root-relative POSIX (per
+  // build-artifacts.ts emission). The relative path we pass in
+  // matches that key shape exactly, so the predicate fires on the
+  // intended files.
+  const isVendor = buildVendorPredicate({
+    scannedBuildArtifacts: buildArtifactsMetaField.scannedBuildArtifacts,
+  });
+  const relativePaths = files.map((f) => posixRelative(cwd, f.filePath));
+  return pickNonVendorNarrowingDirFromPaths(relativePaths, isVendor);
 }
 
 /**

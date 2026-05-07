@@ -37,7 +37,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
@@ -193,6 +193,123 @@ describe("checklist + coverage Q17 oversize-envelope wiring (end-to-end)", () =>
     expect(data["summary"]).toBeDefined();
     expect(typeof data["nextStep"]).toBe("string");
     expect((data["nextStep"] as string).length).toBeGreaterThan(0);
+  });
+
+  it("Q16: nextStepStructured routes to scan_project({restrictToPaths,cwd}) on a corpus with a dominant non-vendor subtree", async () => {
+    // Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW: when truncation
+    // fires AND the corpus carries a dominant non-vendor top-level
+    // directory (the authored content the agent is trying to triage),
+    // the slim envelope routes the agent at
+    // `scan_project({restrictToPaths: [<topDir>], cwd})` directly
+    // rather than the legacy `propose_config({})` fallback. The
+    // legacy fallback's empty args carried no narrowing, so the
+    // agent's recovery call traversed the same too-large scope —
+    // the cycle-break invariant the doctrine names. The new routing
+    // closes that asymmetry by naming the dominant authored subtree
+    // explicitly. Pinned here end-to-end via the MCP handler so the
+    // pre-computation at the call site (parsed-files + vendor
+    // predicate → narrowingDir) flows through to the structured
+    // next-call.
+    const dir = await mkdtemp(join(tmpdir(), "ra11y-q16-narrowing-"));
+    // Authored subtree under `src/` so the picker has a clear
+    // dominant non-vendor top-level directory to surface. Multiple
+    // files under one subtree weight the picker toward that subtree
+    // unambiguously.
+    await mkdir(join(dir, "src"), { recursive: true });
+    await writeFile(
+      join(dir, "src", "index.html"),
+      `<!doctype html>
+<html lang="en">
+<head><title>Index</title></head>
+<body>
+<main><h1>Hi</h1>
+<a href="/x">Read more</a><a href="/y">Read more</a><a href="/z">Read more</a>
+<form><input name="q"><button>Go</button></form>
+</main>
+</body>
+</html>
+`,
+    );
+    await writeFile(
+      join(dir, "src", "page.html"),
+      `<!doctype html>
+<html lang="en">
+<head><title>Page</title></head>
+<body>
+<main><h2>About</h2>
+<img src="/img.png">
+<form><input name="email"><button>Subscribe</button></form>
+</main>
+</body>
+</html>
+`,
+    );
+
+    const session = new McpSession();
+    const checklistResult = await findTool("checklist").handler(
+      { cwd: dir, maxBytes: HARD_CEILING },
+      session,
+    );
+    const coverageResult = await findTool("coverage").handler(
+      { cwd: dir, maxBytes: HARD_CEILING },
+      session,
+    );
+
+    expect(checklistResult.isError).toBeUndefined();
+    expect(coverageResult.isError).toBeUndefined();
+
+    const checklistData = JSON.parse(checklistResult.content[0].text) as Record<string, unknown>;
+    const coverageData = JSON.parse(coverageResult.content[0].text) as Record<string, unknown>;
+
+    // Both responses fell back to the slim envelope (HARD_CEILING is
+    // tight enough to trip even the small synthetic corpus).
+    expect(checklistData["truncated"]).toBe(true);
+    expect(coverageData["truncated"]).toBe(true);
+
+    // Per Q16 closure: when a dominant non-vendor top-level directory
+    // is honestly derivable, the structured next-call routes at
+    // `scan_project({restrictToPaths: [<topDir>], cwd})` — the most
+    // direct scope-narrowing call. The single subtree on this fixture
+    // is `src/`, so the picker resolves the narrowing target to "src".
+    const checklistNs = checklistData["nextStepStructured"] as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    const coverageNs = coverageData["nextStepStructured"] as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(checklistNs.tool).toBe("scan_project");
+    expect((checklistNs.args["restrictToPaths"] as readonly string[])[0]).toBe("src");
+    expect(checklistNs.args["cwd"]).toBe(dir);
+    expect(coverageNs.tool).toBe("scan_project");
+    expect((coverageNs.args["restrictToPaths"] as readonly string[])[0]).toBe("src");
+    expect(coverageNs.args["cwd"]).toBe(dir);
+
+    // Cycle-break invariant still holds: must NOT route at sibling
+    // project-rooted full-scan tool that ships from the same scope-
+    // classifier.
+    expect(checklistNs.tool).not.toBe("checklist");
+    expect(checklistNs.tool).not.toBe("coverage");
+    expect(coverageNs.tool).not.toBe("checklist");
+    expect(coverageNs.tool).not.toBe("coverage");
+
+    // Args agreement: the structured target's args MUST narrow scope
+    // (carry `restrictToPaths` or otherwise reduce input), never
+    // re-echo `args: {}` which provides no narrowing. Per the Q16
+    // closure: "args:{} means 'rerun on same cwd' with no scope
+    // reduction" — the worst routing decision the slim path could
+    // make.
+    expect(Object.keys(checklistNs.args).length).toBeGreaterThan(0);
+    expect(Object.keys(coverageNs.args).length).toBeGreaterThan(0);
+    // Trace one hop on the same cwd: the `restrictToPaths` target
+    // reduces the input scope (single subtree vs. whole tree). Per
+    // the doctrine "every cross-tool nextStepStructured.tool
+    // recommendation, traced one hop further on the same cwd, must
+    // reduce input scope or reduce the rule set; never echo the
+    // parameters that just produced the truncation."
+    expect(checklistNs.args["restrictToPaths"]).toBeDefined();
+    expect(coverageNs.args["restrictToPaths"]).toBeDefined();
   });
 
   it("checklist + coverage trigger oversize on the SAME bulk-vendor cwd simultaneously", async () => {

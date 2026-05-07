@@ -24,6 +24,7 @@ import type {
 } from "../types/review.ts";
 import type { Violation } from "../types/violation.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
+import { posixRelative } from "../utils/path.ts";
 import {
   buildSnippetForReason,
   buildTightLineSnippet,
@@ -51,6 +52,7 @@ import {
   tallyManualCriteriaFromCoverage,
 } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { pickNonVendorNarrowingDirFromPaths } from "./narrowing-dir-from-paths.ts";
 import {
   requireBooleanParam,
   requireNumberParam,
@@ -1735,13 +1737,61 @@ export const checklistTool: McpTool = {
     // and warning-set classification must agree": same override knob
     // shape across every project-rooted tool that runs the slim guard.
     const maxBytes = numParam(params, "maxBytes");
+    // Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW: pre-compute the
+    // dominant non-vendor top-level directory so the slim envelope's
+    // structured nextStep can route directly at
+    // `scan_project({restrictToPaths: [narrowingDir], cwd})` rather
+    // than the legacy `propose_config({})` fallback that names no
+    // narrowing args. The propose_config tool only accepts `cwd`, so
+    // empty args echoed the same scope that produced the oversize
+    // envelope — the worst routing decision the slim path could make
+    // per the AI-first doctrine "NextStep handoffs must terminate at a
+    // narrowing tool, never form a cycle between transport-failing
+    // siblings." When no dominant authored subtree is honestly
+    // derivable (every top dir vendor-classified, files all sit at
+    // root, top-dir tally ties), `narrowingDir` is `undefined` and the
+    // helper falls back to `propose_config({cwd})` — still narrower
+    // than `propose_config({})` because the explicit cwd avoids the
+    // implicit-default ambiguity. The vendor predicate is built off
+    // the same `buildArtifactPaths` set the response-assembler uses
+    // for the `couldBeWrongBecause` stamp, so the per-tool lane
+    // classification stays in agreement per "Per-tool lane and
+    // warning-set classification must agree."
+    const narrowingDir = pickChecklistNarrowingDir(files, cwd, buildArtifactPaths);
     const budgeted = applyChecklistBudget({
       response: fullResponse,
       ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+      ...(narrowingDir === undefined ? {} : { narrowingDir }),
+      cwd,
     });
     return textResult(budgeted.response);
   },
 };
+
+/**
+ * Computes the dominant non-vendor top-level directory for the slim
+ * envelope's structured nextStep. Maps absolute parsed-file paths and
+ * the vendor classification set to root-relative POSIX, then delegates
+ * to {@link pickNonVendorNarrowingDirFromPaths} for the tally + tie-
+ * break logic. Returns `undefined` when no dominant subtree is
+ * honestly derivable — the call site's slim helper then falls back to
+ * `propose_config({cwd})` rather than fabricating a narrowing pivot.
+ *
+ * Extracted from the handler so the handler stays under the lint's
+ * cognitive-complexity cap. Mirrors the conversion shape `tool-coverage.ts`
+ * uses for the same predicate so the cross-tool slim envelope routing
+ * stays symmetric per AI-first doctrine "Per-tool lane and warning-set
+ * classification must agree."
+ */
+function pickChecklistNarrowingDir(
+  files: readonly ParsedFile[],
+  cwd: string,
+  buildArtifactPaths: ReadonlySet<string>,
+): string | undefined {
+  const vendorRelative = new Set([...buildArtifactPaths].map((abs) => posixRelative(cwd, abs)));
+  const relativePaths = files.map((f) => posixRelative(cwd, f.filePath));
+  return pickNonVendorNarrowingDirFromPaths(relativePaths, (rel) => vendorRelative.has(rel));
+}
 
 /**
  * Assembles the `warnings` + `warningsDetails` fragment for `checklist`.
