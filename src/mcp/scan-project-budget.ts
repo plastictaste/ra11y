@@ -746,17 +746,12 @@ function readWarningsDetails(original: Record<string, unknown>): ScanWarningDeta
  *     "Truncated containers must rename or sentinel, not retain" silent-
  *     miss failure mode.
  *   - `restrictToPathsApplied` — present-when-meaningful scope-confirmation
- *     telemetry stamped by `applyRestrictToPaths` whenever the caller
- *     passed a non-empty `restrictToPaths` param. The payload carries
- *     the resolved paths plus pre/post intersection counts, which an
- *     agent reading the slim envelope needs to distinguish "restrict
- *     scoped to N files" from "restrict silently ignored, full corpus
- *     scanned" — without it, an oversize-fallback response with
- *     `filesScanned: 4936` reads as a full-corpus scan even when the
- *     caller had explicitly narrowed via `restrictToPaths`. Inverts
- *     the meaning of `filesScanned` if dropped. Tiny payload (paths +
- *     two scalar counters), no slimming needed; conditional-spread
- *     ensures it stays absent on calls that didn't pass the param.
+ *     telemetry stamped when the caller passed a non-empty
+ *     `restrictToPaths` param. Inverts the meaning of `filesScanned` on
+ *     the slim envelope: drop it and an agent reading the surviving
+ *     block cannot distinguish "restrict scoped to N files" from
+ *     "restrict silently ignored, full corpus scanned." Tiny payload
+ *     (paths + pre/post counters), no slimming needed.
  *
  * Everything else (perRuleCoverage, scannedBuildArtifacts,
  * analysisCoverage, scope, additionalPathsScanned, …) is dropped on
@@ -1084,8 +1079,7 @@ export function pickNonVendorNarrowingDir(
   // honesty principle as `pickTopRuleByCount` — naming an alphabetical
   // winner would route to a dir that doesn't actually dominate. The
   // caller ships empty args and the agent picks.
-  if (tie || topDir === undefined) return undefined;
-  return topDir;
+  return tie ? undefined : topDir;
 }
 
 /**
