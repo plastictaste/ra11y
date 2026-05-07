@@ -74,13 +74,13 @@ import {
 } from "./per-finding-beyond-parse-boundary.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
-// biome-ignore format: keep import on one line — file effective-line budget
-import { buildCorpusWarningFilesFromCodeDemoMatches, enrichFindingsWithCorpusWarningFiles } from "./per-finding-corpus-warning-files.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
 } from "./per-finding-confidence-parity.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { buildCorpusWarningFilesFromCodeDemoMatches, enrichFindingsWithCorpusWarningFiles } from "./per-finding-corpus-warning-files.ts";
 import { buildSharedPerRuleCoverageMeta } from "./per-rule-coverage-shared.ts";
 import {
   buildReferenceGuide,
