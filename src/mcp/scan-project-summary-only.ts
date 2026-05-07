@@ -48,6 +48,11 @@
  */
 
 import type { NextStepStructured } from "./next-step.ts";
+import {
+  guardOversizeEnvelope,
+  type OversizeEnvelopeReason,
+  oversizeEnvelopeWarningsField,
+} from "./oversize-envelope.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
 import type { ScanWarningCode, ScanWarningDetails } from "./warnings.ts";
 
@@ -232,7 +237,7 @@ export function buildSummaryOnlyResponse(args: {
   const { formatted, fullMeta, warnings, warningsDetails } = args;
   const { meta, metaFieldsDropped } = buildSummaryMeta(fullMeta);
   const nextStepStructured = buildSummaryNextStepStructured(formatted.plan);
-  return {
+  const assembled: Record<string, unknown> = {
     plan: formatted.plan,
     summaryOnly: true as const,
     filesArrayDropped: true as const,
@@ -246,4 +251,376 @@ export function buildSummaryOnlyResponse(args: {
       : { warningsDetails }),
     meta,
   };
+  // Q17 oversize-envelope guard: when even the summary envelope crosses
+  // the host token ceiling, fall back to a further-slimmed shape and
+  // emit `response_dropped_files_oversize` so the agent reads an honest
+  // "scope down further" signal. Without this guard, bulk-vendor
+  // corpora can produce summary envelopes that still transport-fail
+  // — succeed-then-evaporate — with no warning telling the caller.
+  // Per AI-first doctrine "Oversize-success is ambiguous failure."
+  const budgeted = applySummaryOnlyBudget({
+    response: assembled,
+    totalFilesWithFindings: formatted.files.length,
+  });
+  return budgeted.response;
+}
+
+/**
+ * Top-level meta keys the summary-only slim envelope keeps when the
+ * post-summary response is STILL over the host ceiling. Subset of
+ * {@link SUMMARY_META_KEYS} — drops the verbose per-extension /
+ * per-file fans (`filesByExtension`, `analysisCoverage`,
+ * `rulesNotEvaluatedDueToInputType`) so the surviving envelope fits
+ * under the minimum target.
+ *
+ * Mirrors `SLIM_META_KEYS` in `scan-project-budget.ts` for the
+ * standard slim path; the two key lists are intentionally close so the
+ * agent reading either slim envelope reads the same scan-confidence
+ * scalars.
+ */
+const SUMMARY_SLIM_META_KEYS: readonly string[] = [
+  "tool",
+  "version",
+  "standards",
+  "level",
+  "filesScanned",
+  "durationMs",
+  "configSource",
+  "scanned",
+  "rootSource",
+  "scanMode",
+  "hostDeclaredRoots",
+  "rootsOverlapNote",
+];
+
+/**
+ * Head-slice cap for `plan.topRules` on the summary-slim envelope. The
+ * full rollup carries up to {@link import("./scan-assembly.ts").TOP_RULES_DEFAULT_LIMIT}
+ * (10) entries at ~250 chars each. Mirrors `SLIM_TOP_RULES_CAP` in
+ * `scan-project-budget.ts` so the cross-surface slim shape stays
+ * symmetric.
+ */
+const SUMMARY_SLIM_TOP_RULES_CAP = 3;
+
+/**
+ * Head-slice cap for `plan.findingsByFile` on the summary-slim
+ * envelope. Mirrors `SLIM_FINDINGS_BY_FILE_CAP` in
+ * `scan-project-budget.ts`.
+ */
+const SUMMARY_SLIM_FINDINGS_BY_FILE_CAP = 3;
+
+/**
+ * Head-slice cap for `plan.findingsByRule` on the summary-slim
+ * envelope. The full map keys every rule that emitted at least one
+ * error/warning finding — on a corpus where 80+ distinct rules fired,
+ * the map alone can carry ~5KB. Cap at 10 entries (sorted by count
+ * descending so the dominant rules survive); the truncated count
+ * lands in `slimTruncations`.
+ *
+ * Slightly higher than `SUMMARY_SLIM_TOP_RULES_CAP` because
+ * `findingsByRule` is the agent's canonical "which rules fired and how
+ * many of each" surface, used to estimate rule-by-rule fix cost. Three
+ * entries would force a re-call to learn the per-rule distribution;
+ * ten preserves the routing utility while still trimming the long tail.
+ */
+const SUMMARY_SLIM_FINDINGS_BY_RULE_CAP = 10;
+
+interface SummaryTruncationEntry {
+  readonly fieldPath: string;
+  readonly shown: number;
+  readonly total: number;
+}
+
+/**
+ * Result of {@link applySummaryOnlyBudget}.
+ */
+export interface ApplySummaryOnlyBudgetResult {
+  readonly response: Record<string, unknown>;
+  /** True when the slim guard fired. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Applies the oversize-envelope guard to a `summaryOnly: true`
+ * response. Pure: never mutates `args.response`. The slim builder owns
+ * its own response shape — this helper only routes between
+ * pass-through and slim.
+ *
+ * Pass-through is reference-stable when the response fits under the
+ * host ceiling — the under-cap path returns the input by reference so
+ * downstream consumers see no churn on common-case responses.
+ *
+ * Slim path: head-slices verbose plan rollups (`topRules`,
+ * `findingsByFile`, `findingsByRule`), drops verbose meta keys
+ * (`filesByExtension`, `analysisCoverage`,
+ * `rulesNotEvaluatedDueToInputType`), and stamps
+ * `response_dropped_files_oversize` with `slimTruncations` /
+ * `metaFieldsDropped` so the agent reads an honest "scope down
+ * further" signal.
+ *
+ * Per AI-first doctrine "Oversize-success is ambiguous failure" —
+ * when the summary envelope itself crosses the host ceiling, the
+ * caller needs the same minimum-honest envelope behavior the standard
+ * `scan_project` slim path offers.
+ */
+export function applySummaryOnlyBudget(args: {
+  readonly response: Record<string, unknown>;
+  readonly hardCeilingChars?: number;
+  readonly totalFilesWithFindings?: number;
+}): ApplySummaryOnlyBudgetResult {
+  const { response, hardCeilingChars, totalFilesWithFindings } = args;
+  // The summary envelope already dropped `files[]`; the post-summary
+  // inventory denominator is `totalFilesWithFindings` from the response
+  // when the caller didn't supply one explicitly. Default to 0 when
+  // both are absent — defensive, matches the helper's behavior on
+  // hostile inputs (`oversize-envelope.ts` does the same).
+  const totalFromResponse =
+    typeof response["totalFilesWithFindings"] === "number"
+      ? (response["totalFilesWithFindings"] as number)
+      : 0;
+  const total = totalFilesWithFindings ?? totalFromResponse;
+  const guarded = guardOversizeEnvelope({
+    original: response,
+    // The summary envelope has no `files[]` — set `arrayKey` to a key
+    // that will resolve to a non-array so `droppedFileCountFromRequestedLimit`
+    // defaults to 0 (no per-file entries to drop on this surface).
+    // The honest count is in `totalFilesWithFindings`.
+    arrayKey: "files",
+    totalFilesWithFindings: total,
+    ...(hardCeilingChars === undefined ? {} : { hardCeilingChars }),
+    buildSlim: (reason) =>
+      buildSummarySlimEnvelope({
+        original: response,
+        reason,
+        totalFilesWithFindings: total,
+      }),
+  });
+  return { response: guarded.response, truncated: guarded.triggered };
+}
+
+/**
+ * Builds the minimum-honest envelope when the post-summary response is
+ * still over the host ceiling. Trims verbose plan rollups, drops
+ * verbose meta keys, and stamps `response_dropped_files_oversize` with
+ * the byte arithmetic + per-field truncation summary.
+ *
+ * Retains the discriminator pair (`summaryOnly: true` +
+ * `filesArrayDropped: true`) so an agent reading the slim response can
+ * still tell summary-only mode from a clean scan of zero files. The
+ * slim path adds the warning, it does NOT strip the mode flag.
+ *
+ * Drops `metaFieldsDroppedForSummary` (the prior summary-trim audit
+ * field) — the canonical `metaFieldsDropped` payload on
+ * `warningsDetails.response_dropped_files_oversize` carries the
+ * superset (every key the slim builder discarded), so retaining the
+ * earlier field would create redundant overlapping signals per
+ * "Truncation reporters must reconcile across warnings."
+ *
+ * Pure: returns a fresh response object; never mutates `original`.
+ */
+function buildSummarySlimEnvelope(args: {
+  readonly original: Record<string, unknown>;
+  readonly reason: OversizeEnvelopeReason;
+  readonly totalFilesWithFindings: number;
+}): Record<string, unknown> {
+  const { original, reason, totalFilesWithFindings } = args;
+  // Slim the meta block further. `original.meta` was already trimmed
+  // by `buildSummaryMeta` — the slim path drops the remaining verbose
+  // sub-fields (`filesByExtension`, `analysisCoverage`, etc.) so the
+  // surviving envelope fits under the minimum target.
+  const summaryMeta = readMeta(original) ?? {};
+  const slimMeta: Record<string, unknown> = {};
+  for (const key of SUMMARY_SLIM_META_KEYS) {
+    if (key in summaryMeta) slimMeta[key] = summaryMeta[key];
+  }
+  // metaFieldsDropped here is the SUPERSET of the prior summary-trim
+  // and the additional slim-trim — every meta key the agent would have
+  // seen in the full meta block but isn't on the wire now. Reconstruct
+  // by reading the prior summary trim audit (`metaFieldsDroppedForSummary`)
+  // and unioning with the new slim drops.
+  const summaryAlreadyDropped = readStringArray(original, "metaFieldsDroppedForSummary") ?? [];
+  const slimNewlyDropped = Object.keys(summaryMeta).filter((k) => !(k in slimMeta));
+  const metaFieldsDropped = unionInOrder(summaryAlreadyDropped, slimNewlyDropped);
+  // Trim verbose plan arrays / maps. Each cap fires only when the
+  // input exceeded it; the truncations array reports each field
+  // independently so `slimTruncations` carries the per-field
+  // shown/total pair the agent can act on.
+  const originalPlan = readPlan(original) ?? {};
+  const { plan: slimPlan, truncations: planTruncations } = trimSummaryPlan(originalPlan);
+  // Pre-existing warnings + warningsDetails ride through the merge so
+  // codes like `scanned_build_artifacts_present` accumulated upstream
+  // are preserved on the slim envelope. Same shape as the standard
+  // `scan_project` slim path.
+  const baseWarnings = readWarnings(original);
+  const baseWarningsDetails = readWarningsDetails(original);
+  const merged = oversizeEnvelopeWarningsField({
+    reason,
+    ...(baseWarnings === undefined ? {} : { baseWarnings }),
+    ...(baseWarningsDetails === undefined ? {} : { baseWarningsDetails }),
+    ...(metaFieldsDropped.length > 0 ? { metaFieldsDropped } : {}),
+    ...(planTruncations.length > 0 ? { slimTruncations: planTruncations } : {}),
+  });
+  // Pass through the small load-bearing top-level fields. The
+  // discriminator pair (`summaryOnly`, `filesArrayDropped`) MUST
+  // survive so the agent can still tell summary-only from a clean
+  // scan of zero files.
+  const nextStepStructured = readNextStepStructured(original);
+  return {
+    plan: slimPlan,
+    summaryOnly: true as const,
+    filesArrayDropped: true as const,
+    totalFilesWithFindings,
+    nextStep: SUMMARY_SLIM_NEXT_STEP_PROSE,
+    ...(nextStepStructured === undefined ? {} : { nextStepStructured }),
+    warnings: merged.warnings,
+    warningsDetails: merged.warningsDetails,
+    meta: slimMeta,
+  };
+}
+
+/**
+ * Trims the verbose plan arrays / maps the summary-slim envelope
+ * head-slices. Three plan fields grow linearly with input fan-out and
+ * cross the slim budget on bulk-vendor corpora: `topRules`,
+ * `findingsByFile`, `findingsByRule`.
+ *
+ * Returns a `{ plan, truncations }` pair so the caller threads the
+ * truncation summary into the warnings-channel payload. Pure: never
+ * mutates the input plan.
+ */
+function trimSummaryPlan(plan: Record<string, unknown>): {
+  readonly plan: Record<string, unknown>;
+  readonly truncations: readonly SummaryTruncationEntry[];
+} {
+  let next: Record<string, unknown> = plan;
+  const truncations: SummaryTruncationEntry[] = [];
+  const trimArray = (key: string, cap: number): void => {
+    const value = plan[key];
+    if (!Array.isArray(value) || value.length <= cap) return;
+    const trimmed = value.slice(0, cap);
+    next = { ...next, [key]: trimmed };
+    truncations.push({ fieldPath: `plan.${key}`, shown: trimmed.length, total: value.length });
+  };
+  trimArray("topRules", SUMMARY_SLIM_TOP_RULES_CAP);
+  trimArray("findingsByFile", SUMMARY_SLIM_FINDINGS_BY_FILE_CAP);
+  // findingsByRule is a `Record<string, number>` (one entry per
+  // rule that emitted at least one error/warning), not an array.
+  // Head-slice by sorting entries descending and keeping the top
+  // SUMMARY_SLIM_FINDINGS_BY_RULE_CAP. Tie-break by ruleId
+  // alphabetically for deterministic wire shape across runs.
+  const findingsByRule = plan["findingsByRule"];
+  if (
+    findingsByRule !== undefined &&
+    findingsByRule !== null &&
+    typeof findingsByRule === "object"
+  ) {
+    const entries = Object.entries(findingsByRule as Record<string, unknown>).filter(
+      (e): e is readonly [string, number] => typeof e[1] === "number",
+    );
+    if (entries.length > SUMMARY_SLIM_FINDINGS_BY_RULE_CAP) {
+      const sorted = [...entries].sort((a, b) => {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        return a[0].localeCompare(b[0]);
+      });
+      const trimmed = sorted.slice(0, SUMMARY_SLIM_FINDINGS_BY_RULE_CAP);
+      const trimmedMap: Record<string, number> = {};
+      for (const [k, v] of trimmed) trimmedMap[k] = v;
+      next = { ...next, findingsByRule: trimmedMap };
+      truncations.push({
+        fieldPath: "plan.findingsByRule",
+        shown: trimmed.length,
+        total: entries.length,
+      });
+    }
+  }
+  return { plan: next, truncations };
+}
+
+/**
+ * Prose for the summary-slim envelope's nextStep. Names the recovery
+ * the agent needs to perform when even the summary envelope crossed
+ * the host ceiling: scope down further (the recovery direction is
+ * the same as the standard slim path, but the framing is explicit
+ * about "summary mode was already the fallback — scope down one
+ * more level").
+ *
+ * Per AI-first doctrine "NextStep handoffs must terminate at a
+ * narrowing tool, never form a cycle between transport-failing
+ * siblings": the summary-slim envelope must NOT route the agent back
+ * at `scan_project({ summaryOnly: true })` with the same params —
+ * that would cycle. The recovery names `restrictToPaths` (a real
+ * narrowing knob) and `propose_config` (a deterministic excludes
+ * generator) as concrete next moves.
+ */
+const SUMMARY_SLIM_NEXT_STEP_PROSE =
+  "Even the summary-only envelope crossed the MCP host's token ceiling on this corpus, so verbose plan rollups (topRules / findingsByFile / findingsByRule) and per-extension meta were further trimmed to keep the response routable. " +
+  "Scope down further before re-calling: pass a tighter `cwd` to a single sub-tree, use `restrictToPaths: [<dominant path from plan.findingsByFile>]`, " +
+  "or call `propose_config` to emit an `exclude` block from the build-artifact classifier and re-run `scan_project` over the narrowed file set. " +
+  "Do NOT re-call `scan_project({ summaryOnly: true })` with the same scope — the envelope was already over the ceiling on that scope.";
+
+function readMeta(response: Record<string, unknown>): Record<string, unknown> | undefined {
+  const m = response["meta"];
+  if (m === undefined || m === null || typeof m !== "object") return undefined;
+  return m as Record<string, unknown>;
+}
+
+function readPlan(response: Record<string, unknown>): Record<string, unknown> | undefined {
+  const p = response["plan"];
+  if (p === undefined || p === null || typeof p !== "object") return undefined;
+  return p as Record<string, unknown>;
+}
+
+function readWarnings(response: Record<string, unknown>): readonly ScanWarningCode[] | undefined {
+  const w = response["warnings"];
+  if (!Array.isArray(w)) return undefined;
+  return w as readonly ScanWarningCode[];
+}
+
+function readWarningsDetails(response: Record<string, unknown>): ScanWarningDetails | undefined {
+  const d = response["warningsDetails"];
+  if (d === undefined || d === null || typeof d !== "object") return undefined;
+  return d as ScanWarningDetails;
+}
+
+function readNextStepStructured(
+  response: Record<string, unknown>,
+): NextStepStructured | undefined {
+  const n = response["nextStepStructured"];
+  if (n === undefined || n === null || typeof n !== "object") return undefined;
+  return n as NextStepStructured;
+}
+
+function readStringArray(
+  response: Record<string, unknown>,
+  key: string,
+): readonly string[] | undefined {
+  const v = response[key];
+  if (!Array.isArray(v)) return undefined;
+  return v.filter((x): x is string => typeof x === "string");
+}
+
+/**
+ * Concatenates two ordered string lists into one, dropping duplicates
+ * while preserving the first-seen order. Used to merge the prior
+ * summary-trim drops with the new slim-trim drops so
+ * `metaFieldsDropped` lists every key the agent would have seen on the
+ * full meta block but doesn't see on the slim envelope.
+ */
+function unionInOrder(
+  first: readonly string[],
+  second: readonly string[],
+): readonly string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of first) {
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  for (const s of second) {
+    if (seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
 }
