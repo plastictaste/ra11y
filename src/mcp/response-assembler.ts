@@ -75,6 +75,10 @@ import {
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
+  type CorpusWarningFiles,
+  enrichFindingsWithCorpusWarningFiles,
+} from "./per-finding-corpus-warning-files.ts";
+import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
@@ -359,6 +363,43 @@ export interface ScanFamilyResponse {
 function violationFilePathSet(violations: readonly Violation[]): Set<string> {
   const out = new Set<string>();
   for (const v of violations) out.add(v.location.filePath);
+  return out;
+}
+
+/**
+ * Builds the {@link CorpusWarningFiles} array consumed by the per-FILE
+ * propagation pass on per-finding `couldBeWrongBecause`. Each entry
+ * pairs one corpus-level warning code with the file-path set the
+ * warning's evidence model named, so the per-finding helper can append
+ * the code (and downgrade confidence one step) on every finding whose
+ * hosting file is in the named set.
+ *
+ * Currently sources one warning — `jsx_code_demo_prop_parsed_as_live_dom`
+ * (file paths drawn from the same map that drives the corpus-level
+ * warning code at the warnings module). Other warnings carrying file
+ * lists (`dynamic_content_container_detected`,
+ * `parser_bailed_on_non_jsx_in_tsx_route`,
+ * `linked_stylesheet_local_unresolved`) can opt in by appending to the
+ * returned array. Each entry is independent — the per-finding helper
+ * propagates them all in a single pass.
+ *
+ * Returns an empty array (no entries with non-empty file sets) when
+ * none of the wired warnings fired on this scan; the per-finding
+ * helper's no-op fast path keeps the common case cheap.
+ */
+function buildCorpusWarningFiles(
+  codeDemoPropMatches: ReadonlyMap<string, readonly { readonly bodyStartLine: number }[]> | undefined,
+): readonly CorpusWarningFiles[] {
+  const out: CorpusWarningFiles[] = [];
+  if (codeDemoPropMatches !== undefined && codeDemoPropMatches.size > 0) {
+    const files = new Set<string>();
+    for (const [path, matches] of codeDemoPropMatches) {
+      if (matches.length > 0) files.add(path);
+    }
+    if (files.size > 0) {
+      out.push({ warningCode: "jsx_code_demo_prop_parsed_as_live_dom", files });
+    }
+  }
   return out;
 }
 
@@ -951,6 +992,31 @@ export function assembleScanFamilyResponse(
   // (object identity stable on the common case — non-MDX repos pay
   // no walk).
   fileEntries = enrichFindingsWithCodeDemoPropMatch(fileEntries, input.codeDemoPropMatches);
+  // Per-finding propagation for the per-FILE axis on corpus-level
+  // warnings whose evidence carries a file list. Generalized companion
+  // to the per-LINE pass above: where the line-range gate tags only
+  // findings INSIDE a recorded code-demo prop body, this pass tags
+  // every finding on a file the warning's payload names — including
+  // findings outside any recorded body range. Doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations" extended to corpus-
+  // level warnings: when the warning channel ships
+  // `jsx_code_demo_prop_parsed_as_live_dom.files: ["docs/forms.mdx"]`
+  // and a per-finding entry on `docs/forms.mdx` ships at
+  // `confidence: "medium", couldBeWrongBecause: undefined`, the two
+  // surfaces disagree silently. This pass appends the warning code
+  // and downgrades confidence one step so the per-finding channel
+  // mirrors the corpus channel's attention-budget signal.
+  // The list is intentionally narrow — only `jsx_code_demo_prop_parsed_as_live_dom`
+  // for now. Other corpus-level warnings carrying file lists
+  // (`dynamic_content_container_detected`, `parser_bailed_on_non_jsx_in_tsx_route`,
+  // `linked_stylesheet_local_unresolved`) can opt in by extending the
+  // array; each entry is independent and propagates corpus-wide
+  // through this same helper.
+  fileEntries = enrichFindingsWithCorpusWarningFiles(
+    fileEntries,
+    buildCorpusWarningFiles(input.codeDemoPropMatches),
+  );
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     ...(typeof filesWithAnyRuleEvaluated === "number" ? { filesWithAnyRuleEvaluated } : {}),

@@ -49,6 +49,10 @@ import {
 } from "./next-step.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
+import {
+  type CorpusWarningFiles,
+  enrichFindingsWithCorpusWarningFiles,
+} from "./per-finding-corpus-warning-files.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
@@ -344,9 +348,27 @@ export const scanProjectTool: McpTool = {
     // suppress — severity stays the rule's choice. No-op fast path
     // when the matches map is empty (object identity stable on the
     // common case — non-MDX repos pay no walk).
-    const enrichedFiles = enrichFindingsWithCodeDemoPropMatch(
+    const codeDemoEnrichedFiles = enrichFindingsWithCodeDemoPropMatch(
       scanRunResult.formatted.files,
       codeDemoPropMatches,
+    );
+    // Per-finding propagation for the per-FILE axis on corpus-level
+    // warnings whose evidence carries a file list. Companion to the
+    // per-LINE pass above: where the line-range gate tags only
+    // findings INSIDE a recorded code-demo prop body, this pass tags
+    // every finding on a file the warning's payload names — including
+    // findings outside any recorded body range. Doctrine source:
+    // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+    // must reflect per-rule coverage limitations" extended to
+    // corpus-level warnings: when the warning channel ships
+    // `jsx_code_demo_prop_parsed_as_live_dom.files: ["docs/forms.mdx"]`
+    // and a per-finding entry on `docs/forms.mdx` ships at
+    // `confidence: "medium", couldBeWrongBecause: undefined`, the
+    // warning channel and the per-finding channel disagree silently.
+    // No-op fast path when no warning's file set is non-empty.
+    const enrichedFiles = enrichFindingsWithCorpusWarningFiles(
+      codeDemoEnrichedFiles,
+      buildCorpusWarningFilesForScanProject(codeDemoPropMatches),
     );
     const formatted: ScanFormatted = { ...scanRunResult.formatted, files: enrichedFiles };
     const rawReviewCandidates = scanRunResult.reviewCandidates;
@@ -1420,6 +1442,43 @@ function codeDemoPropMatchesField(
 } {
   if (matches === undefined || matches.size === 0) return {};
   return { codeDemoPropMatches: matches };
+}
+
+/**
+ * Builds the {@link CorpusWarningFiles} array consumed by the per-FILE
+ * propagation pass on per-finding `couldBeWrongBecause`. Each entry
+ * pairs one corpus-level warning code with the file-path set the
+ * warning's evidence model named, so the per-finding helper can append
+ * the code (and downgrade confidence one step) on every finding whose
+ * hosting file is in the named set.
+ *
+ * Currently sources one warning — `jsx_code_demo_prop_parsed_as_live_dom`
+ * (file paths drawn from the same map that drives the corpus-level
+ * warning at the warnings module). Other warnings carrying file lists
+ * (`dynamic_content_container_detected`,
+ * `parser_bailed_on_non_jsx_in_tsx_route`,
+ * `linked_stylesheet_local_unresolved`) can opt in by appending to the
+ * returned array. Each entry is independent — the per-finding helper
+ * propagates them all in a single pass.
+ *
+ * Returns an empty array when none of the wired warnings fired on this
+ * scan; the per-finding helper's no-op fast path keeps the common case
+ * cheap.
+ */
+function buildCorpusWarningFilesForScanProject(
+  codeDemoPropMatches: import("./warnings.ts").WarningInputs["codeDemoPropMatches"],
+): readonly CorpusWarningFiles[] {
+  const out: CorpusWarningFiles[] = [];
+  if (codeDemoPropMatches !== undefined && codeDemoPropMatches.size > 0) {
+    const files = new Set<string>();
+    for (const [path, matches] of codeDemoPropMatches) {
+      if (matches.length > 0) files.add(path);
+    }
+    if (files.size > 0) {
+      out.push({ warningCode: "jsx_code_demo_prop_parsed_as_live_dom", files });
+    }
+  }
+  return out;
 }
 
 /**
