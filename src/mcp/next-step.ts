@@ -873,27 +873,76 @@ function densestFileFindingForRule(
   vendorPaths: ReadonlySet<string>,
   targetRuleId: string,
 ): FirstFinding | null {
+  const densestPath = pickDensestNonVendorPathForRule(files, vendorPaths, targetRuleId);
+  if (densestPath === undefined) return null;
+  return firstFindingForRuleInFile(files, densestPath, targetRuleId);
+}
+
+/**
+ * Walks non-vendor files, computing the per-file count of findings
+ * for `targetRuleId`, and returns the path of the file with the
+ * highest count (alphabetical tiebreak when two files tie). Returns
+ * `undefined` when no non-vendor file carries the rule. Extracted
+ * from {@link densestFileFindingForRule} so the orchestrator stays
+ * inside the cognitive-complexity lint cap; the densest-pick phase
+ * is conceptually distinct from the first-finding-lookup phase that
+ * follows it and reads better as a separate function.
+ */
+function pickDensestNonVendorPathForRule(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  targetRuleId: string,
+): string | undefined {
   let densestPath: string | undefined;
   let densestCount = -1;
   for (const file of files) {
     if (vendorPaths.has(file.path)) continue;
-    let count = 0;
-    for (const raw of file.findings) {
-      const extracted = readFindingRuleIdAndLine(raw);
-      if (extracted === null) continue;
-      if (extracted.ruleId === targetRuleId) count += 1;
-    }
+    const count = countFindingsForRuleInFile(file.findings, targetRuleId);
     if (count === 0) continue;
-    if (
-      count > densestCount ||
-      (count === densestCount && densestPath !== undefined && file.path < densestPath)
-    ) {
+    if (isDensestPick(count, densestCount, file.path, densestPath)) {
       densestPath = file.path;
       densestCount = count;
     }
   }
-  if (densestPath === undefined) return null;
-  return firstFindingForRuleInFile(files, densestPath, targetRuleId);
+  return densestPath;
+}
+
+/**
+ * Tallies findings carrying `targetRuleId` on a single file's
+ * findings array. Extracted from {@link densestFileFindingForRule}
+ * to keep its loop body shallow enough for the cognitive-complexity
+ * lint cap. Skips findings whose shape doesn't expose a string
+ * `ruleId` — same defensive narrowing as
+ * {@link readFindingRuleIdAndLine}.
+ */
+function countFindingsForRuleInFile(findings: readonly unknown[], targetRuleId: string): number {
+  let count = 0;
+  for (const raw of findings) {
+    const extracted = readFindingRuleIdAndLine(raw);
+    if (extracted === null) continue;
+    if (extracted.ruleId === targetRuleId) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Decides whether `(count, path)` should replace the running
+ * `(currentCount, currentPath)` densest pick — strictly higher count
+ * wins; on a tie, alphabetically earlier path wins (matching
+ * `pickDensestFile` in `src/mcp/scan-assembly.ts`). Extracted so the
+ * tie-break predicate is testable in isolation and the loop body in
+ * {@link pickDensestNonVendorPathForRule} stays inside the cognitive-
+ * complexity lint cap.
+ */
+function isDensestPick(
+  count: number,
+  currentCount: number,
+  path: string,
+  currentPath: string | undefined,
+): boolean {
+  if (count > currentCount) return true;
+  if (count !== currentCount) return false;
+  return currentPath !== undefined && path < currentPath;
 }
 
 /**

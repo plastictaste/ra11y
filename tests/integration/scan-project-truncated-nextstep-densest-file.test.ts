@@ -122,10 +122,7 @@ function buildCatalogWithDenseFile(root: string): {
   const denseDir = posixJoin(root, denseSubdir);
   mkdirSync(denseDir);
   const denseFindings = Array.from({ length: 5 }, (_, i) => i + 1)
-    .map(
-      (i) =>
-        `<div role="button" onclick="alert('${i}')" id="btn-${i}">Tool ${i}</div>`,
-    )
+    .map((i) => `<div role="button" onclick="alert('${i}')" id="btn-${i}">Tool ${i}</div>`)
     .join("\n");
   writeFileSync(
     posixJoin(denseDir, "index.html"),
@@ -159,9 +156,9 @@ function pickStructuredEntries(body: Record<string, unknown>): {
  * doctrine pin is on the triage call's target file, not on which slot
  * carries it.
  */
-function findTriageCall(body: Record<string, unknown>):
-  | { readonly tool: string; readonly args: Record<string, unknown> }
-  | undefined {
+function findTriageCall(
+  body: Record<string, unknown>,
+): { readonly tool: string; readonly args: Record<string, unknown> } | undefined {
   const { primary, alternatives } = pickStructuredEntries(body);
   const candidates = [primary, ...alternatives].filter(
     (c): c is { tool?: string; args?: Record<string, unknown> } => c !== undefined,
@@ -240,8 +237,9 @@ describe("scan_project truncated nextStep targets densest file for dominant rule
       // Whichever channel carries a file arg must equal topFile, not
       // the sibling. If no `file` arg is present (explain_rule), the
       // prose check above already pins the routing.
+      const expectedFile = topFile as string;
       if (typeof triageFile === "string") {
-        expect(triageFile).toBe(topFile);
+        expect(triageFile).toBe(expectedFile);
       }
       // The alphabetically-first sibling MUST NOT appear as the
       // routed verify target — checked via the verify-after-fix
@@ -254,8 +252,9 @@ describe("scan_project truncated nextStep targets densest file for dominant rule
       // densest file. Anchor by checking `scan_file <path>` slice.
       const verifyAfterMatch = prose.match(/`scan_file ([^`]+)`/);
       if (verifyAfterMatch) {
-        expect(verifyAfterMatch[1]).toBe(topFile);
-        expect(verifyAfterMatch[1]?.includes(`${alphabeticalFirstSibling}/`)).toBe(false);
+        const verifyTarget = verifyAfterMatch[1] ?? "";
+        expect(verifyTarget).toBe(expectedFile);
+        expect(verifyTarget.includes(`${alphabeticalFirstSibling}/`)).toBe(false);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
