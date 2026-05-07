@@ -1657,9 +1657,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.untargetedCriteriaList.every((i) => i.candidates.length === 0)).toBe(true);
     // Full-item shape: each entry carries criteria + empty candidates array.
     expect(body.untargetedCriteriaList.every((i) => Array.isArray(i.criteria))).toBe(true);
-    expect(body.summary.untargetedCriteriaForProject).toBe(
-      body.untargetedCriteriaList.length,
-    );
+    expect(body.summary.untargetedCriteriaForProject).toBe(body.untargetedCriteriaList.length);
   });
 
   it("checklist omits untargetedCriteriaList entirely when showUntargeted: false (size-pressure escape)", async () => {

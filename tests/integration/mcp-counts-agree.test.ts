@@ -328,6 +328,7 @@ interface FullCoverageEnvelope extends CoverageBody {
   readonly manualCandidatesTotal?: number;
   readonly summary: {
     readonly actionable: { readonly criteria: number; readonly candidates?: number };
+    readonly untargetedCriteriaForProject: number;
   };
   readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
 }
