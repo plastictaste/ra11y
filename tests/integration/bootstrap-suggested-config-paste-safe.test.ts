@@ -269,3 +269,45 @@ describe("bootstrap suggestedConfig: vendor-classification gate keeps authored s
     });
   });
 });
+
+describe("bootstrap suggestedConfig: parses as valid TS on bulk-vendor corpora", () => {
+  // The classification-gate `describe` above pins the *shape* of the
+  // emitted exclude body when authored siblings are present, but does
+  // NOT round-trip the suggestedConfig through the TS parser on those
+  // bulk-vendor inputs. The 2026-04-30 sweep observed two failure
+  // modes simultaneously on bulk-vendor corpora: (a) trailing commas
+  // / mismatched brackets in serialized strings, (b) authored
+  // subtrees swept by `<topdir>/**`. The gate-shape suite catches (b);
+  // this suite pins the syntax-pre-check axis on the same substrate
+  // — both axes must hold on the same corpus.
+  it("produces TS that transpiles when multiple subtrees mix minified vendor with authored siblings", async () => {
+    // Same substrate as the gate-shape sweep: 4 topdirs each carrying
+    // 3 minified files plus 2 authored HTML pages. The emitter walks
+    // a populated exclude/rules path on this input — the assembly
+    // surface most likely to ship a trailing comma or unterminated
+    // string when serialization helpers regress.
+    const topdirs = ["templates", "snippets", "components", "examples"];
+    await withScratch(async (dir) => {
+      await seedMixedSubtrees(dir, topdirs);
+      const { suggestedConfig } = await callProposeConfig(dir);
+      const { diagnosticCount, firstMessage } = parseSuggestedConfig(suggestedConfig);
+      expect(diagnosticCount).toBe(0);
+      expect(firstMessage).toBeNull();
+    });
+  });
+
+  it("produces TS that transpiles when bootstrap is invoked on a bulk-vendor corpus", async () => {
+    // The doctrine call-out names `bootstrap` first; ensure the
+    // pre-check axis holds on the bootstrap surface too, not just
+    // `propose_config`. Same bulk-vendor substrate.
+    const topdirs = ["templates", "snippets", "components", "examples"];
+    await withScratch(async (dir) => {
+      await seedMixedSubtrees(dir, topdirs);
+      const { suggestedConfig } = await callBootstrap(dir);
+      expect(typeof suggestedConfig).toBe("string");
+      const { diagnosticCount, firstMessage } = parseSuggestedConfig(suggestedConfig ?? "");
+      expect(diagnosticCount).toBe(0);
+      expect(firstMessage).toBeNull();
+    });
+  });
+});
