@@ -2082,6 +2082,7 @@ function mapOneCandidate(
     filePath: c.location.filePath,
     line: c.location.line,
     column: c.location.column,
+    reason: c.reason,
     scanRoot,
   });
   return {
@@ -2281,6 +2282,7 @@ function annotateSharedCandidates(
         filePath: c.path,
         line: c.line,
         column,
+        reason: c.reason,
         scanRoot,
       });
       return { ...c, findingId, criteria };

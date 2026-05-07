@@ -796,6 +796,7 @@ function materializeDedupedCandidate(
     filePath: g.filePath,
     line: g.line,
     column: g.column,
+    reason: g.reason,
     ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   return {

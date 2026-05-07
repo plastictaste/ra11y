@@ -209,6 +209,32 @@ export interface CandidateFindingIdInputs {
    * {@link FindingIdInputs#scanRoot}.
    */
   readonly scanRoot?: string;
+  /**
+   * The candidate's `reason` text. Folded into the hash as a
+   * variant discriminator so two distinct finders firing at the same
+   * `(filePath, line, column)` with identical criterion unions but
+   * different `reason` text get distinct `findingId`s.
+   *
+   * Without this leg the per-position cross-standard fold key — which
+   * already includes `reason` so distinct reasons stay separate dedup
+   * groups (see `candidateCriteriaUnionKey` in
+   * `src/mcp/review-candidate-dedup.ts`) — collapses to one id when
+   * each group's criteria union happens to be identical (canonical
+   * case: `review/alt-duplicates-sibling-text` and
+   * `review/redundant-alt-text` both declaring
+   * `[wcag22:1.1.1, wcag21:1.1.1]` and emitting at the same `<img>`
+   * with distinct framing text). The dedup key already encodes the
+   * reason axis; folding it into the hash carries the same axis to
+   * the addressable id so `suggest_fix(findingId)` and source-level
+   * disable pragmas resolve unambiguously.
+   *
+   * Per AI-first doctrine "Per-finding identifiers must be
+   * addressable, not collision-prone." Optional for backward
+   * compatibility — callers that don't have a reason in scope (test
+   * synthetic emits) skip it; production callers in `src/mcp/**`
+   * always pass it.
+   */
+  readonly reason?: string;
 }
 
 /**
@@ -225,8 +251,10 @@ export interface CandidateFindingIdInputs {
  * emissions on different `(line, column)` always get distinct ids, and
  * "Per-tool review-candidate shape must agree across surfaces": the
  * hash is a pure function over the sorted `criteria` union plus the
- * location, so an agent can address the same candidate by id
- * regardless of which tool surfaced it.
+ * location plus the optional `reason` discriminator, so an agent can
+ * address the same candidate by id regardless of which tool surfaced
+ * it AND two finders firing at the same byte position with distinct
+ * reason text remain individually addressable.
  */
 export function computeCandidateFindingId(inputs: CandidateFindingIdInputs): string {
   // Sort defensively even though every caller already sorts: hash
@@ -234,13 +262,34 @@ export function computeCandidateFindingId(inputs: CandidateFindingIdInputs): str
   // silently desynchronize ids across surfaces.
   const sorted = [...inputs.criteria].sort();
   const ruleId = sorted.join(",");
+  // Reason text is folded into the hash via the variant slot so the
+  // per-position cross-standard dedup fold's reason axis carries
+  // through to the id. The dedup helper groups on `(filePath, line,
+  // column, reason)` already; matching that key here means each
+  // distinct group ships a distinct id even when criteria unions
+  // happen to coincide.
+  const variantKey =
+    inputs.reason !== undefined && inputs.reason.length > 0 ? hashReasonVariantKey(inputs.reason) : undefined;
   return computeFindingId({
     ruleId,
     filePath: inputs.filePath,
     line: inputs.line,
     column: inputs.column,
     ...(inputs.scanRoot === undefined ? {} : { scanRoot: inputs.scanRoot }),
+    ...(variantKey === undefined ? {} : { variantKey }),
   });
+}
+
+/**
+ * Hashes the candidate `reason` to a short stable token suitable for
+ * the `variantKey` slot of {@link computeFindingId}. The full reason
+ * text can be a paragraph (finder authors enrich it with verify-step
+ * prose); we hash so the variant slot stays bounded and the canonical
+ * hash input doesn't grow unbounded with reason length, but identity
+ * is preserved — same reason → same variant token → same id.
+ */
+function hashReasonVariantKey(reason: string): string {
+  return createHash("sha256").update(reason).digest("hex").slice(0, FINDING_ID_LENGTH);
 }
 
 /**

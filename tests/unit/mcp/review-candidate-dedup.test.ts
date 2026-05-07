@@ -289,6 +289,31 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
     expect(a[0]?.findingId).toBe(b[0]?.findingId);
   });
 
+  it("findingId distinguishes two candidates with identical criteria union but distinct reasons at the same position", () => {
+    // Canonical regression: two finders firing at the same byte
+    // position with identical `criterionIds` (e.g.
+    // `review/alt-duplicates-sibling-text` and
+    // `review/redundant-alt-text` both declaring
+    // `["wcag22:1.1.1", "wcag21:1.1.1"]`) but DIFFERENT `reason`
+    // text. Pre-closure, the per-position cross-standard fold key
+    // included `reason` so each reason became its own dedup group,
+    // BUT the findingId hash only saw `(criteria, file, line,
+    // column)` — identical across the two groups → identical id.
+    // `suggest_fix(findingId)` resolved ambiguously, and an agent's
+    // id-keyed suppress silenced a sibling reason it never read.
+    //
+    // Per AI-first doctrine "Per-finding identifiers must be
+    // addressable, not collision-prone": fold the reason into the
+    // findingId hash so the per-position dedup key's reason axis
+    // carries through to the addressable id.
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("wcag22:1.1.1", "alt repeats sibling text", 7, 2),
+      candidate("wcag22:1.1.1", "alt repeats parent text", 7, 2),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]?.findingId).not.toBe(out[1]?.findingId);
+  });
+
   it("each per-finder entry preserves its own confidence (no cross-finder rollup)", () => {
     const levels = new Map<string, string>([
       ["std:a", "AA"],

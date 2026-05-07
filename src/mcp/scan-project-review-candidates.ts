@@ -168,6 +168,7 @@ export function buildScanProjectReviewCandidates(args: {
         filePath: g.file,
         line: g.line,
         column: g.column,
+        reason: g.reason,
         ...(scanRoot === undefined ? {} : { scanRoot }),
       }),
       file: g.file,
