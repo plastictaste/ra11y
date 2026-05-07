@@ -1141,9 +1141,45 @@ function buildCoverageNextStep({
 }
 
 /**
+ * Resolves a single criterion ID to its `{title, level}` from any
+ * loaded standard, returning `undefined` when the ID does not match a
+ * registered criterion. Centralizes the registry walk so callers can
+ * filter unresolved IDs out of their emission rather than fall back to
+ * an empty-string placeholder. Per the AI-first consumer model's
+ * "Ambiguous field shapes are dishonest" rule (see
+ * `docs/kb/architecture/ai-first-consumer.md`), `null`/`""` as the
+ * "didn't resolve" sentinel forces the agent to disambiguate "criterion
+ * exists with no title" from "criterion ID didn't match any loaded
+ * standard," and the silent-miss failure mode is identical to the
+ * canonical empty-string sentinel. Returning `undefined` lets the
+ * `withTitles` / `withTitlesAndCandidates` array helpers omit the
+ * unresolved entry entirely so the headline `length` stays honest.
+ */
+function resolveCriterionMeta(
+  id: string,
+  session: import("./session.ts").McpSession,
+): { readonly title: string; readonly level: string } | undefined {
+  for (const std of session.registry.standards) {
+    const c = std.criteria.find((cr) => cr.id === id);
+    if (c) return { title: c.title, level: c.level };
+  }
+  return undefined;
+}
+
+/**
  * Enriches bare criterion IDs (e.g. "wcag22:2.4.11") with their titles
  * ("Focus Not Obscured (Minimum)") so agents don't have to look them up.
- * Falls back to ID-only if a criterion isn't found in any loaded standard.
+ * Unresolved IDs (no matching criterion in any loaded standard) are
+ * omitted from the returned array — per the AI-first consumer model's
+ * "Ambiguous field shapes are dishonest" rule, the previous fallback
+ * `{ criterionId: id, title: "", level: "" }` used the empty string as
+ * an unknown-sentinel and forced the agent to disambiguate "criterion
+ * exists with no title" from "criterion ID didn't resolve." Omitting
+ * keeps the headline `length` honest (every entry that ships is a
+ * resolved criterion); under normal operation the inputs are
+ * registry-sourced (`c.criteria`, `applicable`, `c.untestableCriteria`,
+ * `failingErrorIds`, etc.) so the filter is a no-op, but a fabricated
+ * unresolved ID can never sneak through as an empty-string row.
  *
  * `criterionId` is the canonical field — matches
  * `checklist.items[].criteria[0]` (length-1 array — the row's owning
@@ -1158,7 +1194,7 @@ function buildCoverageNextStep({
  * under different names on every coverage response inflated payloads
  * and forced the agent to disambiguate which name to read.
  */
-function withTitles(
+export function withTitles(
   criterionIds: readonly string[],
   session: import("./session.ts").McpSession,
 ): readonly {
@@ -1166,13 +1202,14 @@ function withTitles(
   readonly title: string;
   readonly level: string;
 }[] {
-  return criterionIds.map((id) => {
-    for (const std of session.registry.standards) {
-      const c = std.criteria.find((cr) => cr.id === id);
-      if (c) return { criterionId: id, title: c.title, level: c.level };
+  const out: { criterionId: string; title: string; level: string }[] = [];
+  for (const id of criterionIds) {
+    const meta = resolveCriterionMeta(id, session);
+    if (meta !== undefined) {
+      out.push({ criterionId: id, title: meta.title, level: meta.level });
     }
-    return { criterionId: id, title: "", level: "" };
-  });
+  }
+  return out;
 }
 
 /**
@@ -1219,8 +1256,22 @@ const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
  * (`manualCandidateEmissionsTotal`) stays anchored to the review-
  * candidate stream and reads zero for these entries — the criteria-axis
  * vs. candidate-axis split is preserved.
+ *
+ * Unresolved IDs (no matching criterion in any loaded standard) are
+ * omitted from the returned array — same closure as `withTitles`.
+ * Pre-fix the helper emitted `{ criterionId: id, title: "", level: "",
+ * candidates }` as an unknown-sentinel row, the canonical "Ambiguous
+ * field shapes are dishonest" failure mode (per
+ * `docs/kb/architecture/ai-first-consumer.md`) — the empty strings
+ * forced the agent to disambiguate "criterion exists with no title"
+ * from "criterion ID didn't resolve" and the cross-surface count
+ * invariant (`coverage[].manualWithCandidates.length` parity with
+ * `checklist.summary.actionable.criteria`) silently inflated when an
+ * unresolved ID slipped through. Inputs are registry-sourced under
+ * normal operation so the filter is a no-op, but a fabricated
+ * unresolved ID can never ship as an empty-string row.
  */
-function withTitlesAndCandidates(
+export function withTitlesAndCandidates(
   criterionIds: readonly string[],
   session: import("./session.ts").McpSession,
   candidatesByCriterion: ReadonlyMap<string, readonly ScanProjectReviewCandidate[]>,
@@ -1230,14 +1281,20 @@ function withTitlesAndCandidates(
   readonly level: string;
   readonly candidates: readonly ScanProjectReviewCandidate[];
 }[] {
-  return criterionIds.map((id) => {
-    const candidates = candidatesByCriterion.get(id) ?? [];
-    for (const std of session.registry.standards) {
-      const c = std.criteria.find((cr) => cr.id === id);
-      if (c) return { criterionId: id, title: c.title, level: c.level, candidates };
+  const out: {
+    criterionId: string;
+    title: string;
+    level: string;
+    candidates: readonly ScanProjectReviewCandidate[];
+  }[] = [];
+  for (const id of criterionIds) {
+    const meta = resolveCriterionMeta(id, session);
+    if (meta !== undefined) {
+      const candidates = candidatesByCriterion.get(id) ?? [];
+      out.push({ criterionId: id, title: meta.title, level: meta.level, candidates });
     }
-    return { criterionId: id, title: "", level: "", candidates };
-  });
+  }
+  return out;
 }
 
 /**

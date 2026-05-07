@@ -19,7 +19,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { McpSession } from "../../../src/mcp/session.ts";
+import { withTitles, withTitlesAndCandidates } from "../../../src/mcp/tool-coverage.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import type { ScanProjectReviewCandidate } from "../../../src/mcp/scan-project-review-candidates.ts";
 import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
@@ -421,5 +423,87 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(data["buildArtifactEntries"]).toBeUndefined();
     expect(data["buildArtifactsMetaField"]).toBeUndefined();
     expect(data["scssUnresolvedVariableFiles"]).toBeUndefined();
+  });
+});
+
+describe("coverage tool: criterion-title resolution", () => {
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+  // shapes are dishonest", a criterion-ID lookup that doesn't resolve
+  // must NOT ship `{ criterionId, title: "", level: "" }` (or the
+  // candidates-bearing variant): the empty-string sentinel forces the
+  // agent to disambiguate "criterion exists with no title" from
+  // "criterion ID didn't match any loaded standard" and the silent-miss
+  // failure mode is identical to the canonical empty-string sentinel
+  // the doctrine names. Closure: omit the unresolved entry from the
+  // returned array so the headline `length` stays honest (every entry
+  // that ships is a resolved criterion); the cross-surface count
+  // invariant pinning `coverage[].manualWithCandidates.length ===
+  // checklist.summary.actionable.criteria` therefore can't silently
+  // inflate when an unresolved ID slips through. Inputs are
+  // registry-sourced under normal operation (`c.criteria`,
+  // `c.untestableCriteria`, `c.failingCriteria`, etc. all walk the
+  // loaded registry), so the filter is a no-op on real corpora — these
+  // assertions defend the helper shape against a fabricated input.
+
+  it("withTitles: omits unresolved IDs (no empty-string title/level placeholder)", () => {
+    const session = new McpSession();
+    const fabricatedUnresolved = "wcag22:99.99.99";
+    const realResolved = "wcag22:1.1.1";
+    const out = withTitles([fabricatedUnresolved, realResolved], session);
+    // Only the resolved ID survives — the unresolved fabrication is
+    // dropped, not surfaced as an empty-string placeholder.
+    expect(out.length).toBe(1);
+    expect(out[0]?.criterionId).toBe(realResolved);
+    expect(out[0]?.title.length).toBeGreaterThan(0);
+    expect(out[0]?.level.length).toBeGreaterThan(0);
+    // Belt-and-braces: no entry in the returned array carries an
+    // empty title or level under any circumstance.
+    for (const entry of out) {
+      expect(entry.title).not.toBe("");
+      expect(entry.level).not.toBe("");
+    }
+  });
+
+  it("withTitles: returns an empty array when every input is unresolved", () => {
+    const session = new McpSession();
+    const out = withTitles(["wcag22:99.99.99", "made-up:xx.yy.zz"], session);
+    // Headline-honest: an array of unresolved fabrications collapses
+    // to zero entries, not two empty-string rows.
+    expect(out.length).toBe(0);
+  });
+
+  it("withTitlesAndCandidates: omits unresolved IDs while preserving the candidates payload for resolved entries", () => {
+    const session = new McpSession();
+    const realResolved = "wcag22:1.1.1";
+    const fabricatedUnresolved = "wcag22:99.99.99";
+    const fakeCandidate: ScanProjectReviewCandidate = {
+      findingId: "test-finding",
+      file: "page.tsx",
+      line: 1,
+      column: 1,
+      criteria: [realResolved],
+      reason: "test",
+      confidence: "medium",
+    };
+    const map = new Map<string, readonly ScanProjectReviewCandidate[]>([
+      [realResolved, [fakeCandidate]],
+      [fabricatedUnresolved, [fakeCandidate]],
+    ]);
+    const out = withTitlesAndCandidates([fabricatedUnresolved, realResolved], session, map);
+    // Unresolved fabrication is dropped even when it has a candidates
+    // payload — the candidates-axis count stays anchored to the
+    // resolved-criteria axis (otherwise an unresolved-with-candidates
+    // entry would inflate `manualWithCandidates.length` and break the
+    // cross-surface count invariant pinning agreement with
+    // `checklist.summary.actionable.criteria`).
+    expect(out.length).toBe(1);
+    expect(out[0]?.criterionId).toBe(realResolved);
+    expect(out[0]?.title.length).toBeGreaterThan(0);
+    expect(out[0]?.level.length).toBeGreaterThan(0);
+    expect(out[0]?.candidates.length).toBe(1);
+    for (const entry of out) {
+      expect(entry.title).not.toBe("");
+      expect(entry.level).not.toBe("");
+    }
   });
 });
