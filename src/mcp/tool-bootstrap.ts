@@ -45,6 +45,19 @@
  *     disagreed with `fixesByClass.mechanical` on the same response —
  *     callers sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
  *     when they want the apply-now subset.
+ *   - `wrappers` subset enumerates the same discriminator field set the
+ *     standalone `detect_native_wrappers` surface ships — `candidates`
+ *     + `projectKind` always; `inapplicable` / `emptyReason` /
+ *     `opaqueCustomComponentNames` / `absentDeclaredWrappers` /
+ *     `suggestedConfigSnippet` present-when-meaningful. Per
+ *     `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class
+ *     lanes must equal project-rooted lanes" + "Per-tool review-
+ *     candidate shape must agree across surfaces," dropping any of
+ *     these on the bootstrap surface forces the agent to re-call
+ *     `detect_native_wrappers` to disambiguate "tool doesn't apply on
+ *     this projectKind" from "ran clean / coverage miss" — a silent
+ *     gap the regression closure pins via integration test on
+ *     identical cwd.
  */
 
 import { existsSync } from "node:fs";
@@ -286,8 +299,84 @@ export const bootstrapTool: McpTool = {
   },
 };
 
+/**
+ * Subset of the {@link detectNativeWrappersTool} response forwarded onto
+ * the bootstrap `wrappers` field. Mirrors every discriminator the
+ * standalone tool ships so an agent calling `bootstrap` first can tell
+ * "tool doesn't apply on this projectKind" from "ran clean / coverage
+ * miss" without a follow-up `detect_native_wrappers` call. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class lanes
+ * must equal project-rooted lanes" + "Per-tool review-candidate shape
+ * must agree across surfaces" — the bootstrap surface must enumerate
+ * the same field set the upstream surface enumerates so the two
+ * surfaces' mental models stay in lockstep.
+ *
+ * The `nextStep` and `scanned` fields from the upstream response are
+ * intentionally NOT forwarded — bootstrap composes its own top-level
+ * `nextStep` / `nextStepStructured` (covering the wrappers + scan +
+ * baseline triple) and its own `meta.scanned`, so duplicating those
+ * here would be redundant. Every other field from the upstream
+ * response is forwarded with conditional spread (present-when-
+ * meaningful) so the empty / inapplicable / opaque-only branches each
+ * surface their own discriminator.
+ */
 interface WrappersSubset {
   readonly candidates: readonly unknown[];
+  /**
+   * Project-kind classifier forwarded verbatim from the upstream
+   * `detect_native_wrappers.projectKind` discriminator. `"jsx"` /
+   * `"static-site"` / `"ruby"` / `"python"` / `"go"` / `"unknown"` —
+   * lets the agent route on the same signal it would read off the
+   * standalone tool. Always present so empty `candidates` on a Rails
+   * site reads as "tool doesn't apply" rather than "coverage miss."
+   */
+  readonly projectKind: string;
+  /**
+   * Top-level "tool inapplicable" block forwarded from the upstream
+   * `inapplicable: { reason, filesByExtension }` shape. Present only
+   * on the no-JSX-in-tree branch — distinct from `emptyReason`
+   * (which signals "tool ran on real input but came up empty")
+   * because the detector's evidence model never had a surface here.
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Zero-output
+   * success is ambiguous failure," dropping this block on the
+   * bootstrap surface would force the agent to re-call
+   * `detect_native_wrappers` to disambiguate.
+   */
+  readonly inapplicable?: {
+    readonly reason: string;
+    readonly filesByExtension: Readonly<Record<string, number>>;
+  };
+  /**
+   * Structured `emptyReason` discriminator forwarded from the upstream
+   * success branch — `"no-pascalcase-onclick-components"` when the
+   * scan parsed JSX but found no PascalCase tags;
+   * `"no-jsx-onclick-candidates-found-but-opaque-components-present"`
+   * when PascalCase components exist but none carry the detector's
+   * required props. Conditional spread: omitted when `candidates`
+   * is non-empty (the discriminator only fires on the empty branch).
+   */
+  readonly emptyReason?: string;
+  /**
+   * Inlined inventory of opaque PascalCase component names forwarded
+   * from the upstream `opaqueCustomComponentNames` field. Present
+   * only when `emptyReason` names the opaque-components branch —
+   * lets the agent open each component directly without a follow-up
+   * `scan_project` call (per "One tool call should answer 'what
+   * next?'").
+   */
+  readonly opaqueCustomComponentNames?: readonly string[];
+  /**
+   * Declared-but-absent diff forwarded from the upstream
+   * `absentDeclaredWrappers` field — wrapper names declared in
+   * config that no component matched in this scan. Conditional
+   * spread: present-when-non-empty (mirrors the upstream gate).
+   */
+  readonly absentDeclaredWrappers?: readonly string[];
+  /**
+   * Paste-safe `nativeWrappers` config snippet forwarded from the
+   * upstream `suggestedConfigSnippet` field. Conditional spread:
+   * present-when-non-empty.
+   */
   readonly suggestedConfigSnippet?: string;
 }
 
@@ -315,6 +404,25 @@ function settledRecord(
   return payload as Record<string, unknown>;
 }
 
+/**
+ * Extracts the bootstrap `wrappers` subset from the settled
+ * `detect_native_wrappers` leg. Forwards every discriminator the
+ * upstream surface ships (`candidates`, `projectKind`, `inapplicable`,
+ * `emptyReason`, `opaqueCustomComponentNames`, `absentDeclaredWrappers`,
+ * `suggestedConfigSnippet`) so the bootstrap surface enumerates the
+ * same field set per "Bootstrap-class lanes must equal project-rooted
+ * lanes." Conditional spread for each optional field keeps the shape
+ * present-when-meaningful — empty-record sentinels would re-introduce
+ * the ambiguity the doctrine bullet "Ambiguous field shapes are
+ * dishonest" warns against.
+ *
+ * On detect-leg failure, falls back to a degraded `{ candidates: [],
+ * projectKind: "unknown" }` shape — `projectKind` stays populated as
+ * a schema-required scalar (the agent can still route on the
+ * "unknown" signal), and the failure surfaces through
+ * `bootstrap_detect_failed` in `warnings[]` so the degraded path is
+ * distinguishable from a clean-but-inapplicable scan.
+ */
 function extractWrappersSubset(
   settled: PromiseSettledResult<McpToolResult>,
   failedLegs: SubLeg[],
@@ -322,18 +430,55 @@ function extractWrappersSubset(
   const record = settledRecord(settled);
   if (record === null) {
     failedLegs.push("detect");
-    return { candidates: [] };
+    return { candidates: [], projectKind: "unknown" };
   }
   const candidates = Array.isArray(record["candidates"])
     ? (record["candidates"] as readonly unknown[])
     : [];
+  const projectKindRaw = record["projectKind"];
+  const projectKind = typeof projectKindRaw === "string" ? projectKindRaw : "unknown";
   const snippet = record["suggestedConfigSnippet"];
+  const emptyReason = record["emptyReason"];
+  const opaqueNames = record["opaqueCustomComponentNames"];
+  const absent = record["absentDeclaredWrappers"];
+  const inapplicable = record["inapplicable"];
   return {
     candidates,
+    projectKind,
+    ...(isInapplicableBlock(inapplicable) ? { inapplicable } : {}),
+    ...(typeof emptyReason === "string" && emptyReason.length > 0 ? { emptyReason } : {}),
+    ...(Array.isArray(opaqueNames) && opaqueNames.every((n) => typeof n === "string")
+      ? { opaqueCustomComponentNames: opaqueNames as readonly string[] }
+      : {}),
+    ...(Array.isArray(absent) && absent.every((n) => typeof n === "string")
+      ? { absentDeclaredWrappers: absent as readonly string[] }
+      : {}),
     ...(typeof snippet === "string" && snippet.length > 0
       ? { suggestedConfigSnippet: snippet }
       : {}),
   };
+}
+
+/**
+ * Type guard for the upstream `inapplicable: { reason, filesByExtension }`
+ * block. Defensive over forwarded JSON the bootstrap doesn't own —
+ * any wire-shape regression upstream falls through to "skip the field"
+ * rather than ship a partially-populated block that would be
+ * indistinguishable from a degraded payload.
+ */
+function isInapplicableBlock(value: unknown): value is {
+  readonly reason: string;
+  readonly filesByExtension: Readonly<Record<string, number>>;
+} {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record["reason"] !== "string") return false;
+  const filesByExtension = record["filesByExtension"];
+  if (!filesByExtension || typeof filesByExtension !== "object") return false;
+  for (const v of Object.values(filesByExtension)) {
+    if (typeof v !== "number") return false;
+  }
+  return true;
 }
 
 function extractProposedConfig(
