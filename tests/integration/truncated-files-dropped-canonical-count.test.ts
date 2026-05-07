@@ -77,18 +77,15 @@ describe("warningsDetails.truncated_files_dropped — canonical drop-count formu
     });
     const TOTAL_FILES = 71;
     const PAGE_SIZE = 25;
-    const fullInventory: ScanFormatted["files"] = Array.from(
-      { length: TOTAL_FILES },
-      (_, i) => ({
-        path: `src/file-${String(i).padStart(3, "0")}.tsx`,
-        findings: [
-          buildFinding(
-            i % 2 === 0 ? "keyboard/handler-missing" : "aria/icon-child-missing-aria-hidden",
-            i + 1,
-          ) as never,
-        ],
-      }),
-    );
+    const fullInventory: ScanFormatted["files"] = Array.from({ length: TOTAL_FILES }, (_, i) => ({
+      path: `src/file-${String(i).padStart(3, "0")}.tsx`,
+      findings: [
+        buildFinding(
+          i % 2 === 0 ? "keyboard/handler-missing" : "aria/icon-child-missing-aria-hidden",
+          i + 1,
+        ) as never,
+      ],
+    }));
     const page = fullInventory.slice(0, PAGE_SIZE);
     const formatted: ScanFormatted = {
       plan: {
@@ -163,9 +160,9 @@ describe("warningsDetails.truncated_files_dropped — canonical drop-count formu
     // `droppedFileCount` and `pageClipFromRequestedLimit` equals the
     // paginator-skipped subset (TOTAL_FILES - PAGE_SIZE).
     expect(tfdPayload.pageClipFromRequestedLimit).toBe(PAGE_SIZE - survivingFiles.length);
-    expect(
-      tfdPayload.droppedFileCount - (tfdPayload.pageClipFromRequestedLimit ?? 0),
-    ).toBe(TOTAL_FILES - PAGE_SIZE);
+    expect(tfdPayload.droppedFileCount - (tfdPayload.pageClipFromRequestedLimit ?? 0)).toBe(
+      TOTAL_FILES - PAGE_SIZE,
+    );
   });
 
   it("slim-envelope path: droppedFileCount === totalFilesWithFindings; pageClipFromRequestedLimit omitted (would equal canonical)", () => {
@@ -199,9 +196,7 @@ describe("warningsDetails.truncated_files_dropped — canonical drop-count formu
         },
         {
           path: "src/b.tsx",
-          findings: [
-            { ruleId: "aria/icon-child-missing-aria-hidden", severity: "error" } as never,
-          ],
+          findings: [{ ruleId: "aria/icon-child-missing-aria-hidden", severity: "error" } as never],
         },
         {
           path: "src/c.tsx",

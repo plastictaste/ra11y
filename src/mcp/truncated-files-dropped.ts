@@ -126,10 +126,7 @@ export function computeTruncatedFilesDroppedWarning(
   const hasCanonicalInputs =
     options?.totalFilesWithFindings !== undefined && options?.finalFilesShipped !== undefined;
   const canonicalDropCount = hasCanonicalInputs
-    ? Math.max(
-        0,
-        (options?.totalFilesWithFindings ?? 0) - (options?.finalFilesShipped ?? 0),
-      )
+    ? Math.max(0, (options?.totalFilesWithFindings ?? 0) - (options?.finalFilesShipped ?? 0))
     : droppedFiles.length;
   // Page-internal trim count = the per-page subset the caller is
   // actually dropping in this response. Carry it separately when it

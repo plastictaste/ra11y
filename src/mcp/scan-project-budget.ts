@@ -388,18 +388,12 @@ function mergeBudgetedFields(args: {
     effectiveLimit: densityEffectiveLimit,
     topContributor,
   }).warningsDetails;
-  // Q9 rule-level impact of the density-cap drop —
-  // the page-internal trimmed subset is the tail past
-  // `budgeted.files.length` (applyTokenBudget pops from the tail);
-  // pass `totalFilesWithFindings` + `finalFilesShipped` so the helper
+  // Q9 rule-level impact of the density-cap drop. Pass
+  // `totalFilesWithFindings` + `finalFilesShipped` so the helper
   // computes the CANONICAL drop count (= full inventory minus shipped),
-  // not just the page-internal trim. On a paginated bulk-vendor scan
-  // the paginator may have already skipped a sub-inventory before the
-  // density cap saw it, so the page-internal tail-trim alone undercounts
-  // the silent drop — see the canonical drop-count formulation in
-  // `truncated-files-dropped.ts` and the
-  // `truncated_files_dropped.droppedFileCount` field doc in
-  // `warnings.ts` for the full rationale.
+  // not just the page-internal tail-trim — see the canonical
+  // drop-count formulation in `truncated-files-dropped.ts` and the
+  // `truncated_files_dropped.droppedFileCount` field doc in `warnings.ts`.
   const droppedTailFiles = filesForAnalysis.slice(budgeted.files.length);
   const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(droppedTailFiles, {
     totalFilesWithFindings,
@@ -527,9 +521,8 @@ function perRuleNarrowingRerouteFields(args: {
 }
 
 function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): ScanWarningCode[] {
-  if (base === undefined) return ["response_token_budget_truncated"];
-  if (base.includes("response_token_budget_truncated")) return [...base];
-  return [...base, "response_token_budget_truncated"];
+  const code = "response_token_budget_truncated" as const;
+  return base === undefined || !base.includes(code) ? [...(base ?? []), code] : [...base];
 }
 
 /**
@@ -627,15 +620,11 @@ function buildSlimScanProjectEnvelope(args: {
     ...slimmedPlan.truncations,
     ...slimmedDetails.truncations,
   ];
-  // Q9 rule-level impact of the slim path's drop — slim ships
-  // `files: []`, dropping the entire `formatted.files` set. Pass the
-  // canonical inputs (`totalFilesWithFindings: formatted.files.length`,
-  // `finalFilesShipped: 0`) so the helper's drop-count axis stays on
-  // the same canonical formulation the density-cap caller uses; both
-  // values agree here (slim drops everything, so canonical ==
-  // page-internal), and the field-builder omits the redundant
-  // `pageClipFromRequestedLimit` per the present-when-meaningful
-  // contract. See `truncated-files-dropped.ts` for the helper rationale.
+  // Q9 rule-level impact of the slim path's drop — ships `files: []`,
+  // dropping the entire `formatted.files` set. Pass canonical inputs;
+  // both values agree (canonical == page-internal), so the field-builder
+  // omits the redundant `pageClipFromRequestedLimit` per
+  // present-when-meaningful. See `truncated-files-dropped.ts`.
   const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files, {
     totalFilesWithFindings: formatted.files.length,
     finalFilesShipped: 0,
@@ -715,8 +704,7 @@ function buildSlimScanProjectEnvelope(args: {
  */
 function readWarnings(original: Record<string, unknown>): readonly ScanWarningCode[] | undefined {
   const w = original["warnings"];
-  if (!Array.isArray(w)) return undefined;
-  return w as readonly ScanWarningCode[];
+  return Array.isArray(w) ? (w as readonly ScanWarningCode[]) : undefined;
 }
 
 /**
@@ -726,8 +714,7 @@ function readWarnings(original: Record<string, unknown>): readonly ScanWarningCo
  */
 function readWarningsDetails(original: Record<string, unknown>): ScanWarningDetails | undefined {
   const d = original["warningsDetails"];
-  if (d === undefined || d === null || typeof d !== "object") return undefined;
-  return d as ScanWarningDetails;
+  return d !== null && typeof d === "object" ? (d as ScanWarningDetails) : undefined;
 }
 
 /**
@@ -767,9 +754,7 @@ function readWarningsDetails(original: Record<string, unknown>): ScanWarningDeta
 function buildSlimMeta(fullMeta: Record<string, unknown>): Record<string, unknown> {
   const slim: Record<string, unknown> = {};
   for (const key of SLIM_META_KEYS) {
-    if (key in fullMeta) {
-      slim[key] = fullMeta[key];
-    }
+    if (key in fullMeta) slim[key] = fullMeta[key];
   }
   return slim;
 }
