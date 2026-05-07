@@ -1444,7 +1444,6 @@ function codeDemoPropMatchesField(
   return { codeDemoPropMatches: matches };
 }
 
-
 /**
  * Builds the spreadable `dynamicContentContainerEntries` subset for the
  * `warningsFieldFromScanMeta` call. Conditional-spread per the
