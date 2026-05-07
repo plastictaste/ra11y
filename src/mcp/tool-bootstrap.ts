@@ -432,6 +432,20 @@ interface FixesByClassSubset {
   readonly guidance: FixesByClassLaneSubset;
   readonly runtimeOnly: FixesByClassLaneSubset;
   readonly verifyInSource: FixesByClassLaneSubset;
+  /**
+   * Per-emission `suppress-recommended` derivation lane forwarded
+   * verbatim from the upstream `plan.fixesByClass.suppressRecommended`.
+   * Mirrors the per-call `suggest_fix` `kind: "suppress-recommended"`
+   * discriminator so the per-class plan tally stays consistent across
+   * the project-rooted (`scan_project.plan.fixesByClass`) and
+   * bootstrap-class surfaces (`docs/kb/architecture/ai-first-consumer.md`
+   * "Bootstrap-class lanes must equal project-rooted lanes"). Without
+   * this lane the bootstrap subset silently drops every finding routed
+   * into suppress-recommended (343-finding gap on the original
+   * regression corpus); the bootstrap-derived `violationsCount` then
+   * undercounts the upstream by the lane's source-count.
+   */
+  readonly suppressRecommended: FixesByClassLaneSubset;
 }
 
 /**
@@ -451,10 +465,10 @@ interface ScanSubset {
   /**
    * Count of violations (severity `error` / `warning`) — the
    * "things-needing-a-fix" total the bootstrap report budgets against.
-   * Derived from `plan.fixesByClass` (sum of the four lanes) per
-   * the wire-level `plan.violations`
-   * headline was deleted because it summed across categorically
-   * different remediation lanes under one number. The bootstrap
+   * Derived from `plan.fixesByClass` (sum of the five lanes,
+   * including `suppressRecommended`) per the wire-level
+   * `plan.violations` headline was deleted because it summed across
+   * categorically different remediation lanes under one number. The bootstrap
    * subset still carries a flat `violationsCount` because it's an
    * internal structured-output field consumed by the bootstrap
    * report assembler (not a user-facing surface). Distinct from
@@ -524,7 +538,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const plan = record["plan"];
   const filesScanned = readNumberFromRecord(meta, "filesScanned") ?? 0;
   // the wire-level `plan.violations`
-  // headline was deleted because it summed across the four
+  // headline was deleted because it summed across the five
   // `fixesByClass` lanes under one composite number. The bootstrap
   // subset still carries a flat `violationsCount` (it's an internal
   // structured-output field consumed by the bootstrap report
@@ -532,6 +546,13 @@ function extractScanSubset(scan: unknown): ScanSubset {
   // `plan.fixesByClass` so the count tracks the honest per-lane
   // source. `plan.notes` survives unchanged (severity-info, not a
   // composite of categorically different lanes).
+  //
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class
+  // lanes must equal project-rooted lanes," the sum spans every lane
+  // the upstream `plan.fixesByClass` enumerates — including
+  // `suppressRecommended`. Dropping any one (the original regression
+  // dropped suppressRecommended) makes the bootstrap-derived count
+  // undercount the upstream by that lane's totals.
   const fixesByClass = readFixesByClass(plan);
   const violationsCount =
     fixesByClass === null
@@ -539,7 +560,8 @@ function extractScanSubset(scan: unknown): ScanSubset {
       : laneSum(fixesByClass.mechanical) +
         laneSum(fixesByClass.guidance) +
         laneSum(fixesByClass.runtimeOnly) +
-        laneSum(fixesByClass.verifyInSource);
+        laneSum(fixesByClass.verifyInSource) +
+        laneSum(fixesByClass.suppressRecommended);
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionableBySource = readActionableManualLane(plan);
@@ -596,10 +618,17 @@ function readFixesByClass(plan: unknown): FixesByClassSubset | null {
   const guidance = readLane(raw, "guidance");
   const runtimeOnly = readLane(raw, "runtimeOnly");
   const verifyInSource = readLane(raw, "verifyInSource");
-  if (mechanical === null || guidance === null || runtimeOnly === null || verifyInSource === null) {
+  const suppressRecommended = readLane(raw, "suppressRecommended");
+  if (
+    mechanical === null ||
+    guidance === null ||
+    runtimeOnly === null ||
+    verifyInSource === null ||
+    suppressRecommended === null
+  ) {
     return null;
   }
-  return { mechanical, guidance, runtimeOnly, verifyInSource };
+  return { mechanical, guidance, runtimeOnly, verifyInSource, suppressRecommended };
 }
 
 /**

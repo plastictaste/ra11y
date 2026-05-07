@@ -39,6 +39,7 @@ interface BootstrapResponse {
       readonly guidance: { readonly source: number; readonly buildArtifact: number };
       readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
       readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
+      readonly suppressRecommended: { readonly source: number; readonly buildArtifact: number };
     };
     readonly limitations?: readonly string[];
   };
@@ -250,17 +251,22 @@ describe("bootstrap: happy path (writeBaseline default false)", () => {
         guidance: zeroLane,
         runtimeOnly: zeroLane,
         verifyInSource: zeroLane,
+        suppressRecommended: zeroLane,
       };
       // Each lane is a per-scan-kind sub-tally — `source` (authored)
       // + `buildArtifact` (vendor / generated). The bootstrap subset
-      // forwards the upstream shape verbatim.
+      // forwards the upstream shape verbatim. The sum spans all five
+      // lanes the upstream `plan.fixesByClass` enumerates including
+      // `suppressRecommended` per "Bootstrap-class lanes must equal
+      // project-rooted lanes."
       const laneSum = (l: { source: number; buildArtifact: number }): number =>
         l.source + l.buildArtifact;
       const total =
         laneSum(lanes.mechanical) +
         laneSum(lanes.guidance) +
         laneSum(lanes.runtimeOnly) +
-        laneSum(lanes.verifyInSource);
+        laneSum(lanes.verifyInSource) +
+        laneSum(lanes.suppressRecommended);
       // Per-lane tally sums to the total violation count — honest
       // invariant that fails the day the subset drops one lane.
       expect(total).toBe(response.scan.violationsCount);
