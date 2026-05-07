@@ -846,23 +846,42 @@ export const coverageTool: McpTool = {
       // / `checklist`.
       // Q17-CHECKLIST-COVERAGE-NO-MINIMUM-HONEST-ENVELOPE: thread the
       // caller's `maxBytes` override (when supplied) into the budget
-      // helper so test fixtures and tighter-host configurations can
-      // drive the slim envelope on tractable response sizes. Mirrors
-      // `scan_file`'s `maxBytes` → `applyScanFileBudget.maxBytes` and
-      // `checklist`'s parallel knob. Per AI-first doctrine "Per-tool
-      // lane and warning-set classification must agree": same override
-      // knob shape across every project-rooted tool that runs the slim
-      // guard.
-      const maxBytes = numParam(params, "maxBytes");
-      const budgeted = applyCoverageBudget({
-        response: fullResponse,
-        ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
-      });
+      // helper. Extracted into a helper so the handler stays under the
+      // lint's cognitive-complexity cap. Mirrors `scan_file`'s
+      // `maxBytes` knob and `checklist`'s parallel knob.
+      const budgeted = applyCoverageBudgetWithMaxBytes(fullResponse, params);
       return textResult(budgeted.response);
     }
     return textResult(entries);
   },
 };
+
+/**
+ * Applies the oversize-envelope budget guard to the assembled
+ * `coverage` response, threading the caller's `maxBytes` override
+ * (when supplied) through to the helper as `hardCeilingChars`.
+ *
+ * Extracted from the handler so the handler stays under the lint's
+ * cognitive-complexity cap. Mirrors the pattern in
+ * `tool-checklist.ts` for the same `maxBytes` knob — the helper is
+ * a thin shim that translates the agent-facing param name
+ * (`maxBytes`, the same wire-level name `scan_file` uses) into the
+ * helper-facing param name (`hardCeilingChars`).
+ *
+ * Per AI-first doctrine "Per-tool lane and warning-set classification
+ * must agree": same override knob shape across every project-rooted
+ * tool that runs the slim guard.
+ */
+function applyCoverageBudgetWithMaxBytes(
+  response: Record<string, unknown>,
+  params: Record<string, unknown>,
+): { readonly response: Record<string, unknown>; readonly truncated: boolean } {
+  const maxBytes = numParam(params, "maxBytes");
+  return applyCoverageBudget({
+    response,
+    ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+  });
+}
 
 /**
  * Assembles the `meta` field for `coverage`.-
