@@ -78,13 +78,7 @@ export function splitFixesByClassByScanKind(
 
 function laneKeyFor(
   fixClass: string | undefined,
-):
-  | "mechanical"
-  | "guidance"
-  | "runtimeOnly"
-  | "verifyInSource"
-  | "suppressRecommended"
-  | null {
+): "mechanical" | "guidance" | "runtimeOnly" | "verifyInSource" | "suppressRecommended" | null {
   switch (fixClass) {
     case "mechanical":
       return "mechanical";

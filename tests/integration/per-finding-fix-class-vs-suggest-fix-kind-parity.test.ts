@@ -104,7 +104,8 @@ describe("per-finding fixClass agrees with suggest_fix.kind on (rule, file, line
     // for the suppress-recommended case. Per-call `kind` uses
     // `"edit"` / `"guidance"` for the other lanes — the partition
     // discriminator is one-to-one only on `"suppress-recommended"`.
-    expect(finding.fixClass).toBe(payload["kind"] as string);
+    expect(finding.fixClass).toBe("suppress-recommended");
+    expect(payload["kind"]).toBe(finding.fixClass);
   });
 
   it("an honest mechanical-edit finding keeps its declared fixClass and ships kind: 'edit'", () => {
