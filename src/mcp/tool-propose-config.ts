@@ -64,9 +64,11 @@
 
 import { existsSync } from "node:fs";
 import type { ParsedFile } from "../engine/scanner.ts";
+import type { DefaultExcludedArtifactPath } from "../input/discover.ts";
 import { gitRoot } from "../utils/git.ts";
 import { posixRelative } from "../utils/path.ts";
 import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
+import { detectBulkCatalog } from "./bulk-catalog.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
@@ -83,7 +85,7 @@ import {
   applyRuleSettings,
   errorResult,
   type McpTool,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveStandards,
   runScanAndFormat,
   strParam,
@@ -189,7 +191,7 @@ export const proposeConfigTool: McpTool = {
     const root = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
 
     const projectConfig = await session.loadProjectConfig(root);
-    const files = await parseFiles([root], session, root);
+    const { files, diagnostics } = await parseFilesWithDiagnostics([root], session, root);
     const effective = session.effectiveRules(projectConfig);
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
@@ -275,12 +277,62 @@ export const proposeConfigTool: McpTool = {
       allArtifactPaths,
       root,
     );
-    const { paths: buildArtifacts, gated: gatedExcludePaths } = normalizeExcludes(
+    const { paths: definiteArtifactGlobs, gated: gatedExcludePaths } = normalizeExcludes(
       definiteArtifactPaths,
       root,
       excludeGate,
     );
     const likelyBuildPaths = normalizeLikelyHints(likelyArtifactPaths, root);
+    // Shared-classifier consumption: the discovery walker silently
+    // skips a closed set of build-artifact directories (`dist/`,
+    // `.next/`, `build/`, etc. — see
+    // `src/input/discover.ts.DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES`).
+    // When any of them contained at least one parseable file, the
+    // walker surfaces them via `default_excluded_artifact_paths`. The
+    // checklist + coverage `nextStep` prose tells agents to call
+    // `propose_config` precisely so the paste-in config preserves
+    // those skips — but `propose_config` previously consumed only the
+    // path-anchored `collectBuildArtifacts` output (which never sees
+    // these dirs because the walker stopped before parsing them). The
+    // closure: read `diagnostics.defaultExcludedArtifactPaths` and emit
+    // a `<dir>/**` glob per entry. Same paste-safe predicate as the
+    // discovery layer's name-based skip — directory name alone (`dist`,
+    // `.next`, etc.) is the deterministic vendor signal. Matches the
+    // doctrine bullet "Bootstrap output must be paste-safe + Cross-
+    // surface count invariant + Sibling fields naming the same concept
+    // must use one shape" (`docs/kb/architecture/ai-first-consumer.md`).
+    const defaultExcludedDirGlobs = relativizeArtifactDirsToGlobs(
+      diagnostics.defaultExcludedArtifactPaths,
+      root,
+    );
+    // Shared-classifier consumption: when the corpus trips
+    // `bulk_catalog_detected`, the detector produces basename globs
+    // (`**\/bootstrap.min.css`) that collapse hundreds of vendor
+    // copies across sibling subdirs into one paste-safe entry. Without
+    // this consumption path, a 600+-vendor-file corpus would emit 600+
+    // individual paths in `exclude` instead of the 5 collapsed globs
+    // the classifier already produced. Reuses the same detector +
+    // inputs as the scan-time warning emitter so cross-surface
+    // counts agree by construction.
+    const bulkCatalogDetection = detectBulkCatalog({
+      durationMs: Number.NEGATIVE_INFINITY, // we don't measure duration on this surface
+      filesScanned: files.length,
+      buildArtifacts: collectBuildArtifacts(files),
+      parsedFilePaths: files.map((f) => f.filePath),
+      root,
+    });
+    const bulkCatalogBasenameGlobs = bulkCatalogDetection?.suggestedExcludes ?? [];
+    // Merge + dedupe: per-path definite globs that are already covered
+    // by a basename glob (`**\/bootstrap.min.css` covers
+    // `site-a/css/bootstrap.min.css`) collapse into the basename glob.
+    // Per-`<dir>/**` globs from `defaultExcludedArtifactPaths` ride
+    // alongside basename globs — one is directory-anchored, the other
+    // basename-anchored, so they don't overlap by construction.
+    const buildArtifacts = mergeAndDedupeExcludeGlobs({
+      definiteGlobs: definiteArtifactGlobs,
+      defaultExcludedDirGlobs,
+      bulkCatalogBasenameGlobs,
+    });
     // Per-entry rationale for the live `exclude: [...]` array — paste-
     // bearing output must let the agent audit each glob before
     // committing it. The `excludes` array carries the strings, but
@@ -670,6 +722,99 @@ function buildExcludeGate(
  */
 function normalizeLikelyHints(paths: readonly string[], root: string): readonly string[] {
   return relativizeToRoot(paths, root);
+}
+
+/**
+ * Converts each {@link DefaultExcludedArtifactPath} entry into a
+ * `<dir>/**` glob anchored at the scan root. Entries name directories
+ * the discovery walker silently skipped because the directory's
+ * basename appears in
+ * {@link import("../input/discover.ts").DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES}
+ * (`dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`,
+ * `.cache`, `coverage`, `htmlcov`, `.nyc_output`, `target`) — same
+ * deterministic vendor predicate the discovery layer uses to skip
+ * them, so the emitted globs are paste-safe by construction.
+ *
+ * Entries with paths that escape `root` (rare — symlinked sources)
+ * are dropped: an exclude pattern outside the project is meaningless.
+ * Output is sorted-ascending lexically for deterministic wire shape.
+ */
+function relativizeArtifactDirsToGlobs(
+  entries: readonly DefaultExcludedArtifactPath[],
+  root: string,
+): readonly string[] {
+  const out: string[] = [];
+  for (const entry of entries) {
+    const rel = posixRelative(root, entry.path).replace(/\\/g, "/");
+    if (rel === "" || rel.startsWith("..")) continue;
+    out.push(`${rel}/**`);
+  }
+  out.sort();
+  return out;
+}
+
+/**
+ * Merges three sources of paste-safe exclude globs and dedupes the
+ * union. Per the AI-first doctrine bullet "Sibling fields naming the
+ * same concept must use one shape" — when the bulk-catalog detector
+ * already emits a basename glob (`**\/bootstrap.min.css`) that covers
+ * a per-path entry from the discovery walker, the basename glob wins
+ * and the per-path entry collapses into it. Per-`<dir>/**` globs from
+ * `defaultExcludedArtifactPaths` ride alongside basename globs because
+ * one is directory-anchored and the other basename-anchored — the two
+ * shapes don't overlap by construction (a `<dir>/**` glob covers
+ * everything under a topdir; a `**\/<basename>` glob covers a
+ * basename across every directory).
+ *
+ * Per-path entries (already-relativized strings from
+ * `definiteArtifactGlobs` like `assets/vendor.min.js` or
+ * `lib/foo.bundle.js`) collapse into a basename glob when the basename
+ * matches. Topdir collapses (`assets/**`) ride through unchanged —
+ * they are basename-disjoint from the `**\/<basename>` shape.
+ *
+ * Output is deterministic: directory globs first (sorted), then
+ * basename globs (sorted), then itemized per-path entries (sorted).
+ * The grouping makes the emitted snippet easy to scan when an agent
+ * audits the proposal.
+ */
+function mergeAndDedupeExcludeGlobs(args: {
+  readonly definiteGlobs: readonly string[];
+  readonly defaultExcludedDirGlobs: readonly string[];
+  readonly bulkCatalogBasenameGlobs: readonly string[];
+}): readonly string[] {
+  const { definiteGlobs, defaultExcludedDirGlobs, bulkCatalogBasenameGlobs } = args;
+  // Build the set of basenames already covered by a `**/<basename>`
+  // glob. Per-path entries with a matching basename collapse into the
+  // glob; topdir collapses (entries ending in `/**`) ride through.
+  const coveredBasenames = new Set<string>();
+  for (const g of bulkCatalogBasenameGlobs) {
+    if (g.startsWith("**/")) coveredBasenames.add(g.slice(3));
+  }
+  // Bucket the inputs. Use Sets so cross-source duplicates collapse
+  // (e.g. a `dist/**` discovered twice if a future source emits
+  // overlapping entries — defensive, no current overlap).
+  const dirGlobs = new Set<string>(defaultExcludedDirGlobs);
+  const basenameGlobs = new Set<string>(bulkCatalogBasenameGlobs);
+  const itemized = new Set<string>();
+  for (const g of definiteGlobs) {
+    // Topdir collapses (e.g. `assets/**`) ride into the dir-globs
+    // bucket alongside discovery-walker dirs. They are
+    // structurally identical — `<topdir>/**` regardless of the
+    // emission lane.
+    if (g.endsWith("/**")) {
+      dirGlobs.add(g);
+      continue;
+    }
+    const slash = g.lastIndexOf("/");
+    const basename = slash === -1 ? g : g.slice(slash + 1);
+    if (coveredBasenames.has(basename)) continue; // covered by a `**/<basename>` glob
+    itemized.add(g);
+  }
+  return [
+    ...[...dirGlobs].sort(),
+    ...[...basenameGlobs].sort(),
+    ...[...itemized].sort(),
+  ];
 }
 
 function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {
