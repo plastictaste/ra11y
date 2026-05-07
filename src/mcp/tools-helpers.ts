@@ -619,6 +619,20 @@ export async function runScanAndFormat(
    * {@link import("./manual-criteria-tally.ts").ManualCriteriaTally#actionableCriteriaPaths}.
    */
   readonly actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Raw post-couple-severity violation list (post-`coupleSeverityToVerifyTokens`,
+   * pre-`dropWrapperNoise`/severity filter). Exposed so callers that
+   * also need to drive the shared {@link import("./scan-time-warnings.ts").buildScanTimeWarnings}
+   * helper (e.g. `propose_config`) can pass through the same violation
+   * stream every other project-rooted tool's scan-time predicate runs
+   * against, without re-running the scanner. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+   * invariant" (warning-channel extension): the scan-time warning code
+   * set must agree across project-rooted tools on identical cwd, which
+   * requires every consumer to thread the same raw violations into the
+   * shared aggregator.
+   */
+  readonly violations: readonly import("../types/violation.ts").Violation[];
 }> {
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -959,6 +973,11 @@ export async function runScanAndFormat(
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
     adjustedPerRuleCoverage,
     actionableCriteriaPaths: tally.actionableCriteriaPaths,
+    // Raw post-couple-severity stream — used by `propose_config` to
+    // drive the shared scan-time-warnings aggregator without a second
+    // scanner pass. See the return-type docblock for the cross-surface
+    // count invariant rationale.
+    violations: result.violations,
   };
 }
 

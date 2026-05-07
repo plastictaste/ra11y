@@ -67,6 +67,7 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { DefaultExcludedArtifactPath } from "../input/discover.ts";
 import { gitRoot } from "../utils/git.ts";
 import { posixRelative } from "../utils/path.ts";
+import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
 import { detectBulkCatalog } from "./bulk-catalog.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
@@ -79,6 +80,7 @@ import {
 } from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { computeTopRules } from "./scan-assembly.ts";
+import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
@@ -191,7 +193,13 @@ export const proposeConfigTool: McpTool = {
     const root = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
 
     const projectConfig = await session.loadProjectConfig(root);
-    const { files, diagnostics } = await parseFilesWithDiagnostics([root], session, root);
+    const {
+      files,
+      diagnostics,
+      jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
+    } = await parseFilesWithDiagnostics([root], session, root);
     const effective = session.effectiveRules(projectConfig);
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
@@ -406,37 +414,21 @@ export const proposeConfigTool: McpTool = {
       topRules,
     });
 
-    const warningCodes: string[] = [];
-    const warningsDetails: Record<string, unknown> = {};
-    if (foreignDetail !== null) {
-      // Static warning code with structured payload — replaces the
-      // previous colon-suffixed dynamic identifier
-      // (`foreign_ecosystem_detected: ruby`) which violated the
-      // doctrine bullet "Empty `warningsDetails.<code>: {}` is
-      // dishonest" two ways: (a) the dynamic suffix made the code
-      // un-keyable on the typed `warningsDetails` interface so the
-      // emitted payload was `{}` by construction; (b) agents reading
-      // the code identifier got the language inline but had no
-      // structured slot to branch on the corroborating evidence
-      // (which marker fired, whether `package.json` was also
-      // present). The payload now ships both axes — the agent reads
-      // `warningsDetails.foreign_ecosystem_detected.{ecosystem,
-      // evidence, hasPackageJson}` and branches without re-probing
-      // the filesystem.
-      warningCodes.push(FOREIGN_ECOSYSTEM_DETECTED_CODE);
-      warningsDetails[FOREIGN_ECOSYSTEM_DETECTED_CODE] = foreignDetail;
-    }
-    if (noConfigFires) {
-      warningCodes.push("no_config_found");
-      // Present-when-meaningful gate via shared helper: when
-      // `searchedFrom === scanned.root`, the rich payload drops to
-      // the empty record because `meta.scanned.root` already carries
-      // the search base.
-      warningsDetails["no_config_found"] = noConfigFoundWarningDetail({
-        searchedFrom: root,
-        scannedRoot: root,
-      });
-    }
+    const { warningCodes, warningsDetails } = buildProposeConfigWarnings({
+      files,
+      diagnostics,
+      jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
+      scanReport,
+      activeRules,
+      session,
+      projectConfig,
+      root,
+      configSearchSawProjectMarker,
+      noConfigFires,
+      foreignDetail,
+    });
 
     return textResult({
       suggestedConfig,
@@ -515,6 +507,168 @@ export const proposeConfigTool: McpTool = {
     });
   },
 };
+
+/**
+ * Inputs the {@link buildProposeConfigWarnings} helper threads through
+ * to the shared scan-time aggregator + tool-local code emitters. Pure
+ * passthrough from the handler scope; extracted so the handler stays
+ * under the cognitive-complexity lint cap as the warnings axis grew
+ * from two tool-local codes (foreign-ecosystem + no-config-found) to
+ * the full shared scan-time set per Q16 closure.
+ */
+interface ProposeConfigWarningInputs {
+  readonly files: readonly ParsedFile[];
+  readonly diagnostics: import("../input/discover.ts").DiscoveryDiagnostics;
+  readonly jsInnerHtmlDeclinedCount: number;
+  readonly jsInnerHtmlPatternSamples: ReadonlyMap<
+    string,
+    readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+  >;
+  readonly codeDemoPropMatches: ReadonlyMap<
+    string,
+    readonly import("../input/parsers/mdx-example-extractor.ts").CodeDemoPropMatch[]
+  >;
+  readonly scanReport: ProposalScanReport;
+  readonly activeRules: readonly import("../types/rule.ts").Rule[];
+  readonly session: import("./session.ts").McpSession;
+  readonly projectConfig: import("../types/config.ts").LoadedConfig;
+  readonly root: string;
+  readonly configSearchSawProjectMarker: boolean;
+  readonly noConfigFires: boolean;
+  readonly foreignDetail: ReturnType<typeof foreignEcosystemDetected>;
+}
+
+/**
+ * Builds the `propose_config` response's `warnings` + `warningsDetails`
+ * channel — the shared scan-time aggregator's output (cross-surface
+ * count invariant per `docs/kb/architecture/ai-first-consumer.md`)
+ * merged with the tool-local `foreign_ecosystem_detected` code +
+ * dedupe-guarded legacy `no_config_found` emission.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" (warning-channel extension) + "Per-tool lane and
+ * warning-set classification must agree": every project-rooted tool
+ * emitting a `warnings`/`warningsDetails` channel must surface the
+ * same scan-time code set on identical cwd. Pre-Q16 this tool emitted
+ * only `foreign_ecosystem_detected` + `no_config_found`, silently
+ * dropping the corpus-level codes (`scanned_build_artifacts_present`,
+ * `bulk_catalog_detected`, `text_source_skipped`,
+ * `template_files_parsed_as_literal`,
+ * `js_innerhtml_template_literal_unparsed`, `linked_stylesheet_*`,
+ * `parse_errors_present`, etc.) the shared
+ * {@link buildScanTimeWarnings} helper produces for `scan_project` /
+ * `coverage` / `checklist`. The gap meant an agent calling
+ * `propose_config` first on a bulk-vendor or template-island corpus
+ * had zero scope-confidence telemetry — the silent-miss failure mode
+ * the doctrine bullet warns against.
+ *
+ * Closure: route the same `parseFilesWithDiagnostics` outputs + raw
+ * `runScanAndFormat` violation stream through the shared aggregator
+ * and merge its codes / details into the existing `warningCodes` +
+ * `warningsDetails` slots. The two tool-local codes
+ * (`foreign_ecosystem_detected` here, plus the shared
+ * `no_config_found` which the helper also produces) ride alongside;
+ * the helper's `no_config_found` path is identical to the one this
+ * tool computed inline, so the merge dedupes by code and prefers the
+ * shared payload.
+ */
+function buildProposeConfigWarnings(inputs: ProposeConfigWarningInputs): {
+  readonly warningCodes: readonly string[];
+  readonly warningsDetails: Record<string, unknown>;
+} {
+  const filesByExtension = countFilesByExtension(inputs.files);
+  // Threading `discoveryDiagnostics` here makes
+  // `analysisCoverage.skippedByExtension` populate identically to
+  // `coverage` / `scan_project` on the same cwd, which in turn drives
+  // the shared aggregator's `text_source_skipped` /
+  // `binary_assets_skipped` predicates. The `findingFilePaths` set
+  // drives the parse-error vs partial-parse bucket assignment per
+  // AI-first "Cross-surface count invariant" (per-bucket axis).
+  const analysisCoverageField = buildAnalysisCoverage(
+    inputs.files,
+    inputs.session.config.nativeWrappers,
+    inputs.activeRules,
+    false,
+    0,
+    inputs.projectConfig.preset,
+    inputs.diagnostics,
+    inputs.scanReport.findingPaths,
+  );
+  const scanTime = buildScanTimeWarnings({
+    parsedFiles: inputs.files,
+    violations: inputs.scanReport.violations,
+    root: inputs.root,
+    configSource: inputs.projectConfig.sourcePath,
+    configSearchSawProjectMarker: inputs.configSearchSawProjectMarker,
+    // `null` mirrors `coverage` / `checklist` — propose_config has no
+    // explicit/host-root/git/spawn-cwd resolution distinct from the
+    // caller's `cwd`, so the rootSource axis stays inactive (defaulted
+    // path codes do not fire from this surface).
+    rootSource: null,
+    analysisCoverage: analysisCoverageField.analysisCoverage,
+    filesByExtension,
+    jsInnerHtmlDeclinedCount: inputs.jsInnerHtmlDeclinedCount,
+    ...(inputs.jsInnerHtmlPatternSamples.size === 0
+      ? {}
+      : { jsInnerHtmlPatternSamples: inputs.jsInnerHtmlPatternSamples }),
+    ...(inputs.codeDemoPropMatches.size === 0
+      ? {}
+      : { codeDemoPropMatches: inputs.codeDemoPropMatches }),
+  });
+
+  const warningCodes: string[] = [];
+  const warningsDetails: Record<string, unknown> = {};
+  // Seed with the shared aggregator's output FIRST so tool-local
+  // codes (foreign-ecosystem) ride alongside the scan-time set in
+  // emission order without duplicating `no_config_found` (the shared
+  // aggregator already emits it via the same predicate).
+  for (const code of scanTime.warnings ?? []) {
+    warningCodes.push(code);
+  }
+  if (scanTime.warningsDetails !== undefined) {
+    for (const [code, payload] of Object.entries(scanTime.warningsDetails)) {
+      warningsDetails[code] = payload;
+    }
+  }
+  if (inputs.foreignDetail !== null) {
+    // Static warning code with structured payload — replaces the
+    // previous colon-suffixed dynamic identifier
+    // (`foreign_ecosystem_detected: ruby`) which violated the
+    // doctrine bullet "Empty `warningsDetails.<code>: {}` is dishonest"
+    // two ways: (a) the dynamic suffix made the code un-keyable on
+    // the typed `warningsDetails` interface so the emitted payload
+    // was `{}` by construction; (b) agents reading the code
+    // identifier got the language inline but had no structured slot
+    // to branch on the corroborating evidence (which marker fired,
+    // whether `package.json` was also present). The payload now ships
+    // both axes — the agent reads
+    // `warningsDetails.foreign_ecosystem_detected.{ecosystem,
+    // evidence, hasPackageJson}` and branches without re-probing the
+    // filesystem.
+    warningCodes.push(FOREIGN_ECOSYSTEM_DETECTED_CODE);
+    warningsDetails[FOREIGN_ECOSYSTEM_DETECTED_CODE] = inputs.foreignDetail;
+  }
+  // `no_config_found` may have been emitted both by the shared
+  // aggregator (canonical predicate) AND by the legacy inline
+  // emission below. Dedupe-and-prefer-shared via this guard so the
+  // bare code only appears once and the shared payload wins. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+  // must reconcile across warnings" — multiple emitters for the same
+  // predicate must reconcile by reference rather than by independent
+  // enumeration.
+  if (inputs.noConfigFires && !warningCodes.includes("no_config_found")) {
+    warningCodes.push("no_config_found");
+    // Present-when-meaningful gate via shared helper: when
+    // `searchedFrom === scanned.root`, the rich payload drops to the
+    // empty record because `meta.scanned.root` already carries the
+    // search base.
+    warningsDetails["no_config_found"] = noConfigFoundWarningDetail({
+      searchedFrom: inputs.root,
+      scannedRoot: inputs.root,
+    });
+  }
+  return { warningCodes, warningsDetails };
+}
 
 /**
  * Runs the wrapper detector + one-hop probe over the parsed file set
@@ -1001,6 +1155,16 @@ interface TopRuleEntry {
 interface ProposalScanReport {
   readonly topRules: readonly TopRuleEntry[];
   readonly findingPaths: ReadonlySet<string>;
+  /**
+   * Raw post-couple-severity violation stream from the same
+   * {@link runScanAndFormat} pass that produced `topRules` /
+   * `findingPaths`. Threaded through to the {@link buildScanTimeWarnings}
+   * call at the handler so propose_config emits the same scan-time
+   * warning code set as `scan_project` / `coverage` / `checklist` on
+   * identical cwd. Per `docs/kb/architecture/ai-first-consumer.md`
+   * "Cross-surface count invariant" (warning-channel extension).
+   */
+  readonly violations: readonly import("../types/violation.ts").Violation[];
 }
 
 async function scanForProposalSignals(
@@ -1009,7 +1173,7 @@ async function scanForProposalSignals(
   projectConfig: import("../types/config.ts").LoadedConfig,
   root: string,
 ): Promise<ProposalScanReport> {
-  if (files.length === 0) return { topRules: [], findingPaths: new Set() };
+  if (files.length === 0) return { topRules: [], findingPaths: new Set(), violations: [] };
   // Mirror `scan_project`'s `buildWrapperSources` for the no-autoDetect
   // case: thread the file-config and session wrappers through so
   // `dropWrapperNoise` (inside `runScanAndFormat`) treats the same
@@ -1027,7 +1191,7 @@ async function scanForProposalSignals(
     fromSession: session.config.nativeWrappers,
     ...(Object.keys(sessionElements).length > 0 ? { fromSessionElements: sessionElements } : {}),
   };
-  const { formatted } = await runScanAndFormat(
+  const { formatted, violations } = await runScanAndFormat(
     files,
     session,
     resolveStandards(undefined, session),
@@ -1053,7 +1217,7 @@ async function scanForProposalSignals(
   }
   const findingPaths = new Set<string>();
   for (const file of formatted.files) findingPaths.add(file.path);
-  return { topRules, findingPaths };
+  return { topRules, findingPaths, violations };
 }
 
 /**
@@ -1251,4 +1415,23 @@ function buildNextStep(args: {
     return `Scan was clean — proposal is a minimal defineConfig({}) placeholder.${existingNote}${foreignNote}`;
   }
   return `Proposal includes ${summary.join(", ")}. Paste \`suggestedConfig\` into ra11y.config.ts at the project root.${existingNote}${foreignNote}`;
+}
+
+/**
+ * Tally parseable files by extension. Mirrors the same-named helper in
+ * `tool-coverage.ts` / `tool-checklist.ts` (and `countByExtension` in
+ * `scan-assembly.ts`) — duplicated rather than re-exported to keep
+ * `tool-propose-config.ts` independent of those callers' coupling.
+ * Drives `filesByExtension` on the {@link buildScanTimeWarnings} input
+ * so the Tailwind-undercount and other extension-axis predicates fire
+ * identically on this surface.
+ */
+function countFilesByExtension(files: readonly ParsedFile[]): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "(no-ext)" : f.filePath.slice(dot);
+    counts.set(ext, (counts.get(ext) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }
