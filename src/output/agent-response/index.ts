@@ -9,7 +9,7 @@
  * docs/kb/architecture/ai-first-consumer.md.
  */
 
-export { buildAgentFinding, severityToConfidence } from "./build-finding.ts";
+export { buildAgentFinding, resolveConfidence, severityToConfidence } from "./build-finding.ts";
 export {
   buildAgentPlan,
   countFixes,

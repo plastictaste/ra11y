@@ -25,6 +25,7 @@
  * Pure function, no I/O.
  */
 
+import type { Confidence } from "../output/agent-response/types.ts";
 import type { FixPath, Violation } from "../types/violation.ts";
 import { widenToUniqueAnchor } from "../utils/unique-anchor.ts";
 import {
@@ -43,7 +44,19 @@ export interface BuildFixPathsOutcomeInputs {
   readonly source: string;
   readonly line: number;
   readonly sourceContext: string;
-  readonly confidence: "high" | "medium";
+  /**
+   * Per-call `primary.confidence` carried forward from the source
+   * finding via {@link resolveConfidence} (agent-response/build-finding).
+   * Widened from the prior `"high" | "medium"` ladder to the full
+   * {@link Confidence} union so the per-call surface honours rule-
+   * emitted `low` / `inherited` / info-severity emissions instead of
+   * rounding them into `medium`. The drift was the canonical Q16-
+   * confidence-drift case: scan_project shipped `confidence: low` for
+   * an info-severity finding while suggest_fix on the same id shipped
+   * `medium`. Per docs/kb/architecture/ai-first-consumer.md "Per-call
+   * shape must agree with per-class plan tally."
+   */
+  readonly confidence: Confidence;
   readonly snippetField: { readonly snippet?: string };
   readonly verify: {
     readonly verifyCommandStructured: VerifyCommandStructured;
@@ -256,7 +269,7 @@ function buildSuppressRecommendedFixPathsOutcome(args: {
   readonly explanation: string;
   readonly label: string;
   readonly sourceContext: string;
-  readonly confidence: "high" | "medium";
+  readonly confidence: Confidence;
   readonly match: Violation;
   readonly snippetField: { readonly snippet?: string };
   readonly verify: BuildFixPathsOutcomeInputs["verify"];

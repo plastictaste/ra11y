@@ -14,6 +14,8 @@
  * Pure functions, no I/O.
  */
 
+import { resolveConfidence } from "../output/agent-response/build-finding.ts";
+import type { Confidence } from "../output/agent-response/types.ts";
 import type { Violation } from "../types/violation.ts";
 import {
   buildPerCallEnrichmentAlternatives,
@@ -140,7 +142,20 @@ function routeMatchedFallback(args: {
   readonly snippetField: { readonly snippet?: string };
 }): Record<string, unknown> {
   const { args: a, match, shared, snippetField } = args;
-  const confidence = match.severity === "error" ? "high" : "medium";
+  // Carry forward the source finding's confidence rather than recompute
+  // from severity. The previous local ladder
+  // (`match.severity === "error" ? "high" : "medium"`) skipped the
+  // `low` rung entirely, so an info-severity finding that scan_project
+  // ships with `confidence: low` came back from suggest_fix as
+  // `primary.confidence: medium` — the canonical drift the agent
+  // budgeting against scan_project's confidence label cannot tell from
+  // a real per-call upgrade. `resolveConfidence` is the same helper
+  // `buildAgentFinding` uses, so the per-finding and per-call surfaces
+  // partition the same finding into the same confidence bucket. Per
+  // docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+  // agree with per-class plan tally" + "Per-tool review-candidate
+  // shape must agree across surfaces."
+  const confidence: Confidence = resolveConfidence(match);
   if (match.fixPaths) {
     return buildFixPathsOutcome({
       match,
@@ -158,7 +173,7 @@ function routeMatchedFallback(args: {
   const explanation = match.suggestion
     ? stripContextBlindTailwindHint(match.suggestion, a.tailwindDetected)
     : `Violation found but no fix guidance available for ${a.ruleId}. ${match.message}`;
-  const primaryConfidence = match.suggestion ? confidence : "low";
+  const primaryConfidence: Confidence = match.suggestion ? confidence : "low";
   // No rule-supplied paths to demote on this branch — populate
   // `alternatives` with per-call enrichments derived deterministically
   // from filePath + criteria so the slot the tool description promised

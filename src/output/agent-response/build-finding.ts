@@ -49,8 +49,21 @@ export function severityToConfidence(severity: string): Confidence {
  * explicit `v.confidence` when present (canonically `"inherited"` on
  * synthesized wrapper-call-site findings), otherwise
  * falls back to the severity-derived mapping.
+ *
+ * Exported so the `suggest_fix` per-call surface can carry forward the
+ * source finding's confidence rather than recomputing from severity.
+ * Per docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+ * agree with per-class plan tally": when `scan_project` ships a finding
+ * with `confidence: low` (info-severity, or rule-emitted `"low"`), the
+ * `suggest_fix({findingId})` response on the same finding must ship
+ * `primary.confidence: low` — recomputing via the local
+ * `match.severity === "error" ? "high" : "medium"` ladder skipped the
+ * `low` rung entirely (info-severity findings shipped `medium` from
+ * suggest_fix while scan_project shipped `low`). Honoring
+ * `v.confidence` also keeps the `"inherited"` discriminator visible on
+ * wrapper-call-site findings the agent might pass to `suggest_fix`.
  */
-function resolveConfidence(v: Violation): Confidence {
+export function resolveConfidence(v: Violation): Confidence {
   if (v.confidence !== undefined) return v.confidence;
   return severityToConfidence(v.severity);
 }
