@@ -128,7 +128,69 @@ export type ScanWarningCode =
   // residual asset bucket — surfaces both honestly so the agent can
   // route on the text subset without rereading the full ext map. The
   // two warnings can fire simultaneously on heterogeneous corpora.
+  //
+  // Three peer codes narrow the text-source predicate by classifier
+  // (each classifier provable from extension alone, no overlap):
+  //   - `source_language_unsupported` — Ruby / Python / Go ecosystem
+  //     dominance.
+  //   - `parser_routable_extensions_skipped` — text-island substrates
+  //     ra11y could plausibly route (`.vue`, `.svelte`, `.coffee`,
+  //     `.rmd`, `.feature`, `.hbs`, `.haml`, etc.). The agent's lever
+  //     for re-routing.
+  //   - `config_or_data_files_skipped` — config / data files
+  //     (`.json`, `.yml`, `.yaml`, `.toml`, `.csv`) — non-markup by
+  //     spec.
+  // The parent `text_source_skipped` keeps firing as the load-bearing
+  // presence bit that agents new to the warning vocabulary read first;
+  // the peers fire whenever their predicate's subset of the skipped
+  // map is non-empty so an agent already familiar with the wire can
+  // branch directly on the actionable classifier without descending
+  // into the parent's `parserRoutableExtensions[]` slice.
   | "text_source_skipped"
+  // a predicate-narrowed peer of `text_source_skipped`: at least one
+  // entry in `skippedByExtension` is in
+  // {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS} — substrates whose
+  // format spec defines an HTML / JSX surface that ra11y could
+  // plausibly route through a parser if support were added (`.vue`,
+  // `.svelte`, `.coffee`, `.rmd`, `.feature`, `.hbs`, `.haml`, etc.).
+  // The agent's load-bearing lever for re-routing — the one peer the
+  // closure text names as the "agent's lever for re-routing." Without
+  // this peer code, an agent reading `text_source_skipped` on a
+  // static-site-generator corpus with `.yml: 60` + `.feature: 28` +
+  // `.vue: 12` had no way to budget against the actionable subset
+  // without descending into `warningsDetails.text_source_skipped.
+  // parserRoutableExtensions`. Paired payload:
+  // `warningsDetails.parser_routable_extensions_skipped` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalSkipped }` — same shape contract as the parent
+  // `text_source_skipped` payload, scoped to the substrate subset.
+  // Co-fires with `text_source_skipped` (parent) and may co-fire
+  // with `source_language_unsupported` / `config_or_data_files_skipped`
+  // when the corpus mixes substrates with ecosystem-foreign sources
+  // / data files.
+  | "parser_routable_extensions_skipped"
+  // a predicate-narrowed peer of `text_source_skipped`: at least one
+  // entry in `skippedByExtension` is in
+  // {@link CONFIG_OR_DATA_EXTENSIONS} — config / data file extensions
+  // (`.json`, `.yml`, `.yaml`, `.toml`, `.csv`). Surfaced so an agent
+  // reading a corpus where the skipped map is dominated by config /
+  // data (Jekyll `_config.yml`, GitHub-Actions `*.yml`, Hugo
+  // `config.toml`, npm `package.json`) can branch on "this is data,
+  // not a parser-coverage gap" without re-deriving the partition from
+  // the parent's `extensions[]` slice. Per AI-first "Skipped-extension
+  // warnings are split by predicate" + "Labeled buckets are
+  // suppression too" — the alternative (lumping data files under the
+  // generic parent only) makes the actionable subset
+  // (`parser_routable_extensions_skipped`) hard to read against the
+  // data-only tail; splitting by deterministic classifier keeps each
+  // peer honest. Paired payload:
+  // `warningsDetails.config_or_data_files_skipped` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalSkipped }` — same shape contract as the parent
+  // `text_source_skipped` payload, scoped to the config / data
+  // subset. Co-fires with `text_source_skipped` (parent) and may
+  // co-fire with the other peers on heterogeneous corpora.
+  | "config_or_data_files_skipped"
   // the walker considered N binary-asset
   // files (image/font/audio/video/archive/binary-doc) that cleared
   // dir-ignore + user-excludes and rejected them on the parseable-
@@ -1716,6 +1778,7 @@ function isBinaryAssetExtension(ext: string): boolean {
 const PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS: ReadonlySet<string> = new Set([
   ".coffee",
   ".eex",
+  ".feature",
   ".gohtml",
   ".haml",
   ".handlebars",
@@ -1739,6 +1802,51 @@ const PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS: ReadonlySet<string> = new Set([
   ".twig",
   ".vue",
 ]);
+
+/**
+ * Config / data file extensions ra11y intentionally does not parse —
+ * `.json`, `.yml`, `.yaml`, `.toml`, `.csv`. Surfaced under the
+ * dedicated `config_or_data_files_skipped` warning rather than lumped
+ * under the generic `text_source_skipped` parent so an agent reading
+ * a static-site corpus where `.yml: 60` + `.toml: 12` dominates the
+ * skipped map can branch on "this is config / data, not a parser-
+ * coverage gap" without re-deriving from the per-extension breakdown.
+ *
+ * Each entry's rationale:
+ *   - `.json` — JSON data files; never carry a11y-relevant markup.
+ *   - `.yml` / `.yaml` — YAML config (CI workflows, Jekyll / Hugo
+ *     front-matter sources, Kubernetes manifests).
+ *   - `.toml` — TOML config (Rust `Cargo.toml`, Hugo `config.toml`,
+ *     Python `pyproject.toml`).
+ *   - `.csv` — comma-separated data files; tabular data, not markup.
+ *
+ * Per AI-first "Skipped-extension warnings are split by predicate":
+ * the partition is provable from the extension alone (each format
+ * spec defines a non-markup data substrate) — no content inspection.
+ * The set is mutually exclusive with
+ * {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS} (no entry carries an
+ * HTML / JSX surface) and with
+ * {@link UNSUPPORTED_LANGUAGE_EXTENSIONS} (no entry names a
+ * programming-language ecosystem) — the three classifiers carve up
+ * the text-source predicate space without overlap.
+ */
+const CONFIG_OR_DATA_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".csv",
+  ".json",
+  ".toml",
+  ".yaml",
+  ".yml",
+]);
+
+/**
+ * Predicate for {@link CONFIG_OR_DATA_EXTENSIONS} membership. Centralized
+ * so the partition logic doesn't drift between the predicate gate and
+ * the summarizer's filter. Lower-cases the input so a `.YAML` from a
+ * Windows-authored repo classifies the same as `.yaml`.
+ */
+function isConfigOrDataExtension(ext: string): boolean {
+  return CONFIG_OR_DATA_EXTENSIONS.has(ext.toLowerCase());
+}
 
 /**
  * Predicate for {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}
@@ -2083,6 +2191,62 @@ export interface ScanWarningDetails {
     readonly extensions: readonly string[];
     readonly perExtensionCounts?: Readonly<Record<string, number>>;
     readonly noExtensionFiles?: readonly string[];
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalSkipped: number;
+  };
+  /**
+   * Dense summary of the parser-routable text-island substrate subset
+   * of `skippedByExtension` behind the
+   * `parser_routable_extensions_skipped` code. Same shape contract as
+   * {@link text_source_skipped} (extensions / perExtensionCounts /
+   * topExtension / topCount / totalSkipped); the split is by predicate,
+   * not by payload shape, so agents reading either channel use one
+   * mental model. Entries cover the actionable subset whose format
+   * spec defines an HTML / JSX surface ra11y could plausibly route
+   * (`.vue`, `.svelte`, `.coffee`, `.rmd`, `.feature`, `.hbs`,
+   * `.haml`, etc. — see {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}).
+   * Per AI-first "Heuristic-mislabeled meta sub-fields are dishonest"
+   * the partition is provable from the extension alone — each entry
+   * has a documented HTML / JSX surface — not a heuristic on contents.
+   *
+   * `noExtensionFiles` is intentionally omitted from this peer payload —
+   * no well-known textual no-extension filename (LICENSE, Makefile,
+   * Dockerfile, README, etc.) defines an HTML / JSX surface, so the
+   * field would always be absent. The shape contract on
+   * {@link text_source_skipped} keeps `noExtensionFiles` for parity with
+   * binary-assets, but on the substrate-narrowed peer the field has no
+   * meaningful value — declared absent rather than carrying an empty
+   * sentinel.
+   */
+  readonly parser_routable_extensions_skipped?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalSkipped: number;
+  };
+  /**
+   * Dense summary of the config / data file subset of
+   * `skippedByExtension` behind the `config_or_data_files_skipped`
+   * code. Same shape contract as {@link text_source_skipped}
+   * (extensions / perExtensionCounts / topExtension / topCount /
+   * totalSkipped); the split is by predicate, not by payload shape,
+   * so agents reading either channel use one mental model. Entries
+   * cover the data-only tail (`.json`, `.yml`, `.yaml`, `.toml`,
+   * `.csv` — see {@link CONFIG_OR_DATA_EXTENSIONS}). Per AI-first
+   * "Skipped-extension warnings are split by predicate" the partition
+   * is provable from the extension alone — each entry's format spec
+   * defines a non-markup data substrate.
+   *
+   * `noExtensionFiles` is intentionally omitted on this peer payload
+   * for the same reason as {@link parser_routable_extensions_skipped}:
+   * no well-known textual no-extension filename is a config / data
+   * format, so the field has no meaningful value.
+   */
+  readonly config_or_data_files_skipped?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
     readonly topExtension?: string;
     readonly topCount?: number;
     readonly totalSkipped: number;
@@ -3542,6 +3706,8 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "text_source_skipped",
+  "parser_routable_extensions_skipped",
+  "config_or_data_files_skipped",
   "binary_assets_skipped",
   "sourcemap_files_excluded",
   "parse_errors_present",
@@ -3758,6 +3924,12 @@ function coverageConfidenceUniformlyHighWithParseErrors(inputs: WarningInputs): 
 function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (hasTextSourceSkipped(inputs.analysisCoverage)) out.push("text_source_skipped");
+  if (hasParserRoutableExtensionsSkipped(inputs.analysisCoverage)) {
+    out.push("parser_routable_extensions_skipped");
+  }
+  if (hasConfigOrDataFilesSkipped(inputs.analysisCoverage)) {
+    out.push("config_or_data_files_skipped");
+  }
   if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) out.push("binary_assets_skipped");
   if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) out.push("sourcemap_files_excluded");
   if (hasDefaultExcludedArtifactPaths(inputs.analysisCoverage)) {
@@ -4409,6 +4581,45 @@ function hasBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined): 
   const skipped = readSkippedMap(coverage);
   for (const ext of skipped.keys()) {
     if (isBinaryAssetExtension(ext)) return true;
+  }
+  return false;
+}
+
+/**
+ * `parser_routable_extensions_skipped` predicate: at least one entry
+ * in `skippedByExtension` is a parser-routable text-island substrate
+ * (per {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}). Narrows the
+ * `text_source_skipped` parent to the actionable subset the agent
+ * could re-route via parser support — `.vue`, `.svelte`, `.coffee`,
+ * `.rmd`, `.feature`, `.hbs`, `.haml`, etc. Mutually independent of
+ * {@link hasConfigOrDataFilesSkipped} and
+ * {@link dominantUnsupportedLanguage}; the three peers carve up the
+ * text-source predicate space without overlap so a corpus mixing
+ * substrates with config files and ecosystem-foreign sources fires
+ * all three peers alongside the parent.
+ */
+function hasParserRoutableExtensionsSkipped(
+  coverage: Record<string, unknown> | undefined,
+): boolean {
+  const skipped = readSkippedMap(coverage);
+  for (const token of skipped.keys()) {
+    if (token.startsWith(".") && isParserRoutableTextIslandExtension(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * `config_or_data_files_skipped` predicate: at least one entry in
+ * `skippedByExtension` is a config / data file extension (per
+ * {@link CONFIG_OR_DATA_EXTENSIONS}). Narrows the
+ * `text_source_skipped` parent to the data-only subset (`.json`,
+ * `.yml`, `.yaml`, `.toml`, `.csv`). Symmetric to
+ * {@link hasParserRoutableExtensionsSkipped}.
+ */
+function hasConfigOrDataFilesSkipped(coverage: Record<string, unknown> | undefined): boolean {
+  const skipped = readSkippedMap(coverage);
+  for (const token of skipped.keys()) {
+    if (token.startsWith(".") && isConfigOrDataExtension(token)) return true;
   }
   return false;
 }
@@ -5167,6 +5378,14 @@ function buildScanWarningDetailsDispatch(
     {
       code: "text_source_skipped",
       summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "parser_routable_extensions_skipped",
+      summarize: () => summarizeParserRoutableExtensionsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "config_or_data_files_skipped",
+      summarize: () => summarizeConfigOrDataFilesSkipped(inputs.analysisCoverage),
     },
     {
       code: "binary_assets_skipped",
@@ -6538,6 +6757,68 @@ function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefi
     }
   | undefined {
   return summarizeSkippedSubset(coverage, (token) => isBinaryAssetExtension(token));
+}
+
+/**
+ * Collapses the parser-routable-substrate subset of
+ * `skippedByExtension` into the dense summary the
+ * `parser_routable_extensions_skipped` warning ships under
+ * `warningsDetails`. Predicate-narrowed peer of
+ * {@link summarizeTextSourceSkipped}; the only difference is the
+ * extension filter — parser-routable text-island substrates only
+ * (`.vue`, `.svelte`, `.coffee`, `.rmd`, `.feature`, etc., per
+ * {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}). The
+ * `noExtensionFiles` slot is unreachable on this peer (no well-known
+ * textual no-extension filename defines an HTML / JSX surface) so the
+ * shape contract on the type-level interface omits it; the shared
+ * core's `noExtensionFiles` output is dropped at the seam below.
+ */
+function summarizeParserRoutableExtensionsSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  const base = summarizeSkippedSubset(coverage, (token) =>
+    token.startsWith(".") && isParserRoutableTextIslandExtension(token),
+  );
+  if (base === undefined) return undefined;
+  // Drop `noExtensionFiles` from the shared-core output — unreachable on
+  // this peer by construction (filter rejects any non-dotted token).
+  const { noExtensionFiles: _drop, ...rest } = base;
+  return rest;
+}
+
+/**
+ * Collapses the config/data subset of `skippedByExtension` into the
+ * dense summary the `config_or_data_files_skipped` warning ships
+ * under `warningsDetails`. Predicate-narrowed peer of
+ * {@link summarizeTextSourceSkipped}; the only difference is the
+ * extension filter — config / data file extensions only (`.json`,
+ * `.yml`, `.yaml`, `.toml`, `.csv`, per
+ * {@link CONFIG_OR_DATA_EXTENSIONS}). Same shape-contract reasoning
+ * as {@link summarizeParserRoutableExtensionsSkipped} for the
+ * `noExtensionFiles` omission.
+ */
+function summarizeConfigOrDataFilesSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  const base = summarizeSkippedSubset(
+    coverage,
+    (token) => token.startsWith(".") && isConfigOrDataExtension(token),
+  );
+  if (base === undefined) return undefined;
+  const { noExtensionFiles: _drop, ...rest } = base;
+  return rest;
 }
 
 /**

@@ -270,6 +270,8 @@ function warningsEnvelope(raw: Record<string, unknown>): WarningsEnvelope {
  */
 const DISCOVERY_DEPENDENT_CODES: readonly string[] = [
   "text_source_skipped",
+  "parser_routable_extensions_skipped",
+  "config_or_data_files_skipped",
   "binary_assets_skipped",
   "sourcemap_files_excluded",
   "content_files_skipped",

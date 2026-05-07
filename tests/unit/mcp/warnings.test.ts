@@ -695,6 +695,106 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("binary_assets_skipped");
   });
 
+  it("fires `parser_routable_extensions_skipped` when the skipped map carries a parser-routable text-island substrate (.vue / .svelte / .coffee / .rmd / .feature)", () => {
+    // Predicate-narrowed peer of `text_source_skipped`. The agent's
+    // lever for re-routing — the actionable subset whose format spec
+    // defines an HTML / JSX surface ra11y could plausibly route. The
+    // parent `text_source_skipped` co-fires (broader presence bit).
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".vue": 12, ".feature": 28, ".coffee": 3 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("parser_routable_extensions_skipped");
+    expect(codes).toContain("text_source_skipped");
+  });
+
+  it("does NOT fire `parser_routable_extensions_skipped` when the skipped map carries no text-island substrate (.json / .yml / binary only)", () => {
+    // Closure of "Skipped-extension warnings are split by predicate":
+    // each peer's predicate must narrow honestly. A static-site corpus
+    // dominated by config / data files must NOT trip the parser-
+    // routable peer just because the parent `text_source_skipped`
+    // fires.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".json": 80, ".yml": 60, ".png": 30 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).not.toContain("parser_routable_extensions_skipped");
+  });
+
+  it("fires `config_or_data_files_skipped` when the skipped map carries config / data file extensions (.json / .yml / .yaml / .toml / .csv)", () => {
+    // Predicate-narrowed peer of `text_source_skipped` — names the
+    // data-only subset so an agent reading a Jekyll/Hugo/CI corpus
+    // can budget against "this is data, not parser-coverage gap"
+    // without re-deriving from the parent's `extensions[]` slice.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".yml": 60, ".toml": 12, ".csv": 8 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("config_or_data_files_skipped");
+    expect(codes).toContain("text_source_skipped");
+  });
+
+  it("does NOT fire `config_or_data_files_skipped` when the skipped map carries no config / data extensions (substrate-only corpus)", () => {
+    // Mirror of the parser-routable negative case — each peer's
+    // predicate must narrow honestly so co-firing reflects actual
+    // overlap, not lazy ANDing.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".vue": 12, ".svelte": 8, ".coffee": 3 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).not.toContain("config_or_data_files_skipped");
+  });
+
+  it("co-fires text_source_skipped, parser_routable_extensions_skipped, AND config_or_data_files_skipped on a heterogeneous static-site corpus", () => {
+    // Canonical case from the closure: a static-site-generator corpus
+    // mixing parser-routable substrates (.feature / .coffee / .rmd),
+    // config / data files (.yml / .toml), and source-language
+    // ecosystem dominance (.rb 160 files). All three peers fire so
+    // the agent can branch on the actionable subset without burying
+    // the parent.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".feature": 28,
+          ".coffee": 5,
+          ".rmd": 3,
+          ".rb": 160,
+          ".yml": 60,
+          ".toml": 12,
+          ".csv": 8,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("text_source_skipped");
+    expect(codes).toContain("parser_routable_extensions_skipped");
+    expect(codes).toContain("config_or_data_files_skipped");
+    expect(codes).toContain("source_language_unsupported");
+  });
+
   it("fires `sourcemap_files_excluded` when discovery records `.map` paths in the coverage block", () => {
     // The discovery walker routes `.map` files into a dedicated bucket
     // (`analysisCoverage.sourcemapFiles`) so the sourcemap-exclusion
@@ -2454,6 +2554,123 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.binary_assets_skipped?.topExtension).toBe(".png");
     expect(details.binary_assets_skipped?.extensions).toEqual([".png", ".woff2"]);
     expect(details.binary_assets_skipped?.totalSkipped).toBe(230);
+  });
+
+  it("emits a `parser_routable_extensions_skipped` payload describing the substrate subset only (mirror shape of text_source_skipped)", () => {
+    // Predicate-narrowed peer of text_source_skipped: the data-only
+    // tail (.json, .yml, .toml) must be filtered out of this payload
+    // even though it contributes to the parent.
+    const codes = ["parser_routable_extensions_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".feature": 28,
+          ".vue": 12,
+          ".coffee": 3,
+          ".json": 200, // data — must NOT appear under parser-routable peer
+          ".yml": 60, // data — must NOT appear under parser-routable peer
+          ".png": 30, // binary — must NOT appear under parser-routable peer
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Sorted descending by count, alphabetical tie-break on the
+    // substrate-only subset.
+    expect(details.parser_routable_extensions_skipped?.extensions).toEqual([
+      ".feature",
+      ".vue",
+      ".coffee",
+    ]);
+    expect(details.parser_routable_extensions_skipped?.perExtensionCounts).toEqual({
+      ".feature": 28,
+      ".vue": 12,
+      ".coffee": 3,
+    });
+    expect(details.parser_routable_extensions_skipped?.topExtension).toBe(".feature");
+    expect(details.parser_routable_extensions_skipped?.topCount).toBe(28);
+    expect(details.parser_routable_extensions_skipped?.totalSkipped).toBe(43);
+  });
+
+  it("emits a `config_or_data_files_skipped` payload describing the data-only subset only", () => {
+    // Mirror of the parser-routable peer — the data-only subset is
+    // surfaced separately so an agent can branch on "this is config /
+    // data, not a parser-coverage gap" without re-deriving from the
+    // parent.
+    const codes = ["config_or_data_files_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".yml": 60,
+          ".toml": 12,
+          ".csv": 8,
+          ".json": 4,
+          ".vue": 12, // substrate — must NOT appear under config peer
+          ".png": 30, // binary — must NOT appear under config peer
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(details.config_or_data_files_skipped?.extensions).toEqual([
+      ".yml",
+      ".toml",
+      ".csv",
+      ".json",
+    ]);
+    expect(details.config_or_data_files_skipped?.perExtensionCounts).toEqual({
+      ".yml": 60,
+      ".toml": 12,
+      ".csv": 8,
+      ".json": 4,
+    });
+    expect(details.config_or_data_files_skipped?.topExtension).toBe(".yml");
+    expect(details.config_or_data_files_skipped?.topCount).toBe(60);
+    expect(details.config_or_data_files_skipped?.totalSkipped).toBe(84);
+  });
+
+  it("omits `noExtensionFiles` from both peer payloads — the substrate / data partition has no canonical-filename slot by construction", () => {
+    // Per AI-first "Ambiguous field shapes are dishonest" the peer
+    // shapes drop `noExtensionFiles` entirely — no well-known textual
+    // no-extension filename (LICENSE, Makefile, Dockerfile) defines an
+    // HTML / JSX surface or a config / data substrate, so the field
+    // would always be absent. The shape contract on the parent
+    // `text_source_skipped` keeps the slot for parity with binary-
+    // assets; on the peers the field is omitted by construction.
+    const codes = [
+      "parser_routable_extensions_skipped",
+      "config_or_data_files_skipped",
+    ] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".yml": 60,
+          LICENSE: 1,
+          Makefile: 1,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(
+      Object.hasOwn(
+        details.parser_routable_extensions_skipped as Record<string, unknown>,
+        "noExtensionFiles",
+      ),
+    ).toBe(false);
+    expect(
+      Object.hasOwn(
+        details.config_or_data_files_skipped as Record<string, unknown>,
+        "noExtensionFiles",
+      ),
+    ).toBe(false);
   });
 
   it("emits a `sourcemap_files_excluded` payload with count + head-sliced topPaths", () => {
