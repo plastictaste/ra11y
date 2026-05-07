@@ -180,14 +180,15 @@ export class LayoutEvidenceAccumulator {
 const NATIVE_EXT_LANG: Readonly<Record<string, string>> = { htm: "html", jsx: "tsx" };
 
 /**
- * Token for `.md` / `.markdown` files routed through the HTML parser.
- * Distinct from the bare `"html"` AST-language tag: the source is
- * Markdown processed for HTML residue per ADR 0025, not native HTML.
- * Surfaced on `parseModeByExtension` so an agent reading the field
- * can tell native HTML routing apart from the markdown-residue
- * downgrade (the bare `"html"` value would silently conflate the two,
- * mis-cuing the agent into expecting heading-hierarchy / link-purpose
- * coverage that the residue projection intentionally omits).
+ * Token for `.md` / `.markdown` / `.mkdn` files routed through the
+ * HTML parser. Distinct from the bare `"html"` AST-language tag: the
+ * source is Markdown processed for HTML residue per ADR 0025, not
+ * native HTML. Surfaced on `parseModeByExtension` so an agent reading
+ * the field can tell native HTML routing apart from the markdown-
+ * residue downgrade (the bare `"html"` value would silently conflate
+ * the two, mis-cuing the agent into expecting heading-hierarchy /
+ * link-purpose coverage that the residue projection intentionally
+ * omits).
  */
 export const MARKDOWN_HTML_RESIDUE_MODE = "markdown-html-residue";
 
@@ -409,7 +410,7 @@ function collectSsgEvidenceTokens(evidence?: LayoutCompositionEvidence): string[
  *     source IS source of that AST language (`.scss → "css"`,
  *     `.less → "css"`, `.mdx → "tsx"`, `.astro → "html"`,
  *     `.erb → "html"`, `.js`/`.ts → "tsx"`).
- *   - `"markdown-html-residue"` — Markdown source (`.md`/`.markdown`)
+ *   - `"markdown-html-residue"` — Markdown source (`.md`/`.markdown`/`.mkdn`)
  *     processed through the HTML parser as an HTML-residue projection
  *     per ADR 0025 Option B. Distinct from a bare `"html"` value
  *     because the source is NOT HTML: ATX/Setext headings, link text,
@@ -442,12 +443,18 @@ export function parseModeByExtension(files: readonly ParsedFile[]): Record<strin
       seen.set(ext, "native");
       continue;
     }
-    // `.md` / `.markdown` route through the HTML parser per ADR 0025
-    // Option B but the source is not HTML — emit a distinct token so
-    // the disclosure label honestly distinguishes Markdown-residue
-    // from native HTML routing instead of relying on the bare AST
-    // language tag.
-    if (lang === "html" && (ext === ".md" || ext === ".markdown")) {
+    // `.md` / `.markdown` / `.mkdn` route through the HTML parser per
+    // ADR 0025 Option B but the source is not HTML — emit a distinct
+    // token so the disclosure label honestly distinguishes Markdown-
+    // residue from native HTML routing instead of relying on the
+    // bare AST language tag. `.mkdn` is a common alternate Markdown
+    // extension (Vim, older static-site generators); the parser
+    // dispatch in `src/mcp/session.ts` already routes it through
+    // `parseMarkdown`, so the disclosure label must mirror.
+    if (
+      lang === "html" &&
+      (ext === ".md" || ext === ".markdown" || ext === ".mkdn")
+    ) {
       seen.set(ext, MARKDOWN_HTML_RESIDUE_MODE);
       continue;
     }

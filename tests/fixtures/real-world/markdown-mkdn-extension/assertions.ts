@@ -38,10 +38,6 @@ export const assertions: FixtureAssertions = {
   toolInput: {
     verboseMeta: true,
   },
-  // Intentionally RED — remove this flag once
-  // `parseModeByExtension` in src/mcp/markdown-classifier.ts treats
-  // `.mkdn` the same as `.md` and `.markdown`.
-  todo: true,
   expectations: [
     // The .mkdn parser does not record errors.
     { kind: "zero-parse-errors" },

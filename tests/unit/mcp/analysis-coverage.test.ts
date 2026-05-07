@@ -3077,22 +3077,31 @@ describe("buildAnalysisCoverage — hints", () => {
       });
     });
 
-    it("does not label `.md` / `.markdown` as the bare `html` tag (markdown source, not native HTML)", () => {
-      // The disclosure axis is orthogonal to AST language: `.md`
-      // routes through the HTML parser per ADR 0025 Option B, but the
-      // source is not HTML — ATX/Setext headings are stripped before
-      // the residue reaches `parseHtml`, link text and prose
-      // readability are out-of-scope. A bare `"html"` value would
-      // silently mis-cue an agent into expecting full HTML coverage.
-      // Pin equality on the distinct token so the disclosure can't
-      // regress to the conflated shape.
-      const files = [fileWith("readme.md", "html"), fileWith("changelog.markdown", "html")];
+    it("does not label `.md` / `.markdown` / `.mkdn` as the bare `html` tag (markdown source, not native HTML)", () => {
+      // The disclosure axis is orthogonal to AST language: `.md` /
+      // `.markdown` / `.mkdn` all route through the HTML parser per
+      // ADR 0025 Option B, but the source is not HTML — ATX/Setext
+      // headings are stripped before the residue reaches `parseHtml`,
+      // link text and prose readability are out-of-scope. A bare
+      // `"html"` value would silently mis-cue an agent into expecting
+      // full HTML coverage. Pin equality on the distinct token so the
+      // disclosure can't regress to the conflated shape. `.mkdn` is a
+      // common alternate Markdown extension (Vim, older static-site
+      // generators) and the parser dispatch in `src/mcp/session.ts`
+      // already routes it through `parseMarkdown`.
+      const files = [
+        fileWith("readme.md", "html"),
+        fileWith("changelog.markdown", "html"),
+        fileWith("post.mkdn", "html"),
+      ];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
       const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
       expect(mode?.[".md"]).not.toBe("html");
       expect(mode?.[".markdown"]).not.toBe("html");
+      expect(mode?.[".mkdn"]).not.toBe("html");
       expect(mode?.[".md"]).toBe("markdown-html-residue");
       expect(mode?.[".markdown"]).toBe("markdown-html-residue");
+      expect(mode?.[".mkdn"]).toBe("markdown-html-residue");
     });
 
     it("omits the field when no parseable files were scanned (present-when-meaningful)", () => {
