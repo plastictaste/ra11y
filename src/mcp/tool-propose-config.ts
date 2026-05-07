@@ -53,7 +53,9 @@
  *     canonical package-manifest markers (`Gemfile`, `pyproject.toml`,
  *     `go.mod`, `Cargo.toml`). When one resolves and `package.json`
  *     does NOT, the response carries a top-level
- *     `warnings: ["foreign_ecosystem_detected: <language>"]` code and
+ *     `warnings: ["foreign_ecosystem_detected"]` code paired with a
+ *     `warningsDetails.foreign_ecosystem_detected: { ecosystem,
+ *     evidence, hasPackageJson }` payload, and
  *     the `nextStep` hint names an alternative `npx @ra11y/core scan`
  *     invocation the agent can offer in place of committing a Node
  *     config. Never suppresses the config — same "surface, don't
@@ -68,7 +70,11 @@ import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
-import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
+import {
+  detectForeignEcosystem,
+  FOREIGN_ECOSYSTEM_DETECTED_CODE,
+  foreignEcosystemDetected,
+} from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { computeTopRules } from "./scan-assembly.ts";
 import { scannedProject } from "./scanned-envelope.ts";
@@ -321,7 +327,7 @@ export const proposeConfigTool: McpTool = {
     // paste decision is informed. See
     // `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
     // suppress."
-    const foreignWarning = foreignEcosystemWarning(root);
+    const foreignDetail = foreignEcosystemDetected(root);
     const foreignEcosystem = detectForeignEcosystem(root);
 
     // Cross-surface count invariant
@@ -350,9 +356,23 @@ export const proposeConfigTool: McpTool = {
 
     const warningCodes: string[] = [];
     const warningsDetails: Record<string, unknown> = {};
-    if (foreignWarning !== null) {
-      warningCodes.push(foreignWarning);
-      warningsDetails[foreignWarning] = {};
+    if (foreignDetail !== null) {
+      // Static warning code with structured payload — replaces the
+      // previous colon-suffixed dynamic identifier
+      // (`foreign_ecosystem_detected: ruby`) which violated the
+      // doctrine bullet "Empty `warningsDetails.<code>: {}` is
+      // dishonest" two ways: (a) the dynamic suffix made the code
+      // un-keyable on the typed `warningsDetails` interface so the
+      // emitted payload was `{}` by construction; (b) agents reading
+      // the code identifier got the language inline but had no
+      // structured slot to branch on the corroborating evidence
+      // (which marker fired, whether `package.json` was also
+      // present). The payload now ships both axes — the agent reads
+      // `warningsDetails.foreign_ecosystem_detected.{ecosystem,
+      // evidence, hasPackageJson}` and branches without re-probing
+      // the filesystem.
+      warningCodes.push(FOREIGN_ECOSYSTEM_DETECTED_CODE);
+      warningsDetails[FOREIGN_ECOSYSTEM_DETECTED_CODE] = foreignDetail;
     }
     if (noConfigFires) {
       warningCodes.push("no_config_found");
@@ -426,17 +446,18 @@ export const proposeConfigTool: McpTool = {
       // Top-level warnings channel — conditional-spread so clean scans
       // in Node-toolchain repos omit the field entirely (CLAUDE.md §1
       // "Ambiguous field shapes are dishonest" — never emit
-      // `warnings: []`). The code format
-      // `foreign_ecosystem_detected: <language>` carries the ecosystem
-      // tag inline so agents branching on bare `warnings[]` can
-      // discriminate without descending into structured data — the
-      // empty-object marker on `warningsDetails` keeps the
-      // warnings-details schema-discipline membership invariant honest
-      // (every fired code has a corresponding key on `warningsDetails`)
-      // while signaling "no further detail by design." The
-      // `no_config_found` code rides here too with its `searchedFrom`
-      // payload so cross-surface emission stays consistent with the
-      // scan-family tools.
+      // `warnings: []`). The static `foreign_ecosystem_detected` code
+      // pairs with a structured
+      // `warningsDetails.foreign_ecosystem_detected: { ecosystem,
+      // evidence, hasPackageJson }` payload so agents branch on
+      // payload fields rather than parsing the code identifier — the
+      // colon-suffixed dynamic-value shape was rejected per the
+      // AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+      // dishonest" because a runtime-injected suffix can't key the
+      // typed `warningsDetails` slot, leaving the payload `{}` by
+      // construction. The `no_config_found` code rides here too with
+      // its `searchedFrom` payload so cross-surface emission stays
+      // consistent with the scan-family tools.
       ...(warningCodes.length > 0 ? { warnings: warningCodes } : {}),
       ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
     });

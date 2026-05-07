@@ -653,7 +653,7 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   // minimum case where bootstrap must ship `warningsDetails`. Without
   // the fix, the dry-run code lived alone in `warnings[]` with no
   // payload-channel companion at all.
-  it("ships warningsDetails with baseline_dry_run as a binary-presence marker on a clean dry-run", async () => {
+  it("ships warningsDetails with baseline_dry_run carrying { didWrite: false, wouldHaveAdded } on a clean dry-run", async () => {
     await withScratch(async (dir) => {
       await writeFile(
         posixJoin(dir, "index.html"),
@@ -662,10 +662,22 @@ describe("bootstrap: warningsDetails membership invariant", () => {
       const { response } = await callBootstrap({ cwd: dir });
       expect(response.warnings).toContain("baseline_dry_run");
       expect(response.warningsDetails).toBeDefined();
-      // Binary-presence marker: empty object is the honest wire shape
-      // for a code where presence IS the signal (the dry-run flag is
-      // a one-bit yes/no — no further detail by design).
-      expect(response.warningsDetails?.["baseline_dry_run"]).toEqual({});
+      // Structured payload — graduated from BinaryPresenceMarker per
+      // the AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+      // dishonest." `didWrite: false` is the predicate's "fired"
+      // branch; `wouldHaveAdded` is the count of violations the
+      // create leg would have written had `writeBaseline: true` been
+      // passed (sourced from the scan subset's `violationsCount`
+      // lane). On a clean dry-run the count is 0 — the agent reads
+      // the payload and decides "no baseline needed" rather than
+      // budgeting for a follow-up `bootstrap({ writeBaseline: true })`
+      // call against an unknown count.
+      const payload = response.warningsDetails?.["baseline_dry_run"] as
+        | { didWrite: false; wouldHaveAdded: number }
+        | undefined;
+      expect(payload?.didWrite).toBe(false);
+      expect(typeof payload?.wouldHaveAdded).toBe("number");
+      expect(payload?.wouldHaveAdded).toBe(0);
     });
   });
 
@@ -753,10 +765,16 @@ describe("bootstrap: warningsDetails membership invariant", () => {
       // marker is the honest wire shape.
       expect(response.warningsDetails?.["scanned_zero_files"]).toEqual({});
       // `baseline_dry_run` joins the scan-leg code on the same
-      // response and also resolves to a marker — both halves of the
-      // membership invariant exercised in one case.
+      // response and resolves to its structured payload (graduated
+      // from the empty-object marker per the AI-first doctrine
+      // "Empty `warningsDetails.<code>: {}` is dishonest"). Both
+      // halves of the membership invariant exercised in one case.
       expect(response.warnings).toContain("baseline_dry_run");
-      expect(response.warningsDetails?.["baseline_dry_run"]).toEqual({});
+      const dryRunPayload = response.warningsDetails?.["baseline_dry_run"] as
+        | { didWrite: false; wouldHaveAdded: number }
+        | undefined;
+      expect(dryRunPayload?.didWrite).toBe(false);
+      expect(typeof dryRunPayload?.wouldHaveAdded).toBe("number");
     });
   });
 

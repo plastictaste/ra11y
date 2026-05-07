@@ -888,6 +888,56 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("parse_errors_present");
   });
 
+  it("populates `warningsDetails.partial_parse_files_present` with partialParseFileCount + per-parser breakdown — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — the bare code names "partial parses happened
+    // somewhere," but without the count + per-parser map an agent
+    // has to descend into `meta.analysisCoverage.partialParseFiles[]`
+    // and on bulk-vendor corpora that list may be replaced by the
+    // `partialParseTopReasons` rollup, so the per-file identity stays
+    // absent. The payload's per-parser breakdown lets the agent
+    // answer "is every .mdx file partial-parsing?" without paging
+    // through the per-file array.
+    const inputs = {
+      filesScanned: 50,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        partialParseFileCount: 4,
+        partialParseByParser: { mdx: 3, html: 1 },
+      },
+      filesByExtension: { ".mdx": 30, ".html": 20 },
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("partial_parse_files_present");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.partial_parse_files_present).toEqual({
+      partialParseFileCount: 4,
+      partialParseByParser: { mdx: 3, html: 1 },
+    });
+  });
+
+  it("`warningsDetails.partial_parse_files_present.partialParseByParser` is omitted when the coverage block doesn't supply the per-parser map", () => {
+    // Derivative tools that ship only the scalar count drop the
+    // per-parser axis under the conditional-spread present-when-
+    // meaningful contract — empty maps would lie about the parser
+    // attribution.
+    const inputs = {
+      filesScanned: 10,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { partialParseFileCount: 2 },
+      filesByExtension: { ".mdx": 10 },
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.partial_parse_files_present as
+      | { partialParseFileCount: number; partialParseByParser?: Record<string, number> }
+      | undefined;
+    expect(payload?.partialParseFileCount).toBe(2);
+    expect(payload?.partialParseByParser).toBeUndefined();
+  });
+
   it("fires `parser_bailed_zero_findings` when parseErrorFileCount > 0 AND totalFindings === 0", () => {
     const codes = computeScanWarnings({
       filesScanned: 538,
@@ -1778,6 +1828,82 @@ describe("warningsFromScanMeta", () => {
       filesByExtension: { ".css": 5 },
     });
     expect(codes).not.toContain("dist_only_scan_detected");
+  });
+
+  it("populates `warningsDetails.dist_only_scan_detected` with filesScanned + dominant classifierReason + top — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — without this payload, the agent reading the bare
+    // code learns "every parsed file is a build artifact" but cannot
+    // answer "which dist tree, what magnitude, which classifier
+    // reason dominates" without descending into
+    // `meta.scannedBuildArtifacts`. The payload mirrors the
+    // `scanned_build_artifacts_present.top` shape so an agent reading
+    // either code's payload gets the same load-bearing pivot for the
+    // dist-only triage.
+    const inputs = {
+      filesScanned: 3,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 3 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: true,
+      scannedBuildArtifactsSummary: {
+        count: 3,
+        topPath: "dist/bootstrap.min.css",
+        top: [
+          {
+            path: "dist/bootstrap.min.css",
+            reason: "definite-min-infix" as const,
+          },
+          {
+            path: "dist/font-awesome.min.css",
+            reason: "definite-min-infix" as const,
+          },
+          {
+            path: "dist/jquery.css",
+            reason: "likely-vendor-distribution" as const,
+          },
+        ],
+      },
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("dist_only_scan_detected");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.dist_only_scan_detected).toEqual({
+      filesScanned: 3,
+      classifierReason: "definite-min-infix",
+      top: inputs.scannedBuildArtifactsSummary.top,
+    });
+  });
+
+  it("`warningsDetails.dist_only_scan_detected.classifierReason` and `.top` are omitted when the build-artifact summary is absent (derivative-tool surface)", () => {
+    // Derivative tools that fire the warning off the bare boolean
+    // alone (without threading the per-entry list) get the load-
+    // bearing scalar `filesScanned` but no top-slice / classifier
+    // attribution. Honest fall-through: the payload doesn't fabricate
+    // a top-slice it never observed.
+    const inputs = {
+      filesScanned: 5,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 5 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: true,
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.dist_only_scan_detected as
+      | {
+          filesScanned: number;
+          classifierReason?: string;
+          top?: readonly { path: string; reason: string }[];
+        }
+      | undefined;
+    expect(payload?.filesScanned).toBe(5);
+    expect(payload?.classifierReason).toBeUndefined();
+    expect(payload?.top).toBeUndefined();
   });
 
   // when filesScanned: 0 AND

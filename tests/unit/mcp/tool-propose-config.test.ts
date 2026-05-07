@@ -43,6 +43,7 @@ interface ProposeConfigResponse {
   };
   readonly nextStep: string;
   readonly warnings?: readonly string[];
+  readonly warningsDetails?: Readonly<Record<string, unknown>>;
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
@@ -473,10 +474,14 @@ describe("propose_config: zero wrappers, zero build artifacts, zero findings", (
 
 describe("propose_config: foreign-ecosystem detection", () => {
   // Guards the end-to-end wire contract: a Ruby / Python / Go / Rust
-  // project root without package.json fires
-  // `warnings: ["foreign_ecosystem_detected: <language>"]` and the
-  // nextStep hint names the `npx @ra11y/core scan` alternative. The
-  // config string itself is unchanged — surface, don't suppress.
+  // project root without package.json fires the static
+  // `foreign_ecosystem_detected` warning code with a structured
+  // `warningsDetails.foreign_ecosystem_detected: { ecosystem, evidence,
+  // hasPackageJson }` payload (replacing the colon-suffixed dynamic
+  // identifier per the AI-first doctrine "Empty
+  // `warningsDetails.<code>: {}` is dishonest"), and the nextStep
+  // hint names the `npx @ra11y/core scan` alternative. The config
+  // string itself is unchanged — surface, don't suppress.
   const cases: ReadonlyArray<{ readonly marker: string; readonly tag: string }> = [
     { marker: "Gemfile", tag: "ruby" },
     { marker: "pyproject.toml", tag: "python" },
@@ -485,7 +490,7 @@ describe("propose_config: foreign-ecosystem detection", () => {
   ];
 
   for (const { marker, tag } of cases) {
-    it(`emits \`foreign_ecosystem_detected: ${tag}\` when ${marker} is present and package.json is absent`, async () => {
+    it(`emits the static \`foreign_ecosystem_detected\` code with structured payload when ${marker} is present and package.json is absent`, async () => {
       await withScratch(async (dir) => {
         await writeFile(posixJoin(dir, marker), "# minimal stub\n");
         // A trivially-parseable source file so the scan has teeth —
@@ -496,7 +501,18 @@ describe("propose_config: foreign-ecosystem detection", () => {
           "export function add(a: number, b: number): number { return a + b; }\n",
         );
         const body = await callTool(dir);
-        expect(body.warnings).toEqual([`foreign_ecosystem_detected: ${tag}`]);
+        // Static code identifier — no colon-suffixed dynamic value.
+        expect(body.warnings).toEqual(["foreign_ecosystem_detected"]);
+        // Structured payload carries the language tag + evidence + the
+        // package.json axis in one place — agents branch on payload
+        // fields rather than parsing the code identifier.
+        const detail = (body.warningsDetails ?? {})["foreign_ecosystem_detected"] as
+          | { ecosystem: string; evidence: readonly string[]; hasPackageJson: boolean }
+          | undefined;
+        expect(detail).toBeDefined();
+        expect(detail?.ecosystem).toBe(tag);
+        expect(detail?.evidence).toEqual([marker]);
+        expect(detail?.hasPackageJson).toBe(false);
         // Config string is unchanged — the foreign ecosystem is a
         // label, not a filter. The minimal defineConfig({}) still
         // lands because the scan was clean.

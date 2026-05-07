@@ -191,21 +191,32 @@ export const bootstrapTool: McpTool = {
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
       ...(writeBaseline ? [] : ["baseline_dry_run"]),
     ];
-    // Forward the underlying scan's `warningsDetails` payloads verbatim
-    // and stamp fall-through entries for bootstrap-local codes
-    // (`baseline_dry_run`, `bootstrap_<leg>_failed`) so the membership-
+    // Forward the underlying scan's `warningsDetails` payloads verbatim,
+    // attach the structured `baseline_dry_run` payload (the bootstrap
+    // call site is the predicate authority — it knows `writeBaseline`
+    // is `false` AND has the upstream `violationsCount` ready), and
+    // stamp fall-through entries for any remaining codes
+    // (`bootstrap_<leg>_failed` tool-local strings) so the membership-
     // vs-payload invariant holds at the bootstrap surface (every code
     // in `warnings[]` resolves to a `warningsDetails.<code>` entry).
-    // Without this, an agent reading bootstrap had the warning name
-    // and zero way to triage what fired — strictly worse than the
-    // empty-`{}` regression CLAUDE.md §1 "Empty `warningsDetails.<code>:
-    // {}` is dishonest" warns against (the entire container was
-    // missing). `fallThroughDetailEntry` returns `{}` for binary-
-    // presence codes and the truncation sentinel for payload-bearing
-    // codes whose summarizer didn't run on this surface, so each entry
+    // Without the structured `baseline_dry_run` payload, an agent
+    // reading the bare code learns "dry run" but cannot answer
+    // "would the create have produced a non-empty baseline?" without
+    // another round trip — the same silent miss the doctrine bullet
+    // "Empty `warningsDetails.<code>: {}` is dishonest" warns against.
+    // `fallThroughDetailEntry` returns `{}` for binary-presence codes
+    // and the truncation sentinel for payload-bearing codes whose
+    // summarizer didn't run on this surface, so each remaining entry
     // honestly signals what shape the agent should expect.
     const scanWarningsDetails = readWarningsDetails(scan);
-    const warningsDetails = buildWarningsDetails(warnings, scanWarningsDetails);
+    const warningsDetails = buildWarningsDetails(
+      warnings,
+      scanWarningsDetails,
+      buildBootstrapLocalWarningsDetails({
+        writeBaseline,
+        violationsCount: scanSubset.violationsCount,
+      }),
+    );
 
     // Snippet content tracks actual baseline-existence on disk: pasting
     // a `baseline check` incantation into CI before `.ra11y-baseline.json`
@@ -741,27 +752,66 @@ function readWarningsDetails(scan: unknown): Record<string, unknown> {
 
 /**
  * Builds the bootstrap-surface `warningsDetails` payload by forwarding
- * every entry from the upstream scan's `warningsDetails` and stamping
- * fall-through entries for any code in `warnings[]` that lacks one.
+ * every entry from the upstream scan's `warningsDetails`, layering in
+ * any bootstrap-local rich payloads (e.g. the structured
+ * `baseline_dry_run` shape the bootstrap call site computes), and
+ * stamping fall-through entries for any code in `warnings[]` that
+ * still lacks one.
+ *
+ * Layering order: upstream scan details first → bootstrap-local rich
+ * overrides → fall-through. Bootstrap-local entries override the
+ * upstream value when the same code lands on both surfaces (rare —
+ * `baseline_dry_run` is bootstrap-only by construction). The fall-
+ * through covers tool-local strings (`bootstrap_<leg>_failed`) the
+ * dispatch table can't summarize.
  *
  * `fallThroughDetailEntry` discriminates binary-presence codes (where
- * `{}` is the honest wire shape — `baseline_dry_run`, the bootstrap-
- * local `bootstrap_<leg>_failed` strings) from payload-bearing codes
- * whose summarizer didn't run on this surface (sentinel `{ truncated:
- * true, reason: "summarizer_inputs_unavailable" }`). Either way the
+ * `{}` is the honest wire shape — the bootstrap-local
+ * `bootstrap_<leg>_failed` strings) from payload-bearing codes whose
+ * summarizer didn't run on this surface (sentinel `{ truncated: true,
+ * reason: "summarizer_inputs_unavailable" }`). Either way the
  * membership-vs-payload invariant holds: every code has a key, and
  * the agent reads a definite shape rather than `undefined`.
  */
 function buildWarningsDetails(
   warnings: readonly string[],
   baseDetails: Record<string, unknown>,
+  bootstrapLocalDetails: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...baseDetails };
+  const out: Record<string, unknown> = { ...baseDetails, ...bootstrapLocalDetails };
   for (const code of warnings) {
     if (out[code] !== undefined) continue;
     out[code] = fallThroughDetailEntry(code);
   }
   return out;
+}
+
+/**
+ * Builds the bootstrap-local rich payloads layered into
+ * {@link buildWarningsDetails}. Today's only entry is the structured
+ * `baseline_dry_run` payload (`{ didWrite: false, wouldHaveAdded }`) —
+ * the bootstrap call site is the predicate authority because it
+ * knows `writeBaseline` is `false` AND has the upstream
+ * `violationsCount` from the scan subset already in scope. Without
+ * the structured payload, an agent reading the bare code learns
+ * "dry run" but cannot answer "would the create have produced a
+ * non-empty baseline?" without another round trip — the same silent
+ * miss the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+ * dishonest" warns against.
+ *
+ * Pure over its inputs; the conditional-spread shape keeps the
+ * payload absent when `writeBaseline: true` (the dry-run code never
+ * fires, so the bootstrap merge wouldn't read this entry anyway —
+ * the omission is defensive, not load-bearing).
+ */
+function buildBootstrapLocalWarningsDetails(args: {
+  readonly writeBaseline: boolean;
+  readonly violationsCount: number;
+}): Record<string, unknown> {
+  if (args.writeBaseline) return {};
+  return {
+    baseline_dry_run: { didWrite: false, wouldHaveAdded: args.violationsCount },
+  };
 }
 
 function readNumberFromRecord(value: unknown, key: string): number | null | undefined {

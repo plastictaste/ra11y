@@ -392,6 +392,121 @@ describe("bootstrap emits warningsDetails alongside warnings (membership invaria
   });
 });
 
+describe("warningsDetails entries are non-empty for graduated codes (Q16 closure)", () => {
+  // Closes the multi-corpus regression where four codes were shipping
+  // empty `warningsDetails.<code>: {}` payloads on otherwise valid
+  // responses — `partial_parse_files_present`, `baseline_dry_run`,
+  // `dist_only_scan_detected`, and the colon-suffixed dynamic
+  // `foreign_ecosystem_detected: <value>` (which additionally
+  // violated the static-code-only contract because a runtime-injected
+  // suffix can't key the typed `warningsDetails` slot). Each
+  // graduated to a payload-bearing slot per the AI-first doctrine
+  // bullet "Empty `warningsDetails.<code>: {}` is dishonest."
+  //
+  // The structural assertion here: any code in the four-name set that
+  // appears on `warnings[]` MUST have a corresponding
+  // `warningsDetails.<code>` whose value is NOT the empty `{}` marker.
+  // The test fires off the warningsdetails-empty-payload fixture for
+  // partial-parse, off bootstrap (dry-run by default) for
+  // `baseline_dry_run`, and off propose_config in a Ruby-toolchain
+  // scratch dir for the foreign-ecosystem rename. Coverage of
+  // `dist_only_scan_detected` payload graduation is handled by the
+  // unit tests in `tests/unit/mcp/warnings.test.ts` — fabricating a
+  // dist-only scan from the integration harness would require a
+  // bulk-vendor fixture larger than the surface here justifies.
+  const FIXTURE = posixJoin(
+    PROJECT_ROOT,
+    "tests",
+    "fixtures",
+    "real-world",
+    "warningsdetails-empty-payload",
+    "source",
+  );
+
+  it("scan_project: partial_parse_files_present payload is non-empty when the warning fires", async () => {
+    const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: FIXTURE })]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(body.warnings).toBeDefined();
+    if (!(body.warnings ?? []).includes("partial_parse_files_present")) {
+      // The fixture's malformed tail should drive the warning; if a
+      // future parser change recovers more aggressively and the
+      // warning stops firing, this assertion fails loudly so the
+      // fixture can be re-shaped.
+      throw new Error(
+        "partial_parse_files_present did not fire on the fixture — re-shape the malformed tail to restore the predicate",
+      );
+    }
+    const detail = body.warningsDetails?.["partial_parse_files_present"] as
+      | { partialParseFileCount?: number }
+      | Record<string, never>
+      | undefined;
+    expect(detail).toBeDefined();
+    // Empty `{}` is the dishonest shape the doctrine warns against —
+    // payload-bearing codes must carry their structured payload, not
+    // the binary-presence marker.
+    expect(detail).not.toEqual({});
+    expect((detail as { partialParseFileCount?: number }).partialParseFileCount).toBeGreaterThan(0);
+  });
+
+  it("bootstrap: baseline_dry_run payload carries didWrite + wouldHaveAdded (not the empty marker)", async () => {
+    const responses = await mcpSession([initMsg(1), toolCall(2, "bootstrap", { cwd: FIXTURE })]);
+    const body = bodyOf(responses[1]) as {
+      warnings?: readonly string[];
+      warningsDetails?: Record<string, unknown>;
+    };
+    expect(body.warnings).toContain("baseline_dry_run");
+    const detail = body.warningsDetails?.["baseline_dry_run"] as
+      | { didWrite?: false; wouldHaveAdded?: number }
+      | Record<string, never>
+      | undefined;
+    expect(detail).toBeDefined();
+    expect(detail).not.toEqual({});
+    expect((detail as { didWrite?: false }).didWrite).toBe(false);
+    expect(typeof (detail as { wouldHaveAdded?: number }).wouldHaveAdded).toBe("number");
+  });
+
+  it("propose_config: foreign_ecosystem_detected ships as a static code with structured payload (not the colon-suffixed dynamic identifier)", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-foreign-eco-"));
+    try {
+      writeFileSync(posixJoin(dir, "Gemfile"), "source 'https://rubygems.org'\n");
+      writeFileSync(
+        posixJoin(dir, "util.ts"),
+        "export function add(a: number, b: number): number { return a + b; }\n",
+      );
+      const responses = await mcpSession([initMsg(1), toolCall(2, "propose_config", { cwd: dir })]);
+      const body = bodyOf(responses[1]) as {
+        warnings?: readonly string[];
+        warningsDetails?: Record<string, unknown>;
+      };
+      // Static code identifier — the dynamic-suffix shape
+      // `foreign_ecosystem_detected: ruby` was rejected because a
+      // runtime-injected suffix can't key the typed `warningsDetails`
+      // slot, leaving the payload `{}` by construction.
+      expect(body.warnings).toContain("foreign_ecosystem_detected");
+      // No colon-suffixed sibling carrying the language inline.
+      for (const code of body.warnings ?? []) {
+        expect(code.startsWith("foreign_ecosystem_detected:")).toBe(false);
+      }
+      const detail = body.warningsDetails?.["foreign_ecosystem_detected"] as
+        | { ecosystem?: string; evidence?: readonly string[]; hasPackageJson?: boolean }
+        | Record<string, never>
+        | undefined;
+      expect(detail).toBeDefined();
+      expect(detail).not.toEqual({});
+      expect((detail as { ecosystem?: string }).ecosystem).toBe("ruby");
+      expect((detail as { evidence?: readonly string[] }).evidence).toEqual(["Gemfile"]);
+      expect((detail as { hasPackageJson?: boolean }).hasPackageJson).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("scan emits top-level `warnings` for silent-failure modes", () => {
   it("scanned_zero_files fires when the paths exist but resolve to zero parseable files", async () => {
     // Nonexistent-path inputs now hard-error with `scan-paths-not-found`

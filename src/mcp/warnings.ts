@@ -1904,11 +1904,13 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `text_source_skipped`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
+ *     `partial_parse_files_present`,
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
  *     `bulk_catalog_detected`,
  *     `animation_library_without_reduced_motion_guard`,
  *     `response_dropped_files_oversize`,
- *     `cwd_appears_misrooted`, and
+ *     `cwd_appears_misrooted`, `dist_only_scan_detected`,
+ *     `baseline_dry_run`, and
  *     `response_meta_truncated` (carries the dotted field paths of
  *     the meta sub-arrays that were elided so the agent can re-fetch
  *     under `verboseMeta: true` without probing blind).
@@ -1926,12 +1928,9 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `no_hunks_in_comparison`, `storybook_preset_active`,
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
- *     `baseline_dry_run`,
- *     `partial_parse_files_present`,
  *     `parser_bailed_zero_findings`,
- *     `scss_unresolved_variables` (the file list it carries is
- *     declared payload-bearing — see helper),
- *     and `dist_only_scan_detected`. Each names a condition whose
+ *     and `scss_unresolved_variables` (the file list it carries is
+ *     declared payload-bearing — see helper). Each names a condition whose
  *     remediation is documented in the code's prose comment alongside
  *     its declaration; meta sub-fields named there carry any
  *     incidental detail (paths, ext maps, directive lists) that an
@@ -2938,8 +2937,80 @@ export interface ScanWarningDetails {
   readonly response_meta_truncated?: {
     readonly fields: readonly string[];
   };
-  readonly baseline_dry_run?: BinaryPresenceMarker;
-  readonly partial_parse_files_present?: BinaryPresenceMarker;
+  /**
+   * Payload for `baseline_dry_run`. Carries the load-bearing routing
+   * identity an agent reads to triage why no `.ra11y-baseline.json`
+   * landed: a deterministic `didWrite: false` (the predicate's "fired"
+   * branch) plus `wouldHaveAdded` — the count of violations the
+   * `baseline create` leg would have written had `writeBaseline: true`
+   * been passed. Without this payload, an agent reading the bare code
+   * learns "dry run" but cannot answer "would the create have produced
+   * a non-empty baseline?" without another round trip. With the count
+   * inline, the agent budgets the follow-up `bootstrap({ writeBaseline:
+   * true })` call against a concrete number — a 0-finding scan in
+   * dry-run mode reads as "no baseline needed" rather than "create
+   * blocked."
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — without a payload, the warning name implies
+   * specifics (which baseline state, how many findings) that the
+   * empty-object marker does not deliver. The bootstrap call site
+   * is the predicate authority; it threads the count from the same
+   * scan output the response carries, so no second derivation is
+   * required.
+   */
+  readonly baseline_dry_run?: {
+    readonly didWrite: false;
+    readonly wouldHaveAdded: number;
+  };
+  /**
+   * Payload for `partial_parse_files_present`. Carries the partial-
+   * parse subset evidence an agent reads to triage the regime: which
+   * files contributed, and which parser owned the partial-parse mass.
+   * Without this payload, the bare code names "partial parses
+   * happened somewhere" but the agent has to descend into
+   * `meta.analysisCoverage.partialParseFiles[]` to enumerate them —
+   * and on bulk-vendor corpora that array may have been replaced by
+   * the `partialParseTopReasons` rollup, so the per-file identity
+   * stays absent.
+   *
+   * - `partialParseFileCount` — total count of files in the partial-
+   *   parse bucket. Sourced from
+   *   `analysisCoverage.partialParseFileCount`, the authoritative
+   *   scalar at every wire shape (present even when the inline
+   *   `partialParseFiles[]` array was replaced by the
+   *   `partialParseTopReasons` rollup at large counts per
+   *   {@link import("./analysis-coverage-parse-errors.ts").PARSE_ERROR_INLINE_THRESHOLD}).
+   * - `partialParseByParser` — per-parser breakdown of the count so
+   *   an agent can answer "is every .mdx file partial-parsing?"
+   *   without paging through the per-file array. Lifted off the
+   *   coverage block via the same helper that populates
+   *   `parse_errors_present.partialParseByParser`. Conditional-spread
+   *   per AI-first doctrine "Ambiguous field shapes are dishonest"
+   *   — omitted when the coverage block is producer-side stale (e.g.
+   *   derivative tools that only ship the scalar count). Same
+   *   alphabet (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) as the
+   *   per-entry `parser` tag on
+   *   `analysisCoverage.partialParseFiles[]`.
+   *
+   * Pairs with `parse_errors_present.partialParseFileCount` (the
+   * union code carries the same scalar in its rich payload). This
+   * code is the more specific predicate that fires on the partial-
+   * parse subset alone; the agent reads either payload and gets the
+   * same scalar.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires off
+   * `analysisCoverage.partialParseFileCount > 0`. The summarizer
+   * returns `undefined` only when the coverage block is absent or
+   * the count is zero (defensive); in either case the schema-
+   * discipline fall-through stamps the disambiguating sentinel
+   * rather than the empty-object marker.
+   */
+  readonly partial_parse_files_present?: {
+    readonly partialParseFileCount: number;
+    readonly partialParseByParser?: Readonly<Record<string, number>>;
+  };
   /**
    * Payload for `parser_bailed_zero_findings`. Carries the load-bearing
    * routing-decision identity an agent needs to triage the
@@ -2983,7 +3054,63 @@ export interface ScanWarningDetails {
     readonly topFiles?: readonly string[];
     readonly reason: string;
   };
-  readonly dist_only_scan_detected?: BinaryPresenceMarker;
+  /**
+   * Payload for `dist_only_scan_detected`. Carries the load-bearing
+   * routing identity an agent reads to triage the dist-only regime:
+   * the scanned-file count, the dominant build-artifact classifier
+   * verdict, and a head-slice of the affected paths so an agent
+   * branches on which dist tree the caller misrooted into without
+   * descending into `meta.scannedBuildArtifacts`.
+   *
+   * - `filesScanned` — total parsed-file count (every entry of which
+   *   was classified as a build artifact when this code fires —
+   *   `scannedBuildArtifactsAllFiles === true` AND `filesScanned > 0`).
+   *   Without this scalar, an agent reading the bare code knows the
+   *   regime fired but not the magnitude — an `additionalPaths` re-
+   *   route on a 1000-file dist tree is a different cost than on a
+   *   3-file leaf.
+   * - `classifierReason` — the dominant classifier verdict across the
+   *   build-artifact list (the most-frequent
+   *   {@link import("./build-artifacts.ts").BuildArtifactClassification}
+   *   token: `definite-min-infix`, `likely-vendor-distribution`,
+   *   `definite-bundler-output`, etc.). Lifted from the same per-
+   *   entry classifier the agent would otherwise re-derive. Per AI-
+   *   first doctrine "Heuristic-mislabeled meta sub-fields are
+   *   dishonest" — the field is provable from the scan's evidence
+   *   (deterministic argmax over the per-entry classifications), no
+   *   heuristic synthesis at the warnings seam. Conditional-spread
+   *   per AI-first doctrine "Ambiguous field shapes are dishonest"
+   *   — omitted when the build-artifact summary is absent (the bare
+   *   code's predicate can fire off the binary `scannedBuildArtifacts
+   *   AllFiles` flag alone in derivative-tool surfaces that don't
+   *   thread the per-entry list).
+   * - `top` — the head-slice of `{path, reason}` records lifted
+   *   verbatim from the build-artifact summary's `top` field (capped
+   *   at {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}). Mirrors the
+   *   `scanned_build_artifacts_present.top` shape so an agent calling
+   *   `scan_project` once gets the load-bearing pivot for the dist-
+   *   only triage on either code's payload. Conditional-spread per
+   *   AI-first "Sibling fields naming the same concept must use one
+   *   shape" — when the top slice is empty (build-artifact list
+   *   absent), the field omits rather than shipping a `top: []`
+   *   sentinel.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — without this payload, the warning channel reads
+   * `dist_only_scan_detected: {}` and forces the agent to cross-
+   * reference `meta.filesScanned` and `meta.scannedBuildArtifacts`
+   * to recover information already known at predicate time. With
+   * the payload, the warning channel carries the full triage
+   * pivot in one read.
+   */
+  readonly dist_only_scan_detected?: {
+    readonly filesScanned: number;
+    readonly classifierReason?: import("./build-artifacts.ts").BuildArtifactClassification;
+    readonly top?: readonly {
+      readonly path: string;
+      readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+    }[];
+  };
   /**
    * Payload for `js_innerhtml_template_literal_unparsed`. Carries up to
    * five `{ path, line, pattern }` samples drawn from JS/TS source
@@ -3342,9 +3469,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
   "restrict_to_paths_no_matches",
-  "baseline_dry_run",
-  "partial_parse_files_present",
-  "dist_only_scan_detected",
   "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
 
@@ -5044,6 +5168,10 @@ function buildScanWarningDetailsDispatch(
       summarize: () => summarizeParseErrors(inputs.analysisCoverage),
     },
     {
+      code: "partial_parse_files_present",
+      summarize: () => summarizePartialParseFilesPresent(inputs.analysisCoverage),
+    },
+    {
       code: "parser_bailed_zero_findings",
       summarize: () => summarizeParserBailedZeroFindings(inputs.analysisCoverage),
     },
@@ -5080,10 +5208,7 @@ function buildScanWarningDetailsDispatch(
       code: "animation_library_without_reduced_motion_guard",
       summarize: () => summarizeAnimationLibraryGuard(inputs.animationLibraryGuardCandidates),
     },
-    {
-      code: "cwd_appears_misrooted",
-      summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
-    },
+    ...scanShapeDispatchRows(inputs),
     {
       code: "no_config_found",
       summarize: () => summarizeNoConfigFoundFromInputs(inputs),
@@ -5154,6 +5279,45 @@ function templateLiteralDispatchRows(
     {
       code: "curly_double_directives_unparsed",
       summarize: () => summarizeCurlyDoubleDirectivesUnparsed(inputs.curlyDoubleLiteralFiles),
+    },
+  ];
+}
+
+/**
+ * Scan-shape dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the file-budget effective-line cap. Pairs the two scan-shape
+ * codes whose payloads ride on the same set of build-artifact-summary
+ * + filesScanned + nearestConfigAncestor inputs:
+ *
+ *   - `dist_only_scan_detected` — fires when every parsed file was
+ *     classified as a build artifact; payload carries the dominant
+ *     classifier reason + top-N pivot.
+ *   - `cwd_appears_misrooted` — fires when filesScanned is zero AND
+ *     a strict-ancestor project marker resolved; payload carries the
+ *     ancestor path the agent re-scopes to.
+ *
+ * Order matches declaration order on {@link ScanWarningCode} for
+ * stable wire-key sequencing across runs.
+ */
+function scanShapeDispatchRows(inputs: WarningInputs): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "dist_only_scan_detected",
+      summarize: () =>
+        summarizeDistOnlyScanDetected({
+          ...(inputs.scannedBuildArtifactsAllFiles === undefined
+            ? {}
+            : { scannedBuildArtifactsAllFiles: inputs.scannedBuildArtifactsAllFiles }),
+          filesScanned: inputs.filesScanned,
+          ...(inputs.scannedBuildArtifactsSummary === undefined
+            ? {}
+            : { scannedBuildArtifactsSummary: inputs.scannedBuildArtifactsSummary }),
+        }),
+    },
+    {
+      code: "cwd_appears_misrooted",
+      summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
     },
   ];
 }
@@ -5392,6 +5556,144 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
     count: summary.count,
     ...(summary.topPath === undefined ? {} : { topPath: summary.topPath }),
     ...(summary.top === undefined || summary.top.length === 0 ? {} : { top: summary.top }),
+  };
+}
+
+/**
+ * Builds the `dist_only_scan_detected` payload. The predicate fires
+ * only when `scannedBuildArtifactsAllFiles === true && filesScanned > 0`,
+ * so the bare scan-shape signal is always honest; the payload adds
+ * the routing pivot the agent reads to triage which dist tree to re-
+ * scope around. Returns `undefined` when the predicate did not fire
+ * (defensive — the dispatch table only invokes this for codes
+ * `computeScanWarnings` actually emitted, but the helper stays pure).
+ *
+ * - `filesScanned` always rides (the predicate gate guarantees > 0).
+ * - `classifierReason` rides as the dominant
+ *   {@link import("./build-artifacts.ts").BuildArtifactClassification}
+ *   token across the per-entry list — a deterministic argmax over
+ *   the `top` slice's classifications. Conditional-spread per AI-first
+ *   "Heuristic-mislabeled meta sub-fields are dishonest" — omitted
+ *   when the build-artifact summary is absent (the warning fires
+ *   off the bare boolean alone in derivative-tool surfaces that don't
+ *   thread the per-entry list).
+ * - `top` mirrors `scanned_build_artifacts_present.top` so an agent
+ *   reading either code's payload gets the same load-bearing pivot
+ *   for the dist-only triage.
+ */
+function summarizeDistOnlyScanDetected(inputs: {
+  readonly scannedBuildArtifactsAllFiles?: boolean;
+  readonly filesScanned: number;
+  readonly scannedBuildArtifactsSummary?: WarningInputs["scannedBuildArtifactsSummary"];
+}):
+  | {
+      readonly filesScanned: number;
+      readonly classifierReason?: import("./build-artifacts.ts").BuildArtifactClassification;
+      readonly top?: readonly {
+        readonly path: string;
+        readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+      }[];
+    }
+  | undefined {
+  if (inputs.scannedBuildArtifactsAllFiles !== true) return undefined;
+  if (inputs.filesScanned <= 0) return undefined;
+  const summary = inputs.scannedBuildArtifactsSummary;
+  const top = summary?.top;
+  // Deterministic argmax over the `top` slice's classifier reasons —
+  // alphabetical tie-break across equal-frequency tokens so the wire
+  // shape stays stable across runs even when two reasons tie for the
+  // dominant slot. Empty-when-unavailable: the field omits when
+  // `top` is absent so the agent reads "warning fired but the
+  // build-artifact summary wasn't threaded on this surface" via the
+  // missing field, not a misleading `null`.
+  const classifierReason = top !== undefined && top.length > 0 ? dominantReason(top) : undefined;
+  return {
+    filesScanned: inputs.filesScanned,
+    ...(classifierReason === undefined ? {} : { classifierReason }),
+    ...(top === undefined || top.length === 0 ? {} : { top }),
+  };
+}
+
+/**
+ * Returns the lexically-smallest most-frequent
+ * {@link import("./build-artifacts.ts").BuildArtifactClassification}
+ * token across the supplied `{path, reason}` records — the
+ * deterministic argmax used by
+ * {@link summarizeDistOnlyScanDetected.classifierReason}. Tie-break
+ * is alphabetical (every classification token is a stable kebab-case
+ * identifier), so the wire shape stays consistent across runs even
+ * when two reasons tie. Pure over its input; no I/O.
+ */
+function dominantReason(
+  top: readonly {
+    readonly path: string;
+    readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+  }[],
+): import("./build-artifacts.ts").BuildArtifactClassification {
+  const counts = new Map<import("./build-artifacts.ts").BuildArtifactClassification, number>();
+  for (const entry of top) {
+    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+  }
+  let best: import("./build-artifacts.ts").BuildArtifactClassification | undefined;
+  let bestCount = -1;
+  // Sorting the keys before iteration guarantees the alphabetical
+  // tie-break — without it, Map iteration order is insertion order
+  // and the argmax would drift with the upstream classifier's emit
+  // order.
+  const keys = [...counts.keys()].sort();
+  for (const key of keys) {
+    const count = counts.get(key) ?? 0;
+    if (count > bestCount) {
+      bestCount = count;
+      best = key;
+    }
+  }
+  // The non-empty-input contract above ensures `best` is always
+  // defined here; the `as` cast is a type-narrowing convenience.
+  return best as import("./build-artifacts.ts").BuildArtifactClassification;
+}
+
+/**
+ * Builds the `partial_parse_files_present` payload from the
+ * analysis-coverage block. The predicate fires off
+ * `partialParseFileCount > 0` (independent of `parseErrorFileCount`),
+ * so the payload always carries the load-bearing scalar and — when
+ * the coverage block populated it — the per-parser breakdown lifted
+ * from `partialParseByParser`. Returns `undefined` when the coverage
+ * block is absent or the count is zero (defensive — the dispatch
+ * table only invokes this for codes `computeScanWarnings` actually
+ * emitted, but the helper stays pure).
+ *
+ * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+ * dishonest" — without this payload, the bare code names "partial
+ * parses happened somewhere" but the agent must descend into
+ * `meta.analysisCoverage.partialParseFiles[]` to enumerate them, and
+ * on bulk-vendor corpora that array may have been replaced by the
+ * `partialParseTopReasons` rollup so the per-file identity stays
+ * absent. The payload's per-parser breakdown lets the agent answer
+ * "is every .mdx file partial-parsing?" without paging through the
+ * per-file array.
+ *
+ * Pairs structurally with
+ * {@link summarizeParseErrors} (the union code's payload carries the
+ * same scalar in its `partialParseFileCount` slot); this code is the
+ * more specific predicate that fires on the partial-parse subset
+ * alone.
+ */
+function summarizePartialParseFilesPresent(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly partialParseFileCount: number;
+      readonly partialParseByParser?: Readonly<Record<string, number>>;
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const partial = coverage["partialParseFileCount"];
+  const partialParseFileCount = typeof partial === "number" && partial > 0 ? partial : 0;
+  if (partialParseFileCount === 0) return undefined;
+  const partialParseByParser = readNonEmptyParserMap(coverage, "partialParseByParser");
+  return {
+    partialParseFileCount,
+    ...(partialParseByParser === undefined ? {} : { partialParseByParser }),
   };
 }
 
