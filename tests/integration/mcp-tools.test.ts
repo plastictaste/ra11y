@@ -658,17 +658,62 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.disambiguationNote).toMatch(/satisfies|alphabetic|most-specific/);
   });
 
-  it("suggest_fix with a criterion ID that no rule satisfies returns rule-not-found naming the criterion", async () => {
-    // `wcag22:2.4.5` is a manual-only criterion — no automated rule
-    // satisfies it. The criterion bridge falls through to a rule-not-
-    // found envelope; the message must name the criterion (not echo
-    // it as a `ruleId`) so the agent reads the failure honestly. The
-    // remediation hint points at `explain_standard` so the agent has a
-    // next-call pivot beyond `list_rules`.
+  it("suggest_fix with a manual-only criterion ID returns kind: 'guidance' framed as manual-review", async () => {
+    // `wcag22:2.4.5` ("Multiple Ways") is a manual-only criterion — no
+    // automated rule satisfies it. `checklist` ships this criterion as
+    // an addressable item the agent walks via `suggest_fix`, so the
+    // per-call surface MUST address the call honestly rather than fail
+    // with rule-not-found. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces" + "One tool call
+    // should answer 'what next?'." The honest shape is `kind: "guidance"`
+    // framed as "manual-review only — verify against the normative spec
+    // text," with the criterion's description and URL embedded so the
+    // agent has the spec hand-off without a second tool call.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {
         ruleId: "wcag22:2.4.5",
+        file: BAD_ALT_FILE,
+        line: 1,
+      }),
+    ]);
+    const result = responses[1].result as { isError?: boolean };
+    expect(result.isError).toBeFalsy();
+    const body = bodyOf(responses[1]) as {
+      kind?: string;
+      primary?: { explanation?: string; approach?: string; confidence?: string };
+      alternatives?: { approach: string; explanation: string }[];
+    };
+    expect(body.kind).toBe("guidance");
+    // Explanation must quote the criterion ID + title so the agent
+    // reads the framing as "manual-only" not "we don't know."
+    expect(body.primary?.explanation).toContain("wcag22:2.4.5");
+    expect(body.primary?.explanation).toContain("Multiple Ways");
+    expect(body.primary?.explanation).toMatch(/manual-review only/i);
+    // Spec URL embedded so the agent can pivot directly to the normative
+    // text instead of round-tripping through `explain_standard`.
+    expect(body.primary?.explanation).toContain("https://www.w3.org/TR/WCAG");
+    expect(body.primary?.confidence).toBe("medium");
+    // Alternatives must include a "read the spec" pointer — the
+    // suppression-pragma alternative the prose-only fallback offers is
+    // omitted because pasting a pragma for a criterion the scanner
+    // cannot detect would silence nothing meaningful.
+    expect(body.alternatives?.length).toBeGreaterThan(0);
+    expect(body.alternatives?.some((a) => /spec/i.test(a.approach))).toBe(true);
+  });
+
+  it("suggest_fix with an unrecognized criterion ID still returns rule-not-found", async () => {
+    // Distinct from the manual-only case: a criterion ID that does not
+    // exist in the registry (typo, unsupported standard prefix) is a
+    // real failure mode — the criterion itself is unknown. The handler
+    // routes to rule-not-found (not guidance) so the agent reads the
+    // failure honestly rather than receiving a manual-review pointer to
+    // a criterion that doesn't exist.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "wcag22:99.99.99",
         file: BAD_ALT_FILE,
         line: 1,
       }),
@@ -684,10 +729,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.code).toBe("rule-not-found");
-    expect(result.structuredContent?.message).toContain("wcag22:2.4.5");
-    expect(result.structuredContent?.message).toMatch(/criterion/i);
-    expect(result.structuredContent?.details?.requested).toBe("wcag22:2.4.5");
-    expect(result.structuredContent?.remediation).toContain("explain_standard");
+    expect(result.structuredContent?.message).toContain("wcag22:99.99.99");
+    expect(result.structuredContent?.details?.requested).toBe("wcag22:99.99.99");
   });
 
   it("coverage returns automated pass-rate counts for the session standard", async () => {

@@ -9,7 +9,8 @@ import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { resolveCandidateMatchForHandler } from "./suggest-fix-candidate-match.ts";
 import { collectSuggestFixContext, suggestFixRerouteSpread } from "./suggest-fix-context.ts";
 import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
-import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
+import { buildManualOnlyCriterionGuidance } from "./suggest-fix-manual-only-criterion.ts";
+import { buildSuggestFixPayload, buildVerifyCommand } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -72,7 +73,7 @@ export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
     description:
-      "Get resolution paths for a violation. Returns one of four kinds: `kind: 'edit'` with a direct oldText/newText pair that Edit can apply; `kind: 'guidance'` with a ranked `primary` fix and `alternatives` — each a short labeled path you can act on; `kind: 'suppress-recommended'` when the rule's evidence model has conceded the criterion may not apply on this substrate and the deterministic dismissal path is the source-level disable pragma (carries `pragma` + `criterionId` siblings ready to paste, NO edit); or `kind: 'none'` when no violation matched the requested line. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.\n\nThe `ruleId` parameter accepts EITHER a rule ID (e.g. `keyboard/handler-missing`) OR a criterion ID (e.g. `wcag22:2.4.5`, `section508:1194.22.c`, `en301549:9.2.4.5`) — pass through whatever the manual-review candidate carries. When a criterion ID is passed and multiple rules satisfy it, the handler resolves to the most-specific rule (smallest `satisfies` list, alphabetic tiebreak) and attaches a `disambiguationNote` naming the chosen rule and the others; singleton resolution leaves the note absent.",
+      "Get resolution paths for a violation. Returns one of four kinds: `kind: 'edit'` with a direct oldText/newText pair that Edit can apply; `kind: 'guidance'` with a ranked `primary` fix and `alternatives` — each a short labeled path you can act on; `kind: 'suppress-recommended'` when the rule's evidence model has conceded the criterion may not apply on this substrate and the deterministic dismissal path is the source-level disable pragma (carries `pragma` + `criterionId` siblings ready to paste, NO edit); or `kind: 'none'` when no violation matched the requested line. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.\n\nThe `ruleId` parameter accepts EITHER a rule ID (e.g. `keyboard/handler-missing`) OR a criterion ID (e.g. `wcag22:2.4.5`, `section508:1194.22.c`, `en301549:9.2.4.5`) — pass through whatever the manual-review candidate carries. When a criterion ID is passed and multiple rules satisfy it, the handler resolves to the most-specific rule (smallest `satisfies` list, alphabetic tiebreak) and attaches a `disambiguationNote` naming the chosen rule and the others; singleton resolution leaves the note absent. When the criterion is manual-only (no automated rule satisfies it — every `automatable: \"manual\"` row), the response is `kind: 'guidance'` framed as 'manual-review only — verify against the normative spec text', with the criterion's title, description, and URL embedded so the agent has the spec hand-off without a second tool call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -115,16 +116,6 @@ export const suggestFixTool: McpTool = {
     // should answer 'what next?'" + "Surface, don't suppress."
     const bridge = applyCriterionBridge(inputRuleId, session);
     if ("error" in bridge) return bridge.error;
-    const { ruleId, disambiguationNote } = bridge;
-
-    if (!findRule(ruleId, session)) {
-      return errorResult({
-        code: "rule-not-found",
-        message: `Rule '${ruleId}' not found.`,
-        details: { requested: ruleId },
-        remediation: "Call `list_rules` to discover valid rule IDs.",
-      });
-    }
 
     // reject paths that escape the
     // declared `cwd` sandbox before any parse or fs access. See the
@@ -133,6 +124,42 @@ export const suggestFixTool: McpTool = {
     const suggestFixCwd = strParam(params, "cwd");
     const escapeError = await checkCwdContainment(filePath, suggestFixCwd);
     if (escapeError !== null) return escapeError;
+
+    // Manual-only-criterion branch: the caller passed a criterion ID
+    // that exists in the registry but no automated rule satisfies it
+    // (every `automatable: "manual"` row — wcag22:1.3.6, wcag22:2.4.5,
+    // …). `checklist` ships these criteria as addressable items the
+    // agent walks via `suggest_fix`, so the per-call surface MUST
+    // address the call honestly rather than fail with rule-not-found.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces" + "One tool call
+    // should answer 'what next?'." Returns `kind: "guidance"` framed as
+    // "manual-review only — verify against the normative spec text."
+    if ("manualOnlyCriterion" in bridge) {
+      return textResult(
+        buildManualOnlyCriterionGuidance({
+          criterion: bridge.manualOnlyCriterion,
+          inputCriterionId: bridge.inputCriterionId,
+          filePath,
+          line,
+          fields: {
+            warningsField: {},
+            vendorContextField: {},
+            verify: buildVerifyCommand(filePath, bridge.inputCriterionId),
+          },
+        }) as Record<string, unknown>,
+      );
+    }
+
+    const { ruleId, disambiguationNote } = bridge;
+    if (!findRule(ruleId, session)) {
+      return errorResult({
+        code: "rule-not-found",
+        message: `Rule '${ruleId}' not found.`,
+        details: { requested: ruleId },
+        remediation: "Call `list_rules` to discover valid rule IDs.",
+      });
+    }
 
     // Parse the file to find the specific violation and its suggestion.
     const parsed = await session.parseFile(filePath, suggestFixCwd);

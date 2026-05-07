@@ -123,13 +123,15 @@ describe("checklist→suggest_fix candidate parity (Q14)", () => {
       //     criterion (rules are advertised on `list_rules`) and calls
       //     suggest_fix with that rule. Same parity must hold.
       const rules = BUILTIN_RULES.filter((r) => r.satisfies.includes(candidate.criterionId));
-      // Manual-only criteria (no satisfying rule) are exempt — the
-      // agent could not call suggest_fix with a rule that satisfies
-      // them in the first place. The criterion-bridge path is also
-      // exempt for these — `applyCriterionBridge` returns
-      // `rule-not-found` when no rule satisfies, which is the honest
-      // shape (the doctrine carves out manual-only criteria as
-      // expected `actionableManualItems` work). Skip silently.
+      // Manual-only criteria (no satisfying rule) are exempt from this
+      // rule-id parity loop — the agent could not call suggest_fix
+      // with a rule that satisfies them in the first place. The
+      // criterion-bridge path is exercised separately in
+      // `mcp-tools.test.ts` ("manual-only criterion ID returns kind:
+      // 'guidance'"); on that lane `applyCriterionBridge` routes to
+      // `manualOnlyCriterion` and the handler emits a `kind:
+      // "guidance"` payload framed as manual-review only. Skip
+      // silently here.
       if (rules.length === 0) continue;
       for (const rule of rules) {
         pairingsExercised += 1;
@@ -271,9 +273,10 @@ describe("checklist→suggest_fix candidate parity (Q14)", () => {
     });
     const candidates = report.candidates ?? [];
     // Pick a candidate whose criterion has at least one satisfying
-    // rule — manual-only criteria (e.g. wcag22:1.3.6) hit
-    // `rule-not-found` on the bridge, which is the honest shape but
-    // not the lane parity case under test here.
+    // rule — manual-only criteria (e.g. wcag22:1.3.6) route to the
+    // `manualOnlyCriterion` branch of `applyCriterionBridge` (covered
+    // in `mcp-tools.test.ts` "manual-only criterion ID returns kind:
+    // 'guidance'"), not the rule-resolution lane under test here.
     const target = candidates.find((c) =>
       BUILTIN_RULES.some((r) => r.satisfies.includes(c.criterionId)),
     );
