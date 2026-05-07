@@ -952,7 +952,42 @@ export type ScanWarningCode =
   // mutation-on-populated-DOM axis (which fires on a page with
   // authored content the script then mutates); this code names the
   // never-populated-at-parse-time axis specifically.
-  | "dynamic_content_container_detected";
+  | "dynamic_content_container_detected"
+  // The discovery walker filtered at least one parser-routable file
+  // (`.html` / `.css` / `.tsx` / `.jsx` / `.scss` / `.less` / `.mdx`
+  // / `.astro` / etc. — anything in
+  // {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS}) by a
+  // pattern in {@link DEFAULT_EXCLUDED_PATTERNS}, the project's
+  // `.gitignore`, or a user-supplied `exclude` glob. Without this
+  // code, a tutorial-style HTML/CSS/JS corpus where 7 of 8 candidate
+  // HTML files match a default-exclude pattern returns `findings: []`
+  // with zero signal at the top-level warnings channel that the
+  // walker dropped the dominant-extension subset before any rule
+  // saw it — the canonical "Default-exclude globs are suppression
+  // too" silent-miss vector (per `docs/kb/architecture/ai-first-
+  // consumer.md`). Symmetric to {@link binary_assets_skipped}
+  // (which fires for low-leverage binaries the agent can't route)
+  // and {@link default_excluded_artifact_paths} (build-artifact
+  // directory exclusions): both already surface honestly at the
+  // warnings channel; this code closes the gap for the per-file
+  // pattern-exclusion axis. Per AI-first doctrine "Routing skips
+  // that drop content are the symmetric twin of suppression" — the
+  // exclusion stays in place (the patterns encode genuine intent —
+  // `.gitignore`, fixture mocks, user excludes) but the agent gets
+  // an additive signal it can branch on. Paired meta:
+  // `meta.analysisCoverage.excludedByPatternByExtension` carries the
+  // full ext↦count map. Structured payload under
+  // `warningsDetails.text_source_excluded_by_default_pattern` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalExcluded }` — same shape contract as
+  // {@link text_source_skipped} so an agent reading either channel
+  // uses one mental model. The map keys are dotted parseable
+  // extensions only by construction (the discovery walker gates on
+  // {@link import("../utils/path.ts").hasParseableExtension} before
+  // recording; non-parseable matches are accounted under
+  // `skippedByExtension`), so the predicate fires whenever the map
+  // is non-empty.
+  | "text_source_excluded_by_default_pattern";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -2290,6 +2325,36 @@ export interface ScanWarningDetails {
       readonly fileCount: number;
       readonly sampleFiles: readonly string[];
     }[];
+  };
+  /**
+   * Payload for `text_source_excluded_by_default_pattern`. Mirrors the
+   * shape of {@link text_source_skipped} (extensions /
+   * perExtensionCounts / topExtension / topCount / totalExcluded) so
+   * agents reading either channel use one mental model. Carries the
+   * dense per-extension distribution of parser-routable files the
+   * discovery walker filtered via {@link DEFAULT_EXCLUDED_PATTERNS},
+   * `.gitignore`, or user-supplied `exclude` globs. The full ext↦count
+   * map still lives under `meta.analysisCoverage.excludedByPatternByExtension`.
+   *
+   * `extensions` is sorted by descending count (alphabetical tie-break)
+   * so the agent's eye lands on the dominant exclusion first;
+   * `topExtension` + `topCount` mirror the same pivot at the scalar
+   * level for one-read triage on bulk responses.
+   *
+   * Field shape parity with {@link text_source_skipped} is deliberate
+   * — `noExtensionFiles` and `parserRoutableExtensions` are NOT carried
+   * here because the bookkeeping is pre-filtered at the discovery seam:
+   * every entry is by construction a dotted parser-routable extension,
+   * so the parser-routable subset would echo `extensions` and the
+   * no-extension subset is unreachable. The `totalExcluded` slot names
+   * the corresponding total at the wire surface.
+   */
+  readonly text_source_excluded_by_default_pattern?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalExcluded: number;
   };
   /**
    * Density-cap settlement for the `response_token_budget_truncated`
@@ -3742,6 +3807,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "astro_islands_unrendered",
   "jsx_code_demo_prop_parsed_as_live_dom",
   "dynamic_content_container_detected",
+  "text_source_excluded_by_default_pattern",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3934,6 +4000,9 @@ function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) out.push("sourcemap_files_excluded");
   if (hasDefaultExcludedArtifactPaths(inputs.analysisCoverage)) {
     out.push("default_excluded_artifact_paths");
+  }
+  if (hasTextSourceExcludedByDefaultPattern(inputs.analysisCoverage)) {
+    out.push("text_source_excluded_by_default_pattern");
   }
   return out;
 }
@@ -4649,6 +4718,55 @@ function hasSourcemapFilesExcluded(coverage: Record<string, unknown> | undefined
  */
 function hasDefaultExcludedArtifactPaths(coverage: Record<string, unknown> | undefined): boolean {
   return readDefaultExcludedArtifactPaths(coverage).length > 0;
+}
+
+/**
+ * `text_source_excluded_by_default_pattern` predicate: at least one
+ * entry appears under `analysisCoverage.excludedByPatternByExtension`
+ * with a positive count. The discovery walker pre-filters the
+ * recorded entries to parser-routable extensions only (gates on
+ * {@link import("../utils/path.ts").hasParseableExtension} before
+ * recording), so this predicate fires whenever the map is non-empty —
+ * any non-zero entry is by construction parser-routable file content
+ * the agent could re-route via `additionalPaths` or by relaxing the
+ * excluding pattern. Symmetric to {@link hasDefaultExcludedArtifactPaths}
+ * (which fires for build-artifact directory exclusions); the two
+ * predicates are independent so a heterogeneous corpus can fire both.
+ *
+ * Same fail-soft contract as {@link readSkippedMap} — any shape
+ * mismatch returns `false`; never throws.
+ */
+function hasTextSourceExcludedByDefaultPattern(
+  coverage: Record<string, unknown> | undefined,
+): boolean {
+  const map = readExcludedByPatternMap(coverage);
+  for (const count of map.values()) {
+    if (count > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Reads `excludedByPatternByExtension` as a numeric ext↦count map.
+ * Returns an empty map on any of "no coverage block", "no field",
+ * "wrong shape", so callers can operate on the returned map without
+ * re-checking shape invariants. Only keys whose values are numbers
+ * > 0 survive — the same hostile-input defense {@link readSkippedMap}
+ * applies.
+ */
+function readExcludedByPatternMap(
+  coverage: Record<string, unknown> | undefined,
+): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  if (coverage === undefined) return out;
+  const raw = coverage["excludedByPatternByExtension"];
+  if (raw === null || typeof raw !== "object") return out;
+  for (const [ext, count] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof count === "number" && count > 0 && typeof ext === "string" && ext.length > 0) {
+      out.set(ext, count);
+    }
+  }
+  return out;
 }
 
 /**
@@ -5626,6 +5744,10 @@ function discoverySkipDispatchRows(
     {
       code: "default_excluded_artifact_paths",
       summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
+    },
+    {
+      code: "text_source_excluded_by_default_pattern",
+      summarize: () => summarizeTextSourceExcludedByDefaultPattern(inputs.analysisCoverage),
     },
   ];
 }
@@ -7064,6 +7186,55 @@ function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown>
       fileCount: e.fileCount,
       sampleFiles: e.sampleFiles,
     })),
+  };
+}
+
+/**
+ * Builds the `text_source_excluded_by_default_pattern` payload from
+ * the coverage block's `excludedByPatternByExtension` map. Returns
+ * `undefined` when the field is absent, malformed, or every entry has
+ * a non-positive count so the dispatch table conditional-spreads the
+ * entry away (payload-vs-binary contract).
+ *
+ * Mirrors the shape contract of {@link summarizeBinaryAssetsSkipped}
+ * minus the `noExtensionFiles` slot — the discovery walker pre-filters
+ * the recorded entries to dotted parser-routable extensions only
+ * (gates on
+ * {@link import("../utils/path.ts").hasParseableExtension} before
+ * recording), so the no-extension subset is unreachable. Determinism:
+ * `extensions` is sorted by descending count with alphabetical tie-
+ * break so the agent's eye lands on the dominant exclusion first;
+ * `topExtension` + `topCount` mirror the same pivot at the scalar
+ * level for one-read triage.
+ */
+function summarizeTextSourceExcludedByDefaultPattern(
+  coverage: Record<string, unknown> | undefined,
+):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalExcluded: number;
+    }
+  | undefined {
+  const map = readExcludedByPatternMap(coverage);
+  if (map.size === 0) return undefined;
+  const entries = [...map.entries()].sort(
+    ([aExt, aCount], [bExt, bCount]) => bCount - aCount || aExt.localeCompare(bExt),
+  );
+  let totalExcluded = 0;
+  for (const [, count] of entries) totalExcluded += count;
+  if (totalExcluded === 0) return undefined;
+  const extensions = entries.map(([ext]) => ext);
+  const perExtensionCounts: Record<string, number> = {};
+  for (const [ext, count] of entries) perExtensionCounts[ext] = count;
+  const top = entries[0];
+  return {
+    extensions,
+    perExtensionCounts,
+    ...(top === undefined ? {} : { topExtension: top[0], topCount: top[1] }),
+    totalExcluded,
   };
 }
 

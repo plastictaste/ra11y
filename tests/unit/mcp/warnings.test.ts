@@ -882,6 +882,46 @@ describe("computeScanWarnings", () => {
     expect(absent).not.toContain("default_excluded_artifact_paths");
   });
 
+  it("fires `text_source_excluded_by_default_pattern` when discovery records non-empty per-extension counts of pattern-excluded parser-routable files", () => {
+    // The discovery walker buckets every parseable file filtered by
+    // DEFAULT_EXCLUDED_PATTERNS / .gitignore / user excludes under
+    // analysisCoverage.excludedByPatternByExtension. The doctrine
+    // "Default-exclude globs are suppression too" requires the silent-
+    // skip event reach the warnings channel, not just the meta sub-
+    // field — agents calling on a tutorial-style HTML/CSS/JS corpus
+    // where 7 of 8 candidate HTML files default-exclude need a top-
+    // level branching surface.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        excludedByPatternByExtension: { ".html": 7 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(codes).toContain("text_source_excluded_by_default_pattern");
+  });
+
+  it("does NOT fire `text_source_excluded_by_default_pattern` when the map is empty or absent", () => {
+    const empty = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { excludedByPatternByExtension: {} },
+      filesByExtension: { ".tsx": 50 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(empty).not.toContain("text_source_excluded_by_default_pattern");
+    expect(absent).not.toContain("text_source_excluded_by_default_pattern");
+  });
+
   it("does NOT fire `binary_assets_skipped` when the map is text-source only", () => {
     // Symmetric to the binary-only case: a pure text-source skip map
     // (Vue / Astro / SCSS components) trips `text_source_skipped`
@@ -2767,6 +2807,57 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
         sampleFiles: ["/proj/dist/page.html", "/proj/dist/app.js"],
       },
     ]);
+  });
+
+  it("emits a `text_source_excluded_by_default_pattern` payload with extensions sorted by descending count, scalar pivot, and totalExcluded", () => {
+    // The canonical regression: a tutorial-style HTML/CSS/JS corpus
+    // where 7 of 8 candidate HTML files match a default-exclude
+    // pattern. The payload mirrors `text_source_skipped` so an agent
+    // reading either channel uses one mental model. `extensions` is
+    // sorted by descending count with alphabetical tie-break so the
+    // agent's eye lands on the dominant exclusion first.
+    const details = computeScanWarningDetails(["text_source_excluded_by_default_pattern"], {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        excludedByPatternByExtension: { ".html": 7, ".css": 2, ".js": 4 },
+      },
+      filesByExtension: { ".html": 1, ".css": 1, ".js": 1 },
+    });
+    expect(details.text_source_excluded_by_default_pattern?.extensions).toEqual([
+      ".html",
+      ".js",
+      ".css",
+    ]);
+    expect(details.text_source_excluded_by_default_pattern?.perExtensionCounts).toEqual({
+      ".html": 7,
+      ".js": 4,
+      ".css": 2,
+    });
+    expect(details.text_source_excluded_by_default_pattern?.topExtension).toBe(".html");
+    expect(details.text_source_excluded_by_default_pattern?.topCount).toBe(7);
+    expect(details.text_source_excluded_by_default_pattern?.totalExcluded).toBe(13);
+  });
+
+  it("`text_source_excluded_by_default_pattern` falls through to the disambiguating sentinel when the map is absent (defensive fall-through)", () => {
+    // Defensive branch: a caller that fired the warning at the
+    // dispatch seam but supplied a coverage block with no map at all.
+    // The dispatch table's fall-through stamps the
+    // `summarizer_inputs_unavailable` sentinel rather than `{}`, per
+    // the doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+    const details = computeScanWarningDetails(["text_source_excluded_by_default_pattern"], {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.text_source_excluded_by_default_pattern).toEqual({
+      truncated: true,
+      reason: "summarizer_inputs_unavailable",
+    });
   });
 
   // Per `docs/kb/architecture/ai-first-consumer.md` "Empty
