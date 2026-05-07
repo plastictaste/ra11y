@@ -15,15 +15,6 @@
  * are not yet implemented. See `.claude/backlog.md` for current phase.
  */
 
-export type {
-  Criterion,
-  ReportData,
-  ScanResult,
-  Severity,
-  Standard,
-  Violation,
-} from "./types/index.ts";
-
 /**
  * Defines a ra11y user config with full type inference. Re-exported
  * from `@ra11y/core/plugin` so that `import { defineConfig } from
@@ -45,6 +36,14 @@ export type {
  * ```
  */
 export { defineConfig } from "./api/plugin.ts";
+export type {
+  Criterion,
+  ReportData,
+  ScanResult,
+  Severity,
+  Standard,
+  Violation,
+} from "./types/index.ts";
 
 /**
  * Runs an accessibility scan against a set of file paths.
