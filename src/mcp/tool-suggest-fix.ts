@@ -70,7 +70,6 @@ function checkRequiredParams(
   });
 }
 
-
 export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
