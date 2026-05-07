@@ -66,7 +66,7 @@ function buildSyntheticScanFileResponse(
 }
 
 describe("applyScanFileBudget — pass-through under both caps", () => {
-  it("returns the response unchanged when findings fit under the default limit and envelope under ceiling", () => {
+  it("stamps the always-present scan-state primitives on a clean (unpaged) response", () => {
     const response = buildSyntheticScanFileResponse(5);
     const result = applyScanFileBudget({
       limit: undefined,
@@ -74,15 +74,24 @@ describe("applyScanFileBudget — pass-through under both caps", () => {
       maxBytes: undefined,
       response,
     });
-    // Pass-through preserves the input reference (no clone) when no
-    // cap fired — keeps the under-cap shape byte-identical.
-    expect(result.response).toBe(response);
+    // Q16: the under-cap path stamps `totalFindings: <count>`,
+    // `truncated: false`, `findingsArrayDropped: false` so a clean
+    // single-file response and a truncated single-file response ship
+    // the same field set. Pre-Q16 the triplet was conditional-spread
+    // only when paging or the slim guard fired, so a clean scan
+    // omitted them entirely — agents reading `obj.totalFindings` got
+    // `undefined` (read back as `null` in agent prose) and could not
+    // disambiguate "clean inventory" from "field unavailable." Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+    // shapes are dishonest."
     expect(result.truncated).toBe(false);
-    // Paging-state fields must NOT appear when paging is a no-op
-    // (present-when-meaningful per `.claude/rules/mcp-response-shapes.md`).
-    expect(response).not.toHaveProperty("truncated");
-    expect(response).not.toHaveProperty("totalFindings");
-    expect(response).not.toHaveProperty("nextOffset");
+    expect(result.response["totalFindings"]).toBe(5);
+    expect(result.response["truncated"]).toBe(false);
+    expect(result.response["findingsArrayDropped"]).toBe(false);
+    // `nextOffset` is paging-only state — must NOT appear on the
+    // clean inventory response (present-when-meaningful per
+    // `.claude/rules/mcp-response-shapes.md`).
+    expect(result.response).not.toHaveProperty("nextOffset");
   });
 
   it("default limit caps responses at 200 findings — typical-page no-op", () => {
@@ -95,7 +104,13 @@ describe("applyScanFileBudget — pass-through under both caps", () => {
       response: under,
     });
     expect(r1.truncated).toBe(false);
-    expect(r1.response).toBe(under);
+    // Q16: even on the clean (unpaged) path, the response stamps the
+    // always-present scan-state primitives, so the result no longer
+    // matches the input by reference. Inventory scalar agrees with
+    // the findings array length.
+    expect(r1.response["totalFindings"]).toBe(199);
+    expect(r1.response["truncated"]).toBe(false);
+    expect(r1.response["findingsArrayDropped"]).toBe(false);
 
     // 250 findings → paging engages on the default cap of 200.
     const over = buildSyntheticScanFileResponse(250);
@@ -366,17 +381,27 @@ describe("applyScanFileBudget — oversize-envelope slim fallback", () => {
     expect(result.response["findings"]).toBeDefined();
     const findings = result.response["findings"] as readonly unknown[];
     expect(findings.length).toBe(20);
-    expect(result.response).not.toHaveProperty("findingsArrayDropped");
+    // Q16: scan-state primitives ship as `false` / inventory-count
+    // on the clean path — the slim guard's `findingsArrayDropped:
+    // true` shape is reserved for the actual oversize fallback.
+    expect(result.response["findingsArrayDropped"]).toBe(false);
+    expect(result.response["truncated"]).toBe(false);
+    expect(result.response["totalFindings"]).toBe(20);
     const warnings = (result.response["warnings"] as readonly string[] | undefined) ?? [];
     expect(warnings).not.toContain("response_dropped_files_oversize");
   });
 });
 
 describe("applyScanFileBudget — defensive shapes", () => {
-  it("returns a 0-totalFindings response unchanged when the input lacks a findings array", () => {
+  it("stamps a 0-totalFindings shape when the input lacks a findings array", () => {
     // Defensive narrowing — if a future caller threads through a
     // response without `findings` (perhaps an early-error path),
-    // the budget pass becomes a no-op rather than throwing.
+    // the budget pass stamps the always-present scan-state
+    // primitives on a fresh shallow copy rather than throwing.
+    // Q16 contract: `totalFindings: 0`, `truncated: false`,
+    // `findingsArrayDropped: false` on the missing-findings shape so
+    // a downstream agent can't misread the gap as truncation /
+    // dropped-data.
     const response = { plan: {}, meta: {} };
     const result = applyScanFileBudget({
       limit: 10,
@@ -385,7 +410,13 @@ describe("applyScanFileBudget — defensive shapes", () => {
       response,
     });
     expect(result.truncated).toBe(false);
-    expect(result.response).toBe(response);
+    expect(result.response["totalFindings"]).toBe(0);
+    expect(result.response["truncated"]).toBe(false);
+    expect(result.response["findingsArrayDropped"]).toBe(false);
+    // Original fields preserved — defensive-shape contract is purely
+    // additive.
+    expect(result.response["plan"]).toEqual({});
+    expect(result.response["meta"]).toEqual({});
   });
 
   it("paging through to an out-of-range offset yields an empty slice with totalFindings preserved", () => {

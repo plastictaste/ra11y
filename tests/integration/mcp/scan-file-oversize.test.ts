@@ -104,7 +104,7 @@ describe("scan_file Q10 oversize-envelope wiring", () => {
     expect(data).not.toHaveProperty("nextOffset");
   });
 
-  it("returns un-paged response unchanged when findings fit under the default limit", async () => {
+  it("ships always-present scan-state primitives on un-paged response when findings fit under the default limit", async () => {
     // 5 findings is well under DEFAULT_SCAN_FILE_LIMIT (200) — even
     // with the small handful of sibling-rule findings the HTML
     // envelope adds, the total stays well under the cap.
@@ -118,11 +118,19 @@ describe("scan_file Q10 oversize-envelope wiring", () => {
     const findings = data["findings"] as readonly unknown[];
     expect(findings.length).toBeGreaterThanOrEqual(5);
     expect(findings.length).toBeLessThan(200);
-    // Pass-through: paging-state fields stay absent.
-    expect(data).not.toHaveProperty("truncated");
-    expect(data).not.toHaveProperty("totalFindings");
+    // Q16: scan-state primitives ship as deterministic non-null
+    // values on every scan_file response — `truncated: false`,
+    // `findingsArrayDropped: false`, and `totalFindings` agreeing
+    // with `findings.length` on the un-paged path. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field
+    // shapes are dishonest": a clean scan and a paged scan must ship
+    // the same field set so an agent reading the response cannot
+    // confuse "no findings" with "field unavailable" / "scan never
+    // ran." `nextOffset` stays paging-only and is correctly absent.
+    expect(data["truncated"]).toBe(false);
+    expect(data["findingsArrayDropped"]).toBe(false);
+    expect(data["totalFindings"]).toBe(findings.length);
     expect(data).not.toHaveProperty("nextOffset");
-    expect(data).not.toHaveProperty("findingsArrayDropped");
   });
 
   it("engages the slim envelope when post-paging response crosses `maxBytes`", async () => {

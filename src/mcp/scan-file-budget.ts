@@ -160,10 +160,49 @@ export function applyScanFileBudget(args: ApplyScanFileBudgetArgs): ApplyScanFil
         totalFindings,
       }),
   });
+  const truncated = paged.truncated || guarded.triggered;
+  // Q16: stamp the always-present scan-state primitives so a clean
+  // single-file scan response and a truncated single-file scan response
+  // ship the same field set. Pre-Q16 the `totalFindings` / `truncated` /
+  // `findingsArrayDropped` triplet was conditional-spread only when
+  // paging or the slim guard fired, so a clean scan omitted them
+  // entirely — agents reading `obj.totalFindings` got `undefined` (read
+  // back as `null` in agent prose) and could not disambiguate
+  // "clean scan with the full inventory" from "field unavailable" /
+  // "scan never ran." Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Ambiguous field shapes are dishonest" — these three primitives
+  // describe scan-state that ALWAYS applies to a single-file scan
+  // (every scan_file response either ran the full inventory or
+  // truncated some of it; every scan_file response either kept
+  // `findings[]` populated or dropped it under the slim envelope).
+  // The under-cap path stamps `truncated: false`,
+  // `findingsArrayDropped: false`, and `totalFindings: <count>` so the
+  // honest "this IS the full inventory" reading is explicit.
   return {
-    response: guarded.response,
-    truncated: paged.truncated || guarded.triggered,
+    response: ensureScanStatePrimitives(guarded.response, totalFindings, truncated),
+    truncated,
   };
+}
+
+/**
+ * Stamps the always-present `scan_file` scan-state primitives onto
+ * the response when neither the paging primitive nor the slim envelope
+ * has already populated them. Idempotent: if a field is already
+ * present (from `applyFindingsPaging` or `buildSlimScanFileEnvelope`),
+ * the existing value wins. Q16 closure for the `totalFindings` /
+ * `truncated` / `findingsArrayDropped` triplet — see
+ * {@link applyScanFileBudget}'s docblock for the doctrine link.
+ */
+function ensureScanStatePrimitives(
+  response: Record<string, unknown>,
+  totalFindings: number,
+  truncated: boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...response };
+  if (out["totalFindings"] === undefined) out["totalFindings"] = totalFindings;
+  if (out["truncated"] === undefined) out["truncated"] = truncated;
+  if (out["findingsArrayDropped"] === undefined) out["findingsArrayDropped"] = false;
+  return out;
 }
 
 interface PagingResult {
