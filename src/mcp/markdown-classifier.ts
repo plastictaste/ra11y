@@ -451,10 +451,7 @@ export function parseModeByExtension(files: readonly ParsedFile[]): Record<strin
     // extension (Vim, older static-site generators); the parser
     // dispatch in `src/mcp/session.ts` already routes it through
     // `parseMarkdown`, so the disclosure label must mirror.
-    if (
-      lang === "html" &&
-      (ext === ".md" || ext === ".markdown" || ext === ".mkdn")
-    ) {
+    if (lang === "html" && (ext === ".md" || ext === ".markdown" || ext === ".mkdn")) {
       seen.set(ext, MARKDOWN_HTML_RESIDUE_MODE);
       continue;
     }
