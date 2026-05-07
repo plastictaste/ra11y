@@ -3179,19 +3179,19 @@ describe("MCP tool: coverage", () => {
       // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
       // (or `untestableCriteria.length` when the array ships).
       manualWithCandidates?: ReadonlyArray<{ criterionId: string }>;
-      untargetedCriteria: number;
+      untargetedCriteriaForProject: number;
       // Structured `summary` dict — mirrors `checklist.summary` so an
       // agent reading `summary.actionable.criteria` /
-      // `summary.untargetedCriteria` / `summary.likelyIrrelevant` on
-      // either tool gets the same path resolution. Pre-fix this field
-      // shipped as a prose string while `checklist.summary` shipped as
-      // a dict — the canonical "Sibling fields naming the same concept
-      // must use one shape" failure mode in
-      // `docs/kb/architecture/ai-first-consumer.md`. Prose lives at
-      // `summary.headline`.
+      // `summary.untargetedCriteriaForProject` /
+      // `summary.likelyIrrelevant` on either tool gets the same path
+      // resolution. Pre-fix this field shipped as a prose string while
+      // `checklist.summary` shipped as a dict — the canonical "Sibling
+      // fields naming the same concept must use one shape" failure
+      // mode in `docs/kb/architecture/ai-first-consumer.md`. Prose
+      // lives at `summary.headline`.
       summary: {
         actionable: { criteria: number };
-        untargetedCriteria: number;
+        untargetedCriteriaForProject: number;
         likelyIrrelevant: number;
         automatedCoverage: {
           standardId: string;
@@ -3215,15 +3215,18 @@ describe("MCP tool: coverage", () => {
     // (canonical structured access path mirroring
     // `checklist.summary.actionable.criteria`) and on the
     // `manualWithCandidates` array's length when the array ships.
-    // The untargeted count rides on `untargetedCriteria` (no array
-    // twin alongside it on the default envelope). Per AI-first
-    // doctrine "Composite headline counts are dishonest" the legacy
-    // composite `criteriaManualReviewRequired` was deleted; per
-    // "Sibling fields naming the same concept must use one shape"
-    // the redundant top-level scalars were dropped — agents read
-    // through the structured surfaces.
-    expect(typeof data.untargetedCriteria).toBe("number");
-    expect(data.summary.actionable.criteria + data.untargetedCriteria).toBeGreaterThan(0);
+    // The untargeted count rides on `untargetedCriteriaForProject` (no
+    // array twin alongside it on the default envelope; the per-file
+    // twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`
+    // instead). Per AI-first doctrine "Composite headline counts are
+    // dishonest" the legacy composite `criteriaManualReviewRequired`
+    // was deleted; per "Sibling fields naming the same concept must
+    // use one shape" the redundant top-level scalars were dropped —
+    // agents read through the structured surfaces.
+    expect(typeof data.untargetedCriteriaForProject).toBe("number");
+    expect(
+      data.summary.actionable.criteria + data.untargetedCriteriaForProject,
+    ).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
     expect((data as Record<string, unknown>).actionableManualItems).toBeUndefined();
     expect((data as Record<string, unknown>).criteriaUntestable).toBeUndefined();
@@ -3233,7 +3236,7 @@ describe("MCP tool: coverage", () => {
     // `checklist.summary.actionable.criteria` on identical cwd).
     expect(typeof data.summary).toBe("object");
     expect(data.summary.actionable.criteria).toBe(data.manualWithCandidates?.length ?? 0);
-    expect(data.summary.untargetedCriteria).toBe(data.untargetedCriteria);
+    expect(data.summary.untargetedCriteriaForProject).toBe(data.untargetedCriteriaForProject);
     expect(typeof data.summary.likelyIrrelevant).toBe("number");
     expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
     expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");

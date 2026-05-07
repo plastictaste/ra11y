@@ -93,7 +93,8 @@ function body<T>(resp: JsonRpcResponse): T {
 interface ScanFileBody {
   readonly plan: {
     readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    // scan_file is per-file scope — emits the per-file slice name.
+    readonly untargetedCriteriaForFile: number;
   };
   readonly reviewCandidates?: ReadonlyArray<{
     readonly criteria: readonly string[];
@@ -109,7 +110,8 @@ interface ChecklistBody {
       readonly candidatesUncapped: number;
       readonly candidatesReturned: number;
     };
-    readonly untargetedCriteria: number;
+    // checklist is project-walk scope — emits the project slice name.
+    readonly untargetedCriteriaForProject: number;
   };
 }
 

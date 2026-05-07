@@ -65,7 +65,14 @@ interface ScanSummary {
   readonly violations: number;
   readonly notes: number;
   readonly actionableManual: number;
-  readonly untargetedCriteria: number;
+  /**
+   * Renamed from the bare `untargetedCriteria` to match the project-
+   * rooted scan_project / checklist / coverage emission, which now
+   * ships under `untargetedCriteriaForProject`. VPAT narratives are
+   * project-scoped by definition, so the project-rooted name is the
+   * honest one here.
+   */
+  readonly untargetedCriteriaForProject: number;
   readonly keyViolationExamples?: readonly KeyViolationExample[];
 }
 
@@ -125,10 +132,10 @@ export const draftVpatNarrativeTool: McpTool = {
               description:
                 "Manual-review candidates the scan grounded in a file:line (from checklist's actionableManualItems).",
             },
-            untargetedCriteria: {
+            untargetedCriteriaForProject: {
               type: "number",
               description:
-                "Manual criteria that did NOT ground in a file:line (bare-criterion prompts — headline-count sibling of actionableManual).",
+                "Manual criteria that did NOT ground in a file:line (bare-criterion prompts — headline-count sibling of actionableManual). Mirrors `scan_project.plan.untargetedCriteriaForProject` / `checklist.summary.untargetedCriteriaForProject` / `coverage[].summary.untargetedCriteriaForProject`. (The per-file twin `untargetedCriteriaForFile` from `scan` / `scan_file` does not belong here — VPATs are project-scoped.)",
             },
             keyViolationExamples: {
               type: "array",
@@ -151,7 +158,7 @@ export const draftVpatNarrativeTool: McpTool = {
             "violations",
             "notes",
             "actionableManual",
-            "untargetedCriteria",
+            "untargetedCriteriaForProject",
           ],
         },
         timeoutMs: {
@@ -178,7 +185,7 @@ export const draftVpatNarrativeTool: McpTool = {
       return errorResult({
         code: "invalid-param",
         message:
-          "scanSummary must be an object with numeric `totalFindings`, `violations`, `notes`, `actionableManual`, and `untargetedCriteria`.",
+          "scanSummary must be an object with numeric `totalFindings`, `violations`, `notes`, `actionableManual`, and `untargetedCriteriaForProject`.",
         details: { param: "scanSummary" },
       });
     }
@@ -277,7 +284,7 @@ function buildNarrativePrompt(criterionId: string, summary: ScanSummary): string
     `- Violations (error/warning): ${summary.violations}`,
     `- Notes (info-level): ${summary.notes}`,
     `- Actionable manual-review items (grounded with file:line): ${summary.actionableManual}`,
-    `- Untargeted manual criteria (no grounding): ${summary.untargetedCriteria}`,
+    `- Untargeted manual criteria (no grounding): ${summary.untargetedCriteriaForProject}`,
   ];
   if (summary.keyViolationExamples && summary.keyViolationExamples.length > 0) {
     parts.push("", "Key violation examples:");
@@ -330,14 +337,16 @@ function parseScanSummary(raw: unknown): ScanSummary | null {
   const violations = typeof r["violations"] === "number" ? r["violations"] : null;
   const notes = typeof r["notes"] === "number" ? r["notes"] : null;
   const actionableManual = typeof r["actionableManual"] === "number" ? r["actionableManual"] : null;
-  const untargetedCriteria =
-    typeof r["untargetedCriteria"] === "number" ? r["untargetedCriteria"] : null;
+  const untargetedCriteriaForProject =
+    typeof r["untargetedCriteriaForProject"] === "number"
+      ? r["untargetedCriteriaForProject"]
+      : null;
   if (
     totalFindings === null ||
     violations === null ||
     notes === null ||
     actionableManual === null ||
-    untargetedCriteria === null
+    untargetedCriteriaForProject === null
   ) {
     return null;
   }
@@ -347,7 +356,7 @@ function parseScanSummary(raw: unknown): ScanSummary | null {
     violations,
     notes,
     actionableManual,
-    untargetedCriteria,
+    untargetedCriteriaForProject,
     ...(examples === undefined ? {} : { keyViolationExamples: examples }),
   };
 }

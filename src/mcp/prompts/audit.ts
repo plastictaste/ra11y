@@ -63,7 +63,7 @@ export const auditPrompt: Prompt = {
       '         "violations": 2,',
       '         "notes": 1,',
       '         "actionableManual": 1,',
-      '         "untargetedCriteria": 0,',
+      '         "untargetedCriteriaForProject": 0,',
       '         "keyViolationExamples": [',
       '           { "ruleId": "semantics/landmark-one-main", "criterionId": "wcag22:1.3.1", "filePath": "src/App.tsx", "line": 12, "message": "<violation message>" }',
       "         ]",

@@ -163,7 +163,8 @@ export interface FixCounts {
  * Exported so the MCP layer can reuse the same accounting for effort
  * math and `violationsWithoutAnyFix` derivation without rebuilding a
  * full {@link AgentPlan} — its plan wrapper carries MCP-specific fields
- * (actionableManualItems, untargetedCriteria, limitations, etc.) that
+ * (actionableManualItems, untargetedCriteriaForProject /
+ * untargetedCriteriaForFile, limitations, etc.) that
  * the CLI plan deliberately doesn't.
  *
  * Both returned fields are internal signals — neither is surfaced on

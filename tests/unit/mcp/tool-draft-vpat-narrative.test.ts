@@ -37,7 +37,7 @@ function validSummary(): Record<string, unknown> {
     violations: 2,
     notes: 1,
     actionableManual: 4,
-    untargetedCriteria: 0,
+    untargetedCriteriaForProject: 0,
     keyViolationExamples: [
       {
         ruleId: "contrast/minimum",

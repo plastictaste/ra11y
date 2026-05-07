@@ -149,15 +149,17 @@ describe("scan_project — summaryOnly parameter", () => {
 
       // The structured per-lane tally (`fixesByClass`) and the
       // load-bearing sibling counters (`notes`, `actionableManualItems`,
-      // `untargetedCriteria`) are the honest replacement for the former
-      // `plan.summary` prose blurb — see `buildScanPlan` in
+      // `untargetedCriteriaForProject`) are the honest replacement for
+      // the former `plan.summary` prose blurb — see `buildScanPlan` in
       // `src/mcp/scan-assembly.ts` for the doctrine note. The summary
       // spec keys are present here as structured siblings rather than a
-      // single composite sentence.
+      // single composite sentence. (scan_project is the project-walk
+      // surface — emits the project slice name; scan / scan_file emit
+      // the parallel `untargetedCriteriaForFile`.)
       expect(typeof body.plan["fixesByClass"]).toBe("object");
       expect(typeof body.plan["notes"]).toBe("number");
       expect(typeof body.plan["actionableManualItems"]).toBe("number");
-      expect(typeof body.plan["untargetedCriteria"]).toBe("number");
+      expect(typeof body.plan["untargetedCriteriaForProject"]).toBe("number");
 
       // meta.filesByExtension — the per-extension count map the spec
       // names. Confirms the scan saw the file types the agent expected.

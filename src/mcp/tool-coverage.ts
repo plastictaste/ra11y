@@ -72,7 +72,7 @@ export const coverageTool: McpTool = {
         showUntargeted: {
           type: "boolean",
           description:
-            "Include the full `untargetedCriteriaList` (bare WCAG titles for criteria no finder grounded in code). Default false; `untargetedCriteria` (the count) is always returned. Mirrors the `checklist` tool so both surfaces behave consistently.",
+            "Include the full `untargetedCriteriaList` (bare WCAG titles for criteria no finder grounded in code). Default false; `untargetedCriteriaForProject` (the count) is always returned. Mirrors the `checklist` tool so both surfaces behave consistently.",
         },
         verboseMeta: {
           type: "boolean",
@@ -447,12 +447,19 @@ export const coverageTool: McpTool = {
         // doesn't ship 16 entries of bare WCAG titles that mirror the
         // checklist tool's showUntargeted default.
         //
-        // Canonical count field is `untargetedCriteria`
-        // (matches scan_project's `plan` and
-        // checklist's `summary`). The list uses the distinct name
-        // `untargetedCriteriaList` so the number and array fields don't
-        // collide when both are present.
-        untargetedCriteria: untargeted.length,
+        // Project-walk scope: `coverage` is project-rooted (config-walks
+        // up from cwd), so the count is a project-total, not a per-file
+        // slice. The field name is `untargetedCriteriaForProject` so
+        // consumers reading the scalar can't conflate it with a
+        // `scan_file` per-file count (which would over-count on the
+        // same corpus). Cross-surface count invariant: equals
+        // `scan_project.plan.untargetedCriteriaForProject` and
+        // `checklist.summary.untargetedCriteriaForProject` on identical
+        // cwd. The list uses the distinct name `untargetedCriteriaList`
+        // so the number and array fields don't collide when both are
+        // present. See `buildScanPlan` docblock in `scan-assembly.ts`
+        // for the cross-surface rationale.
+        untargetedCriteriaForProject: untargeted.length,
         ...untargetedListField,
         likelyIrrelevantCriteria: withTitles(likelyIrrelevant, session),
         // Renamed from "automatedGaps" — agents consistently misread
@@ -472,8 +479,9 @@ export const coverageTool: McpTool = {
         warningAutomatedCriteria: withTitles(warningOnlyIds, session),
         // Structured summary dict — mirrors `checklist.summary`'s key
         // shape so an agent that reads `summary.actionable.criteria`
-        // / `summary.untargetedCriteria` / `summary.likelyIrrelevant`
-        // on either surface gets the same path resolution. Pre-fix
+        // / `summary.untargetedCriteriaForProject` /
+        // `summary.likelyIrrelevant` on either surface gets the same
+        // path resolution. Pre-fix
         // this field shipped as a prose string while
         // `checklist.summary` shipped as a dict — same field name on
         // sibling tools, two shapes — the canonical "Sibling fields
@@ -520,7 +528,11 @@ export const coverageTool: McpTool = {
           // fields naming the same concept must use one shape" the
           // candidate-vs-criteria split is named, not implied.
           actionable: { criteria: withCandidates.length, candidates: manualCandidatesTotal },
-          untargetedCriteria: untargeted.length,
+          // Mirror `checklist.summary.untargetedCriteriaForProject` —
+          // both surfaces are project-rooted and emit the same scope-
+          // disambiguated name. See `buildScanPlan` docblock in
+          // `scan-assembly.ts` for the cross-surface rationale.
+          untargetedCriteriaForProject: untargeted.length,
           likelyIrrelevant: likelyIrrelevant.length,
           automatedCoverage: {
             standardId: c.standardId,
@@ -1433,8 +1445,8 @@ function buildOptionalArrayField<K extends string, V>(
 /**
  * Builds the `untargetedCriteriaList` spread payload conditional on
  * the caller's `showUntargeted` flag. The list rides as a sibling to
- * the always-present `untargetedCriteria` count; pulled into a
- * helper so the entry literal stays free of inline ternaries.
+ * the always-present `untargetedCriteriaForProject` count; pulled
+ * into a helper so the entry literal stays free of inline ternaries.
  */
 function buildUntargetedListField(
   showUntargeted: boolean,

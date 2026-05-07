@@ -697,15 +697,18 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       automatedCriteriaPassRate: number;
-      untargetedCriteria: number;
+      untargetedCriteriaForProject: number;
       untargetedCriteriaList?: unknown;
     };
     expect(body.standardId).toBe("wcag22");
     expect(body.criteriaTotalForProfile).toBeGreaterThan(0);
     expect(typeof body.automatedCriteriaPassRate).toBe("number");
     // Count always present; list gated behind showUntargeted (mirrors
-    // checklist tool so default responses stay compact).
-    expect(typeof body.untargetedCriteria).toBe("number");
+    // checklist tool so default responses stay compact). The project-
+    // walk slice ships under `untargetedCriteriaForProject` (the
+    // per-file twin `untargetedCriteriaForFile` ships from `scan` /
+    // `scan_file` instead).
+    expect(typeof body.untargetedCriteriaForProject).toBe("number");
     expect(body.untargetedCriteriaList).toBeUndefined();
   });
 
@@ -716,10 +719,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList?: readonly unknown[];
-      untargetedCriteria: number;
+      untargetedCriteriaForProject: number;
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
-    expect(body.untargetedCriteriaList?.length).toBe(body.untargetedCriteria);
+    expect(body.untargetedCriteriaList?.length).toBe(body.untargetedCriteriaForProject);
   });
 
   it("clean scan surfaces limitations as a structured field (not buried in prose)", async () => {
@@ -1540,7 +1543,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
           candidatesUncapped: number;
           candidatesReturned: number;
         };
-        untargetedCriteria: number;
+        untargetedCriteriaForProject: number;
         likelyIrrelevant: number;
       } & Record<string, unknown>;
     };
@@ -1551,19 +1554,19 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     const untargetedIds = body.untargetedCriteriaList as readonly unknown[];
     expect(untargetedIds.every((id) => typeof id === "string")).toBe(true);
-    expect(untargetedIds.length).toBe(body.summary.untargetedCriteria);
+    expect(untargetedIds.length).toBe(body.summary.untargetedCriteriaForProject);
     // Q15-LANDMARK-MAIN: an actionable item carries either a grounded
     // review candidate (the historical predicate) OR a low-confidence
     // verify-token violation (the rule said "please verify in
     // source"). Both axes contribute actionable signal that lands in
     // `items[]`; the test asserts the union, not just the candidate
     // axis. The bare-criterion-prompt subset (no grounded candidate
-    // AND no verify-token violation) lives in `untargetedCriteria`.
+    // AND no verify-token violation) lives in `untargetedCriteriaForProject`.
     expect(body.items.length).toBeGreaterThan(0);
     expect(body.summary.actionable.criteria).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
     // The previous composite `manualReviewRequired = actionable +
-    // untargetedCriteria` counter was the canonical dishonest-headline
+    // untargetedCriteriaForProject` counter was the canonical dishonest-headline
     // example in docs/kb/architecture/ai-first-consumer.md. It is now
     // absent; callers read the two split counters separately.
     expect(body.summary).not.toHaveProperty("manualReviewRequired");
@@ -1648,13 +1651,15 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList: Array<{ criteria: readonly string[]; candidates: unknown[] }>;
-      summary: { untargetedCriteria: number };
+      summary: { untargetedCriteriaForProject: number };
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     expect(body.untargetedCriteriaList.every((i) => i.candidates.length === 0)).toBe(true);
     // Full-item shape: each entry carries criteria + empty candidates array.
     expect(body.untargetedCriteriaList.every((i) => Array.isArray(i.criteria))).toBe(true);
-    expect(body.summary.untargetedCriteria).toBe(body.untargetedCriteriaList.length);
+    expect(body.summary.untargetedCriteriaForProject).toBe(
+      body.untargetedCriteriaList.length,
+    );
   });
 
   it("checklist omits untargetedCriteriaList entirely when showUntargeted: false (size-pressure escape)", async () => {
@@ -1668,10 +1673,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList?: unknown;
-      summary: { untargetedCriteria: number };
+      summary: { untargetedCriteriaForProject: number };
     };
     expect(body.untargetedCriteriaList).toBeUndefined();
-    expect(typeof body.summary.untargetedCriteria).toBe("number");
+    expect(typeof body.summary.untargetedCriteriaForProject).toBe("number");
   });
 
   it("checklist annotates candidates that span multiple criteria with criteria array", async () => {
@@ -1988,7 +1993,8 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
 // criterion prompts into a single inflated number; the old
 // `plan.fixSuggestionAvailable` summed mechanical edits with prose-only
 // guidance. The manual half is now split into honest top-level counters
-// (`actionableManualItems` + `untargetedCriteria`); the fix half is
+// (`actionableManualItems` + `untargetedCriteriaForProject` on the project-walk
+// surface, `untargetedCriteriaForFile` on the per-file surface); the fix half is
 // surfaced exclusively as the structured per-lane `fixesByClass` tally
 // (agents sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
 // for the apply-now subset). The former `safeEditsAvailable` composite
@@ -2007,7 +2013,7 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     const body = bodyOf(responses[1]) as {
       plan: Record<string, unknown> & {
         actionableManualItems?: number;
-        untargetedCriteria?: number;
+        untargetedCriteriaForProject?: number;
         fixesByClass?: {
           mechanical?: Lane;
           guidance?: Lane;
@@ -2020,12 +2026,15 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // when one is zero. Zero on actionable is the honest reading of
     // "the finders didn't ground anything" — omitting the field would
     // re-introduce the ambiguity the composite-counter split closed.
+    // `scan_project` is project-walk scope so the untargeted-criteria
+    // count ships under `untargetedCriteriaForProject` (the per-file
+    // twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`).
     expect(typeof body.plan.actionableManualItems).toBe("number");
-    expect(typeof body.plan.untargetedCriteria).toBe("number");
+    expect(typeof body.plan.untargetedCriteriaForProject).toBe("number");
     expect(body.plan.actionableManualItems).toBeGreaterThanOrEqual(0);
-    expect(body.plan.untargetedCriteria).toBeGreaterThanOrEqual(0);
+    expect(body.plan.untargetedCriteriaForProject).toBeGreaterThanOrEqual(0);
     // The fixture has a full WCAG load, so untargeted is populated.
-    expect(body.plan.untargetedCriteria ?? 0).toBeGreaterThan(0);
+    expect(body.plan.untargetedCriteriaForProject ?? 0).toBeGreaterThan(0);
     // Fix split: the per-lane `fixesByClass` tally is the sole honest
     // shape — the former `safeEditsAvailable` composite was dropped
     // per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT. `fixesByClass`
@@ -2102,7 +2111,8 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // tally, notes, actionable manual review, untargeted criteria) into
     // a single composite sentence the agent would read first — a
     // duplicate of the structured siblings (`fixesByClass`, `notes`,
-    // `actionableManualItems`, `untargetedCriteria`). Per the
+    // `actionableManualItems`, `untargetedCriteriaForProject` /
+    // `untargetedCriteriaForFile`). Per the
     // doctrine in `docs/kb/architecture/ai-first-consumer.md`
     // "Composite headline counts are dishonest" the prose was
     // dropped (not renamed) so the structured siblings carry the data

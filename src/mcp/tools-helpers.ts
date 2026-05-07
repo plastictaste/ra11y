@@ -435,7 +435,8 @@ export function collectManualCriteria(
  * variant ("pass", "automatedPass") read as "the app is accessible",
  * which is a claim static analysis can't make. The structured counts in
  * `plan` (`fixesByClass`, `notes`, `actionableManualItems`,
- * `untargetedCriteria`) convey the state without a load-bearing
+ * `untargetedCriteriaForProject` / `untargetedCriteriaForFile`) convey
+ * the state without a load-bearing
  * boolean — and without a duplicate prose `summary` headline that
  * collapsed those siblings into a single composite (dropped per
  * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
@@ -699,14 +700,17 @@ export async function runScanAndFormat(
 
   // Plan-side split: grounded candidates (file:line) vs.
   // bare-criterion prompts. Routes through `tallyManualCriteria` so the
-  // count agrees with `coverage[].untargetedCriteria` and
-  // `checklist.summary.untargetedCriteria` on the same input — see
-  // `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface count
-  // invariant" and `tests/integration/mcp-counts-agree.test.ts`. Per
-  // CLAUDE.md §1 "Composite headline counts are dishonest" we ship two
-  // top-level counters so the budget lands honestly:
-  //   - actionableManualItems: candidates with file:line
-  //   - untargetedCriteria:    bare-criterion prompts (no grounding)
+  // count agrees with `coverage[].untargetedCriteriaForProject` and
+  // `checklist.summary.untargetedCriteriaForProject` on the same input
+  // — see `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface
+  // count invariant" and `tests/integration/mcp-counts-agree.test.ts`.
+  // Per CLAUDE.md §1 "Composite headline counts are dishonest" we ship
+  // two top-level counters so the budget lands honestly:
+  //   - actionableManualItems:           candidates with file:line
+  //   - untargetedCriteriaForProject:    bare-criterion prompts (no
+  //                                      grounding); per-file lane
+  //                                      ships `untargetedCriteriaForFile`
+  //                                      from `scan` / `scan_file`.
   // The pre-helper recipe used `collectManualCriteria` which kept fired
   // metadata-manual criteria in the manual queue; coverage and checklist
   // route them into the failing lane, and the off-by-N drift was
@@ -888,8 +892,16 @@ export async function runScanAndFormat(
   // code when any row carries the cross-file listener-resolution
   // reason. Adjusted rows fine: parse-error / scss / fragment
   // adjustments do not strip the cross-file reason code.
+  // `scope: "project"` — `runScanAndFormat` is the project-walk path
+  // consumed by `scan_project` / `scan_diff` / `findings_by_rule` /
+  // `get_finding` / `propose_config`. Picks `untargetedCriteriaForProject`
+  // on the wire so per-file and project-walk slices ship under
+  // distinct names. The per-file lane (`scan` / `scan_file`) routes
+  // through `runScanAndCollect` + `assembleScanFamilyResponse` and
+  // threads `scope: "file"` instead — see `buildScanPlan` docblock for
+  // the cross-surface count invariant rationale.
   // biome-ignore format: arg list kept on one line for the file budget
-  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
+  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManual, untargetedCriteria, scope: "project" as const, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
   const formatted: ScanFormatted = {
     plan: buildScanPlan(planArgs),
     files: enrichedFileEntries,

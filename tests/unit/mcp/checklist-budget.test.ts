@@ -47,7 +47,7 @@ function buildSyntheticChecklistResponse(
         candidatesUncapped: itemCount,
         candidatesReturned: itemCount,
       },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
     },
     items,
     totalCandidates: itemCount,

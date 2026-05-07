@@ -145,11 +145,11 @@ interface CoverageBody {
   // `checklist.summary.actionable.criteria`, and
   // `manualWithCandidates.length` exposes the same count via the
   // array form.
-  readonly untargetedCriteria: number;
+  readonly untargetedCriteriaForProject: number;
   // Structured `summary` dict — mirrors `checklist.summary`'s key
   // shape so an agent reading `summary.actionable.criteria` /
-  // `summary.untargetedCriteria` / `summary.likelyIrrelevant` /
-  // `summary.automatedCoverage` resolves the same path on either
+  // `summary.untargetedCriteriaForProject` / `summary.likelyIrrelevant`
+  // / `summary.automatedCoverage` resolves the same path on either
   // tool. Pre-fix this field shipped as a prose string while
   // `checklist.summary` shipped as a dict — same field name on
   // sibling tools, two shapes, the canonical "Sibling fields naming
@@ -158,7 +158,7 @@ interface CoverageBody {
   // `summary.headline`.
   readonly summary: {
     readonly actionable: { readonly criteria: number };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
     readonly likelyIrrelevant: number;
     readonly automatedCoverage: {
       readonly standardId: string;
@@ -199,7 +199,7 @@ interface ChecklistBody {
       readonly candidatesUncapped: number;
       readonly candidatesReturned: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
     readonly likelyIrrelevant: number;
   };
   readonly items: readonly { readonly criteria: readonly string[] }[];
@@ -211,7 +211,7 @@ interface ChecklistBody {
 describe("ADR 0010 — coverage and checklist stay consistent across the shared boundary", () => {
   it("ships `summary` as a structured dict on both surfaces with mirrored keys", async () => {
     // Cross-surface field-shape invariant: an agent reading
-    // `summary.actionable.criteria`, `summary.untargetedCriteria`,
+    // `summary.actionable.criteria`, `summary.untargetedCriteriaForProject`,
     // `summary.likelyIrrelevant`, and `summary.automatedCoverage`
     // gets the same path resolution on both tools. Pre-fix
     // `coverage.summary` shipped as a prose string while
@@ -225,8 +225,8 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // Cross-surface count invariant ("Cross-surface count
     // invariant"): the structured numbers must agree on identical
     // cwd. `summary.actionable.criteria` here equals
-    // `summary.actionable.criteria` there; `summary.untargetedCriteria`
-    // here equals `summary.untargetedCriteria` there.
+    // `summary.actionable.criteria` there; `summary.untargetedCriteriaForProject`
+    // here equals `summary.untargetedCriteriaForProject` there.
     const dir = await makeFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -251,10 +251,14 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // meaningful (omitted when empty).
     expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates?.length ?? 0);
 
-    // `summary.untargetedCriteria` mirrors across tools.
-    expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
+    // `summary.untargetedCriteriaForProject` mirrors across tools.
+    expect(coverage.summary.untargetedCriteriaForProject).toBe(
+      checklist.summary.untargetedCriteriaForProject,
+    );
     // And mirrors the sibling top-level scalar on coverage.
-    expect(coverage.summary.untargetedCriteria).toBe(coverage.untargetedCriteria);
+    expect(coverage.summary.untargetedCriteriaForProject).toBe(
+      coverage.untargetedCriteriaForProject,
+    );
 
     // `summary.likelyIrrelevant` (count) mirrors across tools.
     expect(coverage.summary.likelyIrrelevant).toBe(checklist.summary.likelyIrrelevant);
@@ -287,7 +291,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // Untargeted count must be the same number on both tools — it
     // comes from the same `manualApplicability` pass per ADR 0010.
-    expect(coverage.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
+    expect(coverage.untargetedCriteriaForProject).toBe(
+      checklist.summary.untargetedCriteriaForProject,
+    );
 
     // likelyIrrelevant list: same criteria are flagged on both surfaces.
     // Q7: read the canonical `criterionId` field; the legacy `id` alias

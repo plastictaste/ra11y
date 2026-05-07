@@ -67,10 +67,26 @@ export { computeTopDirectories, TOP_DIRECTORIES_DEFAULT_LIMIT, type TopDirectory
 /**
  * Packs the `plan` block for `ScanFormatted`. Downstream tool handlers
  * consume the result verbatim — the `limitations` prose, the
- * `actionableManualItems`/`untargetedCriteria` split, and the honest
- * counters-are-conditional rules all live here so every callable
- * surface (scan, scan_file, scan_project, scan_diff) emits the same
- * shape without re-stating the rules.
+ * `actionableManualItems` / `untargetedCriteriaForProject` /
+ * `untargetedCriteriaForFile` split, and the honest counters-are-
+ * conditional rules all live here so every callable surface (scan,
+ * scan_file, scan_project, scan_diff) emits the same shape without
+ * re-stating the rules.
+ *
+ * The `scope` discriminator picks the field name on the wire:
+ * `"project"` emits `untargetedCriteriaForProject` (project-walk
+ * surfaces — `scan_project`, `scan_diff`); `"file"` emits
+ * `untargetedCriteriaForFile` (explicit-paths surfaces — `scan`,
+ * `scan_file`). The split exists because per-file untargeted counts
+ * cannot logically equal project-rooted ones — when the input is one
+ * file, more criteria are "untargeted" because finders ground per-file.
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+ * naming the same concept must use one shape" + "Composite headline
+ * counts are dishonest": one field name per slice. The previous bare
+ * `untargetedCriteria` field shipped both slices under one name, so
+ * `scan_file` on a single HTML in the same corpus would report 18
+ * while `scan_project` on the project root reported 7 — same field
+ * name, two different concepts.
  */
 export function buildScanPlan(args: {
   readonly violations: number;
@@ -78,6 +94,14 @@ export function buildScanPlan(args: {
   readonly violationsWithoutAnyFix: number;
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
+  /**
+   * `"project"` for project-walk surfaces (scan_project, scan_diff);
+   * `"file"` for explicit-paths surfaces (scan, scan_file). Picks
+   * whether the per-scope untargeted-criteria count emits as
+   * `untargetedCriteriaForProject` or `untargetedCriteriaForFile`. See
+   * the docblock above for rationale.
+   */
+  readonly scope: "project" | "file";
   /**
    * Per-{@link FixClass} tally surfaced as the structured sibling
    * `plan.fixesByClass`. Replaces the former `guidanceFixesAvailable`
@@ -115,7 +139,7 @@ export function buildScanPlan(args: {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
 }): Record<string, unknown> {
   // biome-ignore format: kept on one line for the file-line budget
-  const { violations, notes, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage } = args;
+  const { violations, notes, violationsWithoutAnyFix, actionableManual, untargetedCriteria, scope, fixesByClass, perRuleCoverage } = args;
   // `fixesByClass` is meaningful only when the scan actually produced
   // violations to bucket — emitting an all-zeros tally on a clean scan
   // is noise that forces the agent to read a field whose only signal
@@ -155,7 +179,8 @@ export function buildScanPlan(args: {
   // same reason: it embedded 5+ counts (per-lane fixClass tally,
   // notes, actionable manual review, untargeted criteria) duplicating
   // structured siblings (`fixesByClass`, `notes`, `actionableManualItems`,
-  // `untargetedCriteria`) into a single composite sentence the agent
+  // `untargetedCriteriaForProject` / `untargetedCriteriaForFile`)
+  // into a single composite sentence the agent
   // would read first. Two surfaces (the prose and the structured
   // tally) framed as "how many of X" disagree silently whenever the
   // numbers drift between assembly steps, and an agent budgeting
@@ -180,6 +205,21 @@ export function buildScanPlan(args: {
   // `emitFixesByClass` gate above) but is NOT emitted onto the wire
   // — it's the upstream count the consumer-visible `fixesByClass`
   // sums to, kept local-only so the public shape stays honest.
+  // Scope-disambiguated untargeted-criteria field name: the bare
+  // `untargetedCriteria` shipped two categorically different slices
+  // (project-walk vs single-file) under one name, and on a bulk
+  // corpus a `scan_file` per-file count of 18 sat alongside a
+  // `scan_project` project-total of 7 — same field, two concepts. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+  // the same concept must use one shape" + "Composite headline counts
+  // are dishonest," each slice gets its own name and the composite is
+  // dropped (no `untargetedCriteria` sibling — same precedent as
+  // `plan.totalFindings` / `plan.safeEditsAvailable` / `plan.violations`
+  // / `plan.summary` deletion-not-renaming).
+  const untargetedField =
+    scope === "project"
+      ? { untargetedCriteriaForProject: untargetedCriteria }
+      : { untargetedCriteriaForFile: untargetedCriteria };
   return {
     notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
@@ -187,7 +227,7 @@ export function buildScanPlan(args: {
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
       : {}),
     actionableManualItems: actionableManual,
-    untargetedCriteria,
+    ...untargetedField,
     limitations: [
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
       "Runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope here.",

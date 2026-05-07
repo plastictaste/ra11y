@@ -77,7 +77,7 @@ interface CoverageEnvelope {
   // populated count). The prose now rides as `summary.headline`.
   readonly summary?: {
     readonly actionable: { readonly criteria: number };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
     readonly likelyIrrelevant: number;
     readonly automatedCoverage: {
       readonly standardId: string;

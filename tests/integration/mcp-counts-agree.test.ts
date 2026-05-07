@@ -79,7 +79,7 @@ async function makeMediaPresentFixture(): Promise<string> {
 interface ScanBody {
   readonly plan: {
     readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
 }
 interface CoverageBody {
@@ -92,13 +92,17 @@ interface CoverageBody {
   // `manualWithCandidates.length` was deleted alongside the parallel
   // `criteriaUntestable` / `untestableCriteria` pair per AI-first
   // doctrine "Sibling fields naming the same concept must use one
-  // shape." `untargetedCriteria` stays as the bare-prompt count (the
-  // array form rides under `untargetedCriteriaList` only when
-  // `showUntargeted: true`).
+  // shape." `untargetedCriteriaForProject` stays as the bare-prompt
+  // count (the array form rides under `untargetedCriteriaList` only
+  // when `showUntargeted: true`). Renamed from the bare
+  // `untargetedCriteria` so the project-walk slice is explicit on the
+  // wire — the per-file slice ships under `untargetedCriteriaForFile`
+  // from `scan` / `scan_file`.
   readonly summary: {
     readonly actionable: { readonly criteria: number };
+    readonly untargetedCriteriaForProject: number;
   };
-  readonly untargetedCriteria: number;
+  readonly untargetedCriteriaForProject: number;
   // Optional — present-when-meaningful: omitted when no manual
   // criteria carried grounded candidates on this corpus.
   readonly manualWithCandidates?: ReadonlyArray<unknown>;
@@ -110,7 +114,7 @@ interface ChecklistBody {
       readonly candidatesUncapped: number;
       readonly candidatesReturned: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
   readonly totalCandidates?: number;
 }
@@ -142,9 +146,11 @@ async function gatherCounts(cwd: string): Promise<{
     // coverage (Q13) — the dishonest-headline pattern is the same on
     // every surface. The invariant is still "all surfaces agree on the
     // total", just computed from the honest parts everywhere.
-    scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
-    coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteria,
-    checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
+    scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteriaForProject,
+    coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteriaForProject,
+    checklist:
+      checklistBody.summary.actionable.criteria +
+      checklistBody.summary.untargetedCriteriaForProject,
     scanActionable: scanBody.plan.actionableManualItems,
     // Coverage exposes the criteria-axis manual-review count through
     // the structured `summary.actionable.criteria` path now (the
@@ -155,9 +161,9 @@ async function gatherCounts(cwd: string): Promise<{
     // would also work — both equal the same count on identical input.
     coverageActionable: coverageBody.summary.actionable.criteria,
     checklistActionable: checklistBody.summary.actionable.criteria,
-    scanUntargeted: scanBody.plan.untargetedCriteria,
-    coverageUntargeted: coverageBody.untargetedCriteria,
-    checklistUntargeted: checklistBody.summary.untargetedCriteria,
+    scanUntargeted: scanBody.plan.untargetedCriteriaForProject,
+    coverageUntargeted: coverageBody.untargetedCriteriaForProject,
+    checklistUntargeted: checklistBody.summary.untargetedCriteriaForProject,
   };
 }
 
@@ -165,13 +171,13 @@ async function gatherCounts(cwd: string): Promise<{
  * Builds a fixture that fires a rule (`color/meaning-by-color-only`)
  * which satisfies a metadata-manual criterion (`wcag22:1.4.1`,
  * `automatable: "manual"`). This is the canonical shape the
- * `untargetedCriteria` cross-surface invariant exists to guard:
+ * `untargetedCriteriaForProject` cross-surface invariant exists to guard:
  * pre-helper, `scan_project` counted such criteria as still-needing-
  * manual-review (because `collectManualCriteria` filtered only on
  * metadata, not on whether a rule had fired) while `coverage` and
  * `checklist` correctly routed them into the failing-automated lane.
  * The integration test below asserts all three surfaces report the
- * same `untargetedCriteria` count on this fixture — drift here means
+ * same `untargetedCriteriaForProject` count on this fixture — drift here means
  * the helper has been bypassed somewhere.
  */
 async function makeFiredManualCriterionFixture(): Promise<string> {
@@ -232,19 +238,20 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
   });
 });
 
-// Q8: the untargetedCriteria sub-counter must agree across surfaces too,
-// not just the totals. The pre-helper drift between
-// `scan_project.plan.untargetedCriteria`,
-// `coverage[].untargetedCriteria`, and
-// `checklist.summary.untargetedCriteria` was off-by-N on every cwd that
-// fired any metadata-manual criterion (e.g. `wcag22:1.4.1` via
-// `color/meaning-by-color-only`) — `scan_project` kept the fired
-// criterion in the manual queue because `collectManualCriteria` only
-// filtered on metadata; `coverage` and `checklist` routed it into the
-// failing lane via `buildCoverageReport`. Now all three surfaces share
+// The untargeted-criteria sub-counter must agree across project-rooted
+// surfaces too, not just the totals. The pre-helper drift between
+// `scan_project.plan.untargetedCriteriaForProject`,
+// `coverage[].untargetedCriteriaForProject`, and
+// `checklist.summary.untargetedCriteriaForProject` was off-by-N on
+// every cwd that fired any metadata-manual criterion (e.g.
+// `wcag22:1.4.1` via `color/meaning-by-color-only`) — `scan_project`
+// kept the fired criterion in the manual queue because
+// `collectManualCriteria` only filtered on metadata; `coverage` and
+// `checklist` routed it into the failing lane via
+// `buildCoverageReport`. Now all three surfaces share
 // `tallyManualCriteria` / `tallyManualCriteriaFromCoverage` so the
 // counts are derived once and the cross-surface agreement is mechanical.
-describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
+describe("MCP invariant: untargetedCriteriaForProject agrees across surfaces", () => {
   it("agrees on a media-free fixture (no fired manual criteria)", async () => {
     const counts = await gatherCounts(await makeMediaFreeFixture());
     expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
@@ -259,9 +266,9 @@ describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
 
   it("agrees on a fixture that fires a metadata-manual criterion", async () => {
     // The canonical drift case: a fired wcag22:1.4.1 violation. Pre-helper,
-    // scan_project.plan.untargetedCriteria over-counted by 1 vs
-    // coverage/checklist on this shape because the manual-set filter on
-    // scan_project's side didn't subtract fired criteria.
+    // scan_project.plan.untargetedCriteriaForProject over-counted by 1
+    // vs coverage/checklist on this shape because the manual-set
+    // filter on scan_project's side didn't subtract fired criteria.
     const counts = await gatherCounts(await makeFiredManualCriterionFixture());
     expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
     expect(counts.coverageUntargeted).toBe(counts.checklistUntargeted);
@@ -299,7 +306,7 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
 
 // Cross-surface count invariant — second-pass coverage. The first
 // describe blocks above pin equality on the manual-review tally and the
-// untargetedCriteria sub-counter. The blocks below extend the invariant
+// untargetedCriteriaForProject sub-counter. The blocks below extend the invariant
 // to the two remaining counters the field-test sweeps observed
 // drifting on real corpora: `actionableManualItems` agreement with
 // `coverage[].manualWithCandidates.length`, and `parseErrorFileCount`
@@ -566,7 +573,7 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
 
 /**
  * `checklist.summary` previously reported `actionable.criteria`,
- * `candidatesUncapped`, and `untargetedCriteria` but not the parse-
+ * `candidatesUncapped`, and `untargetedCriteriaForProject` but not the parse-
  * error scalars `coverage` and `scan_project` lift onto their own
  * `analysisCoverage` blocks. An agent reading the checklist summary as
  * the headline (the surface read-order goes summary → items, per the

@@ -75,6 +75,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
           violationsWithoutAnyFix: 0,
           actionableManual: 0,
           untargetedCriteria: 0,
+          scope: "project",
           fixClassCounts: { mechanical: 0, guidance: 0, "runtime-only": 0, "verify-in-source": 0 },
           fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         });

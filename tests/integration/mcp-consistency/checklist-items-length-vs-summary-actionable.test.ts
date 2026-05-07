@@ -93,7 +93,7 @@ interface ChecklistBody {
       readonly candidatesUncapped: number;
       readonly candidatesReturned: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
   readonly items: readonly ChecklistItem[];
   readonly truncated?: true;

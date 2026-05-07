@@ -98,21 +98,22 @@ interface ScanFileBody {
   readonly findings?: readonly Finding[];
   readonly plan: {
     readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    // scan_file is per-file scope — emits the per-file slice name.
+    readonly untargetedCriteriaForFile: number;
   };
 }
 
 interface ScanProjectBody {
   readonly plan: {
     readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
 }
 
 interface ChecklistBody {
   readonly summary: {
     readonly actionable: { readonly criteria: number };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
 }
 
@@ -120,7 +121,7 @@ interface CoverageBody {
   readonly summary: {
     readonly actionable: { readonly criteria: number };
   };
-  readonly untargetedCriteria: number;
+  readonly untargetedCriteriaForProject: number;
 }
 
 /**

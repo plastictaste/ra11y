@@ -81,13 +81,13 @@ function buildOversizeCoverageResponse(): Record<string, unknown> {
     // form sibling) — the criteria-axis count rides via
     // `summary.actionable.criteria` and the array form
     // `manualWithCandidates`.
-    untargetedCriteria: 0,
+    untargetedCriteriaForProject: 0,
     // Structured `summary` dict mirrors `checklist.summary`'s shape.
     // The slim envelope spreads `original` first, so the dict rides
     // through unchanged.
     summary: {
       actionable: { criteria: 1 },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",

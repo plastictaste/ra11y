@@ -45,7 +45,7 @@
  *     `likelyIrrelevantCriteria`, `failingAutomatedCriteria`,
  *     `warningAutomatedCriteria` dropped (the canonical-criterion lists
  *     the agent gets back via `checklist` on a narrower scope).
- *   - Counter scalars retained (`untargetedCriteria`,
+ *   - Counter scalars retained (`untargetedCriteriaForProject`,
  *     `criteriaAutomatable`, `criteriaEvaluated`, `criteriaClean`,
  *     `criteriaWithFindings`, `criteriaTotalForProfile`, `criteriaByLevel`,
  *     `automatedCriteriaPassRate`, `summary`) — the load-bearing routing
@@ -103,7 +103,7 @@ export const SLIM_COVERAGE_META_KEYS: readonly string[] = [
  * the corpus. Listed explicitly so the slim builder's discard set is
  * inspectable and the contract stays stable across refactors.
  *
- * The corresponding scalar counters (`untargetedCriteria`,
+ * The corresponding scalar counters (`untargetedCriteriaForProject`,
  * `criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`, etc.)
  * ride alongside in the un-dropped fields — the agent still sees how
  * many criteria are in each bucket, just not the per-criterion
@@ -199,7 +199,7 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
  * comes back on that call.
  *
  * Retains every scalar counter (`actionableManualItems`,
- * `untargetedCriteria`, `criteriaEvaluated` …), the `summary` prose,
+ * `untargetedCriteriaForProject`, `criteriaEvaluated` …), the `summary` prose,
  * `nextStep`, the slimmed `meta` block, and the warnings channel.
  */
 function buildSlimCoverageEnvelope(args: {

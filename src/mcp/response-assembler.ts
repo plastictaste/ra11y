@@ -165,6 +165,21 @@ export interface ScanFamilyResponseInput {
   /** Plan-side manual-review counters — the caller computed them against `reviewCandidates`. */
   readonly actionableManual: number;
   readonly untargetedCriteria: number;
+  /**
+   * `"project"` for project-walk callers (none currently route through
+   * this assembler; the project-walk lane uses `runScanAndFormat`);
+   * `"file"` for explicit-paths callers (`scan`, `scan_file`,
+   * `audit_rule_coverage`). Threaded through to `buildScanPlan` so the
+   * untargeted-criteria scalar emits as `untargetedCriteriaForFile`
+   * (the project-walk lane, in `runScanAndFormat`, threads `"project"`
+   * and emits `untargetedCriteriaForProject`). Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+   * naming the same concept must use one shape." Optional with a
+   * `"file"` default to keep legacy fixture / test call sites that
+   * route through this assembler stable; production `scan_file` /
+   * `scan` callers thread the discriminator explicitly.
+   */
+  readonly scope?: "project" | "file";
   /** Config-resolution signal for the warnings channel. */
   readonly configSource: string | null | undefined;
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd" | null;
@@ -712,6 +727,7 @@ export function assembleScanFamilyResponse(
     configSearchedFromForWarning,
     criterionLevels,
     scanRoot,
+    scope = "file",
   } = input;
   // Cross-surface count invariant: when the caller supplied raw
   // (pre-filter) violations, derive the parser/finder-honesty
@@ -760,6 +776,7 @@ export function assembleScanFamilyResponse(
     violationsWithoutAnyFix,
     actionableManual,
     untargetedCriteria,
+    scope,
     fixesByClass,
     // Threaded so the plan can append the structured
     // `external_handler_resolution_unavailable` code when any row

@@ -48,7 +48,7 @@ function buildSyntheticCoverageResponse(
     // via `summary.automatedCoverage.criteriaWithoutEligibleInputs`
     // and `untestableCriteria.length`. Synthetic fixture stays
     // aligned with the live wire shape.
-    untargetedCriteria: 5,
+    untargetedCriteriaForProject: 5,
     untargetedCriteriaList: [{ criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" }],
     manualWithCandidates: [
       { criterionId: "wcag22:1.3.1", title: "Info and Relationships", level: "A" },
@@ -62,7 +62,7 @@ function buildSyntheticCoverageResponse(
     // verbatim.
     summary: {
       actionable: { criteria: 5 },
-      untargetedCriteria: 5,
+      untargetedCriteriaForProject: 5,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",
@@ -127,7 +127,7 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     expect(slim.actionableManualItems).toBeUndefined();
     expect(slim.criteriaUntestable).toBeUndefined();
     expect((slim.summary as { actionable: { criteria: number } }).actionable.criteria).toBe(5);
-    expect(slim.untargetedCriteria).toBe(5);
+    expect(slim.untargetedCriteriaForProject).toBe(5);
     expect(slim.criteriaAutomatable).toBe(40);
     expect(slim.criteriaEvaluated).toBe(40);
     expect(slim.criteriaClean).toBe(40);

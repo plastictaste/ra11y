@@ -1,8 +1,12 @@
 /**
  * Single source of truth for the manual-review tally that
- * `scan_project.plan.{actionableManualItems,untargetedCriteria}`,
- * `coverage[].{summary.actionable.criteria,manualWithCandidates,untargetedCriteria}`,
- * and `checklist.summary.{actionable,untargetedCriteria}` all report.
+ * `scan_project.plan.{actionableManualItems,untargetedCriteriaForProject}`,
+ * `coverage[].{summary.actionable.criteria,manualWithCandidates,untargetedCriteriaForProject}`,
+ * and `checklist.summary.{actionable,untargetedCriteriaForProject}` all report.
+ * (The per-file lane (`scan` / `scan_file`) consumes the same tally
+ * but ships under `plan.untargetedCriteriaForFile` so the project-walk
+ * vs single-file slice is explicit on the wire — see `buildScanPlan`
+ * in `scan-assembly.ts` for the cross-surface rationale.)
  * (Coverage exposes the criteria-axis manual-review count via the
  * structured `summary` block and the `manualWithCandidates` array's
  * length — the redundant top-level scalar `actionableManualItems` was
@@ -215,12 +219,15 @@ export interface ManualCriteriaTally {
   /**
    * Number of applicable manual criteria with no grounded candidate —
    * the bare-criterion-prompt subset. Matches
-   * `scan_project.plan.untargetedCriteria`,
-   * `checklist.summary.untargetedCriteria`, and
-   * `coverage[].untargetedCriteria`. Scoped to `applicableManualIds`
-   * (metadata-manual minus likely-irrelevant minus skip) so the
-   * bare-prompt surface stays focused on the WCAG manual-only criteria
-   * the rule library can never mechanically check.
+   * `scan_project.plan.untargetedCriteriaForProject`,
+   * `checklist.summary.untargetedCriteriaForProject`, and
+   * `coverage[].untargetedCriteriaForProject` on project-rooted
+   * surfaces; the per-file lane (`scan` / `scan_file`) ships the same
+   * tally under `plan.untargetedCriteriaForFile`. Scoped to
+   * `applicableManualIds` (metadata-manual minus likely-irrelevant
+   * minus skip) so the bare-prompt surface stays focused on the WCAG
+   * manual-only criteria the rule library can never mechanically
+   * check.
    */
   readonly untargeted: number;
 }

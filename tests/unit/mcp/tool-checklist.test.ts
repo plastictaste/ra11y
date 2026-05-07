@@ -53,7 +53,7 @@ interface ChecklistEnvelope {
       readonly candidatesUncapped?: number;
       readonly candidatesReturned?: number;
     };
-    readonly untargetedCriteria?: number;
+    readonly untargetedCriteriaForProject?: number;
   };
   readonly items?: ReadonlyArray<{
     readonly criterionId?: string;

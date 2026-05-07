@@ -1032,7 +1032,7 @@ export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, candidatesUncapped, candidatesReturned }` — three honest counts so a clipped/paginated response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItems` and `coverage[].manualWithCandidates.length`); `candidatesUncapped` is the pre-clip inventory across actionable items; `candidatesReturned` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, candidatesUncapped, candidatesReturned }` — three honest counts so a clipped/paginated response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItems` and `coverage[].manualWithCandidates.length`); `candidatesUncapped` is the pre-clip inventory across actionable items; `candidatesReturned` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteriaForProject`: the count of criteria with no candidates the finders could ground in code (project-walk scope; mirrors `scan_project.plan.untargetedCriteriaForProject` and `coverage[].summary.untargetedCriteriaForProject`; the per-file twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`). By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1052,7 +1052,7 @@ export const checklistTool: McpTool = {
         showUntargeted: {
           type: "boolean",
           description:
-            "Tri-state controller for `untargetedCriteriaList`. Default (unset) emits bare criterion IDs so enumeration is cheap. `true` upgrades to full items (title + level + principle + empty candidates) for VPAT drafting. `false` omits the list entirely — size-pressure escape hatch. The summary always reports `untargetedCriteria` (count) regardless.",
+            "Tri-state controller for `untargetedCriteriaList`. Default (unset) emits bare criterion IDs so enumeration is cheap. `true` upgrades to full items (title + level + principle + empty candidates) for VPAT drafting. `false` omits the list entirely — size-pressure escape hatch. The summary always reports `untargetedCriteriaForProject` (count) regardless.",
         },
         limit: {
           type: "number",
@@ -1392,14 +1392,18 @@ export const checklistTool: McpTool = {
     // deletion on 2026-04-24), deletion is the durable answer rather
     // than label-stretching; callers compose their own summary line
     // from the per-kind counters below if they need one.
-    // Canonical count field is `untargetedCriteria` across all MCP tools.
-    // scan_project uses it on `plan`; checklist matches here on `summary`;
-    // coverage on its per-standard entry.
-    // Previous names (`untargeted` count, `manualUntargetedCount`) are
-    // removed — a minor shape break, called out in CHANGELOG so a
-    // single grep surfaces the migration.
+    // Canonical count field is `untargetedCriteriaForProject` across
+    // all project-rooted MCP tools (`scan_project.plan`, `checklist.summary`,
+    // `coverage[].summary` and top-level). The per-file lane (`scan`,
+    // `scan_file`) emits the parallel `untargetedCriteriaForFile` so
+    // the project-vs-file slice is explicit on the wire — the bare
+    // `untargetedCriteria` is no longer emitted (deletion-not-renaming
+    // per the dishonest-composite precedent). Previous names
+    // (`untargeted` count, `manualUntargetedCount`,
+    // `untargetedCriteria`) are removed — a minor shape break called
+    // out in CHANGELOG so a single grep surfaces the migration.
     //
-    // Cross-surface count invariant: `actionable` and `untargetedCriteria`
+    // Cross-surface count invariant: `actionable` and `untargetedCriteriaForProject`
     // are derived from the shared `tallyManualCriteriaFromCoverage` helper
     // — the same algorithm `scan_project` and `coverage` use over
     // identical `coverage[].manualCriteria` + `applicability` +
@@ -1455,7 +1459,20 @@ export const checklistTool: McpTool = {
     const parseErrorScalars = buildSummaryParseErrorScalars(analysisCoverageField);
     const summary = {
       actionable: summaryActionable,
-      untargetedCriteria: summaryTally.untargeted,
+      // Project-walk scope: `checklist` is project-rooted (config-walks
+      // up from cwd, finder runs over the discovered file set), so the
+      // untargeted count is the project-total, not a per-file slice.
+      // The field name is `untargetedCriteriaForProject` so consumers
+      // reading the scalar can't conflate it with a `scan_file`
+      // per-file count (which would over-count on the same corpus).
+      // Cross-surface count invariant: equals
+      // `scan_project.plan.untargetedCriteriaForProject` and
+      // `coverage[].summary.untargetedCriteriaForProject` on identical
+      // cwd — same name, same value across all project-rooted surfaces.
+      // See `buildScanPlan` docblock in `scan-assembly.ts` for the
+      // rationale; the rename was the closure for the dishonest-headline
+      // pattern observed when the same name shipped two slices.
+      untargetedCriteriaForProject: summaryTally.untargeted,
       // One-line gloss: untargeted count is cryptic on its own — the
       // agent's read-order goes summary → items, so the definition
       // belongs here, not buried in the tool docstring.
@@ -1518,7 +1535,7 @@ export const checklistTool: McpTool = {
       allActionableOnVendor,
     });
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
-    // a `checklist` response shaped like `{ items: [], untargetedCriteria: 0 }`
+    // a `checklist` response shaped like `{ items: [], untargetedCriteriaForProject: 0 }`
     // is indistinguishable from "tool never ran" unless we surface the
     // honest "scanned_zero_files" code on a real-but-empty scan root.
     // checklist has no root-resolution step (it takes `paths` directly,

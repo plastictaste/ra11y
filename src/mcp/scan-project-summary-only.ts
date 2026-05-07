@@ -187,7 +187,9 @@ export function buildSummaryNextStepStructured(
  * Output shape:
  *   - `plan` — unchanged from the caller's `formatted.plan`. Carries
  *     `topRules`, `findingsByFile`, `findingsByRule`, `fixesByClass`,
- *     `summary`, `actionableManualItems`, `untargetedCriteria`, etc.
+ *     `summary`, `actionableManualItems`, `untargetedCriteriaForProject`,
+ *     etc. (project-walk surface — the per-file lane ships the parallel
+ *     `untargetedCriteriaForFile` instead).
  *   - `meta` — slimmed to {@link SUMMARY_META_KEYS}.
  *   - `summaryOnly: true` — discriminator flag. Lets the agent (and
  *     downstream snapshot tests) distinguish summary mode from a

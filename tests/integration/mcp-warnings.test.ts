@@ -243,7 +243,7 @@ describe("checklist emits top-level `warnings` for silent-failure modes", () => 
   // `checklist` has no root-resolution step and never hard-errors on a
   // nonexistent cwd — the discover pass simply returns zero files. Without
   // the soft signal, a response shaped like `{ items: [],
-  // untargetedCriteria: 0 }` reads as "clean codebase" when the tool
+  // untargetedCriteriaForProject: 0 }` reads as "clean codebase" when the tool
   // actually never saw parseable input.
   it("scanned_zero_files fires on a nonexistent cwd", async () => {
     const bogus = posixJoin("/path/that/does/not/exist", "ra11y-checklist-no-such-dir");

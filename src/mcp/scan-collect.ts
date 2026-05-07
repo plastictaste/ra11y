@@ -163,10 +163,14 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   const rawCandidates = report.candidates ?? [];
   // Plan-side split: grounded candidates (file:line) vs.
   // bare-criterion prompts. Routes through `tallyManualCriteria` so
-  // the count agrees with `coverage[].untargetedCriteria` and
-  // `checklist.summary.untargetedCriteria` on the same input — see
-  // `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface count
-  // invariant" and `tests/integration/mcp-counts-agree.test.ts`. The
+  // the count agrees with `coverage[].untargetedCriteriaForProject`
+  // and `checklist.summary.untargetedCriteriaForProject` on the same
+  // input — see `docs/kb/architecture/ai-first-consumer.md` §"Cross-
+  // surface count invariant" and `tests/integration/mcp-counts-agree.test.ts`.
+  // (The per-file slice ships under `untargetedCriteriaForFile` from
+  // `scan` / `scan_file` instead — same tally helper, different
+  // wire-name to keep the two slices distinguishable on the agent
+  // side.) The
   // pre-helper recipe used `collectManualCriteria` which kept fired
   // metadata-manual criteria in the manual queue; coverage and checklist
   // route them into the failing lane, and the off-by-N drift was

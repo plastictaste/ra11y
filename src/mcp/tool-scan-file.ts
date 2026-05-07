@@ -236,6 +236,14 @@ export const scanFileTool: McpTool = {
         preset: projectConfig.preset,
         configSource: projectConfig.sourcePath,
         rootSource: null,
+        // `scan_file` is per-file in scope — the untargeted-criteria
+        // scalar is "criteria the finders couldn't ground in *this
+        // file*," NOT a project-walk total. The discriminator selects
+        // `untargetedCriteriaForFile` on the wire so consumers
+        // reading the scalar can't conflate it with a `scan_project`
+        // project-rooted total. See `buildScanPlan` docblock in
+        // `scan-assembly.ts` for the cross-surface rationale.
+        scope: "file" as const,
         configSearchSawProjectMarker,
         // Surface the loader's search root on
         // `warningsDetails.no_config_found.searchedFrom` so an agent

@@ -92,10 +92,10 @@ function buildOversizeCoverageResponse(): Record<string, unknown> {
     // `manualWithCandidates`. Keep the synthetic fixture aligned
     // with the live shape so the reconciler test exercises the wire
     // shape that actually ships.
-    untargetedCriteria: 0,
+    untargetedCriteriaForProject: 0,
     summary: {
       actionable: { criteria: 1 },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",

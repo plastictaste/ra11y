@@ -100,7 +100,8 @@ function body<T>(resp: JsonRpcResponse): T {
 interface ScanFileBody {
   readonly plan: {
     readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    // scan_file is per-file scope — emits the per-file slice name.
+    readonly untargetedCriteriaForFile: number;
   };
   readonly reviewCandidates?: ReadonlyArray<{
     readonly criteria: readonly string[];
