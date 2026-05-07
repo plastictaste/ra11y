@@ -96,10 +96,7 @@ export function computeFindingsByFile(
   }
   // Count desc; path asc tiebreak so the wire shape stays stable across
   // runs even when the underlying scanner reorders discovery.
-  ranked.sort(
-    (a, b) =>
-      b.errorWarningCount - a.errorWarningCount || a.path.localeCompare(b.path),
-  );
+  ranked.sort((a, b) => b.errorWarningCount - a.errorWarningCount || a.path.localeCompare(b.path));
   return ranked.slice(0, limit);
 }
 
