@@ -35,19 +35,16 @@
  *      this is a delegated-listener pattern on the platform's
  *      naturally-focusable root, not a missing-role bug.
  *
- * Closure paths from doctrine: skip emission when the target is a
- * structural document-root selector (`html`, `document`,
- * `document.documentElement`, `body`); OR downgrade per-finding
- * severity to `info` when cross-file resolution lands ONLY in
- * `scanKind: buildArtifact` sites; OR route the candidate to the
- * review-candidate channel so framing matches "please verify
- * delegated-listener pattern." Whichever closure lands, the rule
- * stops appearing in `findings[]` on this fixture's `<html>`.
- *
- * This fixture is RED-first per CLAUDE.md §7's bug-fix workflow:
- * `todo: true` keeps the integration test pending until the closure
- * lands. Remove the flag in the same commit that fixes the rule
- * and the test turns green permanently.
+ * Closure: the JS-side `classifySelector` step in
+ * `src/rules/keyboard/interactive-div-role-missing-js-targets.ts`
+ * skips emission when the captured tag selector names a document
+ * root (`html`, `body`). The selector never enters the host rule's
+ * (selector, sites) map, so no finding is emitted on the user's
+ * `<html>` element regardless of which lane the JS file sits in.
+ * The closure is local and predicate-strength-correct: a tag
+ * selector targeting the document root is composition-speculative
+ * by construction, and the suggested fix `change <html> to <button>`
+ * is structurally invalid for the document root.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -74,11 +71,6 @@ export const assertions: FixtureAssertions = {
       "tagged scanKind: buildArtifact / definite-min-infix; the rule " +
       "presented it as a user-fixable HTML edit.",
   },
-  // Intentionally RED — remove this flag once the rule branch
-  // either skips emission on document-root selectors or downgrades
-  // emission when cross-file resolution lands only in buildArtifact-
-  // lane files.
-  todo: true,
   expectations: [
     // Sanity: the vendor file is correctly classified before the
     // rule branch that consumes its evidence runs.

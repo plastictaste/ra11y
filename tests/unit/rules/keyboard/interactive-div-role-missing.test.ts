@@ -169,6 +169,32 @@ describe("rule keyboard/interactive-div-role-missing", () => {
       // attach — covered by other rules and not in scope here.
       expect(v).toHaveLength(0);
     });
+
+    it('the JS targets the document-root tag selector `html` (delegated outside-click pattern)', () => {
+      const v = scan([
+        htmlFile(
+          "index.html",
+          `<!DOCTYPE html><html lang="en"><head><title>x</title></head><body><main><p>hi</p></main></body></html>`,
+        ),
+        jsFile(
+          "vendor.js",
+          `document.querySelector('html').addEventListener('click', closeOpenMenus);`,
+        ),
+      ]);
+      // The document root cannot be converted to <button>; document-level
+      // click delegation for close-on-outside-click is a normal vendor
+      // pattern. The selector classifier skips `html`/`body` tag
+      // selectors so no (selector, sites) entry is registered.
+      expect(v).toHaveLength(0);
+    });
+
+    it('the JS targets the document-root tag selector `body`', () => {
+      const v = scan([
+        htmlFile("index.html", `<!DOCTYPE html><html><body><main>x</main></body></html>`),
+        jsFile("vendor.js", `document.getElementsByTagName('body')[0].onclick = handler;`),
+      ]);
+      expect(v).toHaveLength(0);
+    });
   });
 
   describe("edge cases", () => {
