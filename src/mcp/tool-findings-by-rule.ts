@@ -16,10 +16,12 @@
  * `evidence` projection — so an agent already familiar with the scan-
  * family per-finding shape doesn't have to re-learn anything. The
  * difference is the response envelope: a single flat `findings[]` keyed
- * by `(file, line)` rather than the per-file bucket structure
- * `scan_project` emits. Each finding carries a top-level `file` field
- * (the relative path) so the agent can route from finding → suggest_fix
- * / read without walking back through a parent.
+ * by `(path, line)` rather than the per-file bucket structure
+ * `scan_project` emits. Each finding carries a top-level `path` field
+ * (mirrors `AgentFile.path` per `docs/kb/architecture/ai-first-consumer.md`
+ * "Sibling fields naming the same concept must use one shape") so the
+ * agent can route from finding → suggest_fix / read without walking
+ * back through a parent.
  *
  * Cross-surface count invariant per
  * `docs/kb/architecture/ai-first-consumer.md`: the `totalFindings`
@@ -54,7 +56,7 @@ import {
 } from "./tools-helpers.ts";
 
 const FINDINGS_BY_RULE_DESCRIPTION =
-  'Return every error/warning finding for a single rule across the project in one call. Use after `scan_project` reveals a high-firing rule (`plan.topRules` / `plan.findingsByRule`) so an agent triaging "all N findings of rule X" reads the full list in one round trip instead of paging through `scan_project.files[]` per rule. Per-finding shape mirrors `scan_project.files[].findings[]` exactly (same `findingId`, `criteria`, `severity`, `fix`, `evidence`); the envelope flattens to a single `findings[]` array keyed by `(file, line)` rather than per-file buckets, with each finding carrying a top-level `file` field. Info-severity findings are excluded — same severity filter as `plan.findingsByRule` so the cross-surface count invariant `totalFindings === scan_project(cwd).plan.findingsByRule[ruleId]` holds.';
+  'Return every error/warning finding for a single rule across the project in one call. Use after `scan_project` reveals a high-firing rule (`plan.topRules` / `plan.findingsByRule`) so an agent triaging "all N findings of rule X" reads the full list in one round trip instead of paging through `scan_project.files[]` per rule. Per-finding shape mirrors `scan_project.files[].findings[]` exactly (same `findingId`, `criteria`, `severity`, `fix`, `evidence`); the envelope flattens to a single `findings[]` array keyed by `(path, line)` rather than per-file buckets, with each finding carrying a top-level `path` field (matches `AgentFile.path`). Info-severity findings are excluded — same severity filter as `plan.findingsByRule` so the cross-surface count invariant `totalFindings === scan_project(cwd).plan.findingsByRule[ruleId]` holds.';
 
 const FINDINGS_BY_RULE_RULE_ID_DESCRIPTION =
   "The rule ID to filter findings by — e.g. `aria/expanded-on-disclosure`, `forms/labels-required`. Resolves through `src/engine/rule-aliases.ts` so deprecated old IDs are accepted (a `deprecated_rule_id:<from>:<to>` warning fires when an alias rewrites). Call `list_rules` to discover valid IDs.";

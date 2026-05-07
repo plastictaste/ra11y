@@ -89,7 +89,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 interface FindingShape {
   readonly findingId: string;
   readonly ruleId: string;
-  readonly file: string;
+  readonly path: string;
   readonly line: number;
   readonly column: number;
   readonly severity: string;
@@ -149,13 +149,16 @@ describe("findings_by_rule: cross-surface count + per-finding shape parity", () 
       expect(findings.length).toBe(expectedCount);
 
       // Per-finding shape parity — each entry carries the canonical
-      // per-finding fields plus a top-level `file` for routing.
+      // per-finding fields plus a top-level `path` for routing. The
+      // address field name is `path` (mirroring `AgentFile.path`) per
+      // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+      // naming the same concept must use one shape."
       for (const f of findings) {
         expect(typeof f.findingId).toBe("string");
         expect(f.findingId.length).toBeGreaterThan(0);
         expect(f.ruleId).toBe(topRuleId);
-        expect(typeof f.file).toBe("string");
-        expect(f.file.length).toBeGreaterThan(0);
+        expect(typeof f.path).toBe("string");
+        expect(f.path.length).toBeGreaterThan(0);
         expect(typeof f.line).toBe("number");
         expect(f.line).toBeGreaterThan(0);
         expect(typeof f.severity).toBe("string");

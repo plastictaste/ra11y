@@ -113,7 +113,7 @@ export function buildAliasWarnings(deprecated: RuleAlias | undefined): AliasWarn
 
 /**
  * Walks the scan-formatted per-file findings list and emits a flat
- * sequence of `(file, ...finding)` entries for the requested ruleId.
+ * sequence of `(path, ...finding)` entries for the requested ruleId.
  * Info-severity findings are excluded — same predicate
  * `computeFindingsByRule` and `computeTopRules` apply, so the
  * cross-surface count invariant pinned by
@@ -122,19 +122,28 @@ export function buildAliasWarnings(deprecated: RuleAlias | undefined): AliasWarn
  * The flat shape is what differentiates this tool from `scan_project`:
  * agents triaging a single rule don't need the per-file bucket
  * structure (`{ path, findings: [...] }`); they need an addressable
- * list keyed by `(file, line, column)` so each entry round-trips into
+ * list keyed by `(path, line, column)` so each entry round-trips into
  * `suggest_fix` directly.
+ *
+ * The address field is named `path` to match `AgentFile.path` and the
+ * rest of the codebase's per-finding addressing convention — per
+ * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+ * the same concept must use one shape." A previous emission used
+ * `file` here, which forced the agent to learn a separate field name
+ * on the flat surface vs. the per-file shape; agents reading across
+ * `scan_project` / `scan_file` / `findings_by_rule` now see one
+ * consistent address field.
  */
 export function collectFindingsForRule(
   files: readonly { readonly path: string; readonly findings: readonly AgentFinding[] }[],
   ruleId: string,
-): readonly (AgentFinding & { readonly file: string })[] {
-  const out: (AgentFinding & { readonly file: string })[] = [];
+): readonly (AgentFinding & { readonly path: string })[] {
+  const out: (AgentFinding & { readonly path: string })[] = [];
   for (const file of files) {
     for (const finding of file.findings) {
       if (finding.ruleId !== ruleId) continue;
       if (finding.severity === "info") continue;
-      out.push({ ...finding, file: file.path });
+      out.push({ ...finding, path: file.path });
     }
   }
   return out;
@@ -142,7 +151,7 @@ export function collectFindingsForRule(
 
 export interface BuildResultArgs {
   readonly ruleId: string;
-  readonly findings: readonly (AgentFinding & { readonly file: string })[];
+  readonly findings: readonly (AgentFinding & { readonly path: string })[];
   readonly filesScanned: number;
   readonly root: string;
   readonly warnings: readonly string[];
@@ -199,7 +208,7 @@ function buildEmptyNextStep(args: {
 
 function buildPopulatedNextStep(args: {
   readonly ruleId: string;
-  readonly findings: readonly (AgentFinding & { readonly file: string })[];
+  readonly findings: readonly (AgentFinding & { readonly path: string })[];
   readonly root: string;
 }): NextStepFields {
   // Caller routes through `buildResult`, which only invokes this
@@ -209,11 +218,16 @@ function buildPopulatedNextStep(args: {
   if (first === undefined) {
     return buildEmptyNextStep({ ruleId: args.ruleId, root: args.root });
   }
+  // The on-finding address field is `path` (mirrors `AgentFile.path`);
+  // `suggest_fix`'s schema parameter name is `file`, so the structured
+  // args still pass the value as `file` — the rename only affects the
+  // wire shape of per-finding entries, not downstream tool input
+  // schemas.
   return {
     nextStep: `Found ${args.findings.length} finding${args.findings.length === 1 ? "" : "s"} for \`${args.ruleId}\`. Call \`suggest_fix({ ruleId, file, line })\` on each finding to get a primary/alternative fix path, or \`apply_fix({ findingId })\` for findings whose \`fixClass: "mechanical"\` lane carries a materialized edit.`,
     nextStepStructured: {
       tool: "suggest_fix",
-      args: { ruleId: args.ruleId, file: first.file, line: first.line, cwd: args.root },
+      args: { ruleId: args.ruleId, file: first.path, line: first.line, cwd: args.root },
     },
   };
 }
