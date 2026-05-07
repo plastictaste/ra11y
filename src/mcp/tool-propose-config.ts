@@ -810,11 +810,7 @@ function mergeAndDedupeExcludeGlobs(args: {
     if (coveredBasenames.has(basename)) continue; // covered by a `**/<basename>` glob
     itemized.add(g);
   }
-  return [
-    ...[...dirGlobs].sort(),
-    ...[...basenameGlobs].sort(),
-    ...[...itemized].sort(),
-  ];
+  return [...[...dirGlobs].sort(), ...[...basenameGlobs].sort(), ...[...itemized].sort()];
 }
 
 function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {

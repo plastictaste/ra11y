@@ -32,10 +32,10 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../src/mcp/session.ts";
 import { proposeConfigTool } from "../../src/mcp/tool-propose-config.ts";
 import { scanProjectTool } from "../../src/mcp/tool-scan-project.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 interface ProposeConfigResponseLike {
   readonly suggestedConfig: string;
@@ -62,7 +62,7 @@ interface ScanProjectResponseLike {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-propose-shared-classifier-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-propose-shared-classifier-"));
   try {
     return await fn(dir);
   } finally {
@@ -107,17 +107,17 @@ describe("propose_config shared-classifier excludes — default_excluded_artifac
       // teeth; the propose_config surface still surfaces the exclude
       // for the silently-skipped dist/ dir.
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!DOCTYPE html><html><head></head><body><p>authored</p></body></html>\n",
       );
       // Compiled bundle output under `dist/` — silently-skipped at the
       // discovery walker. Five files so the count is determinate and
       // four parseable so the warning has signal.
-      await mkdir(join(dir, "dist"), { recursive: true });
-      await writeFile(join(dir, "dist", "index.html"), "<html><body></body></html>\n");
-      await writeFile(join(dir, "dist", "bundle.js"), "console.log('built');\n");
-      await writeFile(join(dir, "dist", "vendor.js"), "console.log('vendor');\n");
-      await writeFile(join(dir, "dist", "styles.css"), "body { color: red; }\n");
+      await mkdir(posixJoin(dir, "dist"), { recursive: true });
+      await writeFile(posixJoin(dir, "dist", "index.html"), "<html><body></body></html>\n");
+      await writeFile(posixJoin(dir, "dist", "bundle.js"), "console.log('built');\n");
+      await writeFile(posixJoin(dir, "dist", "vendor.js"), "console.log('vendor');\n");
+      await writeFile(posixJoin(dir, "dist", "styles.css"), "body { color: red; }\n");
 
       const scan = await callScanProject(dir);
       // Sanity — the scan surfaces the warning. Without this guard a
@@ -141,13 +141,13 @@ describe("propose_config shared-classifier excludes — default_excluded_artifac
     // corresponding rationale entry in `meta.excludesRationale`.
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!DOCTYPE html><html><head></head><body><p>x</p></body></html>\n",
       );
-      await mkdir(join(dir, "dist"), { recursive: true });
-      await writeFile(join(dir, "dist", "index.html"), "<html><body></body></html>\n");
-      await writeFile(join(dir, "dist", "a.js"), "console.log('a');\n");
-      await writeFile(join(dir, "dist", "b.js"), "console.log('b');\n");
+      await mkdir(posixJoin(dir, "dist"), { recursive: true });
+      await writeFile(posixJoin(dir, "dist", "index.html"), "<html><body></body></html>\n");
+      await writeFile(posixJoin(dir, "dist", "a.js"), "console.log('a');\n");
+      await writeFile(posixJoin(dir, "dist", "b.js"), "console.log('b');\n");
 
       const propose = await callProposeConfig(dir);
       const rationale = propose.meta.excludesRationale ?? [];
@@ -178,17 +178,17 @@ describe("propose_config shared-classifier excludes — bulk_catalog_detected.su
       const SITE_COUNT = 30;
       for (let i = 0; i < SITE_COUNT; i += 1) {
         const site = `site-${String(i).padStart(2, "0")}`;
-        await mkdir(join(dir, site, "css"), { recursive: true });
+        await mkdir(posixJoin(dir, site, "css"), { recursive: true });
         await writeFile(
-          join(dir, site, "css", "bootstrap.min.css"),
+          posixJoin(dir, site, "css", "bootstrap.min.css"),
           // Long-line vendor stylesheet content; a few hundred bytes
           // is enough to register as a real artifact.
-          ".btn{padding:8px}".repeat(40) + "\n",
+          `${".btn{padding:8px}".repeat(40)}\n`,
         );
         // Authored-source page so the directory tree has actual
         // content and the scan has files to walk.
         await writeFile(
-          join(dir, site, "index.html"),
+          posixJoin(dir, site, "index.html"),
           "<!DOCTYPE html><html><head></head><body><p>x</p></body></html>\n",
         );
       }
