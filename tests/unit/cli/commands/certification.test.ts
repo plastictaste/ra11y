@@ -8,8 +8,18 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { chdir, cwd } from "node:process";
+import { defineStandard } from "../../../../src/api/plugin.ts";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runCertification } from "../../../../src/cli/commands/certification.ts";
+import type { ManualReview } from "../../../../src/reports/index.ts";
+import {
+  buildCertificationScorecard,
+  buildCoverageReport,
+  renderCertificationMarkdown,
+} from "../../../../src/reports/index.ts";
+import type { Standard } from "../../../../src/types/standard.ts";
+import type { ScanResult } from "../../../../src/types/violation.ts";
+import { withFindingIds } from "../../../helpers/make-violation.ts";
 import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
@@ -136,5 +146,110 @@ describe("runCertification", () => {
 
     expect(r.exitCode).toBe(0);
     expect(r.stdout).toContain("Certification Readiness");
+  });
+});
+
+// Tiny synthetic standard used for shape-stability snapshots. Four
+// criteria deliberately chosen to exercise the readiness scorecard
+// composition: one failing automated criterion (lands in
+// blockingIssues), one passing automated criterion, one manual
+// criterion that is reviewed as supports, one manual criterion that
+// is unreviewed (drives the pending manual count). Keeps snapshots
+// small and reviewable — the builder's full WCAG 2.2 / 2.1 / Section
+// 508 / EN 301 549 behaviors stay covered by `tests/unit/reports/`.
+const SNAPSHOT_STANDARD: Standard = defineStandard({
+  id: "snapstd",
+  name: "Snapshot Standard",
+  version: "1.0",
+  publisher: "Snapshot Test Suite",
+  url: "https://example.test/snapshot-standard",
+  levels: ["A", "AA", "AAA"],
+  criteria: [
+    {
+      id: "snapstd:1.1.1",
+      standardId: "snapstd",
+      localId: "1.1.1",
+      title: "Failing Automated Criterion",
+      level: "A",
+      description: "Synthetic criterion that fails because a rule emitted an error violation.",
+      url: "https://example.test/snapshot-standard#1-1-1",
+      automatable: "full",
+    },
+    {
+      id: "snapstd:2.1.1",
+      standardId: "snapstd",
+      localId: "2.1.1",
+      title: "Passing Automated Criterion",
+      level: "A",
+      description: "Synthetic criterion the scan checked with no findings.",
+      url: "https://example.test/snapshot-standard#2-1-1",
+      automatable: "full",
+    },
+    {
+      id: "snapstd:3.1.1",
+      standardId: "snapstd",
+      localId: "3.1.1",
+      title: "Reviewed Manual Criterion",
+      level: "AA",
+      description: "Synthetic criterion that requires manual review (pre-credited).",
+      url: "https://example.test/snapshot-standard#3-1-1",
+      automatable: "manual",
+    },
+    {
+      id: "snapstd:4.1.1",
+      standardId: "snapstd",
+      localId: "4.1.1",
+      title: "Unreviewed Manual Criterion",
+      level: "AA",
+      description: "Synthetic criterion that requires manual review (pending).",
+      url: "https://example.test/snapshot-standard#4-1-1",
+      automatable: "manual",
+    },
+  ],
+});
+
+const SNAPSHOT_RESULT: ScanResult = {
+  violations: withFindingIds([
+    {
+      ruleId: "synthetic/error-rule",
+      fixClass: "mechanical",
+      criteria: ["snapstd:1.1.1"],
+      severity: "error",
+      location: { filePath: "src/Bad.tsx", line: 12, column: 5 },
+      message: "Synthetic error violation.",
+      suggestion: "Apply the deterministic edit.",
+    },
+  ]),
+  filesScanned: 1,
+  durationMs: 4,
+  enabledStandards: ["snapstd"],
+  isTTY: false,
+};
+
+const SNAPSHOT_MANUAL_REVIEW: ManualReview = {
+  "snapstd:3.1.1": { reviewed: true, status: "supports" },
+};
+
+describe("certification snapshot shape pin", () => {
+  it("matches the JSON snapshot for the pinned synthetic scorecard", () => {
+    const coverage = buildCoverageReport(SNAPSHOT_RESULT, [SNAPSHOT_STANDARD]);
+    const scores = buildCertificationScorecard(
+      coverage,
+      [SNAPSHOT_STANDARD],
+      SNAPSHOT_MANUAL_REVIEW,
+      "AA",
+    );
+    expect(scores).toMatchSnapshot();
+  });
+
+  it("matches the markdown snapshot for the pinned synthetic scorecard", () => {
+    const coverage = buildCoverageReport(SNAPSHOT_RESULT, [SNAPSHOT_STANDARD]);
+    const scores = buildCertificationScorecard(
+      coverage,
+      [SNAPSHOT_STANDARD],
+      SNAPSHOT_MANUAL_REVIEW,
+      "AA",
+    );
+    expect(renderCertificationMarkdown(scores)).toMatchSnapshot();
   });
 });

@@ -7,8 +7,13 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { chdir, cwd } from "node:process";
+import { defineStandard } from "../../../../src/api/plugin.ts";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runVpat } from "../../../../src/cli/commands/vpat.ts";
+import { buildVpatReport, renderVpatMarkdown } from "../../../../src/reports/index.ts";
+import type { Standard } from "../../../../src/types/standard.ts";
+import type { ScanResult } from "../../../../src/types/violation.ts";
+import { withFindingIds } from "../../../helpers/make-violation.ts";
 import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
@@ -159,5 +164,139 @@ describe("runVpat", () => {
       if (prevOrg === undefined) delete process.env.RA11Y_VPAT_CONTACT_ORGANIZATION;
       else process.env.RA11Y_VPAT_CONTACT_ORGANIZATION = prevOrg;
     }
+  });
+});
+
+// Tiny synthetic standard used for shape-stability snapshots. Four
+// criteria deliberately chosen to exercise every conformance verdict
+// the VPAT builder can emit (Supports / Does Not Support / Partially
+// Supports via violations, Not Evaluated for manual). Keeps snapshots
+// small and reviewable — the builder's full WCAG 2.2 / 2.1 / Section
+// 508 / EN 301 549 behaviors stay covered by `tests/unit/reports/`.
+const SNAPSHOT_STANDARD: Standard = defineStandard({
+  id: "snapstd",
+  name: "Snapshot Standard",
+  version: "1.0",
+  publisher: "Snapshot Test Suite",
+  url: "https://example.test/snapshot-standard",
+  levels: ["A", "AA", "AAA"],
+  criteria: [
+    {
+      id: "snapstd:1.1.1",
+      standardId: "snapstd",
+      localId: "1.1.1",
+      title: "Failing Criterion",
+      level: "A",
+      description: "Synthetic criterion that fails because a rule emitted an error violation.",
+      url: "https://example.test/snapshot-standard#1-1-1",
+      automatable: "full",
+    },
+    {
+      id: "snapstd:2.1.1",
+      standardId: "snapstd",
+      localId: "2.1.1",
+      title: "Passing Criterion",
+      level: "A",
+      description: "Synthetic criterion the scan checked with no findings.",
+      url: "https://example.test/snapshot-standard#2-1-1",
+      automatable: "full",
+    },
+    {
+      id: "snapstd:3.1.1",
+      standardId: "snapstd",
+      localId: "3.1.1",
+      title: "Manual Criterion",
+      level: "AA",
+      description: "Synthetic criterion that requires manual review.",
+      url: "https://example.test/snapshot-standard#3-1-1",
+      automatable: "manual",
+    },
+    {
+      id: "snapstd:4.1.1",
+      standardId: "snapstd",
+      localId: "4.1.1",
+      title: "Warning-Only Criterion",
+      level: "A",
+      description: "Synthetic criterion that emits warnings but not errors.",
+      url: "https://example.test/snapshot-standard#4-1-1",
+      automatable: "full",
+    },
+  ],
+});
+
+const SNAPSHOT_RESULT: ScanResult = {
+  violations: withFindingIds([
+    {
+      ruleId: "synthetic/error-rule",
+      fixClass: "mechanical",
+      criteria: ["snapstd:1.1.1"],
+      severity: "error",
+      location: { filePath: "src/Bad.tsx", line: 12, column: 5 },
+      message: "Synthetic error violation.",
+      suggestion: "Apply the deterministic edit.",
+    },
+    {
+      ruleId: "synthetic/warning-rule",
+      fixClass: "guidance",
+      criteria: ["snapstd:4.1.1"],
+      severity: "warning",
+      location: { filePath: "src/Soft.tsx", line: 3, column: 1 },
+      message: "Synthetic warning violation.",
+      suggestion: "Review the soft case.",
+    },
+  ]),
+  filesScanned: 2,
+  durationMs: 7,
+  enabledStandards: ["snapstd"],
+  isTTY: false,
+};
+
+const SNAPSHOT_GENERATED_AT = "2026-04-11T00:00:00Z";
+const SNAPSHOT_PRODUCT = {
+  productName: "Snapshot Product",
+  productVersion: "9.9.9",
+  contactEmail: "snapshot@example.test",
+  contactOrganization: "Snapshot Org",
+  evaluationMethods: "Static source code analysis (snapshot harness).",
+  notesOnEvaluation: "Pinned synthetic input — regenerate on intentional shape changes.",
+};
+
+/**
+ * Replaces the build-driven `evaluator.name` ("ra11y vX.Y.Z") with a
+ * version-stable placeholder so the snapshot survives version bumps.
+ * Field shapes, ordering, and every other value stay intact.
+ */
+function normalizeVpatReport(
+  report: ReturnType<typeof buildVpatReport>,
+): Record<string, unknown> {
+  return {
+    ...report,
+    evaluator: {
+      ...report.evaluator,
+      name: "ra11y v<pinned>",
+    },
+  };
+}
+
+function normalizeVpatMarkdown(md: string): string {
+  return md.replace(/(- \*\*Evaluator\*\*: ra11y v)[^\n]+/g, "$1<pinned>");
+}
+
+describe("VPAT snapshot shape pin", () => {
+  it("matches the JSON snapshot for the pinned synthetic scan", () => {
+    const report = buildVpatReport(SNAPSHOT_RESULT, [SNAPSHOT_STANDARD], {
+      generatedAt: SNAPSHOT_GENERATED_AT,
+      product: SNAPSHOT_PRODUCT,
+    });
+    expect(normalizeVpatReport(report)).toMatchSnapshot();
+  });
+
+  it("matches the markdown snapshot for the pinned synthetic scan", () => {
+    const report = buildVpatReport(SNAPSHOT_RESULT, [SNAPSHOT_STANDARD], {
+      generatedAt: SNAPSHOT_GENERATED_AT,
+      product: SNAPSHOT_PRODUCT,
+    });
+    const md = renderVpatMarkdown(report);
+    expect(normalizeVpatMarkdown(md)).toMatchSnapshot();
   });
 });

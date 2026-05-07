@@ -1,0 +1,112 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`VPAT snapshot shape pin matches the JSON snapshot for the pinned synthetic scan 1`] = `
+{
+  "evaluator": {
+    "name": "ra11y v<pinned>",
+  },
+  "generatedAt": "2026-04-11T00:00:00Z",
+  "product": {
+    "contactEmail": "snapshot@example.test",
+    "contactOrganization": "Snapshot Org",
+    "evaluationMethods": "Static source code analysis (snapshot harness).",
+    "notesOnEvaluation": "Pinned synthetic input — regenerate on intentional shape changes.",
+    "productName": "Snapshot Product",
+    "productVersion": "9.9.9",
+  },
+  "standards": [
+    {
+      "entries": [
+        {
+          "automated": true,
+          "conformance": "Does Not Support",
+          "criterionId": "snapstd:1.1.1",
+          "level": "A",
+          "localId": "1.1.1",
+          "remarks": "Does Not Support. 1.1.1 Failing Criterion (Level A): 1 finding from rule(s): synthetic/error-rule.",
+          "title": "Failing Criterion",
+          "violationCount": 1,
+        },
+        {
+          "automated": true,
+          "conformance": "Supports",
+          "criterionId": "snapstd:2.1.1",
+          "level": "A",
+          "localId": "2.1.1",
+          "remarks": "Supports. 2.1.1 Passing Criterion (Level A): automated source-code checks passed with no findings.",
+          "title": "Passing Criterion",
+          "violationCount": 0,
+        },
+        {
+          "automated": false,
+          "conformance": "Not Evaluated",
+          "criterionId": "snapstd:3.1.1",
+          "level": "AA",
+          "localId": "3.1.1",
+          "remarks": "Not Evaluated. 3.1.1 Manual Criterion (Level AA): requires manual review — this criterion cannot be fully determined by static source analysis.",
+          "title": "Manual Criterion",
+          "violationCount": 0,
+        },
+        {
+          "automated": true,
+          "conformance": "Partially Supports",
+          "criterionId": "snapstd:4.1.1",
+          "level": "A",
+          "localId": "4.1.1",
+          "remarks": "Partially Supports. 4.1.1 Warning-Only Criterion (Level A): 1 finding from rule(s): synthetic/warning-rule.",
+          "title": "Warning-Only Criterion",
+          "violationCount": 1,
+        },
+      ],
+      "standardId": "snapstd",
+      "standardName": "Snapshot Standard",
+      "summary": {
+        "doesNotSupport": 1,
+        "notApplicable": 0,
+        "notEvaluated": 1,
+        "outOfScope": 0,
+        "partiallySupports": 1,
+        "supports": 1,
+        "untested": 0,
+      },
+      "version": "1.0",
+    },
+  ],
+  "templateVersion": "VPAT 2.5 Rev",
+}
+`;
+
+exports[`VPAT snapshot shape pin matches the markdown snapshot for the pinned synthetic scan 1`] = `
+"# VPAT 2.5 Rev Conformance Report
+
+## Product
+- **Name**: Snapshot Product
+- **Version**: 9.9.9
+- **Organization**: Snapshot Org
+- **Contact**: snapshot@example.test
+
+## Evaluation
+- **Evaluator**: ra11y v<pinned>
+- **Generated**: 2026-04-11T00:00:00Z
+- **Methods**: Static source code analysis (snapshot harness).
+- **Notes**: Pinned synthetic input — regenerate on intentional shape changes.
+
+## Applicable Chapters
+- **Chapter 3: Functional Performance Criteria (FPC)** — Not evaluated by static source analysis. See product documentation for FPC statements.
+- **Chapter 4: Hardware** — Not applicable — ra11y scans software sources only.
+- **Chapter 5: Software** — Evaluated by static source analysis. Per-criterion verdicts follow.
+- **Chapter 6: Support Documentation and Services** — Not evaluated by static source analysis. See product documentation for conformance statements.
+- **Chapter 7: Cognitive, Language, and Learning Disabilities** — Partially evaluated via Chapter 5 criteria; dedicated Chapter 7 claims require manual review.
+
+## Snapshot Standard 1.0
+
+Summary: **1** Supports · **1** Partially · **1** Does Not Support · **0** Not Applicable · **1** Not Evaluated
+
+| Criterion | Level | Conformance | Remarks |
+|-----------|-------|-------------|---------|
+| 1.1.1 Failing Criterion | A | Does Not Support | Does Not Support. 1.1.1 Failing Criterion (Level A): 1 finding from rule(s): synthetic/error-rule. |
+| 2.1.1 Passing Criterion | A | Supports | Supports. 2.1.1 Passing Criterion (Level A): automated source-code checks passed with no findings. |
+| 3.1.1 Manual Criterion | AA | Not Evaluated | Not Evaluated. 3.1.1 Manual Criterion (Level AA): requires manual review — this criterion cannot be fully determined by static source analysis. |
+| 4.1.1 Warning-Only Criterion | A | Partially Supports | Partially Supports. 4.1.1 Warning-Only Criterion (Level A): 1 finding from rule(s): synthetic/warning-rule. |
+"
+`;
