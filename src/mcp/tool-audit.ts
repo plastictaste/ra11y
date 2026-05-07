@@ -224,8 +224,9 @@ function suggestAuditNextStep(scan: unknown, checklist: unknown): string {
   const scanNextStep = readString(scanMeta, "nextStep");
   const checklistSummary = readObject(checklist, "summary");
   // `checklist.summary.actionable` is the structured headline shape
-  // `{ criteria, candidatesUncapped, candidatesReturned }` per
-  // ai-first-consumer.md §"Composite headline counts are dishonest";
+  // `{ criteria, emissionsTotal, emissionsAfterCollapse,
+  // emissionsReturnedAfterClip }` per ai-first-consumer.md
+  // §"Composite headline counts are dishonest";
   // the audit prose echoes the criteria count (cross-tool canonical
   // count, matches the flat
   // `scan_project.plan.actionableManualItemsBySource.source +

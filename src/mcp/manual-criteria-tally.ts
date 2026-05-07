@@ -1,8 +1,8 @@
 /**
  * Single source of truth for the manual-review tally that
  * `scan_project.plan.{actionableManualItems,untargetedCriteriaForProject}`,
- * `coverage[].{summary.actionable.criteria,manualWithCandidates,untargetedCriteriaForProject}`,
- * and `checklist.summary.{actionable,untargetedCriteriaForProject}` all report.
+ * `coverage[].{summary.actionable.{criteria,emissionsTotal},manualWithCandidates,manualCandidateEmissionsTotal,untargetedCriteriaForProject}`,
+ * and `checklist.summary.{actionable.{criteria,emissionsTotal,emissionsAfterCollapse,emissionsReturnedAfterClip},untargetedCriteriaForProject}` all report.
  * (The per-file lane (`scan` / `scan_file`) consumes the same tally
  * but ships under `plan.untargetedCriteriaForFile` so the project-walk
  * vs single-file slice is explicit on the wire — see `buildScanPlan`
@@ -545,6 +545,88 @@ export function tallyManualCriteriaFromCoverage(
 }
 
 /**
+ * Per-emission tally on the manual-candidate axis (raw, pre-collapse).
+ *
+ * `groundedByCriterion` mirrors the criteria-axis count
+ * ({@link ManualCriteriaTally#actionable}) — distinct criterion IDs
+ * with at least one shipped grounded review candidate. `emissionsTotal`
+ * is the candidate-axis sibling: the raw per-emission count of
+ * candidates the finders produced against the shared in-scope criteria
+ * set, BEFORE any cross-file collapse / pagination clip a downstream
+ * surface might apply. Two distinct units, named so an agent reading
+ * both does not silently treat one count as the other (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+ * the same concept must use one shape").
+ *
+ * Cross-surface invariant: the same `(candidates, applicableManualIds,
+ * skipCriteria)` inputs must produce the same `emissionsTotal` on
+ * `coverage` and `checklist`. The shared helper is the single source of
+ * truth so a future surface that re-derives the count locally can't
+ * silently drift from the others — closes the manual-candidate cross-
+ * surface drift shape where `actionable.candidates` (post-collapse on
+ * checklist) and `manualCandidatesTotal` (raw on coverage) shipped
+ * under one named concept with up to 187× drift on bulk corpora.
+ */
+export interface ManualCandidateEmissionsTally {
+  /**
+   * Distinct criterion IDs with at least one shipped grounded review
+   * candidate, scoped to {@link inScopeCriteria} ∖ {@link skipCriteria}.
+   * Mirrors {@link ManualCriteriaTally#actionable} on the same inputs;
+   * exposed here so callers building per-emission summaries don't have
+   * to thread the full `tallyManualCriteriaFromCoverage` flow.
+   */
+  readonly groundedByCriterion: number;
+  /**
+   * Raw per-emission tally of review candidates whose `criterionId`
+   * is in `inScopeCriteria` and not in `skipCriteria`. NO cross-file
+   * collapse, NO pagination clip — this is the canonical pre-transform
+   * count both `coverage.summary.actionable.emissionsTotal` and
+   * `checklist.summary.actionable.emissionsTotal` agree on. Surfaces
+   * that apply downstream transforms (checklist's
+   * `collapseRepeatedAcrossFiles` + `collapseAcrossFilesByReason`,
+   * pagination clip) ship the post-transform count under a
+   * shape-asymmetry-disclosing name (e.g.
+   * `emissionsAfterCollapse`); the raw count stays available for
+   * cross-surface equality checks.
+   */
+  readonly emissionsTotal: number;
+}
+
+/**
+ * Computes the {@link ManualCandidateEmissionsTally} on a raw candidate
+ * stream — the single source of truth for `coverage.summary.actionable
+ * .emissionsTotal`, `coverage.manualCandidateEmissionsTotal`, and
+ * `checklist.summary.actionable.emissionsTotal`. Both `coverage` and
+ * `checklist` consume this helper directly so the candidate-axis
+ * cross-surface count invariant holds by construction.
+ *
+ * Filtering matches the candidate-axis branch of
+ * {@link tallyManualCriteriaFromCoverage}: a candidate contributes iff
+ * its `criterionId` is in `inScopeCriteria` AND not in `skipCriteria`.
+ * This is the same gate `collectCandidateCriteriaPaths` applies, so
+ * `groundedByCriterion` agrees with the criteria-axis count.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant": every shared cross-tool counter is computed once in a
+ * shared helper, and integration tests pin equality on identical cwd.
+ */
+export function tallyManualCandidateEmissions(
+  candidates: readonly ReviewCandidate[],
+  inScopeCriteria: ReadonlySet<string>,
+  skipCriteria: ReadonlySet<string> | undefined,
+): ManualCandidateEmissionsTally {
+  const grounded = new Set<string>();
+  let emissions = 0;
+  for (const c of candidates) {
+    if (!inScopeCriteria.has(c.criterionId)) continue;
+    if (skipCriteria?.has(c.criterionId)) continue;
+    grounded.add(c.criterionId);
+    emissions += 1;
+  }
+  return { groundedByCriterion: grounded.size, emissionsTotal: emissions };
+}
+
+/**
  * Splits the {@link ManualCriteriaTally#actionableCriteriaPaths} index
  * into the {@link ActionableManualLane} `{ source, buildArtifact }`
  * tally consumed by `plan.actionableManualItemsBySource`. A criterion
@@ -650,8 +732,16 @@ function unionCriteriaPaths(
  * reflects only the AA-scoped subset. This matches the pre-Q13
  * behavior; a separate concern from the partial-criterion miss that
  * motivated Q13.
+ *
+ * Exported so cross-surface consumers (e.g.
+ * {@link tallyManualCandidateEmissions} callers in `tool-coverage.ts`
+ * and `tool-checklist.ts`) can apply the same in-scope gate the
+ * criteria-axis tally uses, keeping the candidate-axis count anchored
+ * to the same scope.
  */
-function collectInScopeCriteria(coverage: readonly PerStandardCoverage[]): ReadonlySet<string> {
+export function collectInScopeCriteria(
+  coverage: readonly PerStandardCoverage[],
+): ReadonlySet<string> {
   const out = new Set<string>();
   for (const entry of coverage) {
     for (const cc of entry.criteria) out.add(cc.criterionId);

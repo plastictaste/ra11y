@@ -45,7 +45,9 @@ import {
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
 import {
+  collectInScopeCriteria,
   collectVerifyTokenViolationCriteria,
+  tallyManualCandidateEmissions,
   tallyManualCriteriaFromCoverage,
 } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
@@ -861,28 +863,53 @@ function detectPerCriterionClamp(
 
 /**
  * Builds the structured `summary.actionable` shape from the cross-tool
- * canonical criteria tally and the paginated checklist page. Three
- * counts: `criteria` (cross-tool canonical, matches
- * `scan_project.plan.actionableManualItems`), `candidatesUncapped`
- * (pre-clip inventory; matches the response-level `totalCandidates`),
- * and `candidatesReturned` (post-clip page count). Extracted to a
- * helper so the main handler stays under the lint's cognitive-
- * complexity ceiling — the per-item summing loop counts as branching.
+ * canonical criteria tally and the paginated checklist page. Four
+ * counts, each naming a distinct slice on the candidate-axis pipeline:
+ *
+ *   - `criteria` — cross-tool canonical criteria-axis count, matches
+ *     `scan_project.plan.actionableManualItemsBySource.source +
+ *     .buildArtifact` and `coverage[].manualWithCandidates.length`.
+ *   - `emissionsTotal` — RAW pre-collapse, pre-clip per-emission count
+ *     of review candidates against the in-scope manual criteria set.
+ *     Computed via the shared `tallyManualCandidateEmissions` helper
+ *     in `manual-criteria-tally.ts` so the value agrees with
+ *     `coverage.summary.actionable.emissionsTotal` /
+ *     `coverage.manualCandidateEmissionsTotal` on identical cwd. THIS
+ *     is the cross-surface invariant slice the integration test pins.
+ *   - `emissionsAfterCollapse` — checklist-specific tally that reflects
+ *     the post-`collapseRepeatedAcrossFiles` /
+ *     `collapseAcrossFilesByReason` inventory (the count `checklist`
+ *     surfaces under the `totalCandidates` field). Can disagree with
+ *     `emissionsTotal` by up to 187× on bulk corpora when the cross-
+ *     file fold fires (canonical fancybox.pack.js cohort case). The
+ *     name carries the post-transform stage so an agent doesn't read
+ *     it as "the raw count" — closes the manual-candidate cross-
+ *     surface drift shape where `candidatesUncapped` was named as if
+ *     uncapped while actually carrying a folded count.
+ *   - `emissionsReturnedAfterClip` — post-pagination, post-per-criterion
+ *     clip count of candidates actually shipped on this page.
+ *     `≤ emissionsAfterCollapse ≤ emissionsTotal`.
+ *
+ * Extracted to a helper so the main handler stays under the lint's
+ * cognitive-complexity ceiling.
  */
 function buildChecklistSummaryActionable(
   criteriaCount: number,
+  emissionsTotal: number,
   page: PaginatedChecklist,
 ): {
   readonly criteria: number;
-  readonly candidatesUncapped: number;
-  readonly candidatesReturned: number;
+  readonly emissionsTotal: number;
+  readonly emissionsAfterCollapse: number;
+  readonly emissionsReturnedAfterClip: number;
 } {
-  let candidatesReturned = 0;
-  for (const item of page.items) candidatesReturned += item.candidates.length;
+  let emissionsReturnedAfterClip = 0;
+  for (const item of page.items) emissionsReturnedAfterClip += item.candidates.length;
   return {
     criteria: criteriaCount,
-    candidatesUncapped: page.totalCandidates,
-    candidatesReturned,
+    emissionsTotal,
+    emissionsAfterCollapse: page.totalCandidates,
+    emissionsReturnedAfterClip,
   };
 }
 
@@ -1032,7 +1059,7 @@ export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, candidatesUncapped, candidatesReturned }` — three honest counts so a clipped/paginated response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItems` and `coverage[].manualWithCandidates.length`); `candidatesUncapped` is the pre-clip inventory across actionable items; `candidatesReturned` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteriaForProject`: the count of criteria with no candidates the finders could ground in code (project-walk scope; mirrors `scan_project.plan.untargetedCriteriaForProject` and `coverage[].summary.untargetedCriteriaForProject`; the per-file twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`). By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, emissionsTotal, emissionsAfterCollapse, emissionsReturnedAfterClip }` — four honest counts so a clipped/paginated/folded response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItemsBySource.{source,buildArtifact}` sum and `coverage[].manualWithCandidates.length`); `emissionsTotal` is the RAW pre-collapse per-emission count (matches `coverage.summary.actionable.emissionsTotal` on identical cwd via the shared `tallyManualCandidateEmissions` helper); `emissionsAfterCollapse` is the checklist-specific post-collapse inventory (folds cross-file repeated candidates into one row when the same `(line, reason, snippet)` fingerprint fires on >5 distinct paths, OR the same `reason` fires on >20 distinct paths) — can be much smaller than `emissionsTotal` on bulk corpora; `emissionsReturnedAfterClip` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteriaForProject`: the count of criteria with no candidates the finders could ground in code (project-walk scope; mirrors `scan_project.plan.untargetedCriteriaForProject` and `coverage[].summary.untargetedCriteriaForProject`; the per-file twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`). By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1425,13 +1452,32 @@ export const checklistTool: McpTool = {
     // grounded candidates. When `perCriterionClipped` (or even just a deep page)
     // elides candidates per criterion, an agent reading "actionable: 2" reads
     // it as "2 things to verify" — but each criterion may carry 10+ candidates
-    // beyond the cap. The structured shape splits the headline into the three
-    // honest counts (criteria / candidatesUncapped / candidatesReturned) so the
-    // agent can budget against the right axis. Always-split is preferred over
-    // asymmetric clipped-vs-unclipped per the dispatch — keeps callers from
-    // branching on shape. Cross-surface invariant:
-    // `scan_file.plan.actionableManualItems` === `summary.actionable.criteria`.
-    const summaryActionable = buildChecklistSummaryActionable(summaryTally.actionable, page);
+    // beyond the cap. The structured shape splits the headline into four honest
+    // counts (criteria / emissionsTotal / emissionsAfterCollapse /
+    // emissionsReturnedAfterClip) so the agent can budget against the right
+    // axis. Always-split is preferred over asymmetric clipped-vs-unclipped per
+    // the dispatch — keeps callers from branching on shape. Cross-surface
+    // invariants: `summary.actionable.criteria` agrees with
+    // `scan_project.plan.actionableManualItemsBySource.{source,buildArtifact}`
+    // sum and `coverage.summary.actionable.criteria`;
+    // `summary.actionable.emissionsTotal` (RAW, pre-collapse, computed via
+    // shared `tallyManualCandidateEmissions` helper) agrees with
+    // `coverage.summary.actionable.emissionsTotal` /
+    // `coverage.manualCandidateEmissionsTotal` on identical cwd —
+    // closes the manual-candidate cross-surface drift shape where
+    // `candidatesUncapped` (post-collapse) and `manualCandidatesTotal`
+    // (raw) shipped under one named concept with up to 187× drift.
+    const inScopeCriteria = collectInScopeCriteria(coverage);
+    const emissionsTally = tallyManualCandidateEmissions(
+      reportCandidates,
+      inScopeCriteria,
+      skipSet,
+    );
+    const summaryActionable = buildChecklistSummaryActionable(
+      summaryTally.actionable,
+      emissionsTally.emissionsTotal,
+      page,
+    );
     // Build `analysisCoverageField` here (rather than later alongside the
     // response assembly) so the parse-error scalars below can read from
     // it without recomputing the bucket split. The field also feeds the
@@ -3209,10 +3255,11 @@ interface ChecklistNextStepInputs {
   readonly maxCandidatesPerCriterionHint: number | undefined;
   /**
    * Pre-clip inventory total across actionable items (matches
-   * `summary.actionable.candidatesUncapped`). Used together with
-   * `limit` to detect the "near limit" branch where the structured
-   * nextStep should advertise paginate args instead of the generic
-   * iterate-items[] prose.
+   * `summary.actionable.emissionsAfterCollapse` — the post-collapse
+   * checklist-specific tally). Used together with `limit` to detect
+   * the "near limit" branch where the structured nextStep should
+   * advertise paginate args instead of the generic iterate-items[]
+   * prose.
    */
   readonly totalCandidates: number;
   /** Effective `limit` after clamping; paired with `totalCandidates`. */

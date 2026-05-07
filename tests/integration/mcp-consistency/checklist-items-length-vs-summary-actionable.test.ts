@@ -90,8 +90,9 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
     readonly untargetedCriteriaForProject: number;
   };

@@ -120,8 +120,9 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
     readonly untargetedCriteriaForProject: number;
   };
@@ -347,9 +348,9 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  * to the top level alongside `analysisCoverage`.
  */
 interface FullCoverageEnvelope extends CoverageBody {
-  readonly manualCandidatesTotal?: number;
+  readonly manualCandidateEmissionsTotal?: number;
   readonly summary: {
-    readonly actionable: { readonly criteria: number; readonly candidates?: number };
+    readonly actionable: { readonly criteria: number; readonly emissionsTotal?: number };
     readonly untargetedCriteriaForProject: number;
   };
   readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
@@ -400,23 +401,27 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
 });
 
 // Cross-surface count invariant — candidate-axis sibling to the
-// criteria-axis `manualWithCandidates.length` invariant above. Pre-fix,
-// `checklist.summary.totalCandidates` was the only project-rooted
-// counter that reported the candidate-level tally; an agent asking
-// "how many manual-review items are there" had to read three numbers
-// (`coverage.manualWithCandidates: N` criteria-axis,
-// `checklist.summary.actionable.criteria: M` criteria-axis,
-// `checklist.totalCandidates: K` candidate-axis) and disambiguate by
-// reading field names carefully. `coverage.manualCandidatesTotal`
-// closes the gap so coverage carries both axes — the criteria-axis
-// (via `manualWithCandidates.length` / `summary.actionable.criteria`)
-// and the candidate-axis (`manualCandidatesTotal`) — and the
-// candidate-axis number agrees across surfaces. Doctrine:
+// criteria-axis `manualWithCandidates.length` invariant above. The
+// canonical drift shape: pre-rename, `coverage.summary.actionable
+// .candidates` (raw per-emission count) and
+// `checklist.summary.actionable.candidatesUncapped` (post-collapse
+// inventory) shipped under sibling field names that read as the same
+// concept ("uncapped pre-clip candidate count"), but disagreed by up
+// to 187× on bulk corpora when checklist's cross-file collapse passes
+// fired (canonical fancybox.pack.js cohort case). Closure: rename the
+// raw count to `emissionsTotal` on both surfaces — computed via the
+// shared `tallyManualCandidateEmissions` helper — so the cross-surface
+// invariant pins ONE slice both surfaces compute identically. Checklist
+// also surfaces `emissionsAfterCollapse` (post-fold) and
+// `emissionsReturnedAfterClip` (post-pagination) under names that
+// admit the asymmetry. Doctrine:
 // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
 // invariant" + "Sibling fields naming the same concept must use one
-// shape" — the candidate-vs-criteria split is named, not implied.
-describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
-  it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
+// shape" — the candidate-vs-criteria split is named, not implied,
+// AND each post-transform slice carries the transform stage in its
+// name.
+describe("MCP invariant: emissionsTotal agrees across coverage and checklist (raw pre-collapse count)", () => {
+  it("coverage.manualCandidateEmissionsTotal === coverage.summary.actionable.emissionsTotal === checklist.summary.actionable.emissionsTotal", async () => {
     // Media-present fixture seeds grounded candidates via the
     // `review/media-variants` finder fanning out wcag22:1.2.* criteria
     // — the fired-manual fixture used by the criteria-axis invariants
@@ -431,32 +436,34 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
     ]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    const coverageCandidatesTotal = coverageEnvelope.manualCandidatesTotal ?? 0;
-    const checklistUncapped = checklistBody.summary.actionable.candidatesUncapped;
-    const checklistTotal = checklistBody.totalCandidates ?? 0;
+    const coverageEmissionsTopLevel = coverageEnvelope.manualCandidateEmissionsTotal ?? 0;
+    const coverageEmissionsSummary = coverageEnvelope.summary?.actionable?.emissionsTotal ?? 0;
+    const checklistEmissionsTotal = checklistBody.summary.actionable.emissionsTotal;
     // Sanity floor — the media-present fixture must emit at least one
     // grounded candidate; a 0/0/0 result here would mean the finders
     // stopped firing and the assertion would pass vacuously.
-    expect(coverageCandidatesTotal).toBeGreaterThan(0);
-    expect(coverageCandidatesTotal).toBe(checklistUncapped);
-    expect(coverageCandidatesTotal).toBe(checklistTotal);
+    expect(coverageEmissionsTopLevel).toBeGreaterThan(0);
+    expect(coverageEmissionsTopLevel).toBe(coverageEmissionsSummary);
+    expect(coverageEmissionsTopLevel).toBe(checklistEmissionsTotal);
   });
 
-  it("coverage.summary.actionable.candidates mirrors the same candidate-axis count", async () => {
+  it("coverage.summary.actionable.emissionsTotal mirrors the top-level coverage scalar", async () => {
     // The candidate-vs-criteria split is exposed twice on the coverage
-    // envelope: once as the top-level `manualCandidatesTotal` scalar
-    // (paired with the `manualWithCandidates` array's length on the
-    // criteria axis), and once nested under
-    // `summary.actionable.candidates` (sibling to
-    // `summary.actionable.criteria`, mirroring `checklist.summary.actionable`).
-    // Both must agree — they read the same underlying tally; a
-    // disagreement would be the dishonest two-sibling-fields-naming-
-    // the-same-concept shape the doctrine warns against.
+    // envelope: once as the top-level `manualCandidateEmissionsTotal`
+    // scalar (paired with the `manualWithCandidates` array's length
+    // on the criteria axis), and once nested under
+    // `summary.actionable.emissionsTotal` (sibling to
+    // `summary.actionable.criteria`, mirroring
+    // `checklist.summary.actionable`). Both must agree — they read
+    // the same underlying tally via the shared
+    // `tallyManualCandidateEmissions` helper; a disagreement would
+    // be the dishonest two-sibling-fields-naming-the-same-concept
+    // shape the doctrine warns against.
     const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
-    expect(coverageEnvelope.summary?.actionable?.candidates).toBe(
-      coverageEnvelope.manualCandidatesTotal,
+    expect(coverageEnvelope.summary?.actionable?.emissionsTotal).toBe(
+      coverageEnvelope.manualCandidateEmissionsTotal,
     );
     expect(coverageEnvelope.summary?.actionable?.criteria).toBe(
       coverageEnvelope.manualWithCandidates?.length ?? 0,
@@ -599,7 +606,7 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
 
 /**
  * `checklist.summary` previously reported `actionable.criteria`,
- * `candidatesUncapped`, and `untargetedCriteriaForProject` but not the parse-
+ * `emissionsAfterCollapse`, and `untargetedCriteriaForProject` but not the parse-
  * error scalars `coverage` and `scan_project` lift onto their own
  * `analysisCoverage` blocks. An agent reading the checklist summary as
  * the headline (the surface read-order goes summary → items, per the

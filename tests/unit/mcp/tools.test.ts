@@ -3278,14 +3278,16 @@ describe("MCP tool: audit", () => {
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
       };
     };
     expect(typeof checklist.summary.actionable.criteria).toBe("number");
-    expect(typeof checklist.summary.actionable.candidatesUncapped).toBe("number");
-    expect(typeof checklist.summary.actionable.candidatesReturned).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsTotal).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsAfterCollapse).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsReturnedAfterClip).toBe("number");
   });
 
   it("forwards scan-only parameters to the scan leg", async () => {

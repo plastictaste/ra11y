@@ -1428,8 +1428,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
         likelyIrrelevant: number;
         skippedByCaller?: readonly string[];
@@ -1540,8 +1541,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
         untargetedCriteriaForProject: number;
         likelyIrrelevant: number;

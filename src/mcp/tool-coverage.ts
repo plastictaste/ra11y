@@ -263,18 +263,20 @@ export const coverageTool: McpTool = {
         .filter((id) => actionableCriteria.has(id));
       // Candidate-level total scoped to the same in-scope, level-
       // filtered criteria `withCandidates` is computed from.
-      // `withCandidates.length` / `actionableManualItems` is the
-      // criteria-axis sibling; `manualCandidatesTotal` is the
-      // candidate-axis sibling — names make the kind explicit so an
+      // `withCandidates.length` is the criteria-axis sibling;
+      // `manualCandidateEmissionsTotal` (the wire-side rename of
+      // `manualCandidatesTotal`) is the candidate-axis sibling — names
+      // make the kind AND the transformation stage explicit so an
       // agent reading both does not silently reconcile two numbers
       // that measure different units (per
       // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
       // naming the same concept must use one shape"). Cross-surface
-      // invariant: agrees with `checklist.totalCandidates` and
-      // `checklist.summary.actionable.candidatesUncapped` on identical
-      // cwd. Verify-token-only criteria contribute zero to this count
-      // because they have no review-candidate entries — the
-      // candidate-axis sum stays anchored to the candidate stream.
+      // invariant: agrees with `checklist.summary.actionable.emissionsTotal`
+      // (the raw pre-collapse count) on identical cwd via the shared
+      // `tallyManualCandidateEmissions` helper. Verify-token-only
+      // criteria contribute zero to this count because they have no
+      // review-candidate entries — the candidate-axis sum stays
+      // anchored to the candidate stream.
       const manualCandidatesTotal = sumCandidatesAcrossCriteria(
         withCandidates,
         candidateCountByCriterion,
@@ -412,17 +414,23 @@ export const coverageTool: McpTool = {
         // Candidate-axis sibling to `manualWithCandidates.length` (the
         // criteria-axis count). `manualWithCandidates.length: N` reads
         // as "N criteria have grounded candidates";
-        // `manualCandidatesTotal: K` reads as "K total candidates ride
-        // under those criteria." The two sit alongside so an agent
-        // asking "how many manual-review items are there" sees both
-        // axes in one read instead of having to pivot to `checklist`
-        // to learn the candidate-level tally. Cross-surface count
-        // invariant (`docs/kb/architecture/ai-first-consumer.md`):
-        // equals `checklist.totalCandidates` and
-        // `checklist.summary.actionable.candidatesUncapped` on
-        // identical cwd; pinned by the integration test in
-        // `tests/integration/mcp-counts-agree.test.ts`.
-        manualCandidatesTotal,
+        // `manualCandidateEmissionsTotal: K` reads as "K raw
+        // per-emission candidates ride under those criteria." The two
+        // sit alongside so an agent asking "how many manual-review
+        // items are there" sees both axes in one read instead of
+        // having to pivot to `checklist` to learn the candidate-level
+        // tally. Cross-surface count invariant
+        // (`docs/kb/architecture/ai-first-consumer.md`): equals
+        // `checklist.summary.actionable.emissionsTotal` (the raw
+        // pre-collapse count) on identical cwd; pinned by the
+        // integration test in `tests/integration/mcp-counts-agree.test.ts`.
+        // The bare `manualCandidatesTotal` name shipped under one
+        // concept while the post-collapse `candidatesUncapped` count
+        // (checklist) shipped under another — the rename to
+        // `*EmissionsTotal` makes the slice explicit so the cross-
+        // surface invariant pins the raw count both surfaces compute,
+        // not whichever one the agent happens to read first.
+        manualCandidateEmissionsTotal: manualCandidatesTotal,
         // Manual-review pile in array form. Agents derive the
         // criteria-axis count via `manualWithCandidates.length`; the
         // structured `summary.actionable.criteria` ships the same
@@ -516,18 +524,25 @@ export const coverageTool: McpTool = {
         summary: {
           // Two-axis split mirrors `checklist.summary.actionable` —
           // `criteria` (criteria-axis, matches
-          // `scan_project.plan.actionableManualItems` and the sibling
-          // `actionableManualItems` scalar on this entry) and
-          // `candidates` (candidate-axis, matches
-          // `checklist.summary.actionable.candidatesUncapped`,
-          // `checklist.totalCandidates`, and the sibling
-          // `manualCandidatesTotal` scalar on this entry). Naming
-          // makes the unit explicit so an agent reading the field
-          // does not silently treat one count as the other — per
+          // `scan_project.plan.actionableManualItemsBySource.source +
+          // .buildArtifact` and the sibling `manualWithCandidates.length`
+          // on this entry) and `emissionsTotal` (candidate-axis, raw
+          // per-emission tally — agrees with
+          // `checklist.summary.actionable.emissionsTotal` on identical
+          // cwd via the shared `tallyManualCandidateEmissions` helper
+          // in `manual-criteria-tally.ts`). The previous `candidates`
+          // sub-field was renamed to `emissionsTotal` so the slice is
+          // explicit on the wire — the same field name shipped on
+          // checklist's `candidatesUncapped` carried a post-collapse
+          // count that disagreed with this raw count by up to 187× on
+          // bulk corpora (Q-MANUAL-CANDIDATE cross-surface drift).
+          // Naming makes the unit AND the transformation stage explicit
+          // so an agent reading the field does not silently treat one
+          // count as the other — per
           // `docs/kb/architecture/ai-first-consumer.md` "Sibling
           // fields naming the same concept must use one shape" the
           // candidate-vs-criteria split is named, not implied.
-          actionable: { criteria: withCandidates.length, candidates: manualCandidatesTotal },
+          actionable: { criteria: withCandidates.length, emissionsTotal: manualCandidatesTotal },
           // Mirror `checklist.summary.untargetedCriteriaForProject` —
           // both surfaces are project-rooted and emit the same scope-
           // disambiguated name. See `buildScanPlan` docblock in
@@ -1096,9 +1111,9 @@ const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
  * grounded location. Pre-Q15 this was a defensive-only fallback the
  * upstream filter prevented; post-Q15 it can fire on a verify-token-
  * only criterion. The candidate-axis sibling
- * (`manualCandidatesTotal`) stays anchored to the review-candidate
- * stream and reads zero for these entries — the criteria-axis vs.
- * candidate-axis split is preserved.
+ * (`manualCandidateEmissionsTotal`) stays anchored to the review-
+ * candidate stream and reads zero for these entries — the criteria-axis
+ * vs. candidate-axis split is preserved.
  */
 function withTitlesAndCandidates(
   criterionIds: readonly string[],
@@ -1152,7 +1167,7 @@ function indexDedupedCandidatesByCriterion(
  *   - `candidateCriteria`: the union of every criterion ID a candidate
  *     touched (drives the `withCandidates` filter on each entry).
  *   - `candidateCountByCriterion`: per-criterion candidate counts the
- *     `manualCandidatesTotal` aggregate sums over.
+ *     `manualCandidateEmissionsTotal` aggregate sums over.
  *   - `candidatesByCriterion`: deduped position-keyed candidate list
  *     attached to each entry's `candidates[]` array (per-tool
  *     review-candidate shape parity with `scan_project.reviewCandidates[]`
@@ -1300,12 +1315,14 @@ function buildCandidateCountByCriterion(
  * complexity ceiling. Returns 0 when the list is empty or no criterion
  * has a counted candidate.
  *
- * Doctrine: `manualCandidatesTotal` is the candidate-axis sibling to
- * `actionableManualItems` (criteria-axis); the value must agree with
- * `checklist.totalCandidates` and
- * `checklist.summary.actionable.candidatesUncapped` on identical cwd
- * via the cross-surface count invariant in
- * `docs/kb/architecture/ai-first-consumer.md`.
+ * Doctrine: `manualCandidateEmissionsTotal` (renamed from the bare
+ * `manualCandidatesTotal`) is the candidate-axis sibling to
+ * `manualWithCandidates.length` (criteria-axis); the value must agree
+ * with `checklist.summary.actionable.emissionsTotal` (the shared raw
+ * pre-collapse count) on identical cwd via the cross-surface count
+ * invariant in `docs/kb/architecture/ai-first-consumer.md`. Both
+ * surfaces consume the shared `tallyManualCandidateEmissions` helper
+ * in `manual-criteria-tally.ts` so the count agrees by construction.
  */
 function sumCandidatesAcrossCriteria(
   criteriaWithCandidates: readonly string[],

@@ -50,8 +50,9 @@ interface ChecklistEnvelope {
     readonly automatedCoverage?: CoverageGloss | ReadonlyArray<CoverageGloss>;
     readonly actionable?: {
       readonly criteria?: number;
-      readonly candidatesUncapped?: number;
-      readonly candidatesReturned?: number;
+      readonly emissionsTotal?: number;
+      readonly emissionsAfterCollapse?: number;
+      readonly emissionsReturnedAfterClip?: number;
     };
     readonly untargetedCriteriaForProject?: number;
   };
@@ -283,7 +284,7 @@ describe("checklist tool: summary.actionable structured headline shape", () => {
   // criterion carrying 30 elided candidates would read "actionable: 1"
   // and silently mislead the agent's work budget. The split shape ships
   // three honest counts so the agent reads the inventory in three axes.
-  it("always emits the structured `{ criteria, candidatesUncapped, candidatesReturned }` shape (not a number)", async () => {
+  it("always emits the structured `{ criteria, emissionsTotal, emissionsAfterCollapse, emissionsReturnedAfterClip }` shape (not a number)", async () => {
     const tool = findTool("checklist");
     const session = new McpSession();
     const result = await tool.handler({ paths: [BAD_ALT_DIR] }, session);
@@ -293,15 +294,22 @@ describe("checklist tool: summary.actionable structured headline shape", () => {
     const actionable = data.summary?.actionable;
     expect(actionable).toBeDefined();
     expect(typeof actionable?.criteria).toBe("number");
-    expect(typeof actionable?.candidatesUncapped).toBe("number");
-    expect(typeof actionable?.candidatesReturned).toBe("number");
+    expect(typeof actionable?.emissionsTotal).toBe("number");
+    expect(typeof actionable?.emissionsAfterCollapse).toBe("number");
+    expect(typeof actionable?.emissionsReturnedAfterClip).toBe("number");
     expect(actionable?.criteria).toBeGreaterThanOrEqual(0);
-    expect(actionable?.candidatesUncapped).toBeGreaterThanOrEqual(0);
-    expect(actionable?.candidatesReturned).toBeGreaterThanOrEqual(0);
-    // candidatesReturned cannot exceed the uncapped inventory — the
-    // page is a slice of it, never wider.
-    expect(actionable?.candidatesReturned ?? 0).toBeLessThanOrEqual(
-      actionable?.candidatesUncapped ?? 0,
+    expect(actionable?.emissionsTotal).toBeGreaterThanOrEqual(0);
+    expect(actionable?.emissionsAfterCollapse).toBeGreaterThanOrEqual(0);
+    expect(actionable?.emissionsReturnedAfterClip).toBeGreaterThanOrEqual(0);
+    // emissionsReturnedAfterClip cannot exceed the post-collapse
+    // inventory — the page is a slice of it, never wider.
+    expect(actionable?.emissionsReturnedAfterClip ?? 0).toBeLessThanOrEqual(
+      actionable?.emissionsAfterCollapse ?? 0,
+    );
+    // emissionsAfterCollapse cannot exceed emissionsTotal — collapse
+    // only folds rows, never inflates the count.
+    expect(actionable?.emissionsAfterCollapse ?? 0).toBeLessThanOrEqual(
+      actionable?.emissionsTotal ?? 0,
     );
     // Reject the legacy bare-number shape outright. A loose
     // `typeof === "object"` would let an asymmetric "sometimes a number,
@@ -314,7 +322,7 @@ describe("checklist tool: summary.actionable structured headline shape", () => {
   it("emits the structured shape on a zero-actionable scan (not as a bare 0)", async () => {
     // Zero-actionable case: empty fixture directory yields zero
     // actionable criteria. The shape must stay structured (not collapse
-    // to a number) so consumers always read the same three keys —
+    // to a number) so consumers always read the same four keys —
     // asymmetric shape would force callers to branch on type, which
     // the always-split discipline exists to avoid.
     const tool = findTool("checklist");
@@ -327,26 +335,29 @@ describe("checklist tool: summary.actionable structured headline shape", () => {
       const actionable = data.summary?.actionable;
       expect(actionable).toBeDefined();
       expect(typeof actionable?.criteria).toBe("number");
-      expect(typeof actionable?.candidatesUncapped).toBe("number");
-      expect(typeof actionable?.candidatesReturned).toBe("number");
+      expect(typeof actionable?.emissionsTotal).toBe("number");
+      expect(typeof actionable?.emissionsAfterCollapse).toBe("number");
+      expect(typeof actionable?.emissionsReturnedAfterClip).toBe("number");
       expect(actionable?.criteria).toBe(0);
-      expect(actionable?.candidatesUncapped).toBe(0);
-      expect(actionable?.candidatesReturned).toBe(0);
+      expect(actionable?.emissionsTotal).toBe(0);
+      expect(actionable?.emissionsAfterCollapse).toBe(0);
+      expect(actionable?.emissionsReturnedAfterClip).toBe(0);
     } finally {
       rmSync(empty, { recursive: true, force: true });
     }
   });
 
-  it("candidatesUncapped reports the pre-clip inventory when perCriterionClipped fires", async () => {
+  it("emissionsAfterCollapse reports the pre-clip inventory when perCriterionClipped fires", async () => {
     // Per-criterion clip: synthesize a fixture with multiple candidates
     // per criterion (multiple `<input type="password">` files all fire
     // 3.3.8) and tighten `maxCandidatesPerCriterion: 1` so the
-    // criterion clips. The summary's `candidatesUncapped` must report
-    // the pre-clip count (matching the response-level
-    // `totalCandidates`), while `candidatesReturned` reports the
-    // post-clip count actually shipped — the headline reads "1 criterion
-    // with N elided candidates" rather than the dishonest read of just
-    // "1 thing to verify."
+    // criterion clips. The summary's `emissionsAfterCollapse` must
+    // report the pre-clip checklist-side inventory (matching the
+    // response-level `totalCandidates`), while
+    // `emissionsReturnedAfterClip` reports the post-clip count
+    // actually shipped — the headline reads "1 criterion with N elided
+    // candidates" rather than the dishonest read of just "1 thing to
+    // verify."
     const fixture = makeMultiCandidateFixture(5);
     try {
       const tool = findTool("checklist");
@@ -360,8 +371,10 @@ describe("checklist tool: summary.actionable structured headline shape", () => {
       // against a regression where the synthetic fixture stops
       // producing >1 candidate per criterion.
       expect(data.perCriterionClipped).toBe(true);
-      expect(actionable?.candidatesUncapped).toBe(data.totalCandidates ?? 0);
-      expect(actionable?.candidatesReturned ?? 0).toBeLessThan(actionable?.candidatesUncapped ?? 0);
+      expect(actionable?.emissionsAfterCollapse).toBe(data.totalCandidates ?? 0);
+      expect(actionable?.emissionsReturnedAfterClip ?? 0).toBeLessThan(
+        actionable?.emissionsAfterCollapse ?? 0,
+      );
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }

@@ -117,8 +117,9 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
     // checklist is project-walk scope — emits the project slice name.
     readonly untargetedCriteriaForProject: number;

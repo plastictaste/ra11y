@@ -44,8 +44,9 @@ function buildSyntheticChecklistResponse(
     summary: {
       actionable: {
         criteria: itemCount,
-        candidatesUncapped: itemCount,
-        candidatesReturned: itemCount,
+        emissionsTotal: itemCount,
+        emissionsAfterCollapse: itemCount,
+        emissionsReturnedAfterClip: itemCount,
       },
       untargetedCriteriaForProject: 0,
     },
