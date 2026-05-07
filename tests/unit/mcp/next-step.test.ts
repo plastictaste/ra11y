@@ -975,6 +975,62 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("additionalPaths");
     });
 
+    it("reroutes to the DENSEST file for the dominant rule, not the alphabetically-first file containing it", () => {
+      // Field-report repro: on a vanilla-stack catalog, the dominant
+      // rule is `keyboard/handler-missing` and its densest file is
+      // `drawing-app/script.js` (5 fires here, 43 in the field report).
+      // The alphabetically-first file containing that rule is
+      // `3d-boxes/script.js` (1 fire). Pre-fix the picker walked files
+      // in alphabetical order and returned the first one whose rule
+      // matched the top count, so it landed on the alphabetical first.
+      // The fix: pick the (rule, file) pair where file is the densest
+      // for the dominant rule — `topRules[0].topFile` semantics.
+      const handlerFinding = (line: number) => ({
+        ruleId: "keyboard/handler-missing",
+        line,
+        column: 1,
+        severity: "error" as const,
+        fixClass: "guidance" as const,
+      });
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: lanes({ guidance: 6 }),
+          },
+          files: [
+            // Alphabetical first: 1 fire of the dominant rule.
+            { path: "3d-boxes-background/script.js", findings: [handlerFinding(7)] },
+            // Densest file: 5 fires of the dominant rule. Sorts
+            // alphabetically AFTER 3d-boxes-background.
+            {
+              path: "drawing-app/script.js",
+              findings: [
+                handlerFinding(10),
+                handlerFinding(20),
+                handlerFinding(30),
+                handlerFinding(40),
+                handlerFinding(50),
+              ],
+            },
+          ],
+        }),
+        { truncated: true },
+      );
+      // Reroute lands on the densest file for the dominant rule —
+      // `drawing-app/script.js`, the file `topRules[0].topFile` would
+      // name. Pre-fix the test would have asserted
+      // `3d-boxes-background/script.js` (alphabetical first), which is
+      // the bug the dispatch guidance pins against.
+      expect(result.structured?.args).toEqual({
+        ruleId: "keyboard/handler-missing",
+        file: "drawing-app/script.js",
+        line: 10,
+      });
+      expect(result.prose).toContain("drawing-app/script.js");
+      expect(result.prose).toContain("3d-boxes-background/script.js");
+      expect(result.prose).toContain("response is truncated");
+    });
+
     it("routes to scope-down on truncated:true when no non-vendor finding exists at all", () => {
       // Edge case: the truncation lane diagnoses the all-vendor shape
       // even when the alphabetical first happened to BE non-vendor in

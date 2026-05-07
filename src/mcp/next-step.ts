@@ -787,21 +787,39 @@ function findSameRuleIdNonVendorFinding(
 
 /**
  * Tallies finding counts per `ruleId` over non-vendor files only,
- * picks the rule with the highest count, then returns that rule's
- * first non-vendor finding (file, line, ruleId). Used by the dominant-
- * rule reroute lane in {@link pickFirstFinding} when no same-`ruleId`
- * non-vendor sibling exists.
+ * picks the rule with the highest count, then returns the densest
+ * non-vendor file for that rule (file, line, ruleId) — i.e. the file
+ * with the most occurrences of the dominant rule, matching
+ * `topRules[0].topFile` semantics from `src/mcp/scan-assembly.ts`.
+ * Used by the dominant-rule reroute lane in {@link pickFirstFinding}
+ * when no same-`ruleId` non-vendor sibling exists, and by the
+ * truncation reroute when the alphabetical-first pick on a paged
+ * corpus is a low-impact target (visual-regression fixture, scaffold
+ * dir, underscore-prefixed template).
  *
- * On a clean tie (two rules with equal max count), picks the one whose
- * first non-vendor finding appears earliest in `files[]` order. The
- * `pickTopRuleByCount` helper used by the per-rule narrowing reroute
- * returns `undefined` on ties (honest "we couldn't pick" for the
- * `explain_rule` reroute), but here a tie-break IS available: file
- * order is deterministic and the tie-break aligns with the same
- * "earliest in the page" intuition the default first-callable picker
- * already uses. Returns `null` only when every finding on every file
- * sits in `vendorPaths` (the all-vendor signal — caller routes to
- * scope-down).
+ * Why densest-file rather than first-by-filename match: per the
+ * AI-first doctrine "NextStep prioritization on truncated/bulk
+ * responses must avoid first-by-filename routing," routing to the
+ * alphabetically-first file containing the dominant rule reproduces
+ * the exact bug the doctrine warns against — observed on a vanilla-
+ * stack catalog where the dominant rule's topFile carried 43 fires
+ * but nextStep landed on a sibling file with 1 fire because that
+ * sibling sorted alphabetically earlier. The densest-file pick
+ * matches `topRules[0].topFile` so the agent's first action lands on
+ * the file with the broadest authored impact for the dominant rule.
+ *
+ * Tiebreaks (deterministic across runs):
+ *   - Multiple rules tied at the top count → pick the alphabetically
+ *     smallest ruleId, matching `withTopRules`'s
+ *     `b.count - a.count || a.ruleId.localeCompare(b.ruleId)` sort
+ *     (`src/mcp/scan-assembly.ts`). This way the reroute's pick
+ *     equals `topRules[0].topFile` even on ties.
+ *   - Multiple files tied at the densest count for the chosen rule →
+ *     pick the alphabetically smallest path, matching `pickDensestFile`
+ *     in `src/mcp/scan-assembly.ts`.
+ *
+ * Returns `null` only when every finding on every file sits in
+ * `vendorPaths` (the all-vendor signal — caller routes to scope-down).
  */
 function pickHighestFiringNonVendorFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
@@ -809,8 +827,98 @@ function pickHighestFiringNonVendorFinding(
 ): FirstFinding | null {
   const counts = countNonVendorFindingsByRuleId(files, vendorPaths);
   if (counts.size === 0) return null;
-  const topCount = maxValue(counts);
-  return firstNonVendorFindingMatchingCount(files, vendorPaths, counts, topCount);
+  const topRuleId = pickDominantRuleId(counts);
+  return densestFileFindingForRule(files, vendorPaths, topRuleId);
+}
+
+/**
+ * Picks the dominant ruleId from a non-empty count map: highest count
+ * wins; alphabetical ruleId tiebreak when two rules tie at the top.
+ * Mirrors `withTopRules`'s sort key in `src/mcp/scan-assembly.ts`
+ * (`b.count - a.count || a.ruleId.localeCompare(b.ruleId)`) so the
+ * reroute target equals `topRules[0]` on the same input. Caller has
+ * already verified `counts.size > 0`.
+ */
+function pickDominantRuleId(counts: ReadonlyMap<string, number>): string {
+  let topRuleId = "";
+  let topCount = -1;
+  for (const [ruleId, count] of counts) {
+    if (count > topCount || (count === topCount && ruleId < topRuleId)) {
+      topRuleId = ruleId;
+      topCount = count;
+    }
+  }
+  return topRuleId;
+}
+
+/**
+ * Walks non-vendor files, tallies how many findings each one carries
+ * for `targetRuleId`, picks the densest file (alphabetical tiebreak
+ * matching `pickDensestFile` in `src/mcp/scan-assembly.ts`), then
+ * returns the first finding line for that rule in that file. The
+ * "densest file for the dominant rule" pick equals
+ * `topRules[0].topFile` semantically — agents reading the headline
+ * `topRules[0]` slot get the same target the next-step reroute names.
+ *
+ * Returns `null` only when no non-vendor file carries the rule (the
+ * all-vendor signal — caller routes to scope-down). The caller's
+ * outer flow has already established `counts.size > 0`, so this
+ * branch is defensive against the degenerate input where the chosen
+ * rule's findings all sit on vendor files (impossible because
+ * `countNonVendorFindingsByRuleId` only tallies non-vendor — kept for
+ * type safety).
+ */
+function densestFileFindingForRule(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  targetRuleId: string,
+): FirstFinding | null {
+  let densestPath: string | undefined;
+  let densestCount = -1;
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    let count = 0;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      if (extracted.ruleId === targetRuleId) count += 1;
+    }
+    if (count === 0) continue;
+    if (
+      count > densestCount ||
+      (count === densestCount && densestPath !== undefined && file.path < densestPath)
+    ) {
+      densestPath = file.path;
+      densestCount = count;
+    }
+  }
+  if (densestPath === undefined) return null;
+  return firstFindingForRuleInFile(files, densestPath, targetRuleId);
+}
+
+/**
+ * Pulls the first (line, ruleId) for `targetRuleId` in the file at
+ * `targetPath`. Used by {@link densestFileFindingForRule} after the
+ * densest file has been chosen — the line itself is just the first
+ * occurrence on that file (the agent navigates from there). Returns
+ * `null` only when the file or the matching finding can't be located,
+ * a degenerate path the caller short-circuits before reaching.
+ */
+function firstFindingForRuleInFile(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  targetPath: string,
+  targetRuleId: string,
+): FirstFinding | null {
+  for (const file of files) {
+    if (file.path !== targetPath) continue;
+    for (const raw of file.findings) {
+      const extracted = readFindingRuleIdAndLine(raw);
+      if (extracted === null) continue;
+      if (extracted.ruleId !== targetRuleId) continue;
+      return { path: file.path, ...extracted };
+    }
+  }
+  return null;
 }
 
 /**
@@ -834,46 +942,6 @@ function countNonVendorFindingsByRuleId(
     }
   }
   return counts;
-}
-
-/**
- * Returns the maximum value across a non-empty `Map<string, number>`.
- * Caller has already checked `counts.size > 0`; returns 0 on the
- * unreachable empty-map case for type safety.
- */
-function maxValue(counts: ReadonlyMap<string, number>): number {
-  let top = 0;
-  for (const c of counts.values()) {
-    if (c > top) top = c;
-  }
-  return top;
-}
-
-/**
- * Walks `files` in order, returning the first non-vendor finding whose
- * `ruleId` hits `topCount`. File order resolves dominant-rule ties
- * deterministically — when two rules tie at the top, the one whose
- * first non-vendor finding appears earliest on the page wins. Returns
- * `null` when no such finding exists (the caller short-circuits before
- * this point on empty `counts`, so this is defensive only).
- */
-function firstNonVendorFindingMatchingCount(
-  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
-  vendorPaths: ReadonlySet<string>,
-  counts: ReadonlyMap<string, number>,
-  topCount: number,
-): FirstFinding | null {
-  for (const file of files) {
-    if (vendorPaths.has(file.path)) continue;
-    for (const raw of file.findings) {
-      const extracted = readFindingRuleIdAndLine(raw);
-      if (extracted === null) continue;
-      if ((counts.get(extracted.ruleId) ?? 0) === topCount) {
-        return { path: file.path, ...extracted };
-      }
-    }
-  }
-  return null;
 }
 
 /**
