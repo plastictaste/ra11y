@@ -269,7 +269,9 @@ export function computeCandidateFindingId(inputs: CandidateFindingIdInputs): str
   // distinct group ships a distinct id even when criteria unions
   // happen to coincide.
   const variantKey =
-    inputs.reason !== undefined && inputs.reason.length > 0 ? hashReasonVariantKey(inputs.reason) : undefined;
+    inputs.reason !== undefined && inputs.reason.length > 0
+      ? hashReasonVariantKey(inputs.reason)
+      : undefined;
   return computeFindingId({
     ruleId,
     filePath: inputs.filePath,

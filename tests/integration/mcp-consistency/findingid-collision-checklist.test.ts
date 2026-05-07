@@ -136,8 +136,7 @@ function describeCollisions(
     if (members.length < 2) continue;
     const trail = members
       .map(
-        (m) =>
-          `${m.path ?? "?"}:${m.line} reason="${m.reason.slice(0, 40).replace(/\n/gu, " ")}…"`,
+        (m) => `${m.path ?? "?"}:${m.line} reason="${m.reason.slice(0, 40).replace(/\n/gu, " ")}…"`,
       )
       .join(" | ");
     lines.push(`  - findingId=${id} → ${members.length} entries: ${trail}`);
@@ -147,7 +146,10 @@ function describeCollisions(
 
 describe("MCP invariant: every checklist candidate findingId is unique within a response", () => {
   it("two finders firing at same byte position with distinct reasons get distinct findingIds on checklist", async () => {
-    const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: FIXTURE_DIR })]);
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "checklist", { cwd: FIXTURE_DIR }),
+    ]);
     const checklistBody = body<ChecklistBody>(responses[1]);
 
     // Flatten every checklist candidate the response shipped.
@@ -190,7 +192,10 @@ describe("MCP invariant: every checklist candidate findingId is unique within a 
   });
 
   it("two finders firing at same byte position with distinct reasons get distinct findingIds on scan_file", async () => {
-    const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: FIXTURE_PAGE })]);
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_file", { path: FIXTURE_PAGE }),
+    ]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const candidates = scanFileBody.reviewCandidates ?? [];
 
