@@ -2641,10 +2641,7 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     // would always be absent. The shape contract on the parent
     // `text_source_skipped` keeps the slot for parity with binary-
     // assets; on the peers the field is omitted by construction.
-    const codes = [
-      "parser_routable_extensions_skipped",
-      "config_or_data_files_skipped",
-    ] as const;
+    const codes = ["parser_routable_extensions_skipped", "config_or_data_files_skipped"] as const;
     const details = computeScanWarningDetails(codes, {
       filesScanned: 50,
       rootSource: "explicit",
