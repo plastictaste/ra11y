@@ -148,7 +148,7 @@ describe("scan_project — summaryOnly parameter", () => {
       expect(typeof fileHead.count).toBe("number");
 
       // The structured per-lane tally (`fixesByClass`) and the
-      // load-bearing sibling counters (`notes`,
+      // load-bearing sibling counters (`infoSeverityFindings`,
       // `actionableManualItemsBySource`, `untargetedCriteriaForProject`)
       // are the honest replacement for the former `plan.summary` prose
       // blurb — see `buildScanPlan` in `src/mcp/scan-assembly.ts` for
@@ -160,7 +160,7 @@ describe("scan_project — summaryOnly parameter", () => {
       // scalar was dropped per Q15-MIN-CSS — the per-scan-kind sibling
       // is the honest replacement.
       expect(typeof body.plan["fixesByClass"]).toBe("object");
-      expect(typeof body.plan["notes"]).toBe("number");
+      expect(typeof body.plan["infoSeverityFindings"]).toBe("number");
       expect(typeof body.plan["actionableManualItemsBySource"]).toBe("object");
       expect(typeof body.plan["untargetedCriteriaForProject"]).toBe("number");
 

@@ -250,7 +250,7 @@ export function buildScanPlan(args: {
       ? { untargetedCriteriaForProject: untargetedCriteria }
       : { untargetedCriteriaForFile: untargetedCriteria };
   return {
-    notes,
+    infoSeverityFindings: notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
@@ -1335,7 +1335,7 @@ export const TOP_RULES_DEFAULT_LIMIT = 10;
  * `plan.fixesByClass` headline tallies. Without the filter, an
  * info-only rule (e.g. `wrappers/inferred`) would crowd the top of
  * the list with non-actionable context — the agent reads
- * "{@link AgentPlan.notes}" for that surface separately.
+ * "{@link AgentPlan.infoSeverityFindings}" for that surface separately.
  *
  * `fixClass` mirrors the per-finding remediation lane (the same value
  * `AgentFinding.fixClass` carries) so the agent reading the headline

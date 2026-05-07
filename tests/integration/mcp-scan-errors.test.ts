@@ -134,7 +134,7 @@ describe("scan_project hard-errors when cwd does not exist", () => {
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
       plan?: {
-        notes?: number;
+        infoSeverityFindings?: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -145,10 +145,10 @@ describe("scan_project hard-errors when cwd does not exist", () => {
     };
     // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
-    // is that the plan exists with a numeric `notes` counter (and
-    // optionally a `fixesByClass` per-lane tally, present-when-
-    // meaningful).
-    expect(typeof body.plan?.notes).toBe("number");
+    // is that the plan exists with a numeric `infoSeverityFindings`
+    // counter (and optionally a `fixesByClass` per-lane tally,
+    // present-when-meaningful).
+    expect(typeof body.plan?.infoSeverityFindings).toBe("number");
   });
 });
 
@@ -181,7 +181,7 @@ describe("scan hard-errors when every path is missing", () => {
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
       plan?: {
-        notes?: number;
+        infoSeverityFindings?: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -192,10 +192,10 @@ describe("scan hard-errors when every path is missing", () => {
     };
     // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
-    // is that the plan exists with a numeric `notes` counter (and
-    // optionally a `fixesByClass` per-lane tally, present-when-
-    // meaningful).
-    expect(typeof body.plan?.notes).toBe("number");
+    // is that the plan exists with a numeric `infoSeverityFindings`
+    // counter (and optionally a `fixesByClass` per-lane tally,
+    // present-when-meaningful).
+    expect(typeof body.plan?.infoSeverityFindings).toBe("number");
   });
 
   it("still emits the warnings envelope on a valid-but-empty directory", async () => {

@@ -154,7 +154,7 @@ describe("scan_project: violations split by scan kind", () => {
       // honest split: no finding gets double-counted, no violation
       // is dropped between the per-lane tally and the per-kind
       // sibling. Both surfaces split the same error+warning axis;
-      // info-severity notes (`plan.notes`) sit on a different axis
+      // info-severity notes (`plan.infoSeverityFindings`) sit on a different axis
       // and stay out of the per-kind lanes.
       const lanesSum = (split?.source ?? 0) + (split?.buildArtifact ?? 0);
       expect(lanesSum).toBe(totalViolations);

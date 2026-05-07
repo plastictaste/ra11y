@@ -35,7 +35,7 @@ function validSummary(): Record<string, unknown> {
   return {
     totalFindings: 3,
     violations: 2,
-    notes: 1,
+    infoSeverityFindings: 1,
     actionableManual: 4,
     untargetedCriteriaForProject: 0,
     keyViolationExamples: [

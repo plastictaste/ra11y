@@ -38,7 +38,7 @@ function buildSyntheticScanFileResponse(
   return {
     findings,
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: findingsCount, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },

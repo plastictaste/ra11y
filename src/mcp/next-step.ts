@@ -265,7 +265,7 @@ export function buildNextStep(
     // the same per-criterion grounded candidates — summing both lanes
     // matches that intent.
     actionableManual: actionableManualSum(formatted.plan),
-    notes: numFromPlan(formatted.plan, "notes"),
+    notes: numFromPlan(formatted.plan, "infoSeverityFindings"),
     first: firstPick.finding,
     iterativeTip: options.iterativeTip ?? "",
     // Conditional-spread per CLAUDE.md §1 — omit entirely when the

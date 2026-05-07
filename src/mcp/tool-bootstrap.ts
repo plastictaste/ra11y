@@ -555,8 +555,9 @@ function extractScanSubset(scan: unknown): ScanSubset {
   // structured-output field consumed by the bootstrap report
   // assembler, not a user-facing surface) — we derive it from
   // `plan.fixesByClass` so the count tracks the honest per-lane
-  // source. `plan.notes` survives unchanged (severity-info, not a
-  // composite of categorically different lanes).
+  // source. `plan.infoSeverityFindings` (renamed from the opaque
+  // `notes`) survives unchanged (severity-info, not a composite of
+  // categorically different lanes).
   //
   // Per `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class
   // lanes must equal project-rooted lanes," the sum spans every lane
@@ -573,7 +574,7 @@ function extractScanSubset(scan: unknown): ScanSubset {
         laneSum(fixesByClass.runtimeOnly) +
         laneSum(fixesByClass.verifyInSource) +
         laneSum(fixesByClass.suppressRecommended);
-  const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
+  const notesCount = readNumberFromRecord(plan, "infoSeverityFindings") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
   const actionableBySource = readActionableManualLane(plan);
   const limitations = readStringArray(plan, "limitations");

@@ -29,7 +29,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
       import { textResult } from "./helpers";
       export function handler() {
         return textResult({
-          plan: { violations: 0, notes: 0, summary: "clean" },
+          plan: { violations: 0, infoSeverityFindings: 0, summary: "clean" },
           files: [],
           meta: {},
         });
@@ -49,7 +49,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
       import { textResult } from "./helpers";
       export function handler() {
         return textResult({
-          plan: { violations: 323, notes: 0 },
+          plan: { violations: 323, infoSeverityFindings: 0 },
         });
       }
     `;

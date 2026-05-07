@@ -392,7 +392,7 @@ export function buildAgentPlan(
   // per-lane tally themselves.
   void violationsCount;
   return {
-    notes: notesCount,
+    infoSeverityFindings: notesCount,
     fixesByClass,
     reviewNeeded,
     manualOnly,

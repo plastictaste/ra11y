@@ -123,7 +123,7 @@ function buildOversizeScanFileResponse(): Record<string, unknown> {
   return {
     findings: [{ findingId: "x@1", ruleId: "test/rule", severity: "error", line: 1, column: 1 }],
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },

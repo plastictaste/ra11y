@@ -112,7 +112,7 @@ describe("withFindingsByRule — conditional spread on the plan", () => {
 
   it("preserves all input plan keys verbatim alongside the new field", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: { mechanical: { source: 1, buildArtifact: 0 } },
       reviewNeeded: 0,
       manualOnly: 0,
@@ -126,7 +126,7 @@ describe("withFindingsByRule — conditional spread on the plan", () => {
     // additive and never replaces a sibling.
     expect(Object.keys(out).sort()).toEqual(
       [
-        "notes",
+        "infoSeverityFindings",
         "fixesByClass",
         "reviewNeeded",
         "manualOnly",

@@ -285,7 +285,7 @@ describe("scan_project pagination (overflow)", () => {
       type Lane = { source: number; buildArtifact: number };
       const body = bodyOf(responses[1]) as {
         plan: {
-          notes: number;
+          infoSeverityFindings: number;
           fixesByClass?: {
             mechanical: Lane;
             guidance: Lane;
@@ -312,7 +312,7 @@ describe("scan_project pagination (overflow)", () => {
           laneSum(lanes.runtimeOnly) +
           laneSum(lanes.verifyInSource)
         : 0;
-      const total = errorWarning + body.plan.notes;
+      const total = errorWarning + body.plan.infoSeverityFindings;
       expect(total).toBeGreaterThanOrEqual(6);
     } finally {
       rmSync(root, { recursive: true, force: true });

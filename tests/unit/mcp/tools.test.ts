@@ -590,7 +590,7 @@ describe("MCP tool: scan", () => {
     type FbcLane = { source: number; buildArtifact: number };
     const data = JSON.parse(result.content[0].text) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: {
           mechanical: FbcLane;
           guidance: FbcLane;
@@ -603,8 +603,8 @@ describe("MCP tool: scan", () => {
     };
     // The flat `plan.violations`
     // headline is gone; sum the four `fixesByClass` lanes for the
-    // error+warning total alongside `plan.notes`. Each lane carries
-    // a per-scan-kind sub-tally (`source + buildArtifact`).
+    // error+warning total alongside `plan.infoSeverityFindings`. Each
+    // lane carries a per-scan-kind sub-tally (`source + buildArtifact`).
     const lanes = data.plan.fixesByClass;
     const laneSum = (l: FbcLane): number => l.source + l.buildArtifact;
     const errorWarning = lanes
@@ -613,7 +613,7 @@ describe("MCP tool: scan", () => {
         laneSum(lanes.runtimeOnly) +
         laneSum(lanes.verifyInSource)
       : 0;
-    expect(errorWarning + data.plan.notes).toBeGreaterThan(0);
+    expect(errorWarning + data.plan.infoSeverityFindings).toBeGreaterThan(0);
     expect(data.files.length).toBeGreaterThan(0);
     expect(data.meta.filesScanned).toBe(1);
   });

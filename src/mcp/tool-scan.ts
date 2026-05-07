@@ -134,10 +134,11 @@ export const scanTool: McpTool = {
       return textResult({
         // the flat `violations: 0` headline
         // was dropped from the plan shape; on a zero-files scan the
-        // honest tally has no lanes to populate, so only `notes` and
-        // `summary` ride. Callers that want the flat count sum
-        // `plan.fixesByClass` (absent here — present-when-meaningful).
-        plan: { notes: 0, summary: "No parseable files found." },
+        // honest tally has no lanes to populate, so only
+        // `infoSeverityFindings` and `summary` ride. Callers that want
+        // the flat count sum `plan.fixesByClass` (absent here —
+        // present-when-meaningful).
+        plan: { infoSeverityFindings: 0, summary: "No parseable files found." },
         files: [],
         meta: { filesScanned: 0, scanned: scannedDir(paths) },
         // `scan` takes paths directly and has no root-resolution step,

@@ -61,7 +61,7 @@ export const auditPrompt: Prompt = {
       '       "scanSummary": {',
       '         "totalFindings": 3,',
       '         "violations": 2,',
-      '         "notes": 1,',
+      '         "infoSeverityFindings": 1,',
       '         "actionableManual": 1,',
       '         "untargetedCriteriaForProject": 0,',
       '         "keyViolationExamples": [',

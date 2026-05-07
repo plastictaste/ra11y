@@ -63,7 +63,7 @@ interface KeyViolationExample {
 interface ScanSummary {
   readonly totalFindings: number;
   readonly violations: number;
-  readonly notes: number;
+  readonly infoSeverityFindings: number;
   readonly actionableManual: number;
   /**
    * Renamed from the bare `untargetedCriteria` to match the project-
@@ -117,15 +117,16 @@ export const draftVpatNarrativeTool: McpTool = {
             totalFindings: {
               type: "number",
               description:
-                "Total findings across the scan whose scope includes this criterion (violations + notes).",
+                "Total findings across the scan whose scope includes this criterion (violations + infoSeverityFindings).",
             },
             violations: {
               type: "number",
               description: "Error/warning findings (severity !== 'info').",
             },
-            notes: {
+            infoSeverityFindings: {
               type: "number",
-              description: "Info-level findings.",
+              description:
+                "Info-level findings (mirrors `scan_project.plan.infoSeverityFindings`). Renamed from `notes` for self-documentation per AI-first doctrine 'Composite headline counts are dishonest.'",
             },
             actionableManual: {
               type: "number",
@@ -156,7 +157,7 @@ export const draftVpatNarrativeTool: McpTool = {
           required: [
             "totalFindings",
             "violations",
-            "notes",
+            "infoSeverityFindings",
             "actionableManual",
             "untargetedCriteriaForProject",
           ],
@@ -185,7 +186,7 @@ export const draftVpatNarrativeTool: McpTool = {
       return errorResult({
         code: "invalid-param",
         message:
-          "scanSummary must be an object with numeric `totalFindings`, `violations`, `notes`, `actionableManual`, and `untargetedCriteriaForProject`.",
+          "scanSummary must be an object with numeric `totalFindings`, `violations`, `infoSeverityFindings`, `actionableManual`, and `untargetedCriteriaForProject`.",
         details: { param: "scanSummary" },
       });
     }
@@ -282,7 +283,7 @@ function buildNarrativePrompt(criterionId: string, summary: ScanSummary): string
     "Scan summary (this is the ONLY evidence available — do not cite findings outside it):",
     `- Total findings: ${summary.totalFindings}`,
     `- Violations (error/warning): ${summary.violations}`,
-    `- Notes (info-level): ${summary.notes}`,
+    `- Notes (info-level): ${summary.infoSeverityFindings}`,
     `- Actionable manual-review items (grounded with file:line): ${summary.actionableManual}`,
     `- Untargeted manual criteria (no grounding): ${summary.untargetedCriteriaForProject}`,
   ];
@@ -335,7 +336,8 @@ function parseScanSummary(raw: unknown): ScanSummary | null {
   const r = raw as Record<string, unknown>;
   const totalFindings = typeof r["totalFindings"] === "number" ? r["totalFindings"] : null;
   const violations = typeof r["violations"] === "number" ? r["violations"] : null;
-  const notes = typeof r["notes"] === "number" ? r["notes"] : null;
+  const infoSeverityFindings =
+    typeof r["infoSeverityFindings"] === "number" ? r["infoSeverityFindings"] : null;
   const actionableManual = typeof r["actionableManual"] === "number" ? r["actionableManual"] : null;
   const untargetedCriteriaForProject =
     typeof r["untargetedCriteriaForProject"] === "number"
@@ -344,7 +346,7 @@ function parseScanSummary(raw: unknown): ScanSummary | null {
   if (
     totalFindings === null ||
     violations === null ||
-    notes === null ||
+    infoSeverityFindings === null ||
     actionableManual === null ||
     untargetedCriteriaForProject === null
   ) {
@@ -354,7 +356,7 @@ function parseScanSummary(raw: unknown): ScanSummary | null {
   return {
     totalFindings,
     violations,
-    notes,
+    infoSeverityFindings,
     actionableManual,
     untargetedCriteriaForProject,
     ...(examples === undefined ? {} : { keyViolationExamples: examples }),

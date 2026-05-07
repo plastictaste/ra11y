@@ -2043,9 +2043,10 @@ function buildEmptyFilesResult(args: {
   return textResult({
     // drop the flat `violations: 0` headline
     // — see `buildScanPlan` in `scan-assembly.ts` for the full rationale.
-    // Zero-files scan has no lanes to populate, so only `notes` and
-    // `summary` ride; callers sum `plan.fixesByClass` for the flat count.
-    plan: { notes: 0, summary: "No parseable files found." },
+    // Zero-files scan has no lanes to populate, so only
+    // `infoSeverityFindings` and `summary` ride; callers sum
+    // `plan.fixesByClass` for the flat count.
+    plan: { infoSeverityFindings: 0, summary: "No parseable files found." },
     files: [],
     meta: {
       filesScanned: 0,

@@ -56,7 +56,7 @@ function buildFinding(
 function buildScanFormatted(filesWithFindings: ScanFormatted["files"]): ScanFormatted {
   return {
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 0, buildArtifact: 0 },
         guidance: {

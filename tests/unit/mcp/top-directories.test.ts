@@ -181,7 +181,7 @@ describe("computeTopDirectories — per-first-child-dir rollup", () => {
     expect(computeTopDirectories([], ROOT)).toEqual([]);
     expect(computeTopDirectories([{ path: "/repo/a.tsx", findings: [] }], ROOT)).toEqual([]);
     // Info-only scan — same severity filter as `computeTopRules`;
-    // `plan.notes` carries that surface separately.
+    // `plan.infoSeverityFindings` carries that surface separately.
     expect(
       computeTopDirectories([{ path: "/repo/a.tsx", findings: [I("wrappers/inferred")] }], ROOT),
     ).toEqual([]);
@@ -191,7 +191,7 @@ describe("computeTopDirectories — per-first-child-dir rollup", () => {
 describe("withTopDirectories — plan-stamping helper", () => {
   it("stamps `plan.topDirectories` when at least two sub-trees carry error/warning findings", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
     } satisfies Record<string, unknown>;
     const out = withTopDirectories(
@@ -207,7 +207,7 @@ describe("withTopDirectories — plan-stamping helper", () => {
       { path: "bbb", violationCount: 1, fileCount: 1, topRule: "button/no-name" },
     ]);
     // Existing plan fields preserved — additive enrichment only.
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
     expect(out["fixesByClass"]).toEqual({
       mechanical: 3,
       guidance: 0,
@@ -218,7 +218,7 @@ describe("withTopDirectories — plan-stamping helper", () => {
 
   it("returns the input plan by identity when no sub-tree carries findings — common no-violations path", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       summary: "No accessibility violations found.",
     } satisfies Record<string, unknown>;
     const out = withTopDirectories(plan, [{ path: "/repo/a.tsx", findings: [] }], ROOT);
@@ -230,7 +230,7 @@ describe("withTopDirectories — plan-stamping helper", () => {
     // Single-bucket short-circuit: a one-row rollup doesn't help the
     // agent route, and `findingsByFile`/`topRules` already cover the
     // single-bucket case. Surfacing one row is redundancy, not signal.
-    const plan = { notes: 0 } satisfies Record<string, unknown>;
+    const plan = { infoSeverityFindings: 0 } satisfies Record<string, unknown>;
     const out = withTopDirectories(
       plan,
       [

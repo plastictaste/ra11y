@@ -593,13 +593,20 @@ export interface FixesByClass {
 /**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
- * `notes` counts `severity: "info"` findings — additive context
- * (e.g. labeled parents, deprecation hints) that share the violations
- * array but do not represent failure. There is no top-level
- * `violations` counter: a flat `violations: N` headline summed
- * categorically different `fixesByClass` lanes (mechanical edits +
- * verify-in-source prose + guidance rewrites + runtime-only) under
- * one number, and agents budgeted against it as if it were N
+ * `infoSeverityFindings` counts `severity: "info"` findings —
+ * additive context (e.g. labeled parents, deprecation hints) that
+ * share the violations array but do not represent failure. The field
+ * was renamed from the opaque `notes`: an agent reading
+ * `plan.notes: 117` on a static-site corpus had no way to derive the
+ * count from sibling fields (it sums info-severity findings, a
+ * categorically different slice from the error+warning lanes that
+ * `fixesByClass` carries — they intentionally don't reconcile). The
+ * self-documenting name reads as "117 info-severity findings" without
+ * the agent having to recall what `notes` measures. There is no
+ * top-level `violations` counter: a flat `violations: N` headline
+ * summed categorically different `fixesByClass` lanes (mechanical
+ * edits + verify-in-source prose + guidance rewrites + runtime-only)
+ * under one number, and agents budgeted against it as if it were N
  * actionable edits. Same shape as the dropped `plan.totalFindings`
  * (severity-distinct lanes under one name) and `plan.safeEditsAvailable`
  * (two editable lanes under one name) precedents — per
@@ -630,7 +637,7 @@ export interface FixesByClass {
  * top-level `violations` counter.
  */
 export interface AgentPlan {
-  readonly notes: number;
+  readonly infoSeverityFindings: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;
   readonly manualOnly: number;

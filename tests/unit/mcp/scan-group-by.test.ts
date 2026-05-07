@@ -260,7 +260,7 @@ describe("withByGroup — plan-stamping helper", () => {
   const root = "/repo";
 
   it("identity-stable when strategy is undefined (the standard non-groupBy path)", () => {
-    const plan = { notes: 0 } satisfies Record<string, unknown>;
+    const plan = { infoSeverityFindings: 0 } satisfies Record<string, unknown>;
     const out = withByGroup(
       plan,
       [{ path: "/repo/a/foo.tsx", findings: [{ ruleId: "x", severity: "error" }] }],
@@ -272,7 +272,7 @@ describe("withByGroup — plan-stamping helper", () => {
   });
 
   it("stamps `plan.byGroup` when at least one group has error/warning findings", () => {
-    const plan = { notes: 0 } satisfies Record<string, unknown>;
+    const plan = { infoSeverityFindings: 0 } satisfies Record<string, unknown>;
     const out = withByGroup(
       plan,
       [
@@ -291,11 +291,11 @@ describe("withByGroup — plan-stamping helper", () => {
         mostCommonRule: "alt-text/missing",
       },
     });
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
   });
 
   it("identity-stable when no group has any error/warning findings (clean scan)", () => {
-    const plan = { notes: 1 } satisfies Record<string, unknown>;
+    const plan = { infoSeverityFindings: 1 } satisfies Record<string, unknown>;
     const out = withByGroup(plan, [], root, "firstChildDir");
     expect(out).toBe(plan);
     expect(out["byGroup"]).toBeUndefined();

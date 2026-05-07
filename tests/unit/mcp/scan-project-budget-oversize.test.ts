@@ -27,7 +27,7 @@ import type { ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
 function buildMinimalFormatted(): ScanFormatted {
   return {
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -197,7 +197,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 4, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -293,7 +293,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 1, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -378,7 +378,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 2, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -448,7 +448,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 0, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -634,7 +634,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     );
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 250, buildArtifact: 0 },
           guidance: { source: 100, buildArtifact: 0 },
@@ -972,7 +972,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 4, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -1100,7 +1100,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       }));
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 0, buildArtifact: 0 },
           guidance: { source: 10, buildArtifact: 0 },

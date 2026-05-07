@@ -46,10 +46,10 @@ interface ScanProjectResponse {
   readonly plan: {
     // The flat top-level
     // `violations` integer was deleted; the honest shape carries
-    // `notes` (severity-info) plus an optional `fixesByClass`
-    // per-lane tally (present-when-meaningful, omitted on
-    // clean scans).
-    readonly notes: number;
+    // `infoSeverityFindings` (severity-info) plus an optional
+    // `fixesByClass` per-lane tally (present-when-meaningful, omitted
+    // on clean scans).
+    readonly infoSeverityFindings: number;
     readonly fixesByClass?: {
       readonly mechanical: { readonly source: number; readonly buildArtifact: number };
       readonly guidance: { readonly source: number; readonly buildArtifact: number };

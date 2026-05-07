@@ -186,7 +186,7 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
     // This is the canonical drift site named in the backlog item.
     const result = buildNextStep(
       formatted({
-        plan: { notes: 1 },
+        plan: { infoSeverityFindings: 1 },
         files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -205,7 +205,10 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
   it("buildNextStep clean-scan branch emits checklist-valid args (empty is honest)", () => {
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
       }),
     );
     expect(result.structured?.tool).toBe("checklist");

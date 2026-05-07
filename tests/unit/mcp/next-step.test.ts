@@ -133,7 +133,7 @@ describe("buildNextStep", () => {
     // notes-only handling.
     const result = buildNextStep(
       formatted({
-        plan: { notes: 3 },
+        plan: { infoSeverityFindings: 3 },
         files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -146,7 +146,10 @@ describe("buildNextStep", () => {
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
       }),
     );
 
@@ -157,7 +160,10 @@ describe("buildNextStep", () => {
   it("returns checklist when the actionable-manual count is non-zero", () => {
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 4, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 4, buildArtifact: 0 },
+        },
       }),
     );
 
@@ -286,7 +292,10 @@ describe("buildNextStep", () => {
     // recommendation (`checklist`) must not be affected.
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
       }),
     );
 
@@ -334,7 +343,10 @@ describe("buildNextStep", () => {
   it("clean scan with manual candidates mentions ra11y/triage prompt", () => {
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 3, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 3, buildArtifact: 0 },
+        },
       }),
     );
     expect(result.prose).toContain("ra11y/triage");
@@ -347,7 +359,10 @@ describe("buildNextStep", () => {
   it("clean scan with zero manual candidates mentions ra11y/audit prompt", () => {
     const result = buildNextStep(
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
       }),
     );
     expect(result.prose).toContain("ra11y/audit");
@@ -425,11 +440,14 @@ describe("buildNextStep", () => {
         files: [{ path: "B.tsx", findings: [sampleFinding] }],
       }),
       formatted({
-        plan: { notes: 1 },
+        plan: { infoSeverityFindings: 1 },
         files: [{ path: "C.tsx", findings: [sampleFinding] }],
       }),
       formatted({
-        plan: { notes: 0, actionableManualItemsBySource: { source: 2, buildArtifact: 0 } },
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 2, buildArtifact: 0 },
+        },
       }),
     ];
     for (const f of cases) {

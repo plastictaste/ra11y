@@ -258,7 +258,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -271,7 +271,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
     // The flat `plan.violations`
     // headline was deleted — sum the structured per-lane tally
-    // alongside `plan.notes` for the total finding count.
+    // alongside `plan.infoSeverityFindings` for the total finding count.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
       ? lanes.mechanical.source +
@@ -280,7 +280,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
         (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
-    expect(errorWarning + body.plan.notes).toBeGreaterThan(0);
+    expect(errorWarning + body.plan.infoSeverityFindings).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
   });
 
@@ -733,7 +733,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: Record<string, number>;
         limitations?: readonly string[];
       };
@@ -1458,7 +1458,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     type Lane = { source: number; buildArtifact: number };
     type PlanShape = {
-      readonly notes: number;
+      readonly infoSeverityFindings: number;
       readonly fixesByClass?: {
         readonly mechanical: Lane;
         readonly guidance: Lane;
@@ -1468,7 +1468,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     function planTotal(plan: PlanShape): number {
       // Per: sum the per-lane tally
-      // alongside `plan.notes` for the total finding count.
+      // alongside `plan.infoSeverityFindings` for the total finding count.
       const lanes = plan.fixesByClass;
       const errorWarning = lanes
         ? lanes.mechanical.source +
@@ -1477,7 +1477,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
           (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
           (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
         : 0;
-      return errorWarning + plan.notes;
+      return errorWarning + plan.infoSeverityFindings;
     }
     const baselineBody = bodyOf(baseline[1]) as {
       plan: PlanShape;
