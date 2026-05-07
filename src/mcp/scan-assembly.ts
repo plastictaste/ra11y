@@ -1337,24 +1337,27 @@ export const TOP_RULES_DEFAULT_LIMIT = 10;
  * the list with non-actionable context — the agent reads
  * "{@link AgentPlan.notes}" for that surface separately.
  *
- * `fixClass` mirrors the rule's declared remediation lane (the same
- * value `Violation.fixClass` carries on every per-finding emission)
- * so the agent reading the headline can partition `topRules[]` by
- * remediation lane and reach the per-rule subset of the
- * `plan.fixesByClass.<lane>` headline tally without paging through
- * `files[]` or `referenceGuide.fixDescriptions`. Per AI-first doctrine
- * "Per-call shape must agree with per-class plan tally": when
- * `plan.fixesByClass.mechanical: 14` advertises 14 mechanical
- * findings, the topRules entries carrying `fixClass: "mechanical"`
- * partition the per-rule axis of those 14 findings. Present-when-
- * meaningful: omitted on the (theoretically degenerate) bucket where
- * the rollup observed no findings carrying a `fixClass` token.
+ * `fixClass` mirrors the per-finding remediation lane (the same value
+ * `AgentFinding.fixClass` carries) so the agent reading the headline
+ * can partition `topRules[]` by remediation lane and reach the per-rule
+ * subset of the `plan.fixesByClass.<lane>` headline tally without
+ * paging through `files[]` or `referenceGuide.fixDescriptions`. Per
+ * AI-first doctrine "Per-call shape must agree with per-class plan
+ * tally": when `plan.fixesByClass.mechanical: 14` advertises 14
+ * mechanical findings, the topRules entries carrying `fixClass:
+ * "mechanical"` partition the per-rule axis of those 14 findings. The
+ * union includes `"suppress-recommended"` because the per-finding
+ * lane reroutes suppression-flavored emissions into that bucket — see
+ * `AgentFinding#fixClass` and `src/output/agent-response/build-finding.ts`
+ * `resolveFixClass`. Present-when-meaningful: omitted on the
+ * (theoretically degenerate) bucket where the rollup observed no
+ * findings carrying a `fixClass` token.
  */
 export interface TopRule {
   readonly ruleId: string;
   readonly count: number;
   readonly topFile?: string;
-  readonly fixClass?: FixClass;
+  readonly fixClass?: FixClass | "suppress-recommended";
 }
 
 /**
@@ -1387,7 +1390,7 @@ export function computeTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,
@@ -1423,17 +1426,19 @@ export function computeTopRules(
  * the count axis and the densest-file selection stay aligned with
  * the error+warning surface `plan.fixesByClass` tallies.
  *
- * `fixClass` capture: the rule registry stamps a single `fixClass`
- * onto every emission a rule produces (`Violation.fixClass` is
- * required), so the first observed finding's `fixClass` is the
- * rule's declared lane. Recording the first-seen value is enough —
- * the per-violation suppression-flavored override that
- * `countFixesByClass` re-routes via emission-text predicates lives
- * downstream of the rule's declared lane and is intentionally not
- * surfaced here (the rollup describes the rule's remediation lane,
- * not the per-emission re-route — agents reading
- * `plan.fixesByClass.suppressRecommended` get the per-emission view
- * separately).
+ * `fixClass` capture: the per-finding `fixClass` carries the
+ * rerouted lane (the rule's declared `Violation.fixClass` for normal
+ * emissions; `"suppress-recommended"` when `buildAgentFinding`'s
+ * `resolveFixClass` predicate routed the emission into the
+ * suppression-flavored lane). Recording the first-seen value is
+ * enough for the per-rule rollup — when a rule emits a mix of normal
+ * and suppression-flavored findings the first observed lane sets the
+ * topRules attribution, mirroring the per-finding label the agent
+ * reads on the bulk of that rule's emissions. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally," the rollup uses the same lane
+ * partition the per-finding `fixClass` and `plan.fixesByClass`
+ * surfaces use.
  */
 function tallyTopRules(
   files: readonly {
@@ -1441,17 +1446,17 @@ function tallyTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
 ): {
   readonly totals: ReadonlyMap<string, number>;
   readonly perFile: ReadonlyMap<string, ReadonlyMap<string, number>>;
-  readonly fixClass: ReadonlyMap<string, FixClass>;
+  readonly fixClass: ReadonlyMap<string, FixClass | "suppress-recommended">;
 } {
   const totals = new Map<string, number>();
   const perFile = new Map<string, Map<string, number>>();
-  const fixClass = new Map<string, FixClass>();
+  const fixClass = new Map<string, FixClass | "suppress-recommended">();
   for (const file of files) {
     for (const finding of file.findings) {
       if (finding.severity === "info") continue;
@@ -1515,7 +1520,7 @@ export function withTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,

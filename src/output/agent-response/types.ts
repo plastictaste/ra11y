@@ -151,14 +151,33 @@ export interface AgentFinding {
   readonly cssPatternId?: string;
   readonly ruleId: string;
   /**
-   * Per-finding remediation lane stamped from the rule's `fixClass`
-   * metadata. Lets agents batch-route at scan time without a per-
-   * finding `suggest_fix` round-trip. See
-   * docs/adr/0007-violation-fix-class-metadata.md. Distinct axis from
-   * `suggest_fix.kind` ("what does the payload contain") — do not
-   * conflate.
+   * Per-finding remediation lane. Stamped from the rule's `fixClass`
+   * metadata in the common case; rerouted to `"suppress-recommended"`
+   * when the violation's `suggestion` prose is suppression-flavored
+   * (mentions the source-level disable pragma — `ra11y-disable` /
+   * `suppress with` — see
+   * `src/utils/suppression-flavored-suggestion.ts`). Lets agents
+   * batch-route at scan time without a per-finding `suggest_fix`
+   * round-trip. See docs/adr/0007-violation-fix-class-metadata.md.
+   *
+   * The per-emission re-route mirrors `suggest_fix`'s `kind:
+   * "suppress-recommended"` discriminator one-to-one and partitions
+   * with the other lanes the same way `plan.fixesByClass` does — a
+   * finding rerouted to `"suppress-recommended"` is NOT also counted
+   * in its rule's declared `fixClass` lane on the plan tally. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+   * agree with per-class plan tally": for every finding `F`,
+   * `suggest_fix(F.ruleId, F.path, F.line).kind` resolves to a value
+   * compatible with `F.fixClass` — `"edit"` / `"guidance"` for
+   * findings whose lane is `mechanical` / `guidance` / `runtime-only`
+   * / `verify-in-source`, and `"suppress-recommended"` for findings
+   * whose lane is `"suppress-recommended"`.
+   *
+   * Distinct axis from `suggest_fix.kind` ("what does the payload
+   * contain") — do not conflate. The lane describes the nature of
+   * the work; `kind` describes the per-call payload shape.
    */
-  readonly fixClass: FixClass;
+  readonly fixClass: FixClass | "suppress-recommended";
   readonly criteria: readonly string[];
   /**
    * Short human titles aligned index-for-index with `criteria`. Present
