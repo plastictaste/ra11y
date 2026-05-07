@@ -245,7 +245,43 @@ export type FixtureExpectation =
    * pipeline invokes, without widening the harness's surface to the
    * full MCP scan envelope.
    */
-  | { readonly kind: "no-build-artifact-label"; readonly path: string };
+  | { readonly kind: "no-build-artifact-label"; readonly path: string }
+  /**
+   * Assert that at least one finding for `ruleId` on the formatted
+   * `files[*].findings[*]` surface (i.e. post-enrichment AgentFinding
+   * shape) carries the named severity / confidence / `couldBeWrongBecause`
+   * substring. Use this when the invariant under test is the per-finding
+   * shape an agent reads on the wire — severity / confidence couplings
+   * propagated by the per-finding helpers in `src/mcp/` are visible
+   * here, NOT on the raw `Violation[]` stream the `violation-present`
+   * predicate walks.
+   *
+   * When `inFile` is set, the matching finding must live in the bucket
+   * for that file path (root-relative POSIX, matching
+   * `ScanFormatted.files[].path`). Without `inFile`, ANY file's finding
+   * counts.
+   *
+   * When `severity` / `confidence` are set, ALL of: severity matches AND
+   * confidence matches AND (when `couldBeWrongBecauseIncludes` is set)
+   * the finding's `couldBeWrongBecause` array contains that token.
+   * Predicates are ANDed across the named axes; absent axes go
+   * unchecked. At least one finding must satisfy every set axis.
+   *
+   * Failure messages distinguish the modes:
+   *   - no finding for `ruleId` (either at all, or in `inFile` when
+   *     scoped) — silent-miss regression guard
+   *   - findings exist but none satisfy the severity / confidence /
+   *     code constraints — a rule emitting at the wrong attention-budget
+   *     level for its conceded uncertainty
+   */
+  | {
+      readonly kind: "finding-shape";
+      readonly ruleId: string;
+      readonly inFile?: string;
+      readonly severity?: "error" | "warning" | "info";
+      readonly confidence?: "high" | "medium" | "low";
+      readonly couldBeWrongBecauseIncludes?: string;
+    };
 
 /** Predicates available for the {@link MetaFieldExpectation}. */
 export type MetaFieldPredicate =
@@ -760,6 +796,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalPerRuleCoverageConfidence(fixtureId, exp, ctx);
     case "no-build-artifact-label":
       return evalNoBuildArtifactLabel(fixtureId, exp, ctx);
+    case "finding-shape":
+      return evalFindingShape(fixtureId, exp, ctx);
     default: {
       // Exhaustive switch — `never` tells us a new variant was added.
       const _exhaustive: never = exp;
@@ -1510,6 +1548,98 @@ function evalNoBuildArtifactLabel(
     pass: true,
     message: `real-world/${fixtureId}: '${exp.path}' is not labeled as a build artifact`,
   };
+}
+
+// ─── finding-shape ──────────────────────────────────────────────────────────
+
+/**
+ * Asserts that at least one finding for the named rule on the formatted
+ * `files[*].findings[*]` surface (post-enrichment AgentFinding shape)
+ * carries every set axis on the predicate. Distinct from
+ * `violation-present` because the AgentFinding stream rides downstream
+ * of the per-finding helpers in `src/mcp/`, where severity / confidence
+ * couplings (e.g. the verify-token coupling that downgrades layout-
+ * partial / fragment / demo-shape findings to `severity: info`) are
+ * applied. The raw `Violation[]` stream `violation-present` walks does
+ * not carry those couplings.
+ *
+ * Failure modes distinguished in the message:
+ *   - no finding for `ruleId` at all (or in `inFile` when scoped) —
+ *     silent-miss regression guard
+ *   - findings exist but none match every set axis — the per-finding
+ *     coupling is missing or partial
+ */
+function evalFindingShape(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "finding-shape" },
+  ctx: FixtureScanContext,
+): ExpectationResult {
+  const buckets = exp.inFile === undefined
+    ? ctx.formatted.files
+    : ctx.formatted.files.filter((b) => b.path === exp.inFile);
+  if (exp.inFile !== undefined && buckets.length === 0) {
+    const known = ctx.formatted.files.map((b) => b.path).join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: no formatted file bucket at '${exp.inFile}' for finding-shape on ${exp.ruleId}. Buckets: [${known}]`,
+    };
+  }
+  const candidates = buckets.flatMap((b) => b.findings.filter((f) => f.ruleId === exp.ruleId));
+  if (candidates.length === 0) {
+    const where = exp.inFile === undefined ? "" : ` in '${exp.inFile}'`;
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: finding-shape: no findings for ruleId '${exp.ruleId}'${where} on the formatted files surface`,
+    };
+  }
+  const matches = candidates.filter((f) => {
+    if (exp.severity !== undefined && f.severity !== exp.severity) return false;
+    if (exp.confidence !== undefined && f.confidence !== exp.confidence) return false;
+    if (exp.couldBeWrongBecauseIncludes !== undefined) {
+      const codes = f.couldBeWrongBecause;
+      if (codes === undefined || !codes.includes(exp.couldBeWrongBecauseIncludes)) return false;
+    }
+    return true;
+  });
+  if (matches.length > 0) {
+    const axes = formatFindingShapeAxes(exp);
+    return {
+      expectation: exp,
+      pass: true,
+      message: `real-world/${fixtureId}: finding-shape: ${matches.length} of ${candidates.length} '${exp.ruleId}' findings satisfy ${axes}`,
+    };
+  }
+  const observed = candidates
+    .slice(0, 3)
+    .map(
+      (f) =>
+        `{severity:${f.severity},confidence:${f.confidence},couldBeWrongBecause:${JSON.stringify(f.couldBeWrongBecause ?? [])}}`,
+    )
+    .join(", ");
+  const more = candidates.length > 3 ? `, +${candidates.length - 3} more` : "";
+  const axes = formatFindingShapeAxes(exp);
+  return {
+    expectation: exp,
+    pass: false,
+    message: `real-world/${fixtureId}: finding-shape: 0 of ${candidates.length} '${exp.ruleId}' findings satisfy ${axes}. Observed: [${observed}${more}]`,
+  };
+}
+
+/**
+ * Compact human-readable summary of the per-axis predicate set on a
+ * `finding-shape` expectation, used in pass / fail messages so the
+ * author sees which axes were under test.
+ */
+function formatFindingShapeAxes(exp: FixtureExpectation & { kind: "finding-shape" }): string {
+  const parts: string[] = [];
+  if (exp.severity !== undefined) parts.push(`severity=${exp.severity}`);
+  if (exp.confidence !== undefined) parts.push(`confidence=${exp.confidence}`);
+  if (exp.couldBeWrongBecauseIncludes !== undefined) {
+    parts.push(`couldBeWrongBecauseIncludes='${exp.couldBeWrongBecauseIncludes}'`);
+  }
+  return parts.length === 0 ? "(no axes set)" : parts.join(", ");
 }
 
 /**
