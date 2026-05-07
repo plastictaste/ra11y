@@ -730,7 +730,7 @@ const BINARY_PRESENCE_CODES_FOR_INVARIANT: ReadonlySet<string> = new Set([
   // exclusively-binary set; derivative surfaces that don't materialize
   // the coverage block still fall back to the truncation sentinel via
   // the schema-discipline contract.
-  "dist_only_scan_detected",
+  "build_artifact_only_scan_detected",
 ]);
 
 /**

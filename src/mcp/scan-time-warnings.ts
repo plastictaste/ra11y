@@ -24,7 +24,7 @@
  *     `scanned_minified_file`, `bulk_catalog_detected`,
  *     `scss_unresolved_variables`, `vendor_css_dominates_findings`,
  *     `animation_library_without_reduced_motion_guard`,
- *     `dist_only_scan_detected`, `js_innerhtml_template_literal_unparsed`,
+ *     `build_artifact_only_scan_detected`, `js_innerhtml_template_literal_unparsed`,
  *     etc.
  *
  *   - **response-instance warnings** — predicate is a function of the

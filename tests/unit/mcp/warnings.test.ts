@@ -1777,7 +1777,7 @@ describe("warningsFromScanMeta", () => {
   // one artifact" — neither it nor `scanned_zero_files` (which needs
   // filesScanned: 0) names the dominance regime. The new code surfaces
   // the gap so the agent re-scopes to authored source.
-  it("fires `dist_only_scan_detected` when every parsed file is a build artifact", () => {
+  it("fires `build_artifact_only_scan_detected` when every parsed file is a build artifact", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
@@ -1787,10 +1787,10 @@ describe("warningsFromScanMeta", () => {
       scannedBuildArtifactsPresent: true,
       scannedBuildArtifactsAllFiles: true,
     });
-    expect(codes).toContain("dist_only_scan_detected");
+    expect(codes).toContain("build_artifact_only_scan_detected");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when at least one parsed file is authored source", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when at least one parsed file is authored source", () => {
     const codes = computeScanWarnings({
       filesScanned: 10,
       rootSource: "explicit",
@@ -1800,10 +1800,10 @@ describe("warningsFromScanMeta", () => {
       scannedBuildArtifactsPresent: true,
       scannedBuildArtifactsAllFiles: false,
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when filesScanned is zero (the bare scanned_zero_files stays the honest signal)", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when filesScanned is zero (the bare scanned_zero_files stays the honest signal)", () => {
     const codes = computeScanWarnings({
       filesScanned: 0,
       rootSource: "explicit",
@@ -1815,11 +1815,11 @@ describe("warningsFromScanMeta", () => {
       // this code on top of `scanned_zero_files`.
       scannedBuildArtifactsAllFiles: true,
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
     expect(codes).toContain("scanned_zero_files");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when the flag is omitted (tool didn't run the detector)", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when the flag is omitted (tool didn't run the detector)", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
@@ -1827,19 +1827,19 @@ describe("warningsFromScanMeta", () => {
       analysisCoverage: undefined,
       filesByExtension: { ".css": 5 },
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
   });
 
-  it("populates `warningsDetails.dist_only_scan_detected` with filesScanned + dominant classifierReason + top — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+  it("populates `warningsDetails.build_artifact_only_scan_detected` with filesScanned + dominant classifierReason + top — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
     // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
     // dishonest" — without this payload, the agent reading the bare
     // code learns "every parsed file is a build artifact" but cannot
-    // answer "which dist tree, what magnitude, which classifier
+    // answer "which generated tree, what magnitude, which classifier
     // reason dominates" without descending into
     // `meta.scannedBuildArtifacts`. The payload mirrors the
     // `scanned_build_artifacts_present.top` shape so an agent reading
     // either code's payload gets the same load-bearing pivot for the
-    // dist-only triage.
+    // build-artifact-only triage.
     const inputs = {
       filesScanned: 3,
       rootSource: "explicit" as const,
@@ -1868,16 +1868,16 @@ describe("warningsFromScanMeta", () => {
       },
     };
     const codes = computeScanWarnings(inputs);
-    expect(codes).toContain("dist_only_scan_detected");
+    expect(codes).toContain("build_artifact_only_scan_detected");
     const result = computeScanWarningDetails(codes, inputs);
-    expect(result.dist_only_scan_detected).toEqual({
+    expect(result.build_artifact_only_scan_detected).toEqual({
       filesScanned: 3,
       classifierReason: "definite-min-infix",
       top: inputs.scannedBuildArtifactsSummary.top,
     });
   });
 
-  it("`warningsDetails.dist_only_scan_detected.classifierReason` and `.top` are omitted when the build-artifact summary is absent (derivative-tool surface)", () => {
+  it("`warningsDetails.build_artifact_only_scan_detected.classifierReason` and `.top` are omitted when the build-artifact summary is absent (derivative-tool surface)", () => {
     // Derivative tools that fire the warning off the bare boolean
     // alone (without threading the per-entry list) get the load-
     // bearing scalar `filesScanned` but no top-slice / classifier
@@ -1894,7 +1894,7 @@ describe("warningsFromScanMeta", () => {
     };
     const codes = computeScanWarnings(inputs);
     const result = computeScanWarningDetails(codes, inputs);
-    const payload = result.dist_only_scan_detected as
+    const payload = result.build_artifact_only_scan_detected as
       | {
           filesScanned: number;
           classifierReason?: string;

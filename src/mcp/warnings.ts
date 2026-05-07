@@ -546,11 +546,19 @@ export type ScanWarningCode =
   // the source tree (`additionalPaths` to `src/`, narrower `cwd`)
   // instead of triaging finding-by-finding on un-editable bytes. Pairs
   // with — and is strictly narrower than — `scanned_build_artifacts_present`:
-  // both fire together when the dist-only condition holds, but this
-  // code names the dominance regime the broader presence label cannot.
-  // Binary-presence: the file list lives in `meta.scannedBuildArtifacts`
-  // already, so no payload is needed beyond the bare fired bit.
-  | "dist_only_scan_detected"
+  // both fire together when the build-artifact-only condition holds,
+  // but this code names the dominance regime the broader presence
+  // label cannot. The predicate is "100% of parsed files classified as
+  // build artifacts" — `dist/` is the canonical example but the
+  // classifier matches on `.min.` infix, hashed filenames, sourcemap
+  // pairs, and other deterministic signals regardless of path segment;
+  // naming the code after the predicate (`build_artifact_only`) keeps
+  // the wire shape honest per AI-first doctrine "Heuristic-mislabeled
+  // meta sub-fields are dishonest." Payload-bearing —
+  // {@link ScanWarningDetails.build_artifact_only_scan_detected}
+  // carries `filesScanned`, the dominant `classifierReason`, and a
+  // top-N pivot mirroring the build-artifact summary.
+  | "build_artifact_only_scan_detected"
   // `filesScanned === 0` AND
   // the config-resolution walk-up landed on a `ra11y.config.*` /
   // `package.json` at a strict ancestor of the resolved scan root —
@@ -1309,7 +1317,7 @@ export interface WarningInputs {
    * flag). Pass `true` only when both halves of the predicate hold:
    * `entries.length === filesScanned` AND `filesScanned > 0`. Pass
    * `false` (or omit) when even one parsed file was authored source —
-   * the dist-only signal would be a lie in that case.
+   * the build-artifact-only signal would be a lie in that case.
    */
   readonly scannedBuildArtifactsAllFiles?: boolean;
   /**
@@ -1909,7 +1917,7 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `bulk_catalog_detected`,
  *     `animation_library_without_reduced_motion_guard`,
  *     `response_dropped_files_oversize`,
- *     `cwd_appears_misrooted`, `dist_only_scan_detected`,
+ *     `cwd_appears_misrooted`, `build_artifact_only_scan_detected`,
  *     `baseline_dry_run`, and
  *     `response_meta_truncated` (carries the dotted field paths of
  *     the meta sub-arrays that were elided so the agent can re-fetch
@@ -3074,11 +3082,11 @@ export interface ScanWarningDetails {
     readonly reason: string;
   };
   /**
-   * Payload for `dist_only_scan_detected`. Carries the load-bearing
-   * routing identity an agent reads to triage the dist-only regime:
-   * the scanned-file count, the dominant build-artifact classifier
+   * Payload for `build_artifact_only_scan_detected`. Carries the load-bearing
+   * routing identity an agent reads to triage the build-artifact-only
+   * regime: the scanned-file count, the dominant build-artifact classifier
    * verdict, and a head-slice of the affected paths so an agent
-   * branches on which dist tree the caller misrooted into without
+   * branches on which generated tree the caller misrooted into without
    * descending into `meta.scannedBuildArtifacts`.
    *
    * - `filesScanned` — total parsed-file count (every entry of which
@@ -3086,8 +3094,8 @@ export interface ScanWarningDetails {
    *   `scannedBuildArtifactsAllFiles === true` AND `filesScanned > 0`).
    *   Without this scalar, an agent reading the bare code knows the
    *   regime fired but not the magnitude — an `additionalPaths` re-
-   *   route on a 1000-file dist tree is a different cost than on a
-   *   3-file leaf.
+   *   route on a 1000-file generated tree is a different cost than on
+   *   a 3-file leaf.
    * - `classifierReason` — the dominant classifier verdict across the
    *   build-artifact list (the most-frequent
    *   {@link import("./build-artifacts.ts").BuildArtifactClassification}
@@ -3107,22 +3115,22 @@ export interface ScanWarningDetails {
    *   verbatim from the build-artifact summary's `top` field (capped
    *   at {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}). Mirrors the
    *   `scanned_build_artifacts_present.top` shape so an agent calling
-   *   `scan_project` once gets the load-bearing pivot for the dist-
-   *   only triage on either code's payload. Conditional-spread per
-   *   AI-first "Sibling fields naming the same concept must use one
-   *   shape" — when the top slice is empty (build-artifact list
+   *   `scan_project` once gets the load-bearing pivot for the build-
+   *   artifact-only triage on either code's payload. Conditional-
+   *   spread per AI-first "Sibling fields naming the same concept must
+   *   use one shape" — when the top slice is empty (build-artifact list
    *   absent), the field omits rather than shipping a `top: []`
    *   sentinel.
    *
    * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
    * dishonest" — without this payload, the warning channel reads
-   * `dist_only_scan_detected: {}` and forces the agent to cross-
+   * `build_artifact_only_scan_detected: {}` and forces the agent to cross-
    * reference `meta.filesScanned` and `meta.scannedBuildArtifacts`
    * to recover information already known at predicate time. With
    * the payload, the warning channel carries the full triage
    * pivot in one read.
    */
-  readonly dist_only_scan_detected?: {
+  readonly build_artifact_only_scan_detected?: {
     readonly filesScanned: number;
     readonly classifierReason?: import("./build-artifacts.ts").BuildArtifactClassification;
     readonly top?: readonly {
@@ -3554,7 +3562,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "animation_library_without_reduced_motion_guard",
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
-  "dist_only_scan_detected",
+  "build_artifact_only_scan_detected",
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
   "linked_stylesheet_local_unresolved",
@@ -3765,17 +3773,19 @@ function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
  * cognitive-complexity cap (same pattern as
  * {@link contentDistributionCodes} and {@link parseErrorCodes}). Both
  * codes name a regime where the success-shape is ambiguous about whether
- * the scan reached authored source — `dist_only_scan_detected` for "every
- * parsed file was generated bytes," `cwd_appears_misrooted` for "no
- * parseable files but a parent dir likely would have produced them."
+ * the scan reached authored source — `build_artifact_only_scan_detected`
+ * for "every parsed file was classified as build artifact,"
+ * `cwd_appears_misrooted` for "no parseable files but a parent dir
+ * likely would have produced them."
  *
  * Order matches declaration order on `ScanWarningCode` for stable
- * `warnings[]` sequencing across runs: dist-only first, misrooted second.
+ * `warnings[]` sequencing across runs: build-artifact-only first,
+ * misrooted second.
  */
 function scanShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (inputs.scannedBuildArtifactsAllFiles === true && inputs.filesScanned > 0) {
-    out.push("dist_only_scan_detected");
+    out.push("build_artifact_only_scan_detected");
   }
   if (inputs.filesScanned === 0 && typeof inputs.nearestConfigAncestor === "string") {
     out.push("cwd_appears_misrooted");
@@ -5309,9 +5319,9 @@ function templateLiteralDispatchRows(
  * codes whose payloads ride on the same set of build-artifact-summary
  * + filesScanned + nearestConfigAncestor inputs:
  *
- *   - `dist_only_scan_detected` — fires when every parsed file was
- *     classified as a build artifact; payload carries the dominant
- *     classifier reason + top-N pivot.
+ *   - `build_artifact_only_scan_detected` — fires when every parsed
+ *     file was classified as a build artifact; payload carries the
+ *     dominant classifier reason + top-N pivot.
  *   - `cwd_appears_misrooted` — fires when filesScanned is zero AND
  *     a strict-ancestor project marker resolved; payload carries the
  *     ancestor path the agent re-scopes to.
@@ -5322,9 +5332,9 @@ function templateLiteralDispatchRows(
 function scanShapeDispatchRows(inputs: WarningInputs): readonly ScanWarningDetailsDispatchRow[] {
   return [
     {
-      code: "dist_only_scan_detected",
+      code: "build_artifact_only_scan_detected",
       summarize: () =>
-        summarizeDistOnlyScanDetected({
+        summarizeBuildArtifactOnlyScanDetected({
           ...(inputs.scannedBuildArtifactsAllFiles === undefined
             ? {}
             : { scannedBuildArtifactsAllFiles: inputs.scannedBuildArtifactsAllFiles }),
@@ -5579,12 +5589,12 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
 }
 
 /**
- * Builds the `dist_only_scan_detected` payload. The predicate fires
+ * Builds the `build_artifact_only_scan_detected` payload. The predicate fires
  * only when `scannedBuildArtifactsAllFiles === true && filesScanned > 0`,
  * so the bare scan-shape signal is always honest; the payload adds
- * the routing pivot the agent reads to triage which dist tree to re-
- * scope around. Returns `undefined` when the predicate did not fire
- * (defensive — the dispatch table only invokes this for codes
+ * the routing pivot the agent reads to triage which generated tree
+ * to re-scope around. Returns `undefined` when the predicate did not
+ * fire (defensive — the dispatch table only invokes this for codes
  * `computeScanWarnings` actually emitted, but the helper stays pure).
  *
  * - `filesScanned` always rides (the predicate gate guarantees > 0).
@@ -5598,9 +5608,9 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
  *   thread the per-entry list).
  * - `top` mirrors `scanned_build_artifacts_present.top` so an agent
  *   reading either code's payload gets the same load-bearing pivot
- *   for the dist-only triage.
+ *   for the build-artifact-only triage.
  */
-function summarizeDistOnlyScanDetected(inputs: {
+function summarizeBuildArtifactOnlyScanDetected(inputs: {
   readonly scannedBuildArtifactsAllFiles?: boolean;
   readonly filesScanned: number;
   readonly scannedBuildArtifactsSummary?: WarningInputs["scannedBuildArtifactsSummary"];
@@ -5638,7 +5648,7 @@ function summarizeDistOnlyScanDetected(inputs: {
  * {@link import("./build-artifacts.ts").BuildArtifactClassification}
  * token across the supplied `{path, reason}` records — the
  * deterministic argmax used by
- * {@link summarizeDistOnlyScanDetected.classifierReason}. Tie-break
+ * {@link summarizeBuildArtifactOnlyScanDetected.classifierReason}. Tie-break
  * is alphabetical (every classification token is a stable kebab-case
  * identifier), so the wire shape stays consistent across runs even
  * when two reasons tie. Pure over its input; no I/O.

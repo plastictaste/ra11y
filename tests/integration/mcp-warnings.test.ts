@@ -396,7 +396,7 @@ describe("warningsDetails entries are non-empty for graduated codes (Q16 closure
   // Closes the multi-corpus regression where four codes were shipping
   // empty `warningsDetails.<code>: {}` payloads on otherwise valid
   // responses — `partial_parse_files_present`, `baseline_dry_run`,
-  // `dist_only_scan_detected`, and the colon-suffixed dynamic
+  // `build_artifact_only_scan_detected`, and the colon-suffixed dynamic
   // `foreign_ecosystem_detected: <value>` (which additionally
   // violated the static-code-only contract because a runtime-injected
   // suffix can't key the typed `warningsDetails` slot). Each
@@ -410,10 +410,11 @@ describe("warningsDetails entries are non-empty for graduated codes (Q16 closure
   // partial-parse, off bootstrap (dry-run by default) for
   // `baseline_dry_run`, and off propose_config in a Ruby-toolchain
   // scratch dir for the foreign-ecosystem rename. Coverage of
-  // `dist_only_scan_detected` payload graduation is handled by the
-  // unit tests in `tests/unit/mcp/warnings.test.ts` — fabricating a
-  // dist-only scan from the integration harness would require a
-  // bulk-vendor fixture larger than the surface here justifies.
+  // `build_artifact_only_scan_detected` payload graduation is handled
+  // by the unit tests in `tests/unit/mcp/warnings.test.ts` —
+  // fabricating a build-artifact-only scan from the integration
+  // harness would require a bulk-vendor fixture larger than the
+  // surface here justifies.
   const FIXTURE = posixJoin(
     PROJECT_ROOT,
     "tests",

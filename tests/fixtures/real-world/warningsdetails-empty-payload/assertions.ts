@@ -7,7 +7,7 @@
  * Field-report shape (multi-corpus regression): four codes were
  * shipping empty `{}` payloads — `partial_parse_files_present` (on
  * `scan_project` / `bootstrap` / `coverage`),
- * `baseline_dry_run` (on `bootstrap`), `dist_only_scan_detected`
+ * `baseline_dry_run` (on `bootstrap`), `build_artifact_only_scan_detected`
  * (on `scan_file` against a vendor stylesheet), and
  * `foreign_ecosystem_detected: <value>` (on `propose_config` —
  * additionally a colon-suffixed dynamic-value-in-warning-code key
