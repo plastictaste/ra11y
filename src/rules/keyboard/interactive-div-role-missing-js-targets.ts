@@ -375,11 +375,18 @@ function classifySelector(method: string, arg: string): CapturedSelector | null 
   }
   if (method === "getElementsByTagName") {
     if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(trimmed)) return null;
-    if (DOCUMENT_ROOT_TAGS.has(trimmed.toLowerCase())) return null;
-    return { selector: trimmed, kind: "tag", value: trimmed };
+    return buildTagSelector(trimmed);
   }
-  // querySelector / querySelectorAll — accept simple single-token shapes
-  // only.
+  return classifyQuerySelectorArg(trimmed);
+}
+
+/**
+ * Decode a `querySelector` / `querySelectorAll` argument into a
+ * captured selector. Accepts simple single-token shapes only:
+ * `#id`, `.class`, `tag`, `[attr]` (no value comparator). Compound
+ * selectors fall through to null.
+ */
+function classifyQuerySelectorArg(trimmed: string): CapturedSelector | null {
   if (/^#[A-Za-z][\w-]*$/.test(trimmed)) {
     return { selector: trimmed, kind: "id", value: trimmed.slice(1) };
   }
@@ -387,18 +394,25 @@ function classifySelector(method: string, arg: string): CapturedSelector | null 
     return { selector: trimmed, kind: "class", value: trimmed.slice(1) };
   }
   if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(trimmed)) {
-    if (DOCUMENT_ROOT_TAGS.has(trimmed.toLowerCase())) return null;
-    return { selector: trimmed, kind: "tag", value: trimmed };
+    return buildTagSelector(trimmed);
   }
   // Bracketed attribute selector with no value comparator (`[data-x]`
   // but NOT `[data-x="y"]`) — value-comparators require attribute-value
   // matching which the simple HTML walker doesn't support yet.
   const attrMatch = /^\[([A-Za-z][\w-]*)\]$/.exec(trimmed);
-  if (attrMatch !== null) {
-    const name = attrMatch[1];
-    if (name !== undefined) return { selector: trimmed, kind: "attribute", value: name };
-  }
-  return null;
+  if (attrMatch === null) return null;
+  const name = attrMatch[1];
+  if (name === undefined) return null;
+  return { selector: trimmed, kind: "attribute", value: name };
+}
+
+/**
+ * Build a tag-selector capture, returning null when the tag names a
+ * document root (`html`, `body`) — see `DOCUMENT_ROOT_TAGS`.
+ */
+function buildTagSelector(tagName: string): CapturedSelector | null {
+  if (DOCUMENT_ROOT_TAGS.has(tagName.toLowerCase())) return null;
+  return { selector: tagName, kind: "tag", value: tagName };
 }
 
 function escapeForRegex(name: string): string {

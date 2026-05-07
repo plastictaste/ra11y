@@ -170,7 +170,7 @@ describe("rule keyboard/interactive-div-role-missing", () => {
       expect(v).toHaveLength(0);
     });
 
-    it('the JS targets the document-root tag selector `html` (delegated outside-click pattern)', () => {
+    it("the JS targets the document-root tag selector `html` (delegated outside-click pattern)", () => {
       const v = scan([
         htmlFile(
           "index.html",
@@ -188,7 +188,7 @@ describe("rule keyboard/interactive-div-role-missing", () => {
       expect(v).toHaveLength(0);
     });
 
-    it('the JS targets the document-root tag selector `body`', () => {
+    it("the JS targets the document-root tag selector `body`", () => {
       const v = scan([
         htmlFile("index.html", `<!DOCTYPE html><html><body><main>x</main></body></html>`),
         jsFile("vendor.js", `document.getElementsByTagName('body')[0].onclick = handler;`),
