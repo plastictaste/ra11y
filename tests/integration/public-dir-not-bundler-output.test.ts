@@ -27,7 +27,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { posixJoin } from "../helpers/path.ts";
 
@@ -212,10 +212,7 @@ describe("public/ as static-assets convention (not bundler-output)", () => {
       const minInfix = entry?.classifications.find(
         (c) => c.classification === "definite-min-infix",
       );
-      expect(
-        minInfix,
-        "bootstrap.min.css should classify via .min. infix predicate",
-      ).toBeDefined();
+      expect(minInfix, "bootstrap.min.css should classify via .min. infix predicate").toBeDefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
