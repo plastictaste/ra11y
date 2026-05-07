@@ -79,6 +79,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  numParam,
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
@@ -1114,6 +1115,11 @@ export const checklistTool: McpTool = {
           required: ["afterCriterion", "afterCandidateIndex"],
         },
         skipCriterion: skipCriterionSchema,
+        maxBytes: {
+          type: "number",
+          description:
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
+        },
         metaMode: metaModeSchema,
       },
     },
@@ -1718,7 +1724,21 @@ export const checklistTool: McpTool = {
     // "Per-tool lane and warning-set classification must agree" — same
     // warning code (`response_dropped_files_oversize`) and same
     // byte-arithmetic payload as `scan_project` / `scan_file`.
-    const budgeted = applyChecklistBudget({ response: fullResponse });
+    // Q17-CHECKLIST-COVERAGE-NO-MINIMUM-HONEST-ENVELOPE: thread the
+    // caller's `maxBytes` override (when supplied) into the budget
+    // helper so test fixtures and tighter-host configurations can
+    // drive the slim envelope on tractable response sizes. Mirrors
+    // `scan_file`'s `maxBytes` → `applyScanFileBudget.maxBytes` wiring.
+    // Without this seam, an integration test would need to assemble a
+    // 100+ KB corpus to hit the natural 96000-char ceiling on this
+    // tool — brittle and slow. Per AI-first doctrine "Per-tool lane
+    // and warning-set classification must agree": same override knob
+    // shape across every project-rooted tool that runs the slim guard.
+    const maxBytes = numParam(params, "maxBytes");
+    const budgeted = applyChecklistBudget({
+      response: fullResponse,
+      ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+    });
     return textResult(budgeted.response);
   },
 };

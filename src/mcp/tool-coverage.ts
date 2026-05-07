@@ -39,6 +39,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  numParam,
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
@@ -78,6 +79,11 @@ export const coverageTool: McpTool = {
           type: "boolean",
           description:
             "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and `analysisCoverage.parseErrorFiles` / `partialParseFiles` (full per-entry `{ path, parserAttempted, naturalParser?, reason }` arrays uncapped — at default verbosity, counts ≤ 20 still ship inline; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup of top distinct reasons by frequency). `parserAttempted` is the parser the dispatcher actually invoked (routing decision); `naturalParser` is present-when-meaningful, only surfaced when the dispatcher routed the file through a non-natural parser (`.js` → tsx, `.svg` → html). The count scalar (`parseErrorFileCount` / `partialParseFileCount`) and the scan-confidence telemetry (`rulesEvaluated`, `filesWithAnyRuleEvaluated` / `filesWithZeroRuleEvaluation`, `rulesNotEvaluatedDueToInputType`) stay inline at every verbosity. Off by default to keep responses bounded on bulk-template scans; flip when triaging which specific files failed to parse or auditing per-rule confidence.",
+        },
+        maxBytes: {
+          type: "number",
+          description:
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
         },
         metaMode: metaModeSchema,
       },
@@ -838,7 +844,20 @@ export const coverageTool: McpTool = {
       // — same warning code (`response_dropped_files_oversize`) and
       // same byte-arithmetic payload as `scan_project` / `scan_file`
       // / `checklist`.
-      const budgeted = applyCoverageBudget({ response: fullResponse });
+      // Q17-CHECKLIST-COVERAGE-NO-MINIMUM-HONEST-ENVELOPE: thread the
+      // caller's `maxBytes` override (when supplied) into the budget
+      // helper so test fixtures and tighter-host configurations can
+      // drive the slim envelope on tractable response sizes. Mirrors
+      // `scan_file`'s `maxBytes` → `applyScanFileBudget.maxBytes` and
+      // `checklist`'s parallel knob. Per AI-first doctrine "Per-tool
+      // lane and warning-set classification must agree": same override
+      // knob shape across every project-rooted tool that runs the slim
+      // guard.
+      const maxBytes = numParam(params, "maxBytes");
+      const budgeted = applyCoverageBudget({
+        response: fullResponse,
+        ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+      });
       return textResult(budgeted.response);
     }
     return textResult(entries);
