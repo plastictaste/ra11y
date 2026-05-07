@@ -189,11 +189,19 @@ function parseFileList(stdout: string, root: string): string[] {
   // --show-toplevel` output (forward slashes) intermixed with
   // `path.resolve` (backslashes); without one canonical form the
   // staleness probe's `Set.has()` lookup misses on Windows.
+  //
+  // Canonicalize `root` via `realpathSync.native` first so 8.3 short
+  // names (`RUNNER~1`) get expanded to the long form git emits.
+  // GitHub Actions Windows runners hit this path: `os.tmpdir()`
+  // returns short-form, `git --show-toplevel` returns long-form, and
+  // without normalizing one to the other the changed-set keys never
+  // line up with caller-supplied paths.
+  const rootReal = safeRealpath(root);
   return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((rel) => resolve(root, rel).split(/[\\/]/).join("/"));
+    .map((rel) => resolve(rootReal, rel).split(/[\\/]/).join("/"));
 }
 
 // ─── Hunk-intersection mode ────────────────────────────────────────────────
@@ -384,10 +392,20 @@ export function getChangedHunks(ref: string, cwd: string = process.cwd()): Chang
  * helper whose job is "canonicalize when possible." A non-canonical
  * fallback just means we'd miss cross-symlink-space comparisons,
  * which was the pre-canonicalization baseline anyway.
+ *
+ * Uses `realpathSync.native` rather than the pure-JS `realpathSync`
+ * because the native variant goes through libuv's `uv_fs_realpath`,
+ * which on Windows resolves 8.3 short-name aliases (`RUNNER~1` →
+ * `runneradmin`) via `GetFinalPathNameByHandleW`. The pure-JS variant
+ * walks symlinks step-by-step but does NOT resolve 8.3 aliases, so on
+ * GitHub Actions Windows runners (where `os.tmpdir()` returns the
+ * 8.3 form while `git rev-parse --show-toplevel` returns the long
+ * form) the lookup-side path stayed in short form and never matched
+ * the long-form hunk keys.
  */
-function safeRealpath(path: string): string {
+export function safeRealpath(path: string): string {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return path;
   }
