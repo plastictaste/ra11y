@@ -23,6 +23,7 @@
 import type { Rule } from "../types/rule.ts";
 import type { Criterion } from "../types/standard.ts";
 import type { McpSession } from "./session.ts";
+import { manualOnlyCriterionResult } from "./suggest-fix-manual-only-criterion.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import type { McpToolResult } from "./tools-helpers.ts";
 import { errorResult, findRule } from "./tools-helpers.ts";
@@ -209,6 +210,41 @@ export function resolveSuggestFixRule(
     };
   }
   return { rule, ...bridge };
+}
+
+/**
+ * Bridge resolution + early-exit routing for the suggest_fix handler:
+ * resolves the input through {@link resolveSuggestFixRule} and routes
+ * the three terminal branches (error envelope, manual-only-criterion
+ * guidance, rule-not-found) into a single `earlyExit` discriminator
+ * the handler returns directly. The resolved-rule path returns the
+ * `{ ruleId, disambiguationNote }` pair the rest of the handler
+ * proceeds with.
+ *
+ * Lives in this module (alongside the bridge primitives) so the
+ * MCP handler in `tool-suggest-fix.ts` stays under the
+ * 150-effective-line cap enforced by `scripts/check-limits.ts`.
+ */
+export function resolveCriterionBridgeOrEarlyExit(
+  inputRuleId: string,
+  filePath: string,
+  line: number,
+  session: McpSession,
+):
+  | { readonly earlyExit: McpToolResult }
+  | { readonly ruleId: string; readonly disambiguationNote: string | undefined } {
+  const resolved = resolveSuggestFixRule(inputRuleId, session);
+  if ("error" in resolved) return { earlyExit: resolved.error };
+  if ("manualOnlyCriterion" in resolved) {
+    return {
+      earlyExit: manualOnlyCriterionResult(
+        { criterion: resolved.manualOnlyCriterion, inputCriterionId: resolved.inputCriterionId },
+        filePath,
+        line,
+      ),
+    };
+  }
+  return { ruleId: resolved.ruleId, disambiguationNote: resolved.disambiguationNote };
 }
 
 /**

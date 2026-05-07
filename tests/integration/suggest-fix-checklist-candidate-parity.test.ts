@@ -292,6 +292,12 @@ describe("checklist→suggest_fix candidate parity (Q14)", () => {
     const bridge = applyCriterionBridge(target.criterionId, session);
     expect("error" in bridge).toBe(false);
     if ("error" in bridge) return;
+    // The target was selected for "criterion has at least one rule"; the
+    // bridge must therefore route to the rule-resolution lane, not the
+    // manual-only-criterion lane. This guards against the resolver
+    // conflating the two cases when the registry lookup is in flight.
+    expect("manualOnlyCriterion" in bridge).toBe(false);
+    if ("manualOnlyCriterion" in bridge) return;
     // The bridged rule's `satisfies` must include the candidate's
     // criterion — that's the precondition the candidate-match resolver
     // depends on. Without this, the bridge would resolve to a rule the

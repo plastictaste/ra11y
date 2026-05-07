@@ -8,13 +8,14 @@ import { runScan } from "../engine/scanner.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { resolveCandidateMatchForHandler } from "./suggest-fix-candidate-match.ts";
 import { collectSuggestFixContext, suggestFixRerouteSpread } from "./suggest-fix-context.ts";
-import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
-import { buildManualOnlyCriterionGuidance } from "./suggest-fix-manual-only-criterion.ts";
-import { buildSuggestFixPayload, buildVerifyCommand } from "./tool-suggest-fix-internals.ts";
+import {
+  optionalSuggestFixFields,
+  resolveCriterionBridgeOrEarlyExit,
+} from "./suggest-fix-criterion-bridge.ts";
+import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
   errorResult,
-  findRule,
   type McpTool,
   type McpToolResult,
   numParam,
@@ -69,6 +70,7 @@ function checkRequiredParams(
   });
 }
 
+
 export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
@@ -106,60 +108,19 @@ export const suggestFixTool: McpTool = {
       return checkRequiredParams(inputRuleId, filePath, line) as McpToolResult;
     }
 
-    // Criterion-id bridge: when the caller passes a criterion ID
-    // (`wcag22:N.N.N`, `section508:…`, `en301549:…`) instead of a rule
-    // ID, resolve it to the most-specific rule that satisfies it.
-    // Manual-review candidates carry criterion IDs; without this bridge
-    // the handoff `review_candidates → suggest_fix` hard-errors with
-    // `Rule not found. Call list_rules.` See
-    // `docs/kb/architecture/ai-first-consumer.md`: "One tool call
-    // should answer 'what next?'" + "Surface, don't suppress."
-    const bridge = applyCriterionBridge(inputRuleId, session);
-    if ("error" in bridge) return bridge.error;
+    // Criterion-id bridge resolution + three early-exit branches
+    // (error / manual-only-criterion guidance / rule-not-found on a
+    // resolved-but-missing rule). See
+    // `suggest-fix-criterion-bridge.ts` for the doctrine.
+    const resolved = resolveCriterionBridgeOrEarlyExit(inputRuleId, filePath, line, session);
+    if ("earlyExit" in resolved) return resolved.earlyExit;
+    const { ruleId, disambiguationNote } = resolved;
 
-    // reject paths that escape the
-    // declared `cwd` sandbox before any parse or fs access. See the
-    // matching comment in tool-scan-file.ts for the read-only vs
-    // write-tool enforcement difference.
+    // reject paths that escape the declared `cwd` sandbox before any
+    // parse or fs access.
     const suggestFixCwd = strParam(params, "cwd");
     const escapeError = await checkCwdContainment(filePath, suggestFixCwd);
     if (escapeError !== null) return escapeError;
-
-    // Manual-only-criterion branch: the caller passed a criterion ID
-    // that exists in the registry but no automated rule satisfies it
-    // (every `automatable: "manual"` row — wcag22:1.3.6, wcag22:2.4.5,
-    // …). `checklist` ships these criteria as addressable items the
-    // agent walks via `suggest_fix`, so the per-call surface MUST
-    // address the call honestly rather than fail with rule-not-found.
-    // Per `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
-    // candidate shape must agree across surfaces" + "One tool call
-    // should answer 'what next?'." Returns `kind: "guidance"` framed as
-    // "manual-review only — verify against the normative spec text."
-    if ("manualOnlyCriterion" in bridge) {
-      return textResult(
-        buildManualOnlyCriterionGuidance({
-          criterion: bridge.manualOnlyCriterion,
-          inputCriterionId: bridge.inputCriterionId,
-          filePath,
-          line,
-          fields: {
-            warningsField: {},
-            vendorContextField: {},
-            verify: buildVerifyCommand(filePath, bridge.inputCriterionId),
-          },
-        }) as Record<string, unknown>,
-      );
-    }
-
-    const { ruleId, disambiguationNote } = bridge;
-    if (!findRule(ruleId, session)) {
-      return errorResult({
-        code: "rule-not-found",
-        message: `Rule '${ruleId}' not found.`,
-        details: { requested: ruleId },
-        remediation: "Call `list_rules` to discover valid rule IDs.",
-      });
-    }
 
     // Parse the file to find the specific violation and its suggestion.
     const parsed = await session.parseFile(filePath, suggestFixCwd);

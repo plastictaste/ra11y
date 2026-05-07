@@ -37,6 +37,8 @@
 
 import type { Criterion } from "../types/standard.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
+import { buildVerifyCommand } from "./tool-suggest-fix-internals.ts";
+import { type McpToolResult, textResult } from "./tools-helpers.ts";
 
 /**
  * Shared per-call fields the handler threads into every guidance lane:
@@ -80,6 +82,40 @@ export interface ManualOnlyGuidanceFields {
  * for a criterion the scanner cannot detect would silence nothing
  * meaningful, only litter source.
  */
+/**
+ * Handler-level wrapper that constructs the manual-only-criterion
+ * guidance payload AND wraps it in the standard MCP `textResult`
+ * envelope. Lives in this module (alongside the payload helper) so
+ * `tool-suggest-fix.ts` stays under the 150-effective-line cap and
+ * the manual-only branch's full assembly lives in one place.
+ *
+ * The `fields` shape is constructed inline here rather than threaded
+ * by the handler — the manual-only branch fires before any file parse
+ * runs, so there's no `vendorContext` to detect and no scan-warnings
+ * to forward; both spreads are the empty `{}`. `verify` rides the
+ * criterion ID as `verifyRuleId` so `scan_file` re-checks against the
+ * criterion the agent asked about.
+ */
+export function manualOnlyCriterionResult(
+  bridge: { readonly criterion: Criterion; readonly inputCriterionId: string },
+  filePath: string,
+  line: number,
+): McpToolResult {
+  return textResult(
+    buildManualOnlyCriterionGuidance({
+      criterion: bridge.criterion,
+      inputCriterionId: bridge.inputCriterionId,
+      filePath,
+      line,
+      fields: {
+        warningsField: {},
+        vendorContextField: {},
+        verify: buildVerifyCommand(filePath, bridge.inputCriterionId),
+      },
+    }) as Record<string, unknown>,
+  );
+}
+
 export function buildManualOnlyCriterionGuidance(args: {
   readonly criterion: Criterion;
   readonly inputCriterionId: string;
