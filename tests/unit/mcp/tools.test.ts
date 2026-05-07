@@ -3224,9 +3224,7 @@ describe("MCP tool: coverage", () => {
     // use one shape" the redundant top-level scalars were dropped —
     // agents read through the structured surfaces.
     expect(typeof data.untargetedCriteriaForProject).toBe("number");
-    expect(
-      data.summary.actionable.criteria + data.untargetedCriteriaForProject,
-    ).toBeGreaterThan(0);
+    expect(data.summary.actionable.criteria + data.untargetedCriteriaForProject).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
     expect((data as Record<string, unknown>).actionableManualItems).toBeUndefined();
     expect((data as Record<string, unknown>).criteriaUntestable).toBeUndefined();
