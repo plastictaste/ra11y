@@ -76,10 +76,7 @@ import type { FindingBucket } from "./per-finding-confidence-parity.ts";
  * `WarningInputs.codeDemoPropMatches` — only the fields needed to
  * derive the file set (path keys + non-empty match list) are required.
  */
-type CodeDemoPropMatchesMap = ReadonlyMap<
-  string,
-  readonly { readonly bodyStartLine: number }[]
->;
+type CodeDemoPropMatchesMap = ReadonlyMap<string, readonly { readonly bodyStartLine: number }[]>;
 
 /**
  * One corpus-level warning's contribution to per-finding propagation.

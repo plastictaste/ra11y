@@ -31,7 +31,7 @@ function fakeFinding(line: number, extra: Partial<AgentFinding> = {}): AgentFind
     ruleId: "navigation/href-empty-fragment",
     severity: "error",
     confidence: "high",
-    message: "<a href=\"#\"> must point at a real target",
+    message: '<a href="#"> must point at a real target',
     line,
     column: 1,
     criteria: ["wcag22:2.4.4"],
