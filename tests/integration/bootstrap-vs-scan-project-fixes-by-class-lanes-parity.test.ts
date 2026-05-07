@@ -111,7 +111,7 @@ describe("bootstrap vs scan_project: fixesByClass lane-key set parity", () => {
       const bootstrapLanes = bootRes.scan.fixesByClass;
       expect(upstreamLanes).toBeDefined();
       expect(bootstrapLanes).toBeDefined();
-      if (!upstreamLanes || !bootstrapLanes) {
+      if (!(upstreamLanes && bootstrapLanes)) {
         throw new Error("fixesByClass missing on one of the surfaces");
       }
 
