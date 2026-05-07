@@ -2704,6 +2704,26 @@ export interface ScanWarningDetails {
     readonly totalFilesWithFindings: number;
     readonly metaFieldsDropped?: readonly string[];
     /**
+     * Cross-link to the canonical co-firing truncation reporter when the
+     * meta-array cap (`response_meta_truncated`) ALSO trimmed sub-array
+     * meta fields on the same response. Populated by
+     * {@link oversizeEnvelopeWarningsField} when both reporters co-fire
+     * — points at the dotted payload path
+     * (`warningsDetails.response_meta_truncated.fields`) so an agent
+     * reading the slim drop reporter knows the OTHER reporter carries
+     * the sub-array truncation evidence on a different scope (top-level
+     * meta-key drops here vs. sub-array head-slice there). The two
+     * reporters address disjoint scopes by construction; the `seeAlso`
+     * cross-links exist so an agent reading either side discovers the
+     * other without enumerating every warning code blind. Per
+     * `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+     * must reconcile across warnings" — multiple truncation channels on
+     * the same response reconcile by reference rather than by
+     * independent enumeration. Present-when-meaningful: omitted when
+     * the meta-array cap did not fire on this response.
+     */
+    readonly metaTruncationSeeAlso?: string;
+    /**
      * Per-field truncation summaries for verbose collections the slim
      * builder head-sliced after dropping `files[]`. Even with `files[]`
      * gone, the surviving envelope can still serialize over the
@@ -3192,6 +3212,23 @@ export interface ScanWarningDetails {
    */
   readonly response_meta_truncated?: {
     readonly fields: readonly string[];
+    /**
+     * Cross-link to the canonical co-firing truncation reporter when the
+     * slim envelope ALSO discarded top-level meta keys on the same
+     * response. Populated by {@link oversizeEnvelopeWarningsField} when
+     * `response_dropped_files_oversize` co-fires — points at the dotted
+     * payload path
+     * (`warningsDetails.response_dropped_files_oversize.metaFieldsDropped`)
+     * so an agent reading this reporter knows the OTHER reporter also
+     * carries truncation evidence on a different scope (sub-array
+     * head-slice here vs. top-level meta-key drop there). Per
+     * `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+     * must reconcile across warnings" — multiple truncation channels on
+     * the same response reconcile by reference rather than by
+     * independent enumeration. Present-when-meaningful: omitted when
+     * the slim envelope did not fire on this response.
+     */
+    readonly seeAlso?: string;
   };
   /**
    * Payload for `baseline_dry_run`. Carries the load-bearing routing
