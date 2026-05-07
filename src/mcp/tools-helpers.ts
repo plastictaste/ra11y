@@ -34,6 +34,8 @@ import { posixResolve } from "../utils/path.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { fingerprintParsedFiles, stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { defaultActionableManualLane, tallyManualCriteria } from "./manual-criteria-tally.ts";
 import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-parse-boundary.ts";
@@ -335,6 +337,14 @@ export async function parseFilesWithDiagnostics(
   readonly jsInnerHtmlDeclinedCount: number;
   readonly jsInnerHtmlPatternSamples: ReadonlyMap<string, readonly InlineHtmlPatternSample[]>;
   readonly codeDemoPropMatches: ReadonlyMap<string, readonly CodeDemoPropMatch[]>;
+  /**
+   * Byte-fingerprint duplicate map (canonical path → other paths
+   * with the same SHA-1). Drives the post-scan stamp in
+   * `src/mcp/file-fingerprint-stamp.ts` so canonical findings ship
+   * `vendorOccurrences` listing every byte-identical copy. See
+   * `src/input/file-fingerprint.ts` for the helper.
+   */
+  readonly fingerprintDuplicates: ReadonlyMap<string, readonly string[]>;
 }> {
   const base = cwd ?? process.cwd();
   const absPaths = paths.map((p) => (isAbsolute(p) ? p : posixResolve(base, p)));
@@ -354,8 +364,14 @@ export async function parseFilesWithDiagnostics(
       jsInnerHtmlDeclinedCount += accumulateInlineHtml(result, parsed, jsInnerHtmlPatternSamples);
     accumulateCodeDemoPropMatches(result, codeDemoPropMatches);
   }
+  // Hash already-parsed sources by SHA-1, group byte-identical
+  // eligible-extension copies, thread the map onto
+  // `discoveryDiagnostics` so the post-scan stamp drops non-canonical
+  // duplicate findings and lists every copy on the canonical's
+  // `vendorOccurrences`. See `src/mcp/file-fingerprint-stamp.ts`.
+  const fp = await fingerprintParsedFiles(parsed);
   // biome-ignore format: keep return object on one line — file effective-line budget
-  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples, codeDemoPropMatches };
+  return { files: parsed, diagnostics: fp.size === 0 ? diagnostics : { ...diagnostics, fingerprintDuplicates: fp }, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples, codeDemoPropMatches, fingerprintDuplicates: fp };
 }
 
 /**
@@ -624,6 +640,13 @@ export async function runScanAndFormat(
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);
+  // Drop findings emitted from non-canonical fingerprint duplicate
+  // paths and stamp `vendorOccurrences` on the canonical's findings.
+  // Runs BEFORE the basename-keyed `collapseVendorCssFindings` so
+  // that pass sees the already-stamped stream — they compose or no-op
+  // depending on whether non-byte-identical sibling copies remain.
+  // biome-ignore format: keep call on two lines — file effective-line budget
+  const fingerprintStamped = stampFingerprintOccurrences(severityFiltered, discoveryDiagnostics?.fingerprintDuplicates ?? new Map());
   // collapse identical findings
   // that repeat across sibling files sharing a basename (canonical case:
   // `bootstrap.css` / `animate.css` copied into 100+ template
@@ -635,7 +658,7 @@ export async function runScanAndFormat(
   // honest (agent sees one canonical finding naming N paths instead of N
   // rows of the same bug). Runs BEFORE the criterion-skip filter so
   // skip-by-criterion semantics operate on the post-dedupe stream.
-  const deduped = collapseVendorCssFindings(severityFiltered);
+  const deduped = collapseVendorCssFindings(fingerprintStamped);
   const filtered = applyCriterionSkip(deduped, skipCriteria);
   const grouped = groupViolationsByFile(filtered);
   // thread per-file source

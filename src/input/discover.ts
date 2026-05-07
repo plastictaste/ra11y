@@ -362,6 +362,30 @@ export interface DiscoveryDiagnostics {
   readonly excludedByPatternByExtension: Readonly<Record<string, number>>;
   readonly sourcemapFiles: readonly string[];
   readonly defaultExcludedArtifactPaths: readonly DefaultExcludedArtifactPath[];
+  /**
+   * Cross-file byte-fingerprint duplicate map produced by the
+   * pre-parse fingerprint pass in `src/input/file-fingerprint.ts`.
+   * Keyed by the canonical (lex-smallest) path of each duplicate
+   * group; valued by the lex-sorted list of every other file with the
+   * same SHA-1 hash. Optional — the discovery walker itself does NOT
+   * compute fingerprints (the walker stays pure FS-traversal); the
+   * field is populated by the parser pipeline (`parseFilesWithDiagnostics`
+   * in `src/mcp/tools-helpers.ts`) after discovery returns. Discovery
+   * call sites that bypass the parser pipeline (test fixtures, the
+   * CLI's bare `discoverFiles`) leave the field undefined.
+   *
+   * Powers two downstream behaviors:
+   *   - The parser pipeline skips parsing every entry in the
+   *     duplicates list — one canonical copy parses instead of N
+   *     byte-identical copies.
+   *   - The scan-family response stamps `vendorOccurrences` on
+   *     findings emitted from canonical paths (the post-scan pass in
+   *     `src/mcp/file-fingerprint-stamp.ts`) so every collapsed copy
+   *     surfaces on the canonical finding without re-emitting per
+   *     copy. Surface-don't-suppress per AI-first doctrine — the
+   *     dedupe is lossless.
+   */
+  readonly fingerprintDuplicates?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**

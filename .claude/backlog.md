@@ -10,7 +10,6 @@ Closing an item = deleting its `- [ ] **<ID>**` line in the same commit that lan
 
 ## Track Q15 — Multi-corpus AI-first sweep (2026-05-02)
 
-- [ ] **Q15-VENDOR-FILE-SHA-FINGERPRINT-DEDUP-ACROSS-TEMPLATE-SUBDIRS** On a 100+ template-subdir bulk catalog, identical vendor files repeat verbatim — `bootstrap.min.css` × 116, `bootstrap.min.js` × 115, `font-awesome.min.css` × 89, `jquery.fancybox.css` × 64. Each instance is parsed and findings are emitted N times. Pairs with V1-CSS-CROSS-TEMPLATE-FINGERPRINT (same-CSS-pattern across files via selector hash) and V1-CHECKLIST-VENDOR-FILE-FINGERPRINT-COLLAPSE (vendor file collapse on candidates). This item is the deterministic-fingerprint variant: hash the first N bytes of the vendor file (or the full sha-1) and emit findings once with `occurrenceCount` + `occurrenceLocations` rather than N times. Avoids re-parsing AND collapses the response shape. Closure: file-fingerprint pre-pass on extension allowlist (`.css` / `.js` / `.svg` / `.woff2`) emits one canonical entry per distinct hash with the path list. Per AI-first doctrine "Composite headline counts are dishonest" — extension: composite emission counts.
 
 ---
 

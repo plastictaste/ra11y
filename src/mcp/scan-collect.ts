@@ -23,6 +23,7 @@ import type { ConfigPreset, Process } from "../types/config.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
 import type { McpSession } from "./session.ts";
@@ -126,6 +127,22 @@ export interface RunScanAndCollectArgs {
    * framing.
    */
   readonly preset?: ConfigPreset;
+  /**
+   * Cross-file byte-fingerprint duplicate map produced by the
+   * pre-parse fingerprint pass in `src/input/file-fingerprint.ts`.
+   * Threaded through the scan pipeline so the post-scan stamp
+   * (`stampFingerprintOccurrences`) can attach `vendorOccurrences` to
+   * findings emitted from canonical paths — every duplicate path
+   * surfaces on the canonical finding without re-emitting per copy.
+   *
+   * Optional: omitted by callers that did not run the fingerprint
+   * pre-pass (`scan_file` with explicit paths, `scan_diff` operating
+   * on git-changed files). When undefined or empty, the stamping
+   * helper short-circuits and the violation stream passes through
+   * unchanged. Surface, don't suppress per AI-first doctrine — the
+   * dedupe is lossless.
+   */
+  readonly fingerprintDuplicates?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -144,6 +161,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
     cwd,
     skipCriteria,
     processes,
+    fingerprintDuplicates,
   } = args;
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -173,7 +191,18 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   );
   const unusedWrappers = await resolveUnusedWrappers(resolvedWrappers.wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);
-  const filtered = applyCriterionSkip(severityFiltered, skipCriteria);
+  // Pre-parse fingerprint pass dropped byte-identical
+  // duplicates from the parse loop — stamp `vendorOccurrences` on
+  // findings emitted from canonical paths so every duplicate path
+  // stays enumerable on the wire. No-op when the caller did not
+  // thread the fingerprint map (scan / scan_file with explicit
+  // paths). See `src/mcp/file-fingerprint-stamp.ts` for the doctrine
+  // pointer.
+  const fingerprintStamped = stampFingerprintOccurrences(
+    severityFiltered,
+    fingerprintDuplicates ?? new Map(),
+  );
+  const filtered = applyCriterionSkip(fingerprintStamped, skipCriteria);
   const suppressions = suppressionAudit(files);
   const rawCandidates = report.candidates ?? [];
   // Plan-side split: grounded candidates (file:line) vs.

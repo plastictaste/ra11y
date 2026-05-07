@@ -33,6 +33,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
+import { fingerprintEligibleDuplicates } from "../../../src/input/file-fingerprint.ts";
 import {
   parseAstro,
   parseCss,
@@ -51,6 +52,7 @@ import {
   classifyWrapperCandidates,
   collectWrapperCandidates,
 } from "../../../src/mcp/detect-wrappers-core.ts";
+import { stampFingerprintOccurrences } from "../../../src/mcp/file-fingerprint-stamp.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { runScanAndFormat, type ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../../../src/review/index.ts";
@@ -407,13 +409,54 @@ export async function loadAndScanFixture(
   const files = parseFixtureSource(fixture.sourceDir);
   const standards = toolInput.standards ?? ["wcag22"];
 
-  const { result, report } = runScan({
+  // Mirror the production scan-family fingerprint pass: hash each
+  // parsed file's source by the canonical SHA-1 helper, group byte-
+  // identical eligible-extension copies, and thread the duplicate
+  // map through `discoveryDiagnostics` so `runScanAndFormat`'s post-
+  // scan stamp populates `vendorOccurrences` on findings emitted
+  // from canonical paths AND drops findings emitted from non-
+  // canonical duplicate paths. Bypassing this in the harness would
+  // leave the fingerprint surface untested by the real-world
+  // fixture path the dispatch contract names. Re-uses the harness's
+  // already-parsed `source` strings so no extra I/O fires.
+  const sourceByPath = new Map(files.map((f) => [f.filePath, f.source]));
+  const { duplicatesByCanonical } = await fingerprintEligibleDuplicates(
+    files.map((f) => f.filePath),
+    async (filePath) => sourceByPath.get(filePath),
+  );
+  const harnessDiscoveryDiagnostics =
+    duplicatesByCanonical.size === 0
+      ? undefined
+      : {
+          skippedByExtension: {},
+          excludedByPatternByExtension: {},
+          sourcemapFiles: [],
+          defaultExcludedArtifactPaths: [],
+          fingerprintDuplicates: duplicatesByCanonical,
+        };
+
+  const rawScan = runScan({
     standards: BUILTIN_STANDARDS,
     rules: BUILTIN_RULES,
     enabled: standards,
     files,
     finders: BUILTIN_CANDIDATE_FINDERS,
   });
+  // Mirror the production post-scan fingerprint dedupe pass so the
+  // raw `ctx.result.violations` exposed to fixture predicates matches
+  // what `runScanAndFormat`'s pipeline ships on the wire — drop
+  // findings emitted from non-canonical duplicate paths and stamp
+  // `vendorOccurrences` on canonical findings. Without this, a
+  // fixture's `violation-present` assertion against the raw scanner
+  // stream would see N parallel emissions on byte-identical sibling
+  // copies — the exact regression the dedupe pass closes — and the
+  // harness would silently pass tests that the production pipeline
+  // would catch.
+  const result = {
+    ...rawScan.result,
+    violations: stampFingerprintOccurrences(rawScan.result.violations, duplicatesByCanonical),
+  };
+  const report = rawScan.report;
 
   const session = new McpSession();
   // Mirror the autoDetectWrappers logic from scan_project: run the
@@ -449,6 +492,10 @@ export async function loadAndScanFixture(
     wrapperSources,
     fixture.sourceDir,
     toolInput.verboseMeta === true,
+    undefined,
+    undefined,
+    undefined,
+    harnessDiscoveryDiagnostics,
   );
 
   // Mirror tool-scan-project's catalog-shape probe (-
