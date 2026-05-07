@@ -25,6 +25,28 @@ export type {
 } from "./types/index.ts";
 
 /**
+ * Defines a ra11y user config with full type inference. Re-exported
+ * from `@ra11y/core/plugin` so that `import { defineConfig } from
+ * "@ra11y/core"` resolves to the same identity helper plugin authors
+ * reach via the `./plugin` entry. The helper is a zero-cost identity
+ * function — runtime behavior is unchanged whether the user writes
+ * `export default { ... }` or `export default defineConfig({ ... })`;
+ * the value is the IDE intellisense on every config field.
+ *
+ * Bootstrap-class tools (`bootstrap`, `propose_config`) emit
+ * `import { defineConfig } from "@ra11y/core"` in their suggested
+ * config — this re-export is the surface that import resolves
+ * against. See ADR 0019 for the v1.0 public-surface table.
+ *
+ * @example
+ * ```ts
+ * import { defineConfig } from "@ra11y/core";
+ * export default defineConfig({ standards: ["wcag22"], level: "AA" });
+ * ```
+ */
+export { defineConfig } from "./api/plugin.ts";
+
+/**
  * Runs an accessibility scan against a set of file paths.
  *
  * @param options - Scan configuration.
