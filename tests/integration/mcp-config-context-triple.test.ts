@@ -239,4 +239,47 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("scan_project does NOT ship `warningsDetails.no_config_found.searchedFrom` when the search base echoes `cwd === scanned.root`", async () => {
+    // Warning-channel sibling of the meta-channel rule above: the
+    // `warningsDetails.no_config_found.searchedFrom` payload is
+    // present-when-meaningful, omitted when its value would just
+    // echo the caller's `cwd` or a `scanned.root` already in the
+    // response. On `scan_project({cwd})`, the loader walks from
+    // `cwd`, the resolved `scanned.root` equals `cwd`, and any
+    // `searchedFrom: <cwd>` payload would be a triple-echo (cwd =
+    // scanned.root = searchedFrom). The shared helper drops the
+    // rich payload to the empty record on every project-rooted tool
+    // — the bare warning code carries the signal; the agent reads
+    // `meta.scanned.root` for the canonical search base.
+    //
+    // This test pins the closure on
+    // `Q17-CONFIGSEARCHEDFROM-ECHOES-CWD` against `scan_project`
+    // specifically; the cross-surface invariant for the same
+    // shape across `coverage`, `checklist`,
+    // `list_suppressions`, `propose_baseline`, `propose_config`,
+    // `scan_diff` lives in
+    // `tests/integration/mcp-consistency/no-config-found-cross-surface.test.ts`.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
+    ]);
+    const body = bodyOf(responses[1]);
+    const warnings = (body.warnings as readonly string[] | undefined) ?? [];
+    const warningsDetails = body.warningsDetails as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    if (warnings.includes("no_config_found")) {
+      // The slot exists (membership invariant: every fired code has a
+      // key on `warningsDetails`) but its `searchedFrom` field is
+      // dropped because the value would echo `cwd === scanned.root`.
+      const detail = warningsDetails?.["no_config_found"];
+      expect(detail).toBeDefined();
+      expect(detail?.["searchedFrom"]).toBeUndefined();
+      // Strongest contract: the slot is the empty record (binary-
+      // presence shape) — no truncation sentinel, no rich payload,
+      // and definitely not a `cwd`-echoing one.
+      expect(detail).toEqual({});
+    }
+  });
 });

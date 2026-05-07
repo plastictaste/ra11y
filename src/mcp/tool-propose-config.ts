@@ -71,6 +71,7 @@ import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wr
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { computeTopRules } from "./scan-assembly.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import { scannedProject } from "./scanned-envelope.ts";
 import {
   applyRuleSettings,
@@ -355,7 +356,14 @@ export const proposeConfigTool: McpTool = {
     }
     if (noConfigFires) {
       warningCodes.push("no_config_found");
-      warningsDetails["no_config_found"] = { searchedFrom: root };
+      // Present-when-meaningful gate via shared helper: when
+      // `searchedFrom === scanned.root`, the rich payload drops to
+      // the empty record because `meta.scanned.root` already carries
+      // the search base.
+      warningsDetails["no_config_found"] = noConfigFoundWarningDetail({
+        searchedFrom: root,
+        scannedRoot: root,
+      });
     }
 
     return textResult({

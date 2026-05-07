@@ -24,6 +24,7 @@
 
 import { isWellKnownTextualNoExtFilename } from "../input/discover.ts";
 import { shouldEmitNoConfigFound } from "./config-search-marker.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 
 export type ScanWarningCode =
   | "scanned_zero_files"
@@ -927,8 +928,38 @@ export interface WarningInputs {
    * case the payload drops conservatively and the bare code stays the
    * only signal). The value is surfaced on the warning channel
    * deterministically — no second filesystem walk.
+   *
+   * Pairs with {@link noConfigFoundCallerCwd} / {@link noConfigFoundScannedRoot}
+   * for the present-when-meaningful predicate: when the search base
+   * equals either of those (the common case — `searchedFrom` would
+   * just echo the caller's `cwd` or a `scanned.root` already on the
+   * response), the payload drops to the {@link BinaryPresenceMarker}
+   * `{}` shape and the bare warning code carries the signal.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Caller-supplied `cwd` from the tool's params. Drives the present-
+   * when-meaningful gate on the `no_config_found.searchedFrom` payload:
+   * when the loader's walk-up base equals `cwd`, the agent already has
+   * the search base from its own input and `searchedFrom` echoes it.
+   * Pass `undefined` when the tool has no caller-supplied cwd (e.g.
+   * `scan_project` auto-promoted from a host-root or git-root fallback
+   * — pass the resolved {@link noConfigFoundScannedRoot} instead so
+   * the omit predicate fires off the on-response `scanned.root`).
+   *
+   * Mirrors the meta-channel predicate in
+   * {@link import("./scanner-meta.ts").configSearchedFromField}.
+   */
+  readonly noConfigFoundCallerCwd?: string;
+  /**
+   * The resolved `scanned.root` for project-mode scans. Drives the
+   * present-when-meaningful gate on the `no_config_found.searchedFrom`
+   * payload: when the loader's walk-up base equals `scanned.root`,
+   * the agent already has the search base from `meta.scanned.root`
+   * and `searchedFrom` echoes it. Pass `undefined` for tools with no
+   * project-mode resolution (e.g. `scan` against arbitrary `paths`).
+   */
+  readonly noConfigFoundScannedRoot?: string;
   /**
    * The analysisCoverage block as returned by `buildAnalysisCoverage` —
    * we read `hints` for the Tailwind signal and `templateInterpolationFound`
@@ -2645,10 +2676,26 @@ export interface ScanWarningDetails {
    * inconsistency where some emitters paired the warning with `cwd` on
    * the meta block and others with `scanned.root`. Pure shape-builder;
    * the value is the same `cwd`/`root` the loader was handed.
+   *
+   * Dual-shaped slot: when the loader's walk-up base equals the caller-
+   * supplied `cwd` OR the resolved `scanned.root` (the common case —
+   * an agent reading the response already has the value on the meta
+   * block), the warning-detail drops to the
+   * {@link BinaryPresenceMarker} shape `{}`. Same present-when-
+   * meaningful contract as the meta-channel `configSearchedFrom` field
+   * (see `scanner-meta.ts`'s {@link import("./scanner-meta.ts").configSearchedFromField}):
+   * the warning code itself fully specifies the condition, and an
+   * agent has the canonical search base on `meta.scanned.root` /
+   * `cwd`. Per `docs/kb/architecture/ai-first-consumer.md` "Verbose
+   * meta is signal, not clutter — `configSearchedFrom` is
+   * present-when-meaningful — omitted when it would just echo the
+   * caller's `cwd` or a `scanned.root` already in the response."
    */
-  readonly no_config_found?: {
-    readonly searchedFrom: string;
-  };
+  readonly no_config_found?:
+    | {
+        readonly searchedFrom: string;
+      }
+    | BinaryPresenceMarker;
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
   /**
    * Payload for `template_files_parsed_as_literal`. Names the files whose
@@ -4743,6 +4790,18 @@ type ScanMetaWarningArgs = {
    * {@link WarningInputs.configSearchedFromForWarning}.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Pass-through for the present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom`. See
+   * {@link WarningInputs.noConfigFoundCallerCwd}.
+   */
+  readonly noConfigFoundCallerCwd?: string;
+  /**
+   * Pass-through for the present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom`. See
+   * {@link WarningInputs.noConfigFoundScannedRoot}.
+   */
+  readonly noConfigFoundScannedRoot?: string;
   readonly metaArrayTruncatedFields?: readonly string[];
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
@@ -4870,6 +4929,8 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
   "configSearchedFromForWarning",
+  "noConfigFoundCallerCwd",
+  "noConfigFoundScannedRoot",
   "metaArrayTruncatedFields",
   "scssUnresolvedVariableFiles",
   "scannedMinifiedFiles",
@@ -5025,7 +5086,12 @@ function buildScanWarningDetailsDispatch(
     },
     {
       code: "no_config_found",
-      summarize: () => summarizeNoConfigFound(inputs.configSearchedFromForWarning),
+      summarize: () =>
+        summarizeNoConfigFound(
+          inputs.configSearchedFromForWarning,
+          inputs.noConfigFoundCallerCwd,
+          inputs.noConfigFoundScannedRoot,
+        ),
     },
     {
       code: "redundant_additional_paths",
@@ -5555,25 +5621,45 @@ function summarizeCwdAppearsMisrooted(
 
 /**
  * Builds the `no_config_found` payload from the caller-supplied
- * `configSearchedFromForWarning` path. Returns `undefined` when the
- * input is absent or empty so the dispatch table conditional-spreads
- * the entry away — the bare code still carries the signal in that case
- * (the predicate that fires the code is independent from this payload
- * helper). Pure shape-builder; surfaces the value the loader was
- * handed without re-walking.
+ * `configSearchedFromForWarning` path, applying the present-when-
+ * meaningful predicate from the meta-channel sibling
+ * {@link import("./scanner-meta.ts").configSearchedFromField}: when
+ * the search base equals the caller-supplied `cwd` OR the resolved
+ * `scanned.root` (the common case — both already ride on the
+ * response), the rich `{ searchedFrom }` payload would just echo an
+ * input the agent has and the helper returns `{}` (the
+ * {@link BinaryPresenceMarker} shape) so the bare warning code
+ * carries the signal.
+ *
+ * Returns `undefined` when the search base input is absent or empty so
+ * the dispatch table falls through to the disambiguating truncation
+ * sentinel (`{ truncated: true, reason: "summarizer_inputs_unavailable" }`)
+ * — a payload-bearing slot whose summarizer was called without inputs
+ * is structurally distinct from the dual-shape "redundant payload
+ * dropped" case the empty record signals.
+ *
+ * Pure shape-builder; surfaces the value the loader was handed without
+ * re-walking.
  *
  * Drives the cross-surface invariant: every project-rooted tool that
  * emits `no_config_found` ships the same `searchedFrom: cwd` payload
- * so the agent has one canonical answer regardless of which tool
- * emitted the warning. Closes the inconsistency where some emitters
- * left the agent re-deriving the search root from `scanned.root` /
- * `meta.cwd` / response-level `cwd`.
+ * (or the empty record when redundant) so the agent has one canonical
+ * answer regardless of which tool emitted the warning. Closes the
+ * inconsistency where some emitters left the agent re-deriving the
+ * search root from `scanned.root` / `meta.cwd` / response-level `cwd`.
+ *
+ * See `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
+ * signal, not clutter — `configSearchedFrom` is present-when-meaningful,
+ * omitted when it would just echo the caller's `cwd` or a `scanned.root`
+ * already in the response."
  */
 function summarizeNoConfigFound(
   searchedFrom: WarningInputs["configSearchedFromForWarning"],
+  callerCwd: WarningInputs["noConfigFoundCallerCwd"],
+  scannedRoot: WarningInputs["noConfigFoundScannedRoot"],
 ): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
   if (typeof searchedFrom !== "string" || searchedFrom.length === 0) return undefined;
-  return { searchedFrom };
+  return noConfigFoundWarningDetail({ searchedFrom, callerCwd, scannedRoot });
 }
 
 /**

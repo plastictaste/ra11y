@@ -147,6 +147,13 @@ export const scanTool: McpTool = {
           rootSource: null,
           configSource: projectConfig.sourcePath,
           configSearchedFromForWarning: cwd,
+          // Present-when-meaningful gate on
+          // `warningsDetails.no_config_found.searchedFrom`: the
+          // search base is the caller-supplied `cwd`, so the agent
+          // already has the value from its own input. When the gate
+          // fires, the rich payload drops to `{}` and the bare
+          // warning code carries the signal.
+          noConfigFoundCallerCwd: cwd,
           analysisCoverage: undefined,
           filesByExtension: undefined,
           configSearchSawProjectMarker,
@@ -210,6 +217,12 @@ export const scanTool: McpTool = {
         // project-rooted tool answers "where was the search?" the
         // same way.
         configSearchedFromForWarning: cwd,
+        // Present-when-meaningful gate on
+        // `warningsDetails.no_config_found.searchedFrom`: `cwd` is
+        // the caller-supplied value, so the agent already has it
+        // from its own input. When the gate fires, the rich payload
+        // drops to `{}` so the bare warning code carries the signal.
+        noConfigFoundCallerCwd: cwd,
         ...extensionsField,
       },
       { tokenBudget: 0 },

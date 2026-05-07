@@ -100,8 +100,27 @@ export interface ScanTimeWarningInputs {
   readonly parsedFiles: readonly ParsedFile[];
   /** Violations from `runScan`. Used to derive per-file findings + total. */
   readonly violations: readonly Violation[];
-  /** Resolved scan root — drives `no_config_found.searchedFrom`. */
+  /**
+   * Resolved scan root — drives `no_config_found.searchedFrom`. Also
+   * threaded as the present-when-meaningful predicate's `scannedRoot`
+   * gate value (the warning-channel sibling of `meta.scanned.root`):
+   * when the loader walked from this same path, the rich payload
+   * drops to the empty record because `scanned.root` already carries
+   * the search base.
+   */
   readonly root: string;
+  /**
+   * Caller-supplied `cwd` from the originating tool's params, when
+   * different from {@link root}. Drives the present-when-meaningful
+   * gate on `no_config_found.searchedFrom` for tools whose `cwd` and
+   * resolved `root` are the same value (the typical project-rooted
+   * shape — `coverage`, `checklist`). Pass `undefined` when the
+   * caller-supplied value is identical to `root` (the gate fires off
+   * `root` alone in that case) or when the tool has no caller-supplied
+   * cwd (auto-promoted from host-root / git-root fallback in
+   * `scan_project`).
+   */
+  readonly callerCwd?: string;
   /**
    * `null` when the loader walked the project tree and found nothing;
    * the absolute config path otherwise. Pass `undefined` only when the
@@ -661,6 +680,14 @@ function buildWarningsFieldInputs(
     rootSource: inputs.rootSource,
     configSource: inputs.configSource,
     configSearchedFromForWarning: inputs.root,
+    // Present-when-meaningful gate on `no_config_found.searchedFrom`:
+    // `inputs.root` is the loader's walk-up base AND the resolved
+    // `scanned.root` shipped on the response. When the caller's `cwd`
+    // also equals `root`, both legs of the predicate fire and the
+    // payload drops to the empty record — `meta.scanned.root` and the
+    // caller's `cwd` already carry the search base.
+    noConfigFoundScannedRoot: inputs.root,
+    ...(inputs.callerCwd === undefined ? {} : { noConfigFoundCallerCwd: inputs.callerCwd }),
     analysisCoverage: inputs.analysisCoverage,
     filesByExtension: inputs.filesByExtension,
     scannedBuildArtifactsPresent: derived.buildArtifactEntries.length > 0,

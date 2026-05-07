@@ -686,18 +686,28 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   });
 
   // Cross-surface forwarding: the upstream scan_project response
-  // carries rich payloads on its `warningsDetails` (e.g. `no_config_found`
-  // ships `{ searchedFrom: <path> }`). Bootstrap must forward those
-  // payloads verbatim — the per-tool warning-set classification rule
-  // requires the same warning-payload set to reach every consumer of
-  // the corpus. Without the fix, the scan-leg payloads were silently
-  // dropped at the bootstrap envelope.
-  it("forwards rich payloads from the upstream scan_project leg verbatim (no_config_found.searchedFrom)", async () => {
+  // carries the `no_config_found` warning with the present-when-
+  // meaningful empty-record payload on identical `cwd`. Bootstrap
+  // must forward that payload verbatim — the per-tool warning-set
+  // classification rule requires the same warning-payload set to
+  // reach every consumer of the corpus.
+  //
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
+  // signal, not clutter — `configSearchedFrom` is present-when-
+  // meaningful, omitted when it would just echo the caller's `cwd` or
+  // a `scanned.root` already in the response," the
+  // `warningsDetails.no_config_found.searchedFrom` payload drops to
+  // the empty record when the loader's walk-up base equals
+  // `meta.scanned.root` (the common case for bootstrap, since
+  // `cwd === scanned.root === searchedFrom`). The bare warning code
+  // is the canonical signal; the agent reads `meta.scanned.root` for
+  // the search base.
+  it("forwards the no_config_found warning detail from the upstream scan_project leg verbatim (empty-record payload when search base echoes cwd)", async () => {
     await withScratch(async (dir) => {
-      // No ra11y.config.ts at this scratch root → scan_project emits
-      // `no_config_found` with the `searchedFrom` payload. The clean
-      // index.html keeps `filesScanned > 0` so `scanned_zero_files`
-      // doesn't fire (which would shadow the case under test).
+      // No ra11y.config.ts at this scratch root → scan_project may
+      // emit `no_config_found`. The clean index.html keeps
+      // `filesScanned > 0` so `scanned_zero_files` doesn't fire
+      // (which would shadow the case under test).
       await writeFile(
         posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body><p>x</p></body></html>\n',
@@ -707,14 +717,18 @@ describe("bootstrap: warningsDetails membership invariant", () => {
       // tree (per the tiny-repo gate documented in
       // `shouldEmitNoConfigFound`), so this assertion is conditional:
       // when the code is present in `warnings[]`, its forwarded
-      // payload must carry the `searchedFrom` field — not the
-      // fall-through `{}` marker.
+      // payload must be the present-when-meaningful empty record (the
+      // search base equals `cwd === scanned.root` and would just
+      // echo a value the agent already has).
       if ((response.warnings ?? []).includes("no_config_found")) {
         const detail = response.warningsDetails?.["no_config_found"] as
           | { searchedFrom?: string }
           | undefined;
         expect(detail).toBeDefined();
-        expect(typeof detail?.searchedFrom).toBe("string");
+        // The `searchedFrom` field is dropped because it would echo
+        // `cwd` / `scanned.root` already on the response. The
+        // remaining shape is the empty record.
+        expect(detail).toEqual({});
       }
     });
   });

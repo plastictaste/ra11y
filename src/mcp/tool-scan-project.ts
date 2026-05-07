@@ -1283,6 +1283,14 @@ function buildBaseWarningsForScanProject(args: {
     // Threaded through here regardless of the gate predicate; the
     // summarizer drops the payload when the code itself didn't fire.
     configSearchedFromForWarning: root,
+    // Present-when-meaningful gate on
+    // `warningsDetails.no_config_found.searchedFrom`: `root` IS the
+    // resolved `scanned.root` shipped on the response. When the gate
+    // fires (the search base would just echo `meta.scanned.root`), the
+    // rich `{ searchedFrom }` payload drops to `{}` so the bare warning
+    // code is the canonical signal — see `scanner-meta.ts`'s
+    // {@link noConfigFoundWarningDetail} for the predicate.
+    noConfigFoundScannedRoot: root,
     scannedBuildArtifactsPresent: buildArtifacts.present,
     ...(scannedBuildArtifactsSummary === undefined ? {} : { scannedBuildArtifactsSummary }),
     ...(scannedBuildArtifactsAllFiles ? { scannedBuildArtifactsAllFiles: true } : {}),
@@ -2060,6 +2068,14 @@ function buildEmptyFilesResult(args: {
       rootSource,
       configSource,
       configSearchedFromForWarning: root,
+      // Present-when-meaningful gate on
+      // `warningsDetails.no_config_found.searchedFrom`: `root` IS the
+      // resolved `scanned.root` shipped on this response, so when the
+      // gate fires the rich payload drops to `{}` (the bare code
+      // remains the signal; `meta.scanned.root` carries the search
+      // base). Threaded for shape consistency even though the predicate
+      // gate drops `no_config_found` here by construction.
+      noConfigFoundScannedRoot: root,
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,

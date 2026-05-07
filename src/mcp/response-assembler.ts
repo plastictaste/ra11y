@@ -219,6 +219,24 @@ export interface ScanFamilyResponseInput {
    */
   readonly configSearchedFromForWarning?: string;
   /**
+   * Caller-supplied `cwd` from the originating tool's params. Drives
+   * the present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom` — when the loader's
+   * walk-up base equals `cwd`, the rich payload drops to the empty
+   * record because the agent already has the value from its own input.
+   * See {@link import("./scanner-meta.ts").noConfigFoundWarningDetail}.
+   */
+  readonly noConfigFoundCallerCwd?: string;
+  /**
+   * The resolved `scanned.root` for project-mode scans. Drives the
+   * present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom` — when the loader's
+   * walk-up base equals `scanned.root`, the rich payload drops to the
+   * empty record because the agent already reads the search base from
+   * `meta.scanned.root`.
+   */
+  readonly noConfigFoundScannedRoot?: string;
+  /**
    * Caller-supplied scan root for path normalization in the per-emission
    * `findingId` hash. When provided, absolute violation / candidate
    * paths under this root relativize before hashing so a `scan_file`
@@ -604,6 +622,10 @@ function buildAssemblerWarningsField(args: {
   readonly sessionWrappersMismatchCwd: boolean | undefined;
   readonly configSearchSawProjectMarker: boolean | undefined;
   readonly configSearchedFromForWarning: string | undefined;
+  /** See {@link ScanFamilyResponseInput.noConfigFoundCallerCwd}. */
+  readonly noConfigFoundCallerCwd?: string;
+  /** See {@link ScanFamilyResponseInput.noConfigFoundScannedRoot}. */
+  readonly noConfigFoundScannedRoot?: string;
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly linkedStylesheetsUnresolvedForContrast?: import("./scan-assembly.ts").LinkedStylesheetsUnresolvedForContrast;
   /**
@@ -683,6 +705,12 @@ function buildAssemblerWarningsField(args: {
     ...(args.configSearchedFromForWarning === undefined
       ? {}
       : { configSearchedFromForWarning: args.configSearchedFromForWarning }),
+    ...(args.noConfigFoundCallerCwd === undefined
+      ? {}
+      : { noConfigFoundCallerCwd: args.noConfigFoundCallerCwd }),
+    ...(args.noConfigFoundScannedRoot === undefined
+      ? {}
+      : { noConfigFoundScannedRoot: args.noConfigFoundScannedRoot }),
     ...(metaArrayTruncatedFields.length > 0 ? { metaArrayTruncatedFields } : {}),
     ...(args.scssUnresolvedVariableFiles === undefined ||
     args.scssUnresolvedVariableFiles.length === 0
@@ -744,6 +772,8 @@ export function assembleScanFamilyResponse(
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
+    noConfigFoundCallerCwd,
+    noConfigFoundScannedRoot,
     criterionLevels,
     scanRoot,
     scope = "file",
@@ -1038,6 +1068,8 @@ export function assembleScanFamilyResponse(
     sessionWrappersMismatchCwd,
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
+    ...(noConfigFoundCallerCwd === undefined ? {} : { noConfigFoundCallerCwd }),
+    ...(noConfigFoundScannedRoot === undefined ? {} : { noConfigFoundScannedRoot }),
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
     ...(linkedStylesheetsUnresolvedForContrast.localUnresolvedHrefCount === 0 &&
     linkedStylesheetsUnresolvedForContrast.externalCdnHrefCount === 0 &&

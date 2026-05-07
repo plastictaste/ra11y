@@ -3310,26 +3310,73 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     });
   });
 
-  it("warnings-details schema discipline — `no_config_found` carries `searchedFrom` when supplied; falls back to the truncation sentinel otherwise", () => {
-    // `no_config_found` is payload-bearing in the schema — the
-    // `searchedFrom: <cwd>` field gives the agent one canonical
-    // answer to "where did the loader walk from." When the caller
-    // threads `configSearchedFromForWarning`, the payload populates;
-    // when it doesn't, the dispatch falls through to the truncation
-    // sentinel (sentinel disambiguation) so the agent can distinguish "the
-    // payload was supposed to be here" from "binary by design."
-    const withPayload = warningsField({
+  it("warnings-details schema discipline — `no_config_found` ships `{ searchedFrom }` only when the value adds signal; drops to `{}` when redundant; falls through to the truncation sentinel when no input was threaded", () => {
+    // `no_config_found` is dual-shaped in the schema — the
+    // `searchedFrom: <path>` field gives the agent one canonical
+    // answer to "where did the loader walk from" WHEN the value is
+    // not already on the response. When the loader's walk-up base
+    // equals the caller-supplied `cwd` OR the resolved `scanned.root`
+    // (the common case — the agent already has the value), the
+    // payload drops to `{}` (the binary-presence shape) so the bare
+    // warning code carries the signal. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
+    // signal, not clutter — `configSearchedFrom` is present-when-
+    // meaningful, omitted when it would just echo the caller's `cwd`
+    // or a `scanned.root` already in the response."
+    const withMeaningfulPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: null,
       configSearchedFromForWarning: "/proj/root",
+      // Neither callerCwd nor scannedRoot match — the payload adds
+      // signal, so the rich shape rides.
+      noConfigFoundCallerCwd: "/elsewhere",
+      noConfigFoundScannedRoot: "/elsewhere/tree",
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: true,
     });
-    expect(withPayload.warnings).toContain("no_config_found");
-    expect(withPayload.warningsDetails?.no_config_found).toEqual({ searchedFrom: "/proj/root" });
+    expect(withMeaningfulPayload.warnings).toContain("no_config_found");
+    expect(withMeaningfulPayload.warningsDetails?.no_config_found).toEqual({
+      searchedFrom: "/proj/root",
+    });
 
+    // Echo case: the search base equals `scanned.root`. The payload
+    // drops to `{}` because `meta.scanned.root` already carries the
+    // search base.
+    const echoesScannedRoot = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchedFromForWarning: "/proj/root",
+      noConfigFoundScannedRoot: "/proj/root",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(echoesScannedRoot.warnings).toContain("no_config_found");
+    expect(echoesScannedRoot.warningsDetails?.no_config_found).toEqual({});
+
+    // Echo case: the search base equals the caller-supplied `cwd`.
+    // Same shape — the agent passed the value, no new signal.
+    const echoesCallerCwd = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchedFromForWarning: "/proj/cwd",
+      noConfigFoundCallerCwd: "/proj/cwd",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(echoesCallerCwd.warnings).toContain("no_config_found");
+    expect(echoesCallerCwd.warningsDetails?.no_config_found).toEqual({});
+
+    // No `configSearchedFromForWarning` threaded at all → the dispatch
+    // falls through to the disambiguating truncation sentinel, NOT to
+    // the empty record. The shape signals "the payload-bearing slot
+    // exists but the input wasn't threaded" so the agent can tell it
+    // apart from the "value was redundant" case above.
     const withoutPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
