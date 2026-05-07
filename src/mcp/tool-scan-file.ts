@@ -37,7 +37,7 @@ import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
-import { withViolationsByScanKind } from "./scan-assembly.ts";
+import { withActionableManualItemsBySource, withViolationsByScanKind } from "./scan-assembly.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
@@ -456,8 +456,28 @@ function applyCrossSurfaceWarnings(args: {
   const buildArtifactPaths = new Set<string>(
     collectBuildArtifacts([parsed]).map((entry) => entry.path),
   );
-  const planWithLane = withViolationsByScanKind(
+  // Cross-surface lane parity (manual-review axis): same shape as the
+  // {@link withViolationsByScanKind} rewrite above, on the per-criterion
+  // actionable axis. Pre-rewrite, the assembler stamped
+  // `plan.actionableManualItemsBySource: { source: N, buildArtifact: 0 }`
+  // because vendor classification hadn't run yet. With
+  // `buildArtifactPaths` resolved, `withActionableManualItemsBySource`
+  // intersects the per-criterion path index against the vendor set so a
+  // `scan_file` on `dist/*.min.css` honestly reads
+  // `{ source: 0, buildArtifact: N }` — the same dishonest-composite
+  // shape Q15-MIN-CSS surfaced when the bare `actionableManualItems`
+  // headline read 1 while every contributing candidate sat on the
+  // build-artifact lane (per `docs/kb/architecture/ai-first-consumer.md`
+  // "Composite headline counts are dishonest"). Identity-stable when
+  // the file is not a build artifact (helper short-circuits on empty
+  // vendor paths).
+  const planWithActionableLane = withActionableManualItemsBySource(
     assembled.plan,
+    collected.actionableCriteriaPaths,
+    buildArtifactPaths,
+  );
+  const planWithLane = withViolationsByScanKind(
+    planWithActionableLane,
     assembled.files,
     buildArtifactPaths,
   );

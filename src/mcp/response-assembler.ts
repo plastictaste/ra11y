@@ -65,6 +65,7 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { defaultActionableManualLane } from "./manual-criteria-tally.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
 import { collectParserBailedRouteFiles } from "./parser-bail-route-adjustment.ts";
 import {
@@ -164,6 +165,18 @@ export interface ScanFamilyResponseInput {
   readonly discoveryDiagnostics?: DiscoveryDiagnostics;
   /** Plan-side manual-review counters — the caller computed them against `reviewCandidates`. */
   readonly actionableManual: number;
+  /**
+   * Per-criterion file-path index for the actionable manual-review
+   * set — drives `plan.actionableManualItemsBySource: { source,
+   * buildArtifact }`. Threaded from
+   * {@link import("./manual-criteria-tally.ts").ManualCriteriaTally#actionableCriteriaPaths}.
+   * The assembler stamps the empty-vendor-paths default; the
+   * post-classification rewrite via `withActionableManualItemsBySource`
+   * runs at each tool's call site once `vendorPaths` resolves.
+   * Optional so legacy / fixture callers without the index stay
+   * landable; the assembler falls back to an empty map.
+   */
+  readonly actionableCriteriaPaths?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly untargetedCriteria: number;
   /**
    * `"project"` for project-walk callers (none currently route through
@@ -716,7 +729,13 @@ export function assembleScanFamilyResponse(
     verboseMeta,
     preset,
     discoveryDiagnostics,
-    actionableManual,
+    // `actionableManual` (the flat scalar) is intentionally NOT
+    // destructured: the per-scan-kind tally is derived directly from
+    // `actionableCriteriaPaths` so the upstream-vs-assembler split
+    // can never disagree. See `Composite headline counts are
+    // dishonest" + the Q15-MIN-CSS closure for why the bare scalar
+    // can't ride next to the per-lane sibling.
+    actionableCriteriaPaths,
     untargetedCriteria,
     configSource,
     rootSource,
@@ -769,12 +788,14 @@ export function assembleScanFamilyResponse(
   // `fixesByClass` carries the honest per-lane signal. `summary` was
   // dropped per "Composite headline counts are dishonest" — the
   // structured siblings on the plan carry the same data without a
-  // duplicated prose composite.
+  // duplicated prose composite. The per-scan-kind manual-review
+  // tally derives via the empty-vendor-paths default — see
+  // `defaultActionableManualLane` for the rationale.
   const plan = buildScanPlan({
     violations: nonNote.length,
     notes: notes.length,
     violationsWithoutAnyFix,
-    actionableManual,
+    actionableManualBySource: defaultActionableManualLane(actionableCriteriaPaths),
     untargetedCriteria,
     scope,
     fixesByClass,

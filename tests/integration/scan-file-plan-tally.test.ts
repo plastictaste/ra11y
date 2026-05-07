@@ -99,7 +99,15 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface ScanFileBody {
   readonly plan: {
-    readonly actionableManualItems: number;
+    // The bare `actionableManualItems` headline was dropped per
+    // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+    // counts are dishonest" (Q15-MIN-CSS). Per-scan-kind tally
+    // replaces it; consumers that want the flat count sum the two
+    // lanes themselves.
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
     // scan_file is per-file scope — emits the per-file slice name.
     readonly untargetedCriteriaForFile: number;
   };
@@ -277,8 +285,15 @@ async function makeManualCriterionCandidateFixture(): Promise<{ dir: string; pag
   return { dir, page };
 }
 
+function flatActionable(scanFileBody: ScanFileBody): number {
+  return (
+    scanFileBody.plan.actionableManualItemsBySource.source +
+    scanFileBody.plan.actionableManualItemsBySource.buildArtifact
+  );
+}
+
 describe("Q13: scan_file plan reflects shipped reviewCandidates[]", () => {
-  it("scan_file.plan.actionableManualItems === distinct criteria across reviewCandidates[] on a partial-criterion fixture", async () => {
+  it("scan_file.plan.actionableManualItemsBySource (source+buildArtifact) === distinct criteria across reviewCandidates[] on a partial-criterion fixture", async () => {
     const { page } = await makePartialCriterionCandidateFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: page })]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
@@ -290,19 +305,19 @@ describe("Q13: scan_file plan reflects shipped reviewCandidates[]", () => {
     // assertion would pass vacuously, hiding the regression the test
     // exists to prevent.
     expect(distinct).toBeGreaterThan(0);
-    expect(scanFileBody.plan.actionableManualItems).toBe(distinct);
+    expect(flatActionable(scanFileBody)).toBe(distinct);
   });
 
-  it("scan_file.plan.actionableManualItems === distinct criteria across reviewCandidates[] on a manual-criterion fixture", async () => {
+  it("scan_file.plan.actionableManualItemsBySource (source+buildArtifact) === distinct criteria across reviewCandidates[] on a manual-criterion fixture", async () => {
     const { page } = await makeManualCriterionCandidateFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_file", { path: page })]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const distinct = distinctCriteriaCount(scanFileBody, "wcag22");
     expect(distinct).toBeGreaterThan(0);
-    expect(scanFileBody.plan.actionableManualItems).toBe(distinct);
+    expect(flatActionable(scanFileBody)).toBe(distinct);
   });
 
-  it("scan_file.plan.actionableManualItems === checklist.summary.actionable.criteria on the partial-criterion fixture (cross-surface invariant)", async () => {
+  it("scan_file.plan.actionableManualItemsBySource (source+buildArtifact) === checklist.summary.actionable.criteria on the partial-criterion fixture (cross-surface invariant)", async () => {
     // Cross-surface companion to the per-call assertion above. The
     // existing `tests/integration/mcp-consistency/scan-file-checklist-actionable-parity.test.ts`
     // pins the same equality on a metadata-manual fixture (3.3.8
@@ -319,6 +334,6 @@ describe("Q13: scan_file plan reflects shipped reviewCandidates[]", () => {
     ]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    expect(scanFileBody.plan.actionableManualItems).toBe(checklistBody.summary.actionable.criteria);
+    expect(flatActionable(scanFileBody)).toBe(checklistBody.summary.actionable.criteria);
   });
 });

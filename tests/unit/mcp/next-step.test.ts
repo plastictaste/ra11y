@@ -144,14 +144,22 @@ describe("buildNextStep", () => {
   });
 
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.structured).toEqual({ tool: "checklist", args: {} });
   });
 
   it("returns checklist when the actionable-manual count is non-zero", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 4 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 4, buildArtifact: 0 } },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).toContain("4 manual-review");
@@ -276,7 +284,11 @@ describe("buildNextStep", () => {
     // No-violations branch is outside the dedupe predicate's scope —
     // the flag is computed but irrelevant, and the clean-scan
     // recommendation (`checklist`) must not be affected.
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).not.toContain("suggest_fix");
@@ -320,7 +332,11 @@ describe("buildNextStep", () => {
   // caught here before they ship.
 
   it("clean scan with manual candidates mentions ra11y/triage prompt", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 3 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 3, buildArtifact: 0 } },
+      }),
+    );
     expect(result.prose).toContain("ra11y/triage");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at the MCP tool (checklist); the prompt
@@ -329,7 +345,11 @@ describe("buildNextStep", () => {
   });
 
   it("clean scan with zero manual candidates mentions ra11y/audit prompt", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+      }),
+    );
     expect(result.prose).toContain("ra11y/audit");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at checklist — the canonical next MCP call.
@@ -408,7 +428,9 @@ describe("buildNextStep", () => {
         plan: { notes: 1 },
         files: [{ path: "C.tsx", findings: [sampleFinding] }],
       }),
-      formatted({ plan: { notes: 0, actionableManualItems: 2 } }),
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 2, buildArtifact: 0 } },
+      }),
     ];
     for (const f of cases) {
       const result = buildNextStep(f);

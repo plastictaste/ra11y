@@ -84,6 +84,21 @@ export interface ScanCollected {
   readonly unusedWrappers: readonly string[];
   readonly suppressions: readonly SuppressionAuditEntry[];
   readonly actionableManual: number;
+  /**
+   * Per-criterion file-path index for the actionable manual-review
+   * set. Threaded into the assembler so the downstream rewrite seam
+   * (`withActionableManualItemsBySource` in `scan-assembly.ts`) can
+   * intersect each criterion's contributing path set against the
+   * resolved `vendorPaths` and produce the
+   * `plan.actionableManualItemsBySource: { source, buildArtifact }`
+   * lane split. See {@link ManualCriteriaTally#actionableCriteriaPaths}
+   * for the doctrine pointer — the pre-split bare
+   * `actionableManualItems` field violated the
+   * "Composite headline counts are dishonest" rule on bulk-vendor
+   * scans where every contributing candidate sat on the
+   * `buildArtifact` lane.
+   */
+  readonly actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>;
   readonly untargetedCriteria: number;
 }
 
@@ -212,6 +227,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
     unusedWrappers,
     suppressions,
     actionableManual,
+    actionableCriteriaPaths: tally.actionableCriteriaPaths,
     untargetedCriteria,
   };
 }

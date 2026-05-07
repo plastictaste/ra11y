@@ -148,17 +148,20 @@ describe("scan_project — summaryOnly parameter", () => {
       expect(typeof fileHead.count).toBe("number");
 
       // The structured per-lane tally (`fixesByClass`) and the
-      // load-bearing sibling counters (`notes`, `actionableManualItems`,
-      // `untargetedCriteriaForProject`) are the honest replacement for
-      // the former `plan.summary` prose blurb — see `buildScanPlan` in
-      // `src/mcp/scan-assembly.ts` for the doctrine note. The summary
-      // spec keys are present here as structured siblings rather than a
-      // single composite sentence. (scan_project is the project-walk
-      // surface — emits the project slice name; scan / scan_file emit
-      // the parallel `untargetedCriteriaForFile`.)
+      // load-bearing sibling counters (`notes`,
+      // `actionableManualItemsBySource`, `untargetedCriteriaForProject`)
+      // are the honest replacement for the former `plan.summary` prose
+      // blurb — see `buildScanPlan` in `src/mcp/scan-assembly.ts` for
+      // the doctrine note. The summary spec keys are present here as
+      // structured siblings rather than a single composite sentence.
+      // (scan_project is the project-walk surface — emits the project
+      // slice name; scan / scan_file emit the parallel
+      // `untargetedCriteriaForFile`.) The bare `actionableManualItems`
+      // scalar was dropped per Q15-MIN-CSS — the per-scan-kind sibling
+      // is the honest replacement.
       expect(typeof body.plan["fixesByClass"]).toBe("object");
       expect(typeof body.plan["notes"]).toBe("number");
-      expect(typeof body.plan["actionableManualItems"]).toBe("number");
+      expect(typeof body.plan["actionableManualItemsBySource"]).toBe("object");
       expect(typeof body.plan["untargetedCriteriaForProject"]).toBe("number");
 
       // meta.filesByExtension — the per-extension count map the spec

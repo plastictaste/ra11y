@@ -254,7 +254,17 @@ export function buildNextStep(
     violations: violationsCount,
     fixable:
       fixesByClassLane(formatted.plan, "mechanical") + fixesByClassLane(formatted.plan, "guidance"),
-    actionableManual: numFromPlan(formatted.plan, "actionableManualItems"),
+    // Sum the per-scan-kind `actionableManualItemsBySource` lanes to
+    // recover the flat actionable count this branching predicate
+    // budgets against. The bare `actionableManualItems` headline was
+    // dropped because on a `scan_file` of `dist/*.min.css` it read 1
+    // while every contributing candidate sat on the buildArtifact
+    // lane; the per-lane structured sibling is the honest source. A
+    // clean scan with all manual-review evidence in build artifacts
+    // legitimately routes the agent to `checklist` next so it sees
+    // the same per-criterion grounded candidates — summing both lanes
+    // matches that intent.
+    actionableManual: actionableManualSum(formatted.plan),
     notes: numFromPlan(formatted.plan, "notes"),
     first: firstPick.finding,
     iterativeTip: options.iterativeTip ?? "",
@@ -472,6 +482,29 @@ function manualTail(inputs: NextStepInputs): string {
 function numFromPlan(plan: Record<string, unknown>, key: string): number {
   const raw = plan[key];
   return typeof raw === "number" ? raw : 0;
+}
+
+/**
+ * Sums the per-scan-kind `plan.actionableManualItemsBySource` lanes
+ * (`source + buildArtifact`) into the flat actionable-manual count
+ * this builder's branching predicates use. Mirrors {@link sumFixesByClass}
+ * on the manual-review axis: the bare `plan.actionableManualItems`
+ * headline was dropped because on a `scan_file` of `dist/*.min.css`
+ * it read 1 while every contributing candidate sat on the build-
+ * artifact lane (per `docs/kb/architecture/ai-first-consumer.md`
+ * "Composite headline counts are dishonest"). Defensive: a missing
+ * or malformed `actionableManualItemsBySource` parent yields zero,
+ * matching the "no actionable manual review" semantics the caller
+ * expects.
+ */
+function actionableManualSum(plan: Record<string, unknown>): number {
+  const raw = plan["actionableManualItemsBySource"];
+  if (!raw || typeof raw !== "object") return 0;
+  const pair = raw as Record<string, unknown>;
+  const source = typeof pair["source"] === "number" ? (pair["source"] as number) : 0;
+  const buildArtifact =
+    typeof pair["buildArtifact"] === "number" ? (pair["buildArtifact"] as number) : 0;
+  return source + buildArtifact;
 }
 
 /**

@@ -203,7 +203,11 @@ describe("nextStepStructured dispatch invariant — dynamic builders", () => {
   });
 
   it("buildNextStep clean-scan branch emits checklist-valid args (empty is honest)", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: { notes: 0, actionableManualItemsBySource: { source: 0, buildArtifact: 0 } },
+      }),
+    );
     expect(result.structured?.tool).toBe("checklist");
     if (result.structured) {
       assertArgsAgainstSchema(

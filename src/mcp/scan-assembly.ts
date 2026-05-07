@@ -25,6 +25,10 @@ import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 // biome-ignore format: kept on one line for the file-line budget
 import { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLimitation } from "./external-handler-limitation.ts";
+import {
+  type ActionableManualLane,
+  splitActionableCriteriaByLane,
+} from "./manual-criteria-tally.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { splitFixesByClassByScanKind } from "./scan-assembly-fixes-by-scan-kind.ts";
@@ -67,7 +71,7 @@ export { computeTopDirectories, TOP_DIRECTORIES_DEFAULT_LIMIT, type TopDirectory
 /**
  * Packs the `plan` block for `ScanFormatted`. Downstream tool handlers
  * consume the result verbatim — the `limitations` prose, the
- * `actionableManualItems` / `untargetedCriteriaForProject` /
+ * `actionableManualItemsBySource` / `untargetedCriteriaForProject` /
  * `untargetedCriteriaForFile` split, and the honest counters-are-
  * conditional rules all live here so every callable surface (scan,
  * scan_file, scan_project, scan_diff) emits the same shape without
@@ -87,12 +91,37 @@ export { computeTopDirectories, TOP_DIRECTORIES_DEFAULT_LIMIT, type TopDirectory
  * `scan_file` on a single HTML in the same corpus would report 18
  * while `scan_project` on the project root reported 7 — same field
  * name, two different concepts.
+ *
+ * `actionableManualBySource` is the per-scan-kind tally that ships as
+ * `plan.actionableManualItemsBySource: { source, buildArtifact }`.
+ * The bare `actionableManualItems` headline was dropped (the same
+ * deletion-not-renaming precedent on `plan.totalFindings` /
+ * `plan.safeEditsAvailable` / `plan.violations` / `plan.summary` /
+ * `plan.untargetedCriteria`) because on a `scan_file` of
+ * `dist/*.min.css` it read `actionableManualItems: 1` while every
+ * contributing candidate sat on the `buildArtifact` lane — the same
+ * "Composite headline counts are dishonest" miss the per-lane
+ * `fixesByClass` split was created to surface. Callers that want the
+ * flat criteria-with-shipped-evidence count sum the two sub-keys
+ * themselves (`source + buildArtifact`).
  */
 export function buildScanPlan(args: {
   readonly violations: number;
   readonly notes: number;
   readonly violationsWithoutAnyFix: number;
-  readonly actionableManual: number;
+  /**
+   * Per-scan-kind tally for the "criteria with at least one shipped
+   * grounded candidate or low-confidence verify-token finding" axis.
+   * Mirrors {@link FixesByClassLane}'s `{ source, buildArtifact }`
+   * shape. Pre-vendor-classification, every contributor routes to
+   * `source` and `buildArtifact` reads 0 — the same default the
+   * upstream `splitFixesByClassByScanKind` pass produces on no-vendor
+   * scans. The post-classification rewrite ships from
+   * {@link withActionableManualItemsBySource}, similar to how
+   * {@link withViolationsByScanKind} rewrites the per-kind
+   * `fixesByClass` lanes.
+   */
+  readonly actionableManualBySource: ActionableManualLane;
   readonly untargetedCriteria: number;
   /**
    * `"project"` for project-walk surfaces (scan_project, scan_diff);
@@ -139,7 +168,7 @@ export function buildScanPlan(args: {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
 }): Record<string, unknown> {
   // biome-ignore format: kept on one line for the file-line budget
-  const { violations, notes, violationsWithoutAnyFix, actionableManual, untargetedCriteria, scope, fixesByClass, perRuleCoverage } = args;
+  const { violations, notes, violationsWithoutAnyFix, actionableManualBySource, untargetedCriteria, scope, fixesByClass, perRuleCoverage } = args;
   // `fixesByClass` is meaningful only when the scan actually produced
   // violations to bucket — emitting an all-zeros tally on a clean scan
   // is noise that forces the agent to read a field whose only signal
@@ -226,7 +255,22 @@ export function buildScanPlan(args: {
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
       : {}),
-    actionableManualItems: actionableManual,
+    // Per-scan-kind manual-review tally. The bare `actionableManualItems`
+    // headline was dropped (same deletion-not-renaming precedent as
+    // `plan.totalFindings` / `plan.safeEditsAvailable` /
+    // `plan.violations` / `plan.summary` / `plan.untargetedCriteria`)
+    // because on a `scan_file` of `dist/*.min.css` it read 1 while
+    // every contributing candidate sat on the `buildArtifact` lane —
+    // the same dishonest-composite shape the per-lane `fixesByClass`
+    // split was created to surface (`docs/kb/architecture/ai-first-
+    // consumer.md` "Composite headline counts are dishonest").
+    // Pre-vendor-classification, every contributor routes to `source`
+    // and `buildArtifact` reads 0 — the post-classification rewrite
+    // ships from `withActionableManualItemsBySource`, similar to
+    // how `withViolationsByScanKind` rewrites the per-kind `fixesByClass`
+    // lanes. Callers that want the flat criteria-with-shipped-evidence
+    // count sum the two sub-keys themselves.
+    actionableManualItemsBySource: actionableManualBySource,
     ...untargetedField,
     limitations: [
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
@@ -1221,6 +1265,48 @@ export function withViolationsByScanKind(
 // `splitFixesByClassByScanKind` lives in
 // `./scan-assembly-fixes-by-scan-kind.ts` so this file stays under
 // the 500-line file budget enforced by `scripts/check-limits.ts`.
+
+/**
+ * Stamps the post-vendor-classification
+ * `plan.actionableManualItemsBySource: { source, buildArtifact }`
+ * tally onto a `plan` record produced by {@link buildScanPlan}.
+ *
+ * Mirrors {@link withViolationsByScanKind} on the manual-review axis:
+ * the upstream `buildScanPlan` ran with an empty vendor-path set (the
+ * classifier hadn't run yet), so every actionable criterion routed to
+ * the `source` lane and `buildArtifact` read 0 by construction. With
+ * `vendorPaths` now resolved, this helper re-derives the lane split
+ * from the per-criterion path index (`actionableCriteriaPaths`,
+ * threaded through {@link import("./scan-collect.ts").ScanCollected#actionableCriteriaPaths}
+ * and `assembleScanFamilyResponse`'s
+ * {@link import("./response-assembler.ts").ScanFamilyResponseInput#actionableCriteriaPaths}).
+ *
+ * Identity-stable on no-vendor scans (vendorPaths.size === 0) — the
+ * upstream `{ source: N, buildArtifact: 0 }` tally already matches
+ * the post-classification answer, so the helper returns the input
+ * plan unchanged. When artifacts ARE classified, the rewrite restores
+ * the honest split.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest" — pre-split, `plan.actionableManualItems` on a
+ * `scan_file` of `dist/*.min.css` read 1 while every contributing
+ * candidate sat on the `buildArtifact` lane, the same dishonest-
+ * composite shape the per-lane `fixesByClass` split was created to
+ * surface. The bare `actionableManualItems` field was dropped (same
+ * deletion-not-renaming precedent on `plan.totalFindings` /
+ * `plan.safeEditsAvailable` / `plan.violations` / `plan.summary` /
+ * `plan.untargetedCriteria`); the `actionableManualItemsBySource` pair
+ * is the honest replacement.
+ */
+export function withActionableManualItemsBySource(
+  plan: Record<string, unknown>,
+  actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>,
+  vendorPaths: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (vendorPaths.size === 0) return plan;
+  const lane = splitActionableCriteriaByLane(actionableCriteriaPaths, vendorPaths);
+  return { ...plan, actionableManualItemsBySource: lane };
+}
 
 /**
  * Default cap for the {@link computeTopRules} headline rollup. Bulk-

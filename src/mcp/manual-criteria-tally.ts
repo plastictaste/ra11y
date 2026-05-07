@@ -203,7 +203,8 @@ export interface ManualCriteriaTally {
   /**
    * Number of distinct criterion IDs that have at least one shipped
    * grounded review candidate on this scan, modulo any caller-supplied
-   * `skipCriteria`. Matches `scan_project.plan.actionableManualItems`,
+   * `skipCriteria`. Matches the sum of
+   * `scan_project.plan.actionableManualItemsBySource.{source,buildArtifact}`,
    * `checklist.summary.actionable.criteria`, and
    * `coverage[].manualWithCandidates.length` so the "criteria with
    * shipped candidates" count agrees across every project-rooted MCP
@@ -216,6 +217,26 @@ export interface ManualCriteriaTally {
    * 16 grounded items per Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE.
    */
   readonly actionable: number;
+  /**
+   * Per-criterion file-path index for the actionable set: maps each
+   * actionable criterion ID to the set of file paths that contributed
+   * candidates or verify-token findings on this scan. Drives the
+   * `actionableManualItemsBySource: { source, buildArtifact }` lane
+   * split downstream — the rewrite seam (`withActionableManualItemsBySource`
+   * in `scan-assembly.ts`) intersects each criterion's path set against
+   * the resolved `vendorPaths`. A criterion contributes to the `source`
+   * lane iff at least one of its paths is NOT in `vendorPaths`, and to
+   * the `buildArtifact` lane iff at least one of its paths IS in
+   * `vendorPaths`; a criterion with paths on both sides counts in both
+   * lanes. Per `docs/kb/architecture/ai-first-consumer.md` "Composite
+   * headline counts are dishonest" — pre-split, `actionableManualItems`
+   * read 1 on a `dist/*.min.css` `scan_file` while every contributing
+   * candidate sat on the buildArtifact lane, the same shape the
+   * `fixesByClass` per-lane split was created to surface.
+   *
+   * Empty when {@link ManualCriteriaTally#actionable} is 0.
+   */
+  readonly actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>;
   /**
    * Number of applicable manual criteria with no grounded candidate —
    * the bare-criterion-prompt subset. Matches
@@ -230,6 +251,25 @@ export interface ManualCriteriaTally {
    * check.
    */
   readonly untargeted: number;
+}
+
+/**
+ * Per-scan-kind tally for {@link ManualCriteriaTally#actionable}.
+ * Mirrors {@link import("../output/agent-response/types.ts").FixesByClassLane}'s
+ * `{ source, buildArtifact }` shape so consumers reading the per-lane
+ * `actionableManualItemsBySource` field on the plan and the per-lane
+ * `fixesByClass` siblings see one consistent axis. A criterion whose
+ * shipped candidates / verify-token findings span both lanes counts
+ * in both — the lanes are not partitions of the criterion set, they
+ * answer "in which scan-kind does this criterion have any visible
+ * evidence?" Pre-vendor-classification (no caller-supplied vendor
+ * path set) every contributor routes to `source` and `buildArtifact`
+ * reads 0 — same default semantics as `splitFixesByClassByScanKind`'s
+ * empty-vendorPaths behavior.
+ */
+export interface ActionableManualLane {
+  readonly source: number;
+  readonly buildArtifact: number;
 }
 
 /**
@@ -357,6 +397,28 @@ export function collectVerifyTokenViolationCriteria(
 }
 
 /**
+ * Per-criterion file-path index for verify-token violations — the
+ * paths-aware sibling of {@link collectVerifyTokenViolationCriteria}.
+ * Each qualifying finding records its `location.filePath` against
+ * every in-scope, non-skipped criterion it lists. Used by
+ * {@link tallyManualCriteriaFromCoverage} to feed the downstream
+ * `actionableManualItemsBySource` lane split with the substrate-of-
+ * evidence each verify-token contribution sits on.
+ */
+function collectVerifyTokenCriteriaPaths(
+  violations: readonly Violation[],
+  inScopeCriteria: ReadonlySet<string>,
+  skipCriteria: ReadonlySet<string> | undefined,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const v of violations) {
+    if (!isVerifyTokenViolation(v)) continue;
+    addInScopeCriteriaPaths(out, v.criteria, v.location.filePath, inScopeCriteria, skipCriteria);
+  }
+  return out;
+}
+
+/**
  * Predicate: is this violation a low-confidence verify-token finding?
  * Severity must be in {@link VERIFY_TOKEN_SEVERITY_GATE} (info) AND at
  * least one entry on `couldBeWrongBecause` must be in
@@ -380,7 +442,7 @@ function isVerifyTokenViolation(v: Violation): boolean {
  * in-scope gate AND is not in `skipCriteria`. Extracted so the
  * verify-token collector stays under the lint's cognitive-complexity
  * ceiling; the inner per-criterion gate is the same shape used by
- * {@link collectCandidateCriteria} on the candidate axis.
+ * {@link collectCandidateCriteriaPaths} on the candidate axis.
  */
 function addInScopeCriteria(
   out: Set<string>,
@@ -392,6 +454,31 @@ function addInScopeCriteria(
     if (!inScopeCriteria.has(id)) continue;
     if (skipCriteria?.has(id)) continue;
     out.add(id);
+  }
+}
+
+/**
+ * Paths-aware sibling of {@link addInScopeCriteria}: records `path`
+ * against each in-scope, non-skipped criterion. Drives the
+ * verify-token branch of the per-criterion path index that the
+ * `actionableManualItemsBySource` lane split consumes downstream.
+ */
+function addInScopeCriteriaPaths(
+  out: Map<string, Set<string>>,
+  criteria: readonly string[],
+  path: string,
+  inScopeCriteria: ReadonlySet<string>,
+  skipCriteria: ReadonlySet<string> | undefined,
+): void {
+  for (const id of criteria) {
+    if (!inScopeCriteria.has(id)) continue;
+    if (skipCriteria?.has(id)) continue;
+    let bucket = out.get(id);
+    if (bucket === undefined) {
+      bucket = new Set<string>();
+      out.set(id, bucket);
+    }
+    bucket.add(path);
   }
 }
 
@@ -419,7 +506,11 @@ export function tallyManualCriteriaFromCoverage(
 ): ManualCriteriaTally {
   const skipCriteria = filters?.skipCriteria;
   const inScopeCriteria = collectInScopeCriteria(coverage);
-  const candidateCriteria = collectCandidateCriteria(candidates, inScopeCriteria, skipCriteria);
+  const candidateCriteriaPaths = collectCandidateCriteriaPaths(
+    candidates,
+    inScopeCriteria,
+    skipCriteria,
+  );
   // Q15-LANDMARK-MAIN: low-confidence verify-token findings (severity
   // `info` paired with a code from VERIFY_IN_SOURCE_TOKENS) are the
   // rule's way of saying "please verify this in source." Their
@@ -435,30 +526,111 @@ export function tallyManualCriteriaFromCoverage(
   // appearing only on a verify-token finding (no review candidate)
   // pulls into `actionable` without inflating `untargeted` (it drops
   // out of the bare-prompt subset because a finding IS surfacing it).
-  const verifyTokenCriteria = collectVerifyTokenViolationCriteria(
+  const verifyTokenCriteriaPaths = collectVerifyTokenCriteriaPaths(
     filters?.violations ?? [],
     inScopeCriteria,
     skipCriteria,
   );
-  const actionableCriteria = unionCriteria(candidateCriteria, verifyTokenCriteria);
+  const actionableCriteriaPaths = unionCriteriaPaths(
+    candidateCriteriaPaths,
+    verifyTokenCriteriaPaths,
+  );
   const applicableManualIds = collectApplicableManualIds(coverage, applicability, skipCriteria);
-  const actionable = actionableCriteria.size;
+  const actionable = actionableCriteriaPaths.size;
   let untargeted = 0;
   for (const id of applicableManualIds) {
-    if (!actionableCriteria.has(id)) untargeted += 1;
+    if (!actionableCriteriaPaths.has(id)) untargeted += 1;
   }
-  return { applicableManualIds, actionable, untargeted };
+  return { applicableManualIds, actionable, actionableCriteriaPaths, untargeted };
 }
 
 /**
- * Unions two criterion-ID sets. Returns the first input reference
- * unchanged when the second is empty (no-op fast path) — the common
- * case (zero verify-token findings) pays nothing.
+ * Splits the {@link ManualCriteriaTally#actionableCriteriaPaths} index
+ * into the {@link ActionableManualLane} `{ source, buildArtifact }`
+ * tally consumed by `plan.actionableManualItemsBySource`. A criterion
+ * routes into the `source` lane iff at least one of its contributing
+ * file paths is NOT in `vendorPaths`, and into the `buildArtifact`
+ * lane iff at least one of its paths IS in `vendorPaths`. Criteria
+ * whose paths span both sides count in both lanes — the headline
+ * answers "does this lane have any visible evidence for this
+ * criterion?" rather than partitioning the criterion set, mirroring
+ * the way `fixesByClass` lanes count violations whose path-set may
+ * span both sides without double-counting individual emissions.
+ *
+ * Empty `vendorPaths` (the default) routes every criterion to the
+ * `source` lane, matching the upstream `{ source: N, buildArtifact: 0 }`
+ * shape that `splitFixesByClassByScanKind` and
+ * {@link ../output/agent-response/build-plan!countFixesByClass} produce
+ * on no-vendor scans. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Composite headline counts are dishonest" — the pre-split bare
+ * `actionableManualItems` field would read 1 on a `dist/*.min.css`
+ * `scan_file` while every contributing candidate sat in the build-
+ * artifact lane, forcing the agent to budget against a "1 manual-
+ * review item" headline that pointed at zero authored-source
+ * evidence.
  */
-function unionCriteria(a: ReadonlySet<string>, b: ReadonlySet<string>): ReadonlySet<string> {
+export function splitActionableCriteriaByLane(
+  actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>,
+  vendorPaths: ReadonlySet<string>,
+): ActionableManualLane {
+  let source = 0;
+  let buildArtifact = 0;
+  for (const paths of actionableCriteriaPaths.values()) {
+    let hasSource = false;
+    let hasBuildArtifact = false;
+    for (const path of paths) {
+      if (vendorPaths.has(path)) hasBuildArtifact = true;
+      else hasSource = true;
+      if (hasSource && hasBuildArtifact) break;
+    }
+    if (hasSource) source += 1;
+    if (hasBuildArtifact) buildArtifact += 1;
+  }
+  return { source, buildArtifact };
+}
+
+/**
+ * Empty-vendor-paths default for `plan.actionableManualItemsBySource` —
+ * every actionable criterion routes to `source`, `buildArtifact` reads
+ * 0. The post-classification rewrite via
+ * {@link import("./scan-assembly.ts").withActionableManualItemsBySource}
+ * runs at each tool's call site once `vendorPaths` resolves.
+ * Tolerates an `undefined` index so legacy / fixture call sites that
+ * don't thread `actionableCriteriaPaths` stay landable.
+ */
+export function defaultActionableManualLane(
+  actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>> | undefined,
+): ActionableManualLane {
+  return splitActionableCriteriaByLane(
+    actionableCriteriaPaths ?? new Map<string, ReadonlySet<string>>(),
+    new Set<string>(),
+  );
+}
+
+/**
+ * Unions two `criterionId → fileSet` indexes. Returns the first input
+ * reference unchanged when the second is empty (no-op fast path) —
+ * the common case (zero verify-token findings) pays nothing. Per-
+ * criterion file sets are unioned where both inputs carry the same
+ * criterion so a criterion with both candidate-axis and verify-token-
+ * axis evidence in different files preserves both file paths in the
+ * downstream lane split.
+ */
+function unionCriteriaPaths(
+  a: ReadonlyMap<string, ReadonlySet<string>>,
+  b: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlyMap<string, ReadonlySet<string>> {
   if (b.size === 0) return a;
-  const out = new Set<string>(a);
-  for (const id of b) out.add(id);
+  const out = new Map<string, Set<string>>();
+  for (const [id, paths] of a) out.set(id, new Set<string>(paths));
+  for (const [id, paths] of b) {
+    let bucket = out.get(id);
+    if (bucket === undefined) {
+      bucket = new Set<string>();
+      out.set(id, bucket);
+    }
+    for (const p of paths) bucket.add(p);
+  }
   return out;
 }
 
@@ -488,23 +660,30 @@ function collectInScopeCriteria(coverage: readonly PerStandardCoverage[]): Reado
 }
 
 /**
- * Distinct in-scope criterion IDs across the candidate stream, with
- * `skipCriteria` applied. Counts criteria for ANY shipped candidate
- * (regardless of metadata-manual classification) — see
+ * Per-criterion file-path index across the candidate stream, with
+ * `skipCriteria` applied. Records every contributing file path against
+ * each criterion so the downstream lane split (`splitActionableCriteriaByLane`)
+ * can intersect against `vendorPaths`. Counts criteria for ANY shipped
+ * candidate (regardless of metadata-manual classification) — see
  * {@link tallyManualCriteriaFromCoverage} doctrine note for why
  * partial-criterion candidates must contribute to the actionable
  * headline.
  */
-function collectCandidateCriteria(
+function collectCandidateCriteriaPaths(
   candidates: readonly ReviewCandidate[],
   inScopeCriteria: ReadonlySet<string>,
   skipCriteria: ReadonlySet<string> | undefined,
-): ReadonlySet<string> {
-  const out = new Set<string>();
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const out = new Map<string, Set<string>>();
   for (const c of candidates) {
     if (!inScopeCriteria.has(c.criterionId)) continue;
     if (skipCriteria?.has(c.criterionId)) continue;
-    out.add(c.criterionId);
+    let bucket = out.get(c.criterionId);
+    if (bucket === undefined) {
+      bucket = new Set<string>();
+      out.set(c.criterionId, bucket);
+    }
+    bucket.add(c.location.filePath);
   }
   return out;
 }

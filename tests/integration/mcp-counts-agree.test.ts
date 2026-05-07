@@ -78,7 +78,16 @@ async function makeMediaPresentFixture(): Promise<string> {
 
 interface ScanBody {
   readonly plan: {
-    readonly actionableManualItems: number;
+    // The bare `actionableManualItems` scalar was dropped per the
+    // same "Composite headline counts are dishonest" precedent on
+    // `plan.totalFindings` / `plan.safeEditsAvailable` /
+    // `plan.violations` / `plan.summary` / `plan.untargetedCriteria`.
+    // Per-scan-kind tally is the honest replacement; consumers that
+    // want the flat count sum the two lanes themselves.
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
     readonly untargetedCriteriaForProject: number;
   };
 }
@@ -139,6 +148,19 @@ async function gatherCounts(cwd: string): Promise<{
   const scanBody = body<ScanBody>(responses[1]);
   const coverageBody = body<CoverageBody>(responses[2]);
   const checklistBody = body<ChecklistBody>(responses[3]);
+  // Sum the per-scan-kind `actionableManualItemsBySource` lanes to
+  // recover the flat actionable total this cross-surface invariant
+  // budgets against. The bare `plan.actionableManualItems` scalar was
+  // dropped per the same "Composite headline counts are dishonest"
+  // precedent that closed Q15-UNTARGETED — on a `scan_file` of
+  // `dist/*.min.css` it read 1 while every contributing candidate sat
+  // on the `buildArtifact` lane (Q15-MIN-CSS-ACTIONABLE-MANUAL-ITEMS-
+  // INCLUDES-VENDOR-LANE). Consumers reading the per-lane sibling
+  // continue to see the same flat-equality invariant by summing the
+  // two lanes.
+  const scanActionableFlat =
+    scanBody.plan.actionableManualItemsBySource.source +
+    scanBody.plan.actionableManualItemsBySource.buildArtifact;
   return {
     // Re-derive the cross-tool total from the split top-level fields
     // on every surface. The composite `manualReviewRequired` was
@@ -146,12 +168,12 @@ async function gatherCounts(cwd: string): Promise<{
     // coverage (Q13) — the dishonest-headline pattern is the same on
     // every surface. The invariant is still "all surfaces agree on the
     // total", just computed from the honest parts everywhere.
-    scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteriaForProject,
+    scan: scanActionableFlat + scanBody.plan.untargetedCriteriaForProject,
     coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteriaForProject,
     checklist:
       checklistBody.summary.actionable.criteria +
       checklistBody.summary.untargetedCriteriaForProject,
-    scanActionable: scanBody.plan.actionableManualItems,
+    scanActionable: scanActionableFlat,
     // Coverage exposes the criteria-axis manual-review count through
     // the structured `summary.actionable.criteria` path now (the
     // top-level `actionableManualItems` scalar twin was deleted —
@@ -209,7 +231,7 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.summary.actionable.criteria", async () => {
+  it("scan.plan.actionableManualItemsBySource (source+buildArtifact) agrees with checklist.summary.actionable.criteria and coverage.summary.actionable.criteria", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
@@ -357,7 +379,7 @@ async function makeParseErrorFixture(): Promise<string> {
 }
 
 describe("MCP invariant: actionable count matches coverage's manualWithCandidates list", () => {
-  it("scan.plan.actionableManualItems === coverage.entries[0].manualWithCandidates.length", async () => {
+  it("scan.plan.actionableManualItemsBySource (source+buildArtifact) === coverage.entries[0].manualWithCandidates.length", async () => {
     const dir = await makeFiredManualCriterionFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -369,7 +391,10 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
     const checklistBody = body<ChecklistBody>(responses[3]);
     const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
-    expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
+    const scanActionable =
+      scanBody.plan.actionableManualItemsBySource.source +
+      scanBody.plan.actionableManualItemsBySource.buildArtifact;
+    expect(scanActionable).toBe(manualWithCandidatesLen);
     expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
   });
 });

@@ -1601,21 +1601,24 @@ describe("MCP tool: scan_project", () => {
       const withoutDir = await scratch(false);
       const withResult = await tool.handler({ cwd: withDir }, new McpSession());
       const withoutResult = await tool.handler({ cwd: withoutDir }, new McpSession());
+      type ActionableSourcePair = { source: number; buildArtifact: number };
       const withData = JSON.parse(withResult.content[0].text) as {
-        plan: { actionableManualItems: number };
+        plan: { actionableManualItemsBySource: ActionableSourcePair };
       };
       const withoutData = JSON.parse(withoutResult.content[0].text) as {
-        plan: { actionableManualItems: number };
+        plan: { actionableManualItemsBySource: ActionableSourcePair };
       };
+      const flatActionable = (p: { actionableManualItemsBySource: ActionableSourcePair }): number =>
+        p.actionableManualItemsBySource.source + p.actionableManualItemsBySource.buildArtifact;
       // Threading the processes config causes the
       // consistent-identification finder to ground 3.2.4, pushing it
       // from the untargeted bucket into actionable. The exact baseline
       // value isn't pinned — sibling finders that don't consume
       // processes fire identically in both runs, so the delta isolates
-      // the threading fix.
-      expect(withData.plan.actionableManualItems).toBeGreaterThan(
-        withoutData.plan.actionableManualItems,
-      );
+      // the threading fix. Per Q15-MIN-CSS, the bare
+      // `actionableManualItems` headline was dropped; consumers sum
+      // the per-scan-kind lanes to recover the flat budget.
+      expect(flatActionable(withData.plan)).toBeGreaterThan(flatActionable(withoutData.plan));
     });
   });
 });

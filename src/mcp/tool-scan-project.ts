@@ -55,6 +55,7 @@ import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
+  withActionableManualItemsBySource,
   withFindingsByFile,
   withFindingsByRule,
   withTopDirectories,
@@ -436,7 +437,15 @@ export const scanProjectTool: McpTool = {
           withFindingsByRule(
             withFindingsByFile(
               withTopRules(
-                withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+                withViolationsByScanKind(
+                  withActionableManualItemsBySource(
+                    formatted.plan,
+                    scanRunResult.actionableCriteriaPaths,
+                    vendorPaths,
+                  ),
+                  formatted.files,
+                  vendorPaths,
+                ),
                 formatted.files,
               ),
               formatted.files,

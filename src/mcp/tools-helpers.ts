@@ -35,7 +35,7 @@ import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
-import { tallyManualCriteria } from "./manual-criteria-tally.ts";
+import { defaultActionableManualLane, tallyManualCriteria } from "./manual-criteria-tally.ts";
 import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-parse-boundary.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
@@ -592,6 +592,16 @@ export async function runScanAndFormat(
    * without re-walking the adjustment chain.
    */
   readonly adjustedPerRuleCoverage: readonly PerRuleCoverage[];
+  /**
+   * Per-criterion file-path index for the actionable manual-review
+   * set, threaded out so the project-rooted callers
+   * (`tool-scan-project.ts` / `tool-scan-diff.ts`) can drive the
+   * post-vendor-classification rewrite via
+   * {@link import("./scan-assembly.ts").withActionableManualItemsBySource}
+   * once `vendorPaths` resolves. See
+   * {@link import("./manual-criteria-tally.ts").ManualCriteriaTally#actionableCriteriaPaths}.
+   */
+  readonly actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>;
 }> {
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -730,7 +740,15 @@ export async function runScanAndFormat(
     // same raw violation set.
     violations: result.violations,
   });
-  const actionableManual = tally.actionable;
+  // The flat `tally.actionable` count is no longer threaded into the
+  // plan as `actionableManualItems` — that bare composite was dropped
+  // per the Q15-MIN-CSS closure. The per-scan-kind tally derives
+  // from `tally.actionableCriteriaPaths` once `vendorPaths` resolves
+  // (post-classification rewrite via `withActionableManualItemsBySource`
+  // in `tool-scan-project.ts`); the upstream `buildScanPlan` call
+  // here threads the empty-vendor-paths default ({ source: N,
+  // buildArtifact: 0 }) so the wire shape stays stable on no-vendor
+  // scans without needing a sibling rewrite step.
   const untargetedCriteria = tally.untargeted;
   const suppressions = suppressionAudit(files);
   // Findings keep their `fix.description` inline here. The optional
@@ -900,8 +918,14 @@ export async function runScanAndFormat(
   // through `runScanAndCollect` + `assembleScanFamilyResponse` and
   // threads `scope: "file"` instead — see `buildScanPlan` docblock for
   // the cross-surface count invariant rationale.
+  // Empty-vendor-paths default for the per-scan-kind manual-review
+  // tally — every actionable criterion routes to `source` and
+  // `buildArtifact` reads 0. The post-vendor-classification rewrite
+  // ships from {@link withActionableManualItemsBySource} called by
+  // `tool-scan-project.ts` once `vendorPaths` is in scope.
+  const actionableManualBySource = defaultActionableManualLane(tally.actionableCriteriaPaths);
   // biome-ignore format: arg list kept on one line for the file budget
-  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManual, untargetedCriteria, scope: "project" as const, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
+  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManualBySource, untargetedCriteria, scope: "project" as const, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
   const formatted: ScanFormatted = {
     plan: buildScanPlan(planArgs),
     files: enrichedFileEntries,
@@ -917,6 +941,7 @@ export async function runScanAndFormat(
     reviewCandidates: report.candidates ?? [],
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
     adjustedPerRuleCoverage,
+    actionableCriteriaPaths: tally.actionableCriteriaPaths,
   };
 }
 

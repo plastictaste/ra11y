@@ -1991,7 +1991,7 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
 // criterion prompts into a single inflated number; the old
 // `plan.fixSuggestionAvailable` summed mechanical edits with prose-only
 // guidance. The manual half is now split into honest top-level counters
-// (`actionableManualItems` + `untargetedCriteriaForProject` on the project-walk
+// (`actionableManualItemsBySource` + `untargetedCriteriaForProject` on the project-walk
 // surface, `untargetedCriteriaForFile` on the per-file surface); the fix half is
 // surfaced exclusively as the structured per-lane `fixesByClass` tally
 // (agents sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
@@ -2010,7 +2010,9 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     type Lane = { source: number; buildArtifact: number };
     const body = bodyOf(responses[1]) as {
       plan: Record<string, unknown> & {
-        actionableManualItems?: number;
+        // Per-scan-kind manual-review tally — replaces the dropped bare
+        // `actionableManualItems` headline (Q15-MIN-CSS).
+        actionableManualItemsBySource?: Lane;
         untargetedCriteriaForProject?: number;
         fixesByClass?: {
           mechanical?: Lane;
@@ -2020,16 +2022,23 @@ describe("scan_project plan: composite counters split into honest top-level fiel
         };
       };
     };
-    // Manual split: both counters are top-level integers, present even
-    // when one is zero. Zero on actionable is the honest reading of
-    // "the finders didn't ground anything" — omitting the field would
-    // re-introduce the ambiguity the composite-counter split closed.
-    // `scan_project` is project-walk scope so the untargeted-criteria
-    // count ships under `untargetedCriteriaForProject` (the per-file
-    // twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`).
-    expect(typeof body.plan.actionableManualItems).toBe("number");
+    // Manual split: the per-scan-kind tally + untargeted count are
+    // top-level structured fields, present even when zero. `scan_project`
+    // is project-walk scope so the untargeted-criteria count ships
+    // under `untargetedCriteriaForProject` (the per-file twin
+    // `untargetedCriteriaForFile` ships from `scan` / `scan_file`).
+    // The bare `actionableManualItems` scalar was dropped per Q15-MIN-CSS
+    // — on a `scan_file` of `dist/*.min.css` it read 1 while every
+    // contributing candidate sat on the `buildArtifact` lane (per
+    // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+    // counts are dishonest"). Agents sum `source + buildArtifact`
+    // off the structured sibling for the flat budget.
+    expect(typeof body.plan.actionableManualItemsBySource).toBe("object");
+    expect(typeof body.plan.actionableManualItemsBySource?.source).toBe("number");
+    expect(typeof body.plan.actionableManualItemsBySource?.buildArtifact).toBe("number");
     expect(typeof body.plan.untargetedCriteriaForProject).toBe("number");
-    expect(body.plan.actionableManualItems).toBeGreaterThanOrEqual(0);
+    expect(body.plan.actionableManualItemsBySource?.source ?? -1).toBeGreaterThanOrEqual(0);
+    expect(body.plan.actionableManualItemsBySource?.buildArtifact ?? -1).toBeGreaterThanOrEqual(0);
     expect(body.plan.untargetedCriteriaForProject).toBeGreaterThanOrEqual(0);
     // The fixture has a full WCAG load, so untargeted is populated.
     expect(body.plan.untargetedCriteriaForProject ?? 0).toBeGreaterThan(0);
@@ -2102,6 +2111,13 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     const body = bodyOf(responses[1]) as { plan: Record<string, unknown> };
     expect(body.plan).not.toHaveProperty("manualReviewRequired");
     expect(body.plan).not.toHaveProperty("fixSuggestionAvailable");
+    // Q15-MIN-CSS: the bare `actionableManualItems` scalar was
+    // dropped — the per-scan-kind `actionableManualItemsBySource`
+    // sibling is the honest replacement, and keeping a flat scalar
+    // alongside would re-create the dishonest-composite shape (on
+    // `dist/*.min.css` the bare count read 1 while every contributing
+    // candidate sat on the `buildArtifact` lane).
+    expect(body.plan).not.toHaveProperty("actionableManualItems");
   });
 
   it("scan_project.plan does not carry a `summary` prose blurb — dropped composite", async () => {

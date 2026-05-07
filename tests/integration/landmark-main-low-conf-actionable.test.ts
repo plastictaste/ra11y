@@ -94,10 +94,19 @@ interface Finding {
   readonly couldBeWrongBecause?: readonly string[];
 }
 
+interface ActionableManualBySource {
+  readonly source: number;
+  readonly buildArtifact: number;
+}
+
 interface ScanFileBody {
   readonly findings?: readonly Finding[];
   readonly plan: {
-    readonly actionableManualItems: number;
+    // The bare `actionableManualItems` headline was dropped per
+    // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+    // counts are dishonest" (Q15-MIN-CSS). Per-scan-kind tally
+    // replaces it.
+    readonly actionableManualItemsBySource: ActionableManualBySource;
     // scan_file is per-file scope — emits the per-file slice name.
     readonly untargetedCriteriaForFile: number;
   };
@@ -105,9 +114,17 @@ interface ScanFileBody {
 
 interface ScanProjectBody {
   readonly plan: {
-    readonly actionableManualItems: number;
+    readonly actionableManualItemsBySource: ActionableManualBySource;
     readonly untargetedCriteriaForProject: number;
   };
+}
+
+function flatActionable(plan: {
+  readonly actionableManualItemsBySource: ActionableManualBySource;
+}): number {
+  return (
+    plan.actionableManualItemsBySource.source + plan.actionableManualItemsBySource.buildArtifact
+  );
 }
 
 interface ChecklistBody {
@@ -168,7 +185,9 @@ describe("low-confidence verify-token finding contributes to actionableManualIte
     expect(verifyTokenFindings.length).toBeGreaterThan(0);
     // Pre-fix this read 0 while one verify-token finding shipped —
     // the canonical Composite-Headline-Counts-Are-Dishonest miss.
-    expect(scanFileBody.plan.actionableManualItems).toBeGreaterThan(0);
+    // Post-Q15-MIN-CSS the headline ships as a per-scan-kind pair
+    // and the consumer sums the lanes to recover the flat budget.
+    expect(flatActionable(scanFileBody.plan)).toBeGreaterThan(0);
   });
 
   it("cross-surface invariant: scan_project / coverage / checklist all count the verify-token criterion in actionable", async () => {
@@ -186,13 +205,12 @@ describe("low-confidence verify-token finding contributes to actionableManualIte
     // through the shared `tallyManualCriteriaFromCoverage` helper /
     // `actionableCriteria` set so the verify-token criterion folds
     // into every surface's headline. Pre-Q15 they all read 0 on this
-    // fixture; post-Q15 they all read >= 1 and agree.
-    expect(scanProjectBody.plan.actionableManualItems).toBeGreaterThan(0);
-    expect(scanProjectBody.plan.actionableManualItems).toBe(
-      coverageBody.summary.actionable.criteria,
-    );
-    expect(scanProjectBody.plan.actionableManualItems).toBe(
-      checklistBody.summary.actionable.criteria,
-    );
+    // fixture; post-Q15 they all read >= 1 and agree. Post-Q15-MIN-CSS
+    // scan_project ships the per-scan-kind sibling and the flat
+    // total is `source + buildArtifact`.
+    const projectActionable = flatActionable(scanProjectBody.plan);
+    expect(projectActionable).toBeGreaterThan(0);
+    expect(projectActionable).toBe(coverageBody.summary.actionable.criteria);
+    expect(projectActionable).toBe(checklistBody.summary.actionable.criteria);
   });
 });

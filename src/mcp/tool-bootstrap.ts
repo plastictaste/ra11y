@@ -434,6 +434,18 @@ interface FixesByClassSubset {
   readonly verifyInSource: FixesByClassLaneSubset;
 }
 
+/**
+ * Per-scan-kind manual-review lane forwarded from the upstream
+ * `plan.actionableManualItemsBySource`. Same shape as
+ * {@link FixesByClassLaneSubset} on the manual-review axis — see
+ * `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class lanes
+ * must equal project-rooted lanes."
+ */
+interface ActionableManualSubsetLane {
+  readonly source: number;
+  readonly buildArtifact: number;
+}
+
 interface ScanSubset {
   readonly filesScanned: number;
   /**
@@ -459,7 +471,20 @@ interface ScanSubset {
    */
   readonly notesCount: number;
   readonly scanMode?: string;
-  readonly actionableManualItems?: number;
+  /**
+   * Per-scan-kind manual-review tally forwarded verbatim from the
+   * upstream `plan.actionableManualItemsBySource`. Replaces the bare
+   * `actionableManualItems` scalar that was dropped because on a
+   * `scan_file` of `dist/*.min.css` it read 1 while every contributing
+   * candidate sat on the `buildArtifact` lane (per
+   * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+   * counts are dishonest"). Conditional-spread: omitted when the
+   * upstream `plan.actionableManualItemsBySource` is absent / unread-
+   * able. Per the doctrine bullet "Bootstrap-class lanes must equal
+   * project-rooted lanes," the bootstrap subset mirrors the
+   * scan_project lane shape one-to-one.
+   */
+  readonly actionableManualItemsBySource?: ActionableManualSubsetLane;
   /**
    * Per-`fixClass` remediation-lane tally forwarded verbatim from the
    * upstream `plan.fixesByClass` (set by `scan-assembly.ts` when
@@ -517,19 +542,41 @@ function extractScanSubset(scan: unknown): ScanSubset {
         laneSum(fixesByClass.verifyInSource);
   const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
-  const actionable = readNumberFromRecord(plan, "actionableManualItems");
+  const actionableBySource = readActionableManualLane(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
     filesScanned,
     violationsCount,
     notesCount,
     ...(scanMode === null ? {} : { scanMode }),
-    ...(actionable === null || actionable === undefined
-      ? {}
-      : { actionableManualItems: actionable }),
+    ...(actionableBySource === null ? {} : { actionableManualItemsBySource: actionableBySource }),
     ...(fixesByClass === null ? {} : { fixesByClass }),
     ...(limitations.length > 0 ? { limitations } : {}),
   };
+}
+
+/**
+ * Reads the upstream `plan.actionableManualItemsBySource` pair into
+ * the bootstrap subset shape. Mirrors {@link readFixesByClass} on the
+ * manual-review axis. Returns `null` when the field is absent or
+ * malformed so the caller can conditional-spread it out — never
+ * emit a sentinel `{ source: 0, buildArtifact: 0 }` per the
+ * "Bootstrap-class lanes must equal project-rooted lanes" + present-
+ * when-meaningful rules. The upstream emits the field
+ * deterministically (zero-actionable scans surface as
+ * `{ source: 0, buildArtifact: 0 }` — honest "axis tallied, found
+ * zero" signal), so a `null` here means the caller built the
+ * subset from a non-scan-family payload.
+ */
+function readActionableManualLane(plan: unknown): ActionableManualSubsetLane | null {
+  if (plan === null || typeof plan !== "object") return null;
+  const raw = (plan as Record<string, unknown>)["actionableManualItemsBySource"];
+  if (raw === null || typeof raw !== "object") return null;
+  const pair = raw as Record<string, unknown>;
+  const source = pair["source"];
+  const buildArtifact = pair["buildArtifact"];
+  if (typeof source !== "number" || typeof buildArtifact !== "number") return null;
+  return { source, buildArtifact };
 }
 
 /**

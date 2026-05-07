@@ -227,7 +227,10 @@ function suggestAuditNextStep(scan: unknown, checklist: unknown): string {
   // `{ criteria, candidatesUncapped, candidatesReturned }` per
   // ai-first-consumer.md §"Composite headline counts are dishonest";
   // the audit prose echoes the criteria count (cross-tool canonical
-  // count, matches `scan_project.plan.actionableManualItems`).
+  // count, matches the flat
+  // `scan_project.plan.actionableManualItemsBySource.source +
+  // .buildArtifact` sum — the bare `actionableManualItems` headline
+  // was dropped per the same doctrine bullet).
   const actionableShape = readObject(checklistSummary, "actionable");
   const actionable = readNumber(actionableShape, "criteria");
   if (scanNextStep && scanNextStep.length > 0) {
