@@ -26,6 +26,7 @@ import { includeRuleDetailsSchema, ruleCatalogField } from "./rule-catalog.ts";
 import { mergeScanTokenBudget } from "./scan-budget.ts";
 import { runScanAndCollect } from "./scan-collect.ts";
 import { scannedDir } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import { applyTokenBudget } from "./token-budget.ts";
 import {
   errorResult,
@@ -37,7 +38,7 @@ import {
   strParam,
   textResult,
 } from "./tools-helpers.ts";
-import { warningsField } from "./warnings.ts";
+import { type ScanWarningDetails, warningsField } from "./warnings.ts";
 import { buildWrapperSourcesFromConfig } from "./wrappers-meta.ts";
 
 export const scanTool: McpTool = {
@@ -215,14 +216,10 @@ export const scanTool: McpTool = {
         // Surface the loader's search root on
         // `warningsDetails.no_config_found.searchedFrom` so every
         // project-rooted tool answers "where was the search?" the
-        // same way.
+        // same way. Present-when-meaningful gate applied below at
+        // the post-assembly seam (the assembler doesn't accept
+        // gate inputs).
         configSearchedFromForWarning: cwd,
-        // Present-when-meaningful gate on
-        // `warningsDetails.no_config_found.searchedFrom`: `cwd` is
-        // the caller-supplied value, so the agent already has it
-        // from its own input. When the gate fires, the rich payload
-        // drops to `{}` so the bare warning code carries the signal.
-        noConfigFoundCallerCwd: cwd,
         ...extensionsField,
       },
       { tokenBudget: 0 },
@@ -265,7 +262,15 @@ export const scanTool: McpTool = {
     // are the deterministic signal set; density truncation is a
     // secondary concern the merge layers on top.
     const baseWarnings = assembled.warnings ?? [];
-    const baseWarningsDetails = assembled.warningsDetails;
+    // Present-when-meaningful gate on
+    // `warningsDetails.no_config_found.searchedFrom`: the assembler
+    // populates the rich `{ searchedFrom: cwd }` payload because the
+    // search base equals `cwd`, but `scan` ships the caller-supplied
+    // `cwd` on the response by construction — the agent already has
+    // it. Drop the rich payload to `{}` (binary-presence shape) so
+    // the bare warning code carries the signal. See
+    // `scanner-meta.ts`.
+    const baseWarningsDetails = applyNoConfigFoundCallerCwdGate(assembled.warningsDetails, cwd);
     // ADR 0021 amendment (2026-04-20): secondary token-density budget.
     // `scan` has no `limit`/`offset` contract, so when the density cap
     // fires we emit `truncated: true` + `totalFilesWithFindings` + the
@@ -310,6 +315,30 @@ export const scanTool: McpTool = {
     );
   },
 };
+
+/**
+ * Post-assembly gate on `warningsDetails.no_config_found.searchedFrom`:
+ * when the assembler emitted the rich `{ searchedFrom }` payload but
+ * the value equals the caller-supplied `cwd` (which `scan` ships on
+ * its response by construction), drop the payload to `{}` per the
+ * present-when-meaningful contract. Returns the input unchanged when
+ * the warning didn't fire OR when the assembled payload was already
+ * dual-shaped. Lives at the tool-scan seam to keep the assembler's
+ * surface stable.
+ */
+function applyNoConfigFoundCallerCwdGate(
+  details: ScanWarningDetails | undefined,
+  callerCwd: string,
+): ScanWarningDetails | undefined {
+  if (details === undefined) return undefined;
+  const slot = details.no_config_found;
+  if (slot === undefined) return details;
+  if (!("searchedFrom" in slot) || slot.searchedFrom !== callerCwd) return details;
+  return {
+    ...details,
+    no_config_found: noConfigFoundWarningDetail({ searchedFrom: slot.searchedFrom, callerCwd }),
+  };
+}
 
 /**
  * Up-front type + required-param validation for the `scan` handler.

@@ -71,8 +71,8 @@ import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wr
 import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { computeTopRules } from "./scan-assembly.ts";
-import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   applyRuleSettings,
   errorResult,

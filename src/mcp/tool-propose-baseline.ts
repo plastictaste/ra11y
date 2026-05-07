@@ -102,8 +102,8 @@ import {
   tallyReasons,
 } from "./propose-baseline-classify.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
-import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -255,16 +255,8 @@ export const proposeBaselineTool: McpTool = {
       configSearchSawProjectMarker,
     });
     const warnings = noConfigFires ? (["no_config_found"] as const) : [];
-    // Present-when-meaningful gate on
-    // `warningsDetails.no_config_found.searchedFrom`: the loader's
-    // walk-up base equals the resolved `root` shipped on
-    // `meta.scanned.root`, so the rich payload would just echo a
-    // value the agent already has. The shared helper drops it to the
-    // empty record in that case; the bare warning code carries the
-    // signal. See `scanner-meta.ts`.
-    const warningsDetails = noConfigFires
-      ? { no_config_found: noConfigFoundWarningDetail({ searchedFrom: root, scannedRoot: root }) }
-      : undefined;
+    const noConfigDetail = noConfigFoundWarningDetail({ searchedFrom: root, scannedRoot: root });
+    const warningsDetails = noConfigFires ? { no_config_found: noConfigDetail } : undefined;
 
     return textResult({
       proposed,

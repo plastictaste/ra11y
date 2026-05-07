@@ -5086,12 +5086,7 @@ function buildScanWarningDetailsDispatch(
     },
     {
       code: "no_config_found",
-      summarize: () =>
-        summarizeNoConfigFound(
-          inputs.configSearchedFromForWarning,
-          inputs.noConfigFoundCallerCwd,
-          inputs.noConfigFoundScannedRoot,
-        ),
+      summarize: () => summarizeNoConfigFoundFromInputs(inputs),
     },
     {
       code: "redundant_additional_paths",
@@ -5660,6 +5655,17 @@ function summarizeNoConfigFound(
 ): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
   if (typeof searchedFrom !== "string" || searchedFrom.length === 0) return undefined;
   return noConfigFoundWarningDetail({ searchedFrom, callerCwd, scannedRoot });
+}
+
+/** {@link buildScanWarningDetailsDispatch} adapter — one-liner row in the table. */
+function summarizeNoConfigFoundFromInputs(
+  inputs: WarningInputs,
+): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
+  return summarizeNoConfigFound(
+    inputs.configSearchedFromForWarning,
+    inputs.noConfigFoundCallerCwd,
+    inputs.noConfigFoundScannedRoot,
+  );
 }
 
 /**

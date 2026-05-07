@@ -43,8 +43,8 @@ import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { applyScanDiffTokenBudget } from "./scan-diff-budget.ts";
-import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   buildReferenceGuide,
   errorResult,
