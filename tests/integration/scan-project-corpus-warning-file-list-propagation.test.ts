@@ -154,8 +154,7 @@ describe("scan_project — corpus-warning file-list propagation onto per-finding
 
     // (a) The corpus-level warning fires and lists the file.
     expect(result.warnings ?? []).toContain("jsx_code_demo_prop_parsed_as_live_dom");
-    const warningFiles =
-      result.warningsDetails?.jsx_code_demo_prop_parsed_as_live_dom?.files ?? [];
+    const warningFiles = result.warningsDetails?.jsx_code_demo_prop_parsed_as_live_dom?.files ?? [];
     expect(warningFiles.length).toBeGreaterThan(0);
     const namedFile = warningFiles.find((f) => f.path.endsWith("page.mdx"));
     expect(namedFile).toBeDefined();

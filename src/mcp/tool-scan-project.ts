@@ -50,7 +50,7 @@ import {
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
-  type CorpusWarningFiles,
+  buildCorpusWarningFilesFromCodeDemoMatches,
   enrichFindingsWithCorpusWarningFiles,
 } from "./per-finding-corpus-warning-files.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
@@ -368,7 +368,7 @@ export const scanProjectTool: McpTool = {
     // No-op fast path when no warning's file set is non-empty.
     const enrichedFiles = enrichFindingsWithCorpusWarningFiles(
       codeDemoEnrichedFiles,
-      buildCorpusWarningFilesForScanProject(codeDemoPropMatches),
+      buildCorpusWarningFilesFromCodeDemoMatches(codeDemoPropMatches),
     );
     const formatted: ScanFormatted = { ...scanRunResult.formatted, files: enrichedFiles };
     const rawReviewCandidates = scanRunResult.reviewCandidates;
@@ -1444,42 +1444,6 @@ function codeDemoPropMatchesField(
   return { codeDemoPropMatches: matches };
 }
 
-/**
- * Builds the {@link CorpusWarningFiles} array consumed by the per-FILE
- * propagation pass on per-finding `couldBeWrongBecause`. Each entry
- * pairs one corpus-level warning code with the file-path set the
- * warning's evidence model named, so the per-finding helper can append
- * the code (and downgrade confidence one step) on every finding whose
- * hosting file is in the named set.
- *
- * Currently sources one warning — `jsx_code_demo_prop_parsed_as_live_dom`
- * (file paths drawn from the same map that drives the corpus-level
- * warning at the warnings module). Other warnings carrying file lists
- * (`dynamic_content_container_detected`,
- * `parser_bailed_on_non_jsx_in_tsx_route`,
- * `linked_stylesheet_local_unresolved`) can opt in by appending to the
- * returned array. Each entry is independent — the per-finding helper
- * propagates them all in a single pass.
- *
- * Returns an empty array when none of the wired warnings fired on this
- * scan; the per-finding helper's no-op fast path keeps the common case
- * cheap.
- */
-function buildCorpusWarningFilesForScanProject(
-  codeDemoPropMatches: import("./warnings.ts").WarningInputs["codeDemoPropMatches"],
-): readonly CorpusWarningFiles[] {
-  const out: CorpusWarningFiles[] = [];
-  if (codeDemoPropMatches !== undefined && codeDemoPropMatches.size > 0) {
-    const files = new Set<string>();
-    for (const [path, matches] of codeDemoPropMatches) {
-      if (matches.length > 0) files.add(path);
-    }
-    if (files.size > 0) {
-      out.push({ warningCode: "jsx_code_demo_prop_parsed_as_live_dom", files });
-    }
-  }
-  return out;
-}
 
 /**
  * Builds the spreadable `dynamicContentContainerEntries` subset for the

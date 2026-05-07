@@ -66,6 +66,22 @@ import type { AgentFinding, Confidence } from "../output/agent-response/types.ts
 import type { FindingBucket } from "./per-finding-confidence-parity.ts";
 
 /**
+ * Per-file MDX code-demo prop matches the warnings module produces.
+ * Re-declared here as a structural-only type so both the assembler-
+ * internal call site and the `tool-scan-project` post-runScanAndFormat
+ * call site can call {@link buildCorpusWarningFilesFromCodeDemoMatches}
+ * without importing `WarningInputs` and creating an import cycle.
+ *
+ * Matches the shape the warnings module declares for
+ * `WarningInputs.codeDemoPropMatches` — only the fields needed to
+ * derive the file set (path keys + non-empty match list) are required.
+ */
+type CodeDemoPropMatchesMap = ReadonlyMap<
+  string,
+  readonly { readonly bodyStartLine: number }[]
+>;
+
+/**
  * One corpus-level warning's contribution to per-finding propagation.
  *
  * - `warningCode` — the snake_case warning identifier the agent reads
@@ -194,4 +210,42 @@ function downgradeOneStep(c: Confidence): Confidence {
   if (c === "high") return "medium";
   if (c === "medium") return "low";
   return c;
+}
+
+/**
+ * Builds the {@link CorpusWarningFiles} array from the corpus-level
+ * warning inputs available at scan-family response assembly time.
+ * Returns an empty array (no entries with non-empty file sets) when
+ * none of the wired warnings fired on this scan; the propagation
+ * helper's no-op fast path keeps the common case cheap.
+ *
+ * Currently sources one warning — `jsx_code_demo_prop_parsed_as_live_dom`,
+ * keyed off the {@link CodeDemoPropMatchesMap} that the MDX adapter's
+ * detector populates. Other warnings carrying file lists
+ * (`dynamic_content_container_detected`,
+ * `parser_bailed_on_non_jsx_in_tsx_route`,
+ * `linked_stylesheet_local_unresolved`) can opt in by adding parameters
+ * here and pushing additional entries. Each entry is independent;
+ * the per-finding helper propagates them all in a single pass.
+ *
+ * Centralized in this file so both the assembler-internal call site
+ * (`response-assembler.ts`) and the `tool-scan-project` post-
+ * `runScanAndFormat` call site share one builder — keeps the wired
+ * warnings list canonical and lets future warnings opt in from one
+ * spot rather than two parallel call sites that drift.
+ */
+export function buildCorpusWarningFilesFromCodeDemoMatches(
+  codeDemoPropMatches: CodeDemoPropMatchesMap | undefined,
+): readonly CorpusWarningFiles[] {
+  const out: CorpusWarningFiles[] = [];
+  if (codeDemoPropMatches !== undefined && codeDemoPropMatches.size > 0) {
+    const files = new Set<string>();
+    for (const [path, matches] of codeDemoPropMatches) {
+      if (matches.length > 0) files.add(path);
+    }
+    if (files.size > 0) {
+      out.push({ warningCode: "jsx_code_demo_prop_parsed_as_live_dom", files });
+    }
+  }
+  return out;
 }

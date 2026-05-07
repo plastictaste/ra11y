@@ -74,10 +74,8 @@ import {
 } from "./per-finding-beyond-parse-boundary.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
-import {
-  type CorpusWarningFiles,
-  enrichFindingsWithCorpusWarningFiles,
-} from "./per-finding-corpus-warning-files.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { buildCorpusWarningFilesFromCodeDemoMatches, enrichFindingsWithCorpusWarningFiles } from "./per-finding-corpus-warning-files.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
@@ -363,43 +361,6 @@ export interface ScanFamilyResponse {
 function violationFilePathSet(violations: readonly Violation[]): Set<string> {
   const out = new Set<string>();
   for (const v of violations) out.add(v.location.filePath);
-  return out;
-}
-
-/**
- * Builds the {@link CorpusWarningFiles} array consumed by the per-FILE
- * propagation pass on per-finding `couldBeWrongBecause`. Each entry
- * pairs one corpus-level warning code with the file-path set the
- * warning's evidence model named, so the per-finding helper can append
- * the code (and downgrade confidence one step) on every finding whose
- * hosting file is in the named set.
- *
- * Currently sources one warning — `jsx_code_demo_prop_parsed_as_live_dom`
- * (file paths drawn from the same map that drives the corpus-level
- * warning code at the warnings module). Other warnings carrying file
- * lists (`dynamic_content_container_detected`,
- * `parser_bailed_on_non_jsx_in_tsx_route`,
- * `linked_stylesheet_local_unresolved`) can opt in by appending to the
- * returned array. Each entry is independent — the per-finding helper
- * propagates them all in a single pass.
- *
- * Returns an empty array (no entries with non-empty file sets) when
- * none of the wired warnings fired on this scan; the per-finding
- * helper's no-op fast path keeps the common case cheap.
- */
-function buildCorpusWarningFiles(
-  codeDemoPropMatches: ReadonlyMap<string, readonly { readonly bodyStartLine: number }[]> | undefined,
-): readonly CorpusWarningFiles[] {
-  const out: CorpusWarningFiles[] = [];
-  if (codeDemoPropMatches !== undefined && codeDemoPropMatches.size > 0) {
-    const files = new Set<string>();
-    for (const [path, matches] of codeDemoPropMatches) {
-      if (matches.length > 0) files.add(path);
-    }
-    if (files.size > 0) {
-      out.push({ warningCode: "jsx_code_demo_prop_parsed_as_live_dom", files });
-    }
-  }
   return out;
 }
 
@@ -1013,10 +974,8 @@ export function assembleScanFamilyResponse(
   // `linked_stylesheet_local_unresolved`) can opt in by extending the
   // array; each entry is independent and propagates corpus-wide
   // through this same helper.
-  fileEntries = enrichFindingsWithCorpusWarningFiles(
-    fileEntries,
-    buildCorpusWarningFiles(input.codeDemoPropMatches),
-  );
+  // biome-ignore format: keep call on one line — file effective-line budget
+  fileEntries = enrichFindingsWithCorpusWarningFiles(fileEntries, buildCorpusWarningFilesFromCodeDemoMatches(input.codeDemoPropMatches));
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     ...(typeof filesWithAnyRuleEvaluated === "number" ? { filesWithAnyRuleEvaluated } : {}),
