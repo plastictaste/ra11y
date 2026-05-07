@@ -514,9 +514,10 @@ function trimSummaryPlan(plan: Record<string, unknown>): {
     findingsByRule !== null &&
     typeof findingsByRule === "object"
   ) {
-    const entries = Object.entries(findingsByRule as Record<string, unknown>).filter(
-      (e): e is readonly [string, number] => typeof e[1] === "number",
-    );
+    const entries: [string, number][] = [];
+    for (const [k, v] of Object.entries(findingsByRule as Record<string, unknown>)) {
+      if (typeof v === "number") entries.push([k, v]);
+    }
     if (entries.length > SUMMARY_SLIM_FINDINGS_BY_RULE_CAP) {
       const sorted = [...entries].sort((a, b) => {
         if (b[1] !== a[1]) return b[1] - a[1];
@@ -582,9 +583,7 @@ function readWarningsDetails(response: Record<string, unknown>): ScanWarningDeta
   return d as ScanWarningDetails;
 }
 
-function readNextStepStructured(
-  response: Record<string, unknown>,
-): NextStepStructured | undefined {
+function readNextStepStructured(response: Record<string, unknown>): NextStepStructured | undefined {
   const n = response["nextStepStructured"];
   if (n === undefined || n === null || typeof n !== "object") return undefined;
   return n as NextStepStructured;
@@ -606,10 +605,7 @@ function readStringArray(
  * `metaFieldsDropped` lists every key the agent would have seen on the
  * full meta block but doesn't see on the slim envelope.
  */
-function unionInOrder(
-  first: readonly string[],
-  second: readonly string[],
-): readonly string[] {
+function unionInOrder(first: readonly string[], second: readonly string[]): readonly string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const s of first) {

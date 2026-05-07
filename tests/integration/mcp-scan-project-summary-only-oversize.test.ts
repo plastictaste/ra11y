@@ -72,9 +72,8 @@ function buildLargeSummaryResponse(): Record<string, unknown> {
     summaryOnly: true as const,
     filesArrayDropped: true as const,
     totalFilesWithFindings: 4936,
-    nextStep: "Summary-only mode skipped per-file findings to fit under the response envelope. ".repeat(
-      3,
-    ),
+    nextStep:
+      "Summary-only mode skipped per-file findings to fit under the response envelope. ".repeat(3),
     nextStepStructured: { tool: "explain_rule", args: { ruleId: "rules/r-00" } },
     meta: {
       tool: "scan_project",
