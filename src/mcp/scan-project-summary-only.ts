@@ -30,9 +30,13 @@
  *     `summaryOnly`) so the second call lands somewhere productive.
  *   - "Sibling fields naming the same concept must use one shape" —
  *     the spec calls the per-file rollup `topFiles`; the existing
- *     `plan.findingsByFile` already ships `{ path, count }` entries,
- *     so we reuse that field rather than introducing a parallel
- *     `topFiles` sibling. Same shape, one name.
+ *     `plan.findingsByFile` already ships `{ path, errorWarningCount }`
+ *     entries, so we reuse that field rather than introducing a
+ *     parallel `topFiles` sibling. Same shape, one name. The
+ *     `errorWarningCount` slice-explicit name (renamed from bare
+ *     `count`) keeps the field honest against the parallel `scan_file`
+ *     `totalFindings` (paging-load-bearing, all-severity) — see
+ *     `findings-by-file.ts` for the cross-surface identity.
  *   - "Truncated containers must rename or sentinel, not retain" —
  *     `files` is OMITTED entirely (not `[]`) so the agent reading
  *     the response can't confuse "summary-only mode" with "clean scan

@@ -119,7 +119,7 @@ describe("withFindingsByRule — conditional spread on the plan", () => {
       estimatedEffort: "trivial",
       summary: "1 mechanical.",
       topRules: [{ ruleId: "alt-text/missing", count: 1 }],
-      findingsByFile: [{ path: "a.html", count: 1 }],
+      findingsByFile: [{ path: "a.html", errorWarningCount: 1 }],
     };
     const out = withFindingsByRule(plan, [{ findings: [E("alt-text/missing")] }]);
     // All original keys present + the new one — `findingsByRule` is

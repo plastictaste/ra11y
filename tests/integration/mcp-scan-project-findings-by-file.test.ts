@@ -86,7 +86,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 interface FindingsByFileEntry {
   readonly path: string;
-  readonly count: number;
+  readonly errorWarningCount: number;
 }
 
 describe("scan_project: plan.findingsByFile rollup", () => {
@@ -137,7 +137,7 @@ describe("scan_project: plan.findingsByFile rollup", () => {
         const prev = findingsByFile[i - 1];
         const cur = findingsByFile[i];
         if (prev === undefined || cur === undefined) continue;
-        expect(prev.count >= cur.count).toBe(true);
+        expect(prev.errorWarningCount >= cur.errorWarningCount).toBe(true);
       }
 
       // Alphabetical tiebreak — `m.html` and `z.html` carry the same
@@ -151,14 +151,14 @@ describe("scan_project: plan.findingsByFile rollup", () => {
       expect(zEntry).toBeDefined();
       expect(aEntry).toBeDefined();
       if (!(mEntry && zEntry && aEntry)) throw new Error("expected entries missing");
-      expect(mEntry.count).toBe(zEntry.count);
+      expect(mEntry.errorWarningCount).toBe(zEntry.errorWarningCount);
       expect(findingsByFile.indexOf(mEntry)).toBeLessThan(findingsByFile.indexOf(zEntry));
 
       // Top entry — `a.html` has strictly more findings than the tied
       // pair because of the extra missing-alt violations. The rollup's
       // job is to surface "where the work clusters" first.
       expect(findingsByFile[0]).toBe(aEntry);
-      expect(aEntry.count).toBeGreaterThan(mEntry.count);
+      expect(aEntry.errorWarningCount).toBeGreaterThan(mEntry.errorWarningCount);
 
       // No truncation flag when the rollup carries the full inventory
       // (small fixture is well under the 20-entry cap).

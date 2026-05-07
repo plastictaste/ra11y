@@ -142,10 +142,21 @@ describe("scan_project — summaryOnly parameter", () => {
       expect(Array.isArray(findingsByFile)).toBe(true);
       expect((findingsByFile as readonly unknown[]).length).toBeGreaterThan(0);
       const fileHead = (
-        findingsByFile as readonly { readonly path: string; readonly count: number }[]
+        findingsByFile as readonly {
+          readonly path: string;
+          readonly errorWarningCount: number;
+        }[]
       )[0];
       expect(typeof fileHead.path).toBe("string");
-      expect(typeof fileHead.count).toBe("number");
+      // Slice-explicit field name — the cross-surface count invariant
+      // closure for Q16. `scan_file({path}).totalFindings` carries the
+      // all-severity inventory (paging-load-bearing); the rollup here
+      // names its slice (`errorWarningCount`) so the agent reads the
+      // asymmetry on the wire rather than guessing which slice the
+      // bare `count` measured. Per `docs/kb/architecture/ai-first-
+      // consumer.md` "Sibling fields naming the same concept must use
+      // one shape" + "Cross-surface count invariant."
+      expect(typeof fileHead.errorWarningCount).toBe("number");
 
       // The structured per-lane tally (`fixesByClass`) and the
       // load-bearing sibling counters (`infoSeverityFindings`,

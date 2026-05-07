@@ -1880,9 +1880,9 @@ describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
       { path: "src/m.tsx", findings: [E(), W()] }, // count 2 (tie with zzz)
     ]);
     expect(out.map((entry) => entry.path)).toEqual(["src/a.tsx", "src/m.tsx", "src/zzz.tsx"]);
-    expect(out[0]).toEqual({ path: "src/a.tsx", count: 4 });
-    expect(out[1]).toEqual({ path: "src/m.tsx", count: 2 });
-    expect(out[2]).toEqual({ path: "src/zzz.tsx", count: 2 });
+    expect(out[0]).toEqual({ path: "src/a.tsx", errorWarningCount: 4 });
+    expect(out[1]).toEqual({ path: "src/m.tsx", errorWarningCount: 2 });
+    expect(out[2]).toEqual({ path: "src/zzz.tsx", errorWarningCount: 2 });
   });
 
   it("excludes info-severity findings from the count axis", () => {
@@ -1890,9 +1890,9 @@ describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
     // files would crowd the rollup with non-actionable context.
     const out = computeFindingsByFile([
       { path: "src/a.tsx", findings: [I(), I(), I()] }, // info-only → excluded
-      { path: "src/b.tsx", findings: [E(), I()] }, // count 1 (info skipped)
+      { path: "src/b.tsx", findings: [E(), I()] }, // errorWarningCount 1 (info skipped)
     ]);
-    expect(out).toEqual([{ path: "src/b.tsx", count: 1 }]);
+    expect(out).toEqual([{ path: "src/b.tsx", errorWarningCount: 1 }]);
   });
 
   it("truncates to the limit (default 20) on ranked output", () => {
@@ -1939,8 +1939,8 @@ describe("withFindingsByFile — plan-stamping helper", () => {
       { path: "src/b.tsx", findings: [E()] },
     ]);
     expect(out["findingsByFile"]).toEqual([
-      { path: "src/a.tsx", count: 2 },
-      { path: "src/b.tsx", count: 1 },
+      { path: "src/a.tsx", errorWarningCount: 2 },
+      { path: "src/b.tsx", errorWarningCount: 1 },
     ]);
     // No truncation flag when the rollup carries the full inventory.
     expect(out["findingsByFileTruncated"]).toBeUndefined();
