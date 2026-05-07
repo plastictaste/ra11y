@@ -733,7 +733,7 @@ describe("parseMdx — <Example code={`…`}/> template-literal extractor", () =
     // resolved — we refuse to parse a partial body and the extractor
     // bails, leaving the <input> unseen by downstream rules. Honest
     // absence over confidently wrong findings.
-    // eslint-disable-next-line no-template-curly-in-string
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${...}` token under test
     const src = "<Example code={`<input id=${dynamic}>`}/>";
     const { root } = parseMdx(src);
     expect(findElement(root.jsxElements, "input")).toBeUndefined();
