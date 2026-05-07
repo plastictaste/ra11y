@@ -29,7 +29,6 @@ Third multi-corpus AI-first sweep on four shape-distinct corpora (vendor-heavy C
 
 Targeted gap audit across `src/mcp/`, `src/reports/`, response-shape sibling files, and the integration test suite — looking for AI-first consumer-doctrine drift not yet captured under Q15/Q16/Q17 and for invariant rules in the doctrine that ship without a pinning integration test. Findings ground out at four shape-level violations (concrete file:line evidence) and two invariant pins (named doctrine rules with no pinning test in `tests/integration/`).
 
-- [ ] **Q18-NEXTSTEP-CYCLE-AVOIDANCE-PIN** No integration test pins the doctrine rule "NextStep handoffs must terminate at a narrowing tool, never form a cycle between transport-failing siblings" — the bulk-corpus regression where `checklist.nextStepStructured.tool: "coverage"` while `coverage.nextStepStructured.tool: "checklist"` on the same scope went undetected for an entire sweep. Closure: integration test forces oversize-truncation on a bulk-vendor fixture (≥1000 minified files), runs each project-rooted tool, walks `nextStepStructured.tool` recommendations one hop, asserts the next call EITHER reduces input scope (`restrictToPaths` / `additionalPaths` / narrower `cwd`) OR reduces the rule set — never echoes the parameters that produced the truncation. Per AI-first doctrine cycle-detection invariant.
 ---
 
 ## Track V — v1.0.0 readiness
