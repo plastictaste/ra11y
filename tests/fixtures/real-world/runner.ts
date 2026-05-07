@@ -55,6 +55,7 @@ import {
 import { stampFingerprintOccurrences } from "../../../src/mcp/file-fingerprint-stamp.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { runScanAndFormat, type ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
+import { coupleSeverityToVerifyTokens } from "../../../src/mcp/violation-severity-coupling.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../../../src/review/index.ts";
 import { BUILTIN_RULES } from "../../../src/rules/index.ts";
 import { BUILTIN_STANDARDS } from "../../../src/standards/index.ts";
@@ -488,9 +489,22 @@ export async function loadAndScanFixture(
   // copies — the exact regression the dedupe pass closes — and the
   // harness would silently pass tests that the production pipeline
   // would catch.
+  //
+  // Mirror the verify-in-source severity coupling pass for the same
+  // reason: the production `runScanAndFormat` and `runScanAndCollect`
+  // both downgrade `severity: warning` / `error` to `info` on
+  // violations carrying a curated verify-in-source token, BEFORE the
+  // tally and AgentFinding pipeline branch off. Without mirroring here,
+  // `violation-present-without` and `candidate-present` predicates on
+  // a fixture asserting the post-coupling shape would see the raw
+  // pre-coupling severity and silently disagree with the wire shape.
+  // See `src/mcp/violation-severity-coupling.ts` for the doctrine
+  // pointer.
   const result = {
     ...rawScan.result,
-    violations: stampFingerprintOccurrences(rawScan.result.violations, duplicatesByCanonical),
+    violations: coupleSeverityToVerifyTokens(
+      stampFingerprintOccurrences(rawScan.result.violations, duplicatesByCanonical),
+    ),
   };
   const report = rawScan.report;
 
@@ -1574,9 +1588,10 @@ function evalFindingShape(
   exp: FixtureExpectation & { kind: "finding-shape" },
   ctx: FixtureScanContext,
 ): ExpectationResult {
-  const buckets = exp.inFile === undefined
-    ? ctx.formatted.files
-    : ctx.formatted.files.filter((b) => b.path === exp.inFile);
+  const buckets =
+    exp.inFile === undefined
+      ? ctx.formatted.files
+      : ctx.formatted.files.filter((b) => b.path === exp.inFile);
   if (exp.inFile !== undefined && buckets.length === 0) {
     const known = ctx.formatted.files.map((b) => b.path).join(", ");
     return {

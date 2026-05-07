@@ -54,6 +54,7 @@ import {
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
 import { collapseVendorCssFindings } from "./vendor-dedupe.ts";
+import { coupleSeverityToVerifyTokens } from "./violation-severity-coupling.ts";
 import { nameMatchesAnyWrapper } from "./wrapper-matcher.ts";
 import {
   buildRunScanOptions,
@@ -624,19 +625,12 @@ export async function runScanAndFormat(
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
   // biome-ignore format: keep destructure on one line — file effective-line budget
   const { wrappers, sessionOnly, bySource: wrapperProvenance, elements: wrapperElements } = resolveWrapperSources(wrapperSources, session);
-  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
-    buildRunScanOptions({
-      activeRules,
-      enabled,
-      files,
-      level: session.config.level,
-      attestations,
-      processes,
-      wrapperElements,
-      session,
-      ...(cwd === undefined ? {} : { scanRoot: cwd }),
-    }),
-  );
+  // biome-ignore format: keep destructure on one line — file effective-line budget
+  const { result: rawResult, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(buildRunScanOptions({ activeRules, enabled, files, level: session.config.level, attestations, processes, wrapperElements, session, ...(cwd === undefined ? {} : { scanRoot: cwd }) }));
+  // Couple severity to verify-in-source tokens upstream of tally /
+  // AgentFinding / response-assembler. Doctrine: see
+  // `src/mcp/violation-severity-coupling.ts`.
+  const result = { ...rawResult, violations: coupleSeverityToVerifyTokens(rawResult.violations) };
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);

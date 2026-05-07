@@ -35,6 +35,7 @@ import {
   filterBySeverity,
   loadDurableAttestations,
 } from "./tools-helpers.ts";
+import { coupleSeverityToVerifyTokens } from "./violation-severity-coupling.ts";
 import {
   buildRunScanOptions,
   type NativeWrapperSources,
@@ -167,7 +168,12 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   const activeRules = applyRuleSettings(session.registry.rules, effective);
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
   const resolvedWrappers = resolveWrapperSources(wrapperSources, session);
-  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
+  const {
+    result: rawResult,
+    report,
+    perRuleCoverage,
+    filesWithAnyRuleEvaluated,
+  } = runScan(
     buildRunScanOptions({
       activeRules,
       enabled,
@@ -185,6 +191,23 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
       ...(cwd === undefined ? {} : { scanRoot: cwd }),
     }),
   );
+  // Couple severity to the curated verify-in-source token set on the
+  // raw violation stream, BEFORE the AgentFinding pipeline and the
+  // manual-review tally branch off `result.violations`. Doctrine source:
+  // `docs/kb/architecture/ai-first-consumer.md` "Reason text and
+  // severity must agree" (conceded-uncertainty extension) plus "Cross-
+  // surface count invariant" — applying the coupling here ensures the
+  // AgentFinding shape on the wire and the tally walking
+  // `result.violations` see the same severity, so
+  // `actionableManualItemsBySource` agrees with the per-finding
+  // surfacing pressure the agent reads. See
+  // `src/mcp/violation-severity-coupling.ts` for the closure rationale
+  // (centralized normalization across the five rules with the same
+  // dishonest shape).
+  const result = {
+    ...rawResult,
+    violations: coupleSeverityToVerifyTokens(rawResult.violations),
+  };
   const { violations: withoutWrapperNoise } = dropWrapperNoise(
     result.violations,
     resolvedWrappers.wrappers,
