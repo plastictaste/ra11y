@@ -5375,30 +5375,7 @@ function buildScanWarningDetailsDispatch(
   inputs: WarningInputs,
 ): readonly ScanWarningDetailsDispatchRow[] {
   return [
-    {
-      code: "text_source_skipped",
-      summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "parser_routable_extensions_skipped",
-      summarize: () => summarizeParserRoutableExtensionsSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "config_or_data_files_skipped",
-      summarize: () => summarizeConfigOrDataFilesSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "binary_assets_skipped",
-      summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "sourcemap_files_excluded",
-      summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
-    },
-    {
-      code: "default_excluded_artifact_paths",
-      summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
-    },
+    ...discoverySkipDispatchRows(inputs),
     {
       code: "content_files_skipped",
       summarize: () => summarizeContentFiles(inputs.analysisCoverage),
@@ -5597,6 +5574,58 @@ function linkedStylesheetDispatchRows(
       code: "template_expression_in_href",
       summarize: () =>
         summarizeTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast),
+    },
+  ];
+}
+
+/**
+ * Discovery-skip dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the per-function effective-line cap (same pattern as
+ * {@link templateLiteralDispatchRows} / {@link scanShapeDispatchRows} /
+ * {@link linkedStylesheetDispatchRows}). Pairs each
+ * `skippedByExtension`-derived code with its summarizer:
+ *
+ *   - `text_source_skipped` — parent presence bit covering every
+ *     non-binary skipped extension.
+ *   - `parser_routable_extensions_skipped` — predicate-narrowed peer
+ *     for parser-routable text-island substrates (the agent's lever).
+ *   - `config_or_data_files_skipped` — predicate-narrowed peer for
+ *     config / data file extensions.
+ *   - `binary_assets_skipped` — image/font/audio/video/archive subset.
+ *   - `sourcemap_files_excluded` — `.map` sourcemap subset.
+ *   - `default_excluded_artifact_paths` — build-artifact directories.
+ *
+ * Order matches declaration order on {@link ScanWarningCode} for
+ * stable wire-key sequencing across runs.
+ */
+function discoverySkipDispatchRows(
+  inputs: WarningInputs,
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "text_source_skipped",
+      summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "parser_routable_extensions_skipped",
+      summarize: () => summarizeParserRoutableExtensionsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "config_or_data_files_skipped",
+      summarize: () => summarizeConfigOrDataFilesSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "binary_assets_skipped",
+      summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "sourcemap_files_excluded",
+      summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
+    },
+    {
+      code: "default_excluded_artifact_paths",
+      summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
     },
   ];
 }
@@ -6782,8 +6811,9 @@ function summarizeParserRoutableExtensionsSkipped(coverage: Record<string, unkno
       readonly totalSkipped: number;
     }
   | undefined {
-  const base = summarizeSkippedSubset(coverage, (token) =>
-    token.startsWith(".") && isParserRoutableTextIslandExtension(token),
+  const base = summarizeSkippedSubset(
+    coverage,
+    (token) => token.startsWith(".") && isParserRoutableTextIslandExtension(token),
   );
   if (base === undefined) return undefined;
   // Drop `noExtensionFiles` from the shared-core output — unreachable on
