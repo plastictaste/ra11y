@@ -4805,6 +4805,36 @@ describe("truncatedFilesDroppedDetailsField — Q9 rule-level truncation impact"
     });
     expect(out?.ruleFamiliesAffected).toEqual(["another-no-slash", "single-token-rule"]);
   });
+
+  it("emits `pageClipFromRequestedLimit` only when it differs from `droppedFileCount`", () => {
+    // Per the field-doc on `truncated_files_dropped`: the page-internal
+    // trim count is present-when-meaningful — omitted whenever it
+    // would carry the same value as the canonical `droppedFileCount`,
+    // since two siblings naming the same quantity violate "Sibling
+    // fields naming the same concept must use one shape."
+    const distinct = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 70,
+      pageClipFromRequestedLimit: 24,
+    });
+    expect(distinct?.droppedFileCount).toBe(70);
+    expect(distinct?.pageClipFromRequestedLimit).toBe(24);
+
+    const equal = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 5,
+      pageClipFromRequestedLimit: 5,
+    });
+    expect(equal?.droppedFileCount).toBe(5);
+    expect(equal?.pageClipFromRequestedLimit).toBeUndefined();
+
+    const omitted = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 5,
+    });
+    expect(omitted?.droppedFileCount).toBe(5);
+    expect(omitted?.pageClipFromRequestedLimit).toBeUndefined();
+  });
 });
 
 describe("computeTemplateDirectiveOverlap — per-style overlap classification", () => {

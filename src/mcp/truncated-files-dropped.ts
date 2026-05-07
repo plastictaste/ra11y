@@ -72,11 +72,38 @@ export interface TruncatedFilesDroppedResult {
  * as the surviving on-wire emission count for that rule with no
  * cross-axis disambiguation.
  *
+ * Canonical drop-count formulation — when
+ * `options.totalFilesWithFindings` and `options.finalFilesShipped` are
+ * provided, the payload's `droppedFileCount` is set to
+ * `totalFilesWithFindings - finalFilesShipped`, the canonical answer
+ * to "how many files-with-findings did this response keep off the
+ * wire?" — which on a paginated bulk-vendor scan reconciles with the
+ * `totalFilesWithFindings` denominator on the same response. The
+ * caller still passes its `droppedFiles` array (the page-internal
+ * trim, used for the per-rule arithmetic); when its length differs
+ * from the canonical drop count, the page-internal count is preserved
+ * separately as `pageClipFromRequestedLimit` so the agent can
+ * distinguish "dropped from this page's tail" from "skipped by
+ * paginator" without re-deriving from `nextOffset` and
+ * `totalFilesWithFindings`. When `options` is omitted, the helper
+ * falls back to `droppedFileCount: droppedFiles.length` (legacy
+ * behavior — the slim-envelope path passes `formatted.files` as the
+ * full inventory, so `droppedFiles.length === totalFilesWithFindings`
+ * and no page-clip distinction applies).
+ *
  * @param droppedFiles — file inventory the caller is dropping. The
  *   helper iterates `findings[]` on each entry to build the per-rule
  *   tally; entries missing `severity` (loose shape) are kept (the
  *   typed shape always populates it, so the only `undefined`-severity
  *   case is hand-authored test fixtures predating this filter).
+ * @param options.totalFilesWithFindings — full pre-pagination
+ *   inventory size of files-with-findings on this response. When
+ *   present alongside `finalFilesShipped`, drives the canonical
+ *   `droppedFileCount`.
+ * @param options.finalFilesShipped — count of file entries the
+ *   response actually ships (`response.files.length`
+ *   post-density-cap). Pairs with `totalFilesWithFindings` to
+ *   produce the canonical drop count.
  *
  * @returns `{ payload }` where `payload` is the spreadable
  *   `warningsDetails.truncated_files_dropped` value when at least
@@ -89,12 +116,32 @@ export function computeTruncatedFilesDroppedWarning(
   droppedFiles: readonly {
     readonly findings?: readonly { readonly ruleId?: string; readonly severity?: string }[];
   }[],
+  options?: {
+    readonly totalFilesWithFindings?: number;
+    readonly finalFilesShipped?: number;
+  },
 ): TruncatedFilesDroppedResult {
   const droppedFindings = collectDroppedFindings(droppedFiles);
   if (droppedFindings.length === 0) return { payload: undefined };
+  const hasCanonicalInputs =
+    options?.totalFilesWithFindings !== undefined && options?.finalFilesShipped !== undefined;
+  const canonicalDropCount = hasCanonicalInputs
+    ? Math.max(
+        0,
+        (options?.totalFilesWithFindings ?? 0) - (options?.finalFilesShipped ?? 0),
+      )
+    : droppedFiles.length;
+  // Page-internal trim count = the per-page subset the caller is
+  // actually dropping in this response. Carry it separately when it
+  // differs from the canonical count — the field-builder in
+  // `warnings.ts` omits it when the two values agree (slim envelope:
+  // page == full inventory; full-inventory page: paginator skipped
+  // nothing).
+  const pageClipFromRequestedLimit = hasCanonicalInputs ? droppedFiles.length : undefined;
   const payload = truncatedFilesDroppedDetailsField({
     droppedFileFindings: droppedFindings,
-    droppedFileCount: droppedFiles.length,
+    droppedFileCount: canonicalDropCount,
+    ...(pageClipFromRequestedLimit === undefined ? {} : { pageClipFromRequestedLimit }),
   });
   return { payload };
 }

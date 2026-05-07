@@ -389,12 +389,22 @@ function mergeBudgetedFields(args: {
     topContributor,
   }).warningsDetails;
   // Q9 rule-level impact of the density-cap drop —
-  // the dropped subset is the tail past `budgeted.files.length`
-  // (applyTokenBudget pops from the tail). See
-  // `truncated-files-dropped.ts` for the helper rationale.
+  // the page-internal trimmed subset is the tail past
+  // `budgeted.files.length` (applyTokenBudget pops from the tail);
+  // pass `totalFilesWithFindings` + `finalFilesShipped` so the helper
+  // computes the CANONICAL drop count (= full inventory minus shipped),
+  // not just the page-internal trim. On a paginated bulk-vendor scan
+  // the paginator may have already skipped a sub-inventory before the
+  // density cap saw it, so the page-internal tail-trim alone undercounts
+  // the silent drop — see the canonical drop-count formulation in
+  // `truncated-files-dropped.ts` and the
+  // `truncated_files_dropped.droppedFileCount` field doc in
+  // `warnings.ts` for the full rationale.
   const droppedTailFiles = filesForAnalysis.slice(budgeted.files.length);
-  const truncatedFilesDroppedPayload =
-    computeTruncatedFilesDroppedWarning(droppedTailFiles).payload;
+  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(droppedTailFiles, {
+    totalFilesWithFindings,
+    finalFilesShipped: budgeted.files.length,
+  }).payload;
   if (truncatedFilesDroppedPayload !== undefined && !warnings.includes("truncated_files_dropped")) {
     warnings.push("truncated_files_dropped");
   }
@@ -618,9 +628,18 @@ function buildSlimScanProjectEnvelope(args: {
     ...slimmedDetails.truncations,
   ];
   // Q9 rule-level impact of the slim path's drop — slim ships
-  // `files: []`, dropping the entire `formatted.files` set. See
-  // `truncated-files-dropped.ts` for the helper rationale.
-  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files).payload;
+  // `files: []`, dropping the entire `formatted.files` set. Pass the
+  // canonical inputs (`totalFilesWithFindings: formatted.files.length`,
+  // `finalFilesShipped: 0`) so the helper's drop-count axis stays on
+  // the same canonical formulation the density-cap caller uses; both
+  // values agree here (slim drops everything, so canonical ==
+  // page-internal), and the field-builder omits the redundant
+  // `pageClipFromRequestedLimit` per the present-when-meaningful
+  // contract. See `truncated-files-dropped.ts` for the helper rationale.
+  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files, {
+    totalFilesWithFindings: formatted.files.length,
+    finalFilesShipped: 0,
+  }).payload;
   const merged = oversizeEnvelopeWarningsField({
     reason,
     ...(baseWarnings === undefined ? {} : { baseWarnings }),

@@ -2503,15 +2503,33 @@ export interface ScanWarningDetails {
    * having to call back with a wider `limit` to inspect the dropped
    * subset (which is gone from this response's `files[]`).
    *
-   * - `droppedFileCount` — number of files-with-findings the
-   *   truncation pass discarded. Pairs with the byte-level
+   * - `droppedFileCount` — canonical count of files-with-findings the
+   *   truncation pass kept off the wire on this response: equal to
+   *   `totalFilesWithFindings - files.length`, NOT just the page-internal
+   *   tail-trim. On a paginated bulk-vendor scan where the paginator
+   *   already restricted the page to a subset of the full inventory, the
+   *   page-internal tail-trim alone undercounts the silent drop — agents
+   *   reading the smaller number budget against a fraction of the actual
+   *   gap. The canonical formulation reconciles with the
+   *   `totalFilesWithFindings` denominator on the same response so an
+   *   agent can compute "shipped vs. unshipped" by subtracting
+   *   `files.length` directly. Pairs with the byte-level
    *   `response_token_budget_truncated.requestedLimit/effectiveLimit`
    *   and `response_dropped_files_oversize.droppedFileCountFromRequestedLimit`
-   *   on the same response: the byte counters answer "how many
-   *   entries did the cap drop"; this counter answers the same
-   *   question on the rule-impact axis (always equal to the byte
-   *   counter when both fire on the same pass; carried separately so
-   *   downstream consumers don't have to cross-read).
+   *   on the same response.
+   * - `pageClipFromRequestedLimit` — present-when-meaningful: count of
+   *   files the density cap or slim path trimmed from THIS page
+   *   specifically (the page-internal subset of `droppedFileCount`).
+   *   Omitted when it equals `droppedFileCount` (slim envelope drops
+   *   the entire inventory; full-inventory page that fits in
+   *   `requestedLimit` has no paginator-skip gap), since the two
+   *   counters carrying the same value would violate "Sibling fields
+   *   naming the same concept must use one shape." Useful for triage
+   *   when a paginated page saw a partial inventory: the gap between
+   *   `droppedFileCount` and `pageClipFromRequestedLimit` is the
+   *   paginator-skipped subset (recoverable via `nextOffset`); the
+   *   `pageClipFromRequestedLimit` portion is the density-cap or slim
+   *   tail-trim (recoverable via narrower scope).
    * - `ruleFamiliesAffected` — unique rule-family prefixes (the
    *   token before `/` in `ruleId`, e.g. `keyboard`, `aria`,
    *   `forms`) across every finding on every dropped file. Sorted
@@ -2542,6 +2560,7 @@ export interface ScanWarningDetails {
    */
   readonly truncated_files_dropped?: {
     readonly droppedFileCount: number;
+    readonly pageClipFromRequestedLimit?: number;
     readonly ruleFamiliesAffected: readonly string[];
     readonly topDroppedRules: readonly {
       readonly ruleId: string;
@@ -7039,10 +7058,21 @@ export const TRUNCATED_FILES_TOP_DROPPED_RULES_CAP = 10;
  * @param droppedFileFindings — flat list of `{ ruleId }` records
  *   across every dropped file's findings. Order doesn't matter; the
  *   helper aggregates by rule and re-sorts deterministically.
- * @param droppedFileCount — count of files whose findings the
- *   helper just ate. Stamped on the payload as the file-count
- *   denominator so the agent doesn't have to re-derive it; pairs
- *   with the per-pass byte-level counters on the same wire.
+ * @param droppedFileCount — canonical count of files-with-findings the
+ *   truncation pass kept off the wire on this response: equal to
+ *   `totalFilesWithFindings - files.length`. Pairs with the per-pass
+ *   byte-level counters on the same wire. The caller is responsible
+ *   for computing this against the FULL pre-pagination inventory size,
+ *   not just the page-internal tail-trim.
+ * @param pageClipFromRequestedLimit — optional. Count of files the
+ *   density cap or slim path trimmed from THIS page specifically (the
+ *   page-internal subset of `droppedFileCount`). When `undefined` or
+ *   when it equals `droppedFileCount`, the helper omits the field on
+ *   the payload — sibling fields naming the same quantity violate
+ *   "Sibling fields naming the same concept must use one shape." Pass
+ *   the page-internal trim count when the paginator restricted the
+ *   page to a subset of the full inventory; the gap between this and
+ *   `droppedFileCount` is the paginator-skipped subset.
  *
  * Returns `undefined` when no rule-bearing findings were dropped —
  * the caller suppresses both the code and the payload via
@@ -7052,8 +7082,9 @@ export const TRUNCATED_FILES_TOP_DROPPED_RULES_CAP = 10;
 export function truncatedFilesDroppedDetailsField(args: {
   readonly droppedFileFindings: readonly { readonly ruleId: string }[];
   readonly droppedFileCount: number;
+  readonly pageClipFromRequestedLimit?: number;
 }): NonNullable<ScanWarningDetails["truncated_files_dropped"]> | undefined {
-  const { droppedFileFindings, droppedFileCount } = args;
+  const { droppedFileFindings, droppedFileCount, pageClipFromRequestedLimit } = args;
   if (droppedFileFindings.length === 0) return undefined;
   const perRuleCounts = new Map<string, number>();
   const families = new Set<string>();
@@ -7074,8 +7105,15 @@ export function truncatedFilesDroppedDetailsField(args: {
     .slice(0, TRUNCATED_FILES_TOP_DROPPED_RULES_CAP)
     .map(([ruleId, droppedCount]) => ({ ruleId, droppedCount }));
   const ruleFamiliesAffected = [...families].sort((a, b) => a.localeCompare(b));
+  // Omit `pageClipFromRequestedLimit` when it carries no extra signal
+  // beyond `droppedFileCount` — same concept, same value, two field
+  // names is the "Sibling fields naming the same concept must use one
+  // shape" anti-pattern. Present-when-meaningful per CLAUDE.md §1.
+  const includePageClip =
+    pageClipFromRequestedLimit !== undefined && pageClipFromRequestedLimit !== droppedFileCount;
   return {
     droppedFileCount,
+    ...(includePageClip ? { pageClipFromRequestedLimit } : {}),
     ruleFamiliesAffected,
     topDroppedRules,
   };
