@@ -266,9 +266,7 @@ const SNAPSHOT_PRODUCT = {
  * version-stable placeholder so the snapshot survives version bumps.
  * Field shapes, ordering, and every other value stay intact.
  */
-function normalizeVpatReport(
-  report: ReturnType<typeof buildVpatReport>,
-): Record<string, unknown> {
+function normalizeVpatReport(report: ReturnType<typeof buildVpatReport>): Record<string, unknown> {
   return {
     ...report,
     evaluator: {
