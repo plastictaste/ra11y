@@ -251,7 +251,8 @@ function checklistCandidatesByFindingId(
       // First-seen wins — same id repeats across sibling items by
       // construction; the candidate body is byte-equal across the
       // duplicates.
-      if (!out.has(c.findingId)) out.set(c.findingId, { candidate: c, itemPriority: item.priority });
+      if (!out.has(c.findingId))
+        out.set(c.findingId, { candidate: c, itemPriority: item.priority });
     }
   }
   return out;
