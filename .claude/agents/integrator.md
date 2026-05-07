@@ -90,6 +90,8 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
    If every `integrated` item's line is already absent from backlog (the happy path), `backlogCommitSha` is omitted from the return. The commit checker rejects untrailered backlog deletions, so the `Closes:` trailers above are mandatory.
 
+   **Bonus closure — specialist voluntarily closes an adjacent item.** A specialist assigned to one item may discover an adjacent item solvable in the same commit and close both via a `Closes: <ID-1>` + `Closes: <ID-2>` trailer chain. This is a legitimate and desirable pattern — do not treat it as an error. When you see more `Closes:` trailers in a commit than the item count on your dispatch list, for each extra `Closes: <ID>` trailer: (a) confirm the `- [ ]` line for that ID is absent from `.claude/backlog.md` in the cherry-picked result; (b) if it is absent, record the bonus closure in the top-level `note` (e.g. `"Q16 specialist also closed adjacent item X via bonus Closes: trailer — both backlog lines confirmed deleted"`); (c) if the line is still present, add the deletion in the backlog closure tidy commit (step 5 main path) and note the gap. Never suppress or ignore the bonus trailer — the orchestrator needs to know the additional item closed so it can skip dispatching it in a later turn.
+
 6. **Return the summary** as a single JSON block, no prose before or after.
 
    **Default (tight) shape — the common happy path, ~6–10 lines:**
