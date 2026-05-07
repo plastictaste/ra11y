@@ -74,10 +74,7 @@ function parseFile(spec: FileSpec): { source: string; ast: Ast } {
  * (rule supplied prose only) — both are honest under that lane's
  * "fix lands in source" semantics.
  */
-function laneAllowsKind(
-  fixClass: FixClass | "suppress-recommended",
-  kind: string,
-): boolean {
+function laneAllowsKind(fixClass: FixClass | "suppress-recommended", kind: string): boolean {
   if (fixClass === "mechanical") return kind === "edit";
   if (fixClass === "verify-in-source") return kind === "edit" || kind === "guidance";
   if (fixClass === "guidance") return kind === "guidance";
