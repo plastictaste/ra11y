@@ -1,7 +1,7 @@
 ---
 title: "Coverage Matrix"
 description: "Per-criterion rule and finder coverage across all built-in standards."
-generated: "2026-05-05"
+generated: "2026-05-07"
 ---
 
 # Coverage Matrix
@@ -22,21 +22,13 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 140 rule · 85 finder · 25 attestation-only · 2 gap
-
-## Gaps
-
-The following criterion IDs have `gap` verdict — they are auto/partial automatable but have no rule or finder coverage yet.
-These are candidates for new rules or finders.
-
-- `wcag21:2.5.5`
-- `wcag22:2.5.5`
+**By verdict:** 142 rule · 85 finder · 25 attestation-only · 0 gap
 
 ## WCAG 2.2
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
+Coverage: 43 rule · 30 finder · 13 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -99,7 +91,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.5.2` | Pointer Cancellation | A | partial | pointer/cancellation | — | **rule** |
 | `wcag22:2.5.3` | Label in Name | A | partial | semantics/label-in-name | — | **rule** |
 | `wcag22:2.5.4` | Motion Actuation | A | manual | — | motion-actuation | **finder** |
-| `wcag22:2.5.5` | Target Size (Enhanced) | AAA | partial | — | — | **gap** |
+| `wcag22:2.5.5` | Target Size (Enhanced) | AAA | partial | pointer/target-size-enhanced | — | **rule** |
 | `wcag22:2.5.6` | Concurrent Input Mechanisms | AAA | manual | — | pointer-input | **finder** |
 | `wcag22:2.5.7` | Dragging Movements | AA | partial | pointer/drag-alternative, pointer/draggable-no-keyboard-alt | drag-events | **rule** |
 | `wcag22:2.5.8` | Target Size (Minimum) | AA | partial | pointer/target-size | — | **rule** |
@@ -131,7 +123,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
+Coverage: 41 rule · 27 finder · 10 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -191,7 +183,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.5.2` | Pointer Cancellation | A | partial | pointer/cancellation | — | **rule** |
 | `wcag21:2.5.3` | Label in Name | A | partial | semantics/label-in-name | — | **rule** |
 | `wcag21:2.5.4` | Motion Actuation | A | manual | — | motion-actuation | **finder** |
-| `wcag21:2.5.5` | Target Size (Enhanced) | AAA | partial | — | — | **gap** |
+| `wcag21:2.5.5` | Target Size (Enhanced) | AAA | partial | pointer/target-size-enhanced | — | **rule** |
 | `wcag21:2.5.6` | Concurrent Input Mechanisms | AAA | manual | — | pointer-input | **finder** |
 | `wcag21:3.1.1` | Language of Page | A | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `wcag21:3.1.2` | Language of Parts | AA | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |

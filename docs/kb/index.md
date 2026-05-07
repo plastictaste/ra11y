@@ -187,6 +187,7 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 - [pointer/draggable-no-keyboard-alt](./rules/pointer__draggable-no-keyboard-alt.md)
 - [pointer/stretched-link-multiple-in-container](./rules/pointer__stretched-link-multiple-in-container.md)
 - [pointer/target-size](./rules/pointer__target-size.md)
+- [pointer/target-size-enhanced](./rules/pointer__target-size-enhanced.md)
 - [semantics/button-name](./rules/semantics__button-name.md)
 - [semantics/duplicate-landmark-unlabeled](./rules/semantics__duplicate-landmark-unlabeled.md)
 - [semantics/empty-heading](./rules/semantics__empty-heading.md)
@@ -220,12 +221,14 @@ Generated — do not edit. Regenerate via `bun scripts/generate-kb-index.ts`.
 ## architecture
 
 - [AI-first consumer model](./architecture/ai-first-consumer.md)
+- [Cross-platform paths: POSIX everywhere external](./architecture/cross-platform-paths.md)
 - [Inherited findings](./architecture/inherited-findings.md)
 - [Input parsers](./architecture/input-parsers.md)
 - [MCP sampling architecture](./architecture/mcp-sampling.md)
 - [MCP server architecture](./architecture/mcp-server.md)
 - [MCP session meta cache](./architecture/mcp-session-meta-cache.md)
 - [Output formatters](./architecture/output-formatters.md)
+- [ra11y project layout](./architecture/project-layout.md)
 - [Registries: the standards / criteria / rules index chain](./architecture/registries.md)
 - [Reports: coverage, checklist, VPAT, certification](./architecture/reports.md)
 - [Rule engine](./architecture/rule-engine.md)
