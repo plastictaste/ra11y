@@ -32,7 +32,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { parseCliArgs } from "../../src/cli/args.ts";
 import { runCertification } from "../../src/cli/commands/certification.ts";
@@ -41,6 +40,7 @@ import { runCoverage } from "../../src/cli/commands/coverage.ts";
 import { runScanCommand } from "../../src/cli/commands/scan.ts";
 import { runVpat } from "../../src/cli/commands/vpat.ts";
 import { parseFor } from "../../src/cli/parse-for.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -54,7 +54,7 @@ afterEach(async () => {
 });
 
 async function scratch(prefix: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), `ra11y-${prefix}-`));
+  const dir = await mkdtemp(posixJoin(tmpdir(), `ra11y-${prefix}-`));
   scratchDirs.push(dir);
   return dir;
 }
@@ -163,7 +163,7 @@ describe("shared parseFor — extension routing", () => {
 describe("reporting commands surface findings on .md files", () => {
   it("scan emits an alt-text violation on a .md with raw HTML <img>", async () => {
     const dir = await scratch("scan-md");
-    await writeFile(join(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
+    await writeFile(posixJoin(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
     chdir(dir);
 
     const r = await runScanCommand(parseCliArgs([]));
@@ -175,7 +175,7 @@ describe("reporting commands surface findings on .md files", () => {
 
   it("coverage shows 1.1.1 failing on a .md corpus with raw HTML <img>", async () => {
     const dir = await scratch("cov-md");
-    await writeFile(join(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
+    await writeFile(posixJoin(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
     chdir(dir);
 
     const r = await runCoverage(parseCliArgs([]));
@@ -186,7 +186,7 @@ describe("reporting commands surface findings on .md files", () => {
 
   it("checklist surfaces the .md corpus to the violations report", async () => {
     const dir = await scratch("chk-md");
-    await writeFile(join(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
+    await writeFile(posixJoin(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
     chdir(dir);
 
     const r = await runChecklist(parseCliArgs([]));
@@ -196,7 +196,7 @@ describe("reporting commands surface findings on .md files", () => {
 
   it("vpat reports a Does Not Support row for SC 1.1.1 on a .md corpus", async () => {
     const dir = await scratch("vpat-md");
-    await writeFile(join(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
+    await writeFile(posixJoin(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
     chdir(dir);
 
     const r = await runVpat(parseCliArgs([]));
@@ -208,7 +208,7 @@ describe("reporting commands surface findings on .md files", () => {
 
   it("certification scorecard reflects the .md-driven 1.1.1 failure", async () => {
     const dir = await scratch("cert-md");
-    await writeFile(join(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
+    await writeFile(posixJoin(dir, "doc.md"), '# Title\n\n<p><img src="logo.png"></p>\n');
     chdir(dir);
 
     const r = await runCertification(parseCliArgs([]));
@@ -238,7 +238,7 @@ describe("reporting commands surface findings on .md files", () => {
 describe("reporting commands accept .css corpora end-to-end", () => {
   it("coverage runs on a .css-only corpus without crashing", async () => {
     const dir = await scratch("cov-css");
-    await writeFile(join(dir, "site.css"), "body { color: #777; background: #888; }");
+    await writeFile(posixJoin(dir, "site.css"), "body { color: #777; background: #888; }");
     chdir(dir);
 
     const r = await runCoverage(parseCliArgs([]));
@@ -249,7 +249,7 @@ describe("reporting commands accept .css corpora end-to-end", () => {
 
   it("vpat runs on a .css-only corpus without crashing", async () => {
     const dir = await scratch("vpat-css");
-    await writeFile(join(dir, "site.css"), "body { color: #777; background: #888; }");
+    await writeFile(posixJoin(dir, "site.css"), "body { color: #777; background: #888; }");
     chdir(dir);
 
     const r = await runVpat(parseCliArgs([]));
@@ -260,7 +260,7 @@ describe("reporting commands accept .css corpora end-to-end", () => {
 
   it("checklist runs on a .css-only corpus without crashing", async () => {
     const dir = await scratch("chk-css");
-    await writeFile(join(dir, "site.css"), "body { color: #777; background: #888; }");
+    await writeFile(posixJoin(dir, "site.css"), "body { color: #777; background: #888; }");
     chdir(dir);
 
     const r = await runChecklist(parseCliArgs([]));
@@ -271,7 +271,7 @@ describe("reporting commands accept .css corpora end-to-end", () => {
 
   it("certification runs on a .css-only corpus without crashing", async () => {
     const dir = await scratch("cert-css");
-    await writeFile(join(dir, "site.css"), "body { color: #777; background: #888; }");
+    await writeFile(posixJoin(dir, "site.css"), "body { color: #777; background: #888; }");
     chdir(dir);
 
     const r = await runCertification(parseCliArgs([]));

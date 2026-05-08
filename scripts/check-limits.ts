@@ -261,7 +261,10 @@ function check(file: string): void {
   const source = readFileSync(file, "utf8");
   const lines = source.split("\n");
   const effective = countEffectiveLines(lines);
-  const rel = relative(ROOT, file);
+  // Normalize to POSIX so the scoped-budget regex patterns and the
+  // allowlist set match on a stable shape across OSes — `path.relative`
+  // emits backslashes on Windows.
+  const rel = relative(ROOT, file).split(/[\\/]/).join("/");
 
   const scoped = SCOPED_FILE_BUDGETS.find((b) => b.pattern.test(rel));
   const fileExempt = hasLimitsExemptPragma(lines);

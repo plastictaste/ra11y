@@ -28,6 +28,7 @@ import {
 } from "./reference-guide.ts";
 import { buildScanProjectReviewFields } from "./review-candidate-prompts.ts";
 import { ruleCatalogField } from "./rule-catalog.ts";
+import { applyPagingHintToNextStep } from "./scan-project-paging-hint.ts";
 import type { ScanProjectReviewCandidate } from "./scan-project-review-candidates.ts";
 import {
   buildSlimNextStepStructured,
@@ -311,6 +312,15 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
         session,
       }),
   });
+  // when the assembled response ships
+  // `truncated: true` + `nextOffset`, prepend a paging hint to the
+  // prose AND surface the paging call as the primary structured next-
+  // step (moving the prior triage call into
+  // `nextStepStructuredAlternatives`). Without this overlay an agent
+  // following the structured shape proceeds to single-finding triage
+  // and silently never pages the rest. Slim envelope (`files: []`, no
+  // `nextOffset`) is filtered by the helper; ships its own prose.
+  const withPaging = applyPagingHintToNextStep({ response: guarded.response, params });
   // dangling-pointer
   // invariant guard: every `fix.descriptionRef.hash` emitted in the
   // response must resolve in `referenceGuide.fixDescriptions[ruleId]`
@@ -326,7 +336,7 @@ export function assembleScanProjectResponse(args: AssembleArgs): Record<string, 
   // for any future truncation site that drops `referenceGuide` (or
   // trims its entries) without rewriting surviving findings. Identity-
   // preserving on the common case where every ref resolves cleanly.
-  return repairResponseDangling(guarded.response, hoisted.originalFixDescriptions);
+  return repairResponseDangling(withPaging, hoisted.originalFixDescriptions);
 }
 
 /**
@@ -378,13 +388,17 @@ function mergeBudgetedFields(args: {
     effectiveLimit: densityEffectiveLimit,
     topContributor,
   }).warningsDetails;
-  // Q9 rule-level impact of the density-cap drop —
-  // the dropped subset is the tail past `budgeted.files.length`
-  // (applyTokenBudget pops from the tail). See
-  // `truncated-files-dropped.ts` for the helper rationale.
+  // Q9 rule-level impact of the density-cap drop. Pass
+  // `totalFilesWithFindings` + `finalFilesShipped` so the helper
+  // computes the CANONICAL drop count (= full inventory minus shipped),
+  // not just the page-internal tail-trim — see the canonical
+  // drop-count formulation in `truncated-files-dropped.ts` and the
+  // `truncated_files_dropped.droppedFileCount` field doc in `warnings.ts`.
   const droppedTailFiles = filesForAnalysis.slice(budgeted.files.length);
-  const truncatedFilesDroppedPayload =
-    computeTruncatedFilesDroppedWarning(droppedTailFiles).payload;
+  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(droppedTailFiles, {
+    totalFilesWithFindings,
+    finalFilesShipped: budgeted.files.length,
+  }).payload;
   if (truncatedFilesDroppedPayload !== undefined && !warnings.includes("truncated_files_dropped")) {
     warnings.push("truncated_files_dropped");
   }
@@ -507,9 +521,8 @@ function perRuleNarrowingRerouteFields(args: {
 }
 
 function warningsWithDensityCode(base: readonly ScanWarningCode[] | undefined): ScanWarningCode[] {
-  if (base === undefined) return ["response_token_budget_truncated"];
-  if (base.includes("response_token_budget_truncated")) return [...base];
-  return [...base, "response_token_budget_truncated"];
+  const code = "response_token_budget_truncated" as const;
+  return base === undefined || !base.includes(code) ? [...(base ?? []), code] : [...base];
 }
 
 /**
@@ -607,10 +620,15 @@ function buildSlimScanProjectEnvelope(args: {
     ...slimmedPlan.truncations,
     ...slimmedDetails.truncations,
   ];
-  // Q9 rule-level impact of the slim path's drop — slim ships
-  // `files: []`, dropping the entire `formatted.files` set. See
-  // `truncated-files-dropped.ts` for the helper rationale.
-  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files).payload;
+  // Q9 rule-level impact of the slim path's drop — ships `files: []`,
+  // dropping the entire `formatted.files` set. Pass canonical inputs;
+  // both values agree (canonical == page-internal), so the field-builder
+  // omits the redundant `pageClipFromRequestedLimit` per
+  // present-when-meaningful. See `truncated-files-dropped.ts`.
+  const truncatedFilesDroppedPayload = computeTruncatedFilesDroppedWarning(formatted.files, {
+    totalFilesWithFindings: formatted.files.length,
+    finalFilesShipped: 0,
+  }).payload;
   const merged = oversizeEnvelopeWarningsField({
     reason,
     ...(baseWarnings === undefined ? {} : { baseWarnings }),
@@ -686,8 +704,7 @@ function buildSlimScanProjectEnvelope(args: {
  */
 function readWarnings(original: Record<string, unknown>): readonly ScanWarningCode[] | undefined {
   const w = original["warnings"];
-  if (!Array.isArray(w)) return undefined;
-  return w as readonly ScanWarningCode[];
+  return Array.isArray(w) ? (w as readonly ScanWarningCode[]) : undefined;
 }
 
 /**
@@ -697,8 +714,7 @@ function readWarnings(original: Record<string, unknown>): readonly ScanWarningCo
  */
 function readWarningsDetails(original: Record<string, unknown>): ScanWarningDetails | undefined {
   const d = original["warningsDetails"];
-  if (d === undefined || d === null || typeof d !== "object") return undefined;
-  return d as ScanWarningDetails;
+  return d !== null && typeof d === "object" ? (d as ScanWarningDetails) : undefined;
 }
 
 /**
@@ -729,6 +745,13 @@ function readWarningsDetails(original: Record<string, unknown>): ScanWarningDeta
  *     agent guessing why the scope landed where it did, which is the
  *     "Truncated containers must rename or sentinel, not retain" silent-
  *     miss failure mode.
+ *   - `restrictToPathsApplied` — present-when-meaningful scope-confirmation
+ *     telemetry stamped when the caller passed a non-empty
+ *     `restrictToPaths` param. Inverts the meaning of `filesScanned` on
+ *     the slim envelope: drop it and an agent reading the surviving
+ *     block cannot distinguish "restrict scoped to N files" from
+ *     "restrict silently ignored, full corpus scanned." Tiny payload
+ *     (paths + pre/post counters), no slimming needed.
  *
  * Everything else (perRuleCoverage, scannedBuildArtifacts,
  * analysisCoverage, scope, additionalPathsScanned, …) is dropped on
@@ -738,9 +761,7 @@ function readWarningsDetails(original: Record<string, unknown>): ScanWarningDeta
 function buildSlimMeta(fullMeta: Record<string, unknown>): Record<string, unknown> {
   const slim: Record<string, unknown> = {};
   for (const key of SLIM_META_KEYS) {
-    if (key in fullMeta) {
-      slim[key] = fullMeta[key];
-    }
+    if (key in fullMeta) slim[key] = fullMeta[key];
   }
   return slim;
 }
@@ -758,6 +779,7 @@ const SLIM_META_KEYS: readonly string[] = [
   "scanMode",
   "hostDeclaredRoots",
   "rootsOverlapNote",
+  "restrictToPathsApplied",
 ];
 
 /**
@@ -1057,8 +1079,7 @@ export function pickNonVendorNarrowingDir(
   // honesty principle as `pickTopRuleByCount` — naming an alphabetical
   // winner would route to a dir that doesn't actually dominate. The
   // caller ships empty args and the agent picks.
-  if (tie || topDir === undefined) return undefined;
-  return topDir;
+  return tie ? undefined : topDir;
 }
 
 /**

@@ -14,10 +14,10 @@
  */
 
 import { stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
-
+import { isAbsolute } from "node:path";
+import { posixResolve } from "../utils/path.ts";
 export async function pathExists(p: string, base?: string): Promise<boolean> {
-  const abs = isAbsolute(p) ? p : resolve(base ?? process.cwd(), p);
+  const abs = isAbsolute(p) ? p : posixResolve(base ?? process.cwd(), p);
   try {
     await stat(abs);
     return true;

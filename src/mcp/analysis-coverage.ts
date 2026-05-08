@@ -415,6 +415,17 @@ interface CoverageBlock {
   hints?: readonly Hint[];
   skippedByExtension?: Readonly<Record<string, number>>;
   /**
+   * Per-extension counts of parseable files filtered by `.gitignore`,
+   * user-supplied `exclude` globs, or `DEFAULT_EXCLUDED_PATTERNS`. See
+   * {@link import("../input/discover.ts").DiscoveryDiagnostics.excludedByPatternByExtension}
+   * for the full doctrine link. Together with `filesByExtension`
+   * (parsed) + `skippedByExtension` (unparseable) + `sourcemapFiles`
+   * (sourcemap), closes the per-extension accounting invariant for
+   * files reachable under the dir-ignore set. Map keys are ext-with-
+   * dot; counters are raw file counts. Present-when-meaningful.
+   */
+  excludedByPatternByExtension?: Readonly<Record<string, number>>;
+  /**
    * Absolute paths of `.map` sourcemap files the discovery walk
    * encountered and rejected (cleared dir-ignore + user-excludes,
    * failed the parseable-extension check). Routed into a dedicated
@@ -887,37 +898,38 @@ function populateCoverageTail(
   if (Object.keys(parseMode).length > 0) coverage.parseModeByExtension = parseMode;
   const hints = buildHints(files, acc);
   if (hints.length > 0) coverage.hints = hints;
-  // surface per-extension counts for files the
-  // walker considered but rejected purely on the parseable-extension
-  // check. Present-when-meaningful: omitted when the map is empty or
-  // the caller didn't run discovery (`scan_file` takes explicit paths).
-  if (
-    discoveryDiagnostics !== undefined &&
-    Object.keys(discoveryDiagnostics.skippedByExtension).length > 0
-  ) {
-    coverage.skippedByExtension = discoveryDiagnostics.skippedByExtension;
+  populateDiscoveryDiagnostics(coverage, discoveryDiagnostics);
+}
+
+/**
+ * Mirrors the four discovery-diagnostic channels onto the coverage
+ * block, present-when-meaningful: `skippedByExtension`
+ * (parser-routing gaps), `excludedByPatternByExtension` (gitignore /
+ * user-excludes / `DEFAULT_EXCLUDED_PATTERNS`), `sourcemapFiles`
+ * (the `.map` exclusion drives `sourcemap_files_excluded`), and
+ * `defaultExcludedArtifactPaths` (build-artifact dirs the walker
+ * silently skipped — drives `default_excluded_artifact_paths`).
+ * Together with `filesByExtension` these close the per-extension
+ * accounting invariant: parsed + skipped + excludedByPattern +
+ * sourcemap = the raw walker count for files reachable under the
+ * dir-ignore set.
+ */
+function populateDiscoveryDiagnostics(
+  coverage: CoverageBlock,
+  d: import("../input/discover.ts").DiscoveryDiagnostics | undefined,
+): void {
+  if (d === undefined) return;
+  if (Object.keys(d.skippedByExtension).length > 0) {
+    coverage.skippedByExtension = d.skippedByExtension;
   }
-  // Sourcemap files: separate field rather than a `skippedByExtension`
-  // entry so the conventional `.map` exclusion is declared explicitly
-  // (drives the `sourcemap_files_excluded` warning). Present-when-
-  // meaningful — omitted when the walk encountered none.
-  if (discoveryDiagnostics !== undefined && discoveryDiagnostics.sourcemapFiles.length > 0) {
-    coverage.sourcemapFiles = discoveryDiagnostics.sourcemapFiles;
+  if (Object.keys(d.excludedByPatternByExtension).length > 0) {
+    coverage.excludedByPatternByExtension = d.excludedByPatternByExtension;
   }
-  // Default-excluded build-artifact directories the walker silently
-  // dropped (per the AI-first "Default-exclude globs are suppression
-  // too" doctrine). The discovery layer shallow-walks each match to
-  // count parseable files + capture sample paths so the warning
-  // payload names the silent miss without forcing the agent into a
-  // separate Read pass against `dist/` / `.next/` / etc. Drives the
-  // `default_excluded_artifact_paths` warning code. Present-when-
-  // meaningful — omitted when no matched directory contained
-  // parseable content.
-  if (
-    discoveryDiagnostics !== undefined &&
-    discoveryDiagnostics.defaultExcludedArtifactPaths.length > 0
-  ) {
-    coverage.defaultExcludedArtifactPaths = discoveryDiagnostics.defaultExcludedArtifactPaths;
+  if (d.sourcemapFiles.length > 0) {
+    coverage.sourcemapFiles = d.sourcemapFiles;
+  }
+  if (d.defaultExcludedArtifactPaths.length > 0) {
+    coverage.defaultExcludedArtifactPaths = d.defaultExcludedArtifactPaths;
   }
 }
 
@@ -1396,11 +1408,19 @@ function recordParseErrorEntry(file: ParsedFile, acc: CoverageAccumulator): void
   // dishonest").
   const natural = naturalParserFor(file.filePath);
   const naturalParser = natural !== null && natural !== parserAttempted ? natural : undefined;
+  // `reason` is present-when-meaningful: when the head parse error has
+  // no message string (parser recorded a position but no prose), the
+  // field is omitted entirely rather than shipping `reason: ""` — per
+  // the AI-first consumer model's rule against ambiguous field shapes,
+  // an empty string is indistinguishable from "truncated to zero
+  // chars" or "parser had no message," and the agent's downstream
+  // mistake is silent.
+  const reasonText = headError?.message ? truncateParseErrorReason(headError.message) : undefined;
   acc.parseErrorEntries.push({
     path: file.filePath,
     parserAttempted,
     ...(naturalParser === undefined ? {} : { naturalParser }),
-    reason: truncateParseErrorReason(headError?.message ?? ""),
+    ...(reasonText === undefined ? {} : { reason: reasonText }),
     ...(triggerToken === undefined ? {} : { triggerToken }),
     ...(parsedThroughLine && parsedThroughLine > 0 ? { parsedThroughLine } : {}),
   });

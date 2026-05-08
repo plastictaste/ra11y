@@ -57,6 +57,7 @@ interface SlimWarningPayload {
   readonly droppedFileCountFromRequestedLimit: number;
   readonly totalFilesWithFindings: number;
   readonly metaFieldsDropped?: readonly string[];
+  readonly metaTruncationSeeAlso?: string;
 }
 
 function readDropPayload(response: Record<string, unknown>): SlimWarningPayload {
@@ -66,8 +67,15 @@ function readDropPayload(response: Record<string, unknown>): SlimWarningPayload 
 
 function buildOversizeChecklistResponse(): Record<string, unknown> {
   return {
-    summary: { actionable: { criteria: 1, candidatesUncapped: 1, candidatesReturned: 1 } },
-    items: [{ criterionId: "wcag22:1.1.1", candidates: [{ path: "x.tsx", line: 1 }] }],
+    summary: {
+      actionable: {
+        criteria: 1,
+        emissionsTotal: 1,
+        emissionsAfterCollapse: 1,
+        emissionsReturnedAfterClip: 1,
+      },
+    },
+    items: [{ criteria: ["wcag22:1.1.1"], candidates: [{ path: "x.tsx", line: 1 }] }],
     totalCandidates: 1,
     nextStep: "Iterate items[].",
     nextStepStructured: { tool: "scan_project", args: { cwd: "/tmp/x" } },
@@ -85,11 +93,17 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    actionableManualItems: 1,
-    untargetedCriteria: 0,
+    // `actionableManualItems` and `criteriaUntestable` scalars were
+    // dropped from the coverage entry (each duplicated its array-
+    // form sibling) — the criteria-axis count rides via
+    // `summary.actionable.criteria` and the array form
+    // `manualWithCandidates`. Keep the synthetic fixture aligned
+    // with the live shape so the reconciler test exercises the wire
+    // shape that actually ships.
+    untargetedCriteriaForProject: 0,
     summary: {
       actionable: { criteria: 1 },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",
@@ -118,7 +132,7 @@ function buildOversizeScanFileResponse(): Record<string, unknown> {
   return {
     findings: [{ findingId: "x@1", ruleId: "test/rule", severity: "error", line: 1, column: 1 }],
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -244,5 +258,81 @@ describe("truncation reporters reconcile across warnings (Q13)", () => {
     for (const key of metaFieldsDropped) {
       expect(key).not.toContain(".");
     }
+  });
+
+  // The bidirectional seeAlso cross-link closes the doctrine bullet
+  // (a) closure path: "one canonical truncation reporter per scope …
+  // let the others link to it via `seeAlso` rather than duplicating
+  // the field list." When the slim envelope fires on a response that
+  // ALREADY carried `response_meta_truncated`, both reporters must
+  // cross-link to each other so an agent reading either side
+  // discovers the second channel without re-parsing the warning array.
+  it("populates bidirectional seeAlso when response_meta_truncated co-fires with response_dropped_files_oversize", () => {
+    const original = buildOversizeCoverageResponse();
+    // Pre-stamp a `response_meta_truncated` warning + payload to
+    // simulate the meta-array cap firing earlier in the pipeline.
+    // The slim builder reads `original.warnings` / `warningsDetails`
+    // off the input; the cofire predicate fires when both the warning
+    // code is present AND the slim builder dropped at least one
+    // top-level meta key (which the bloated coverage fixture does).
+    const responseWithMetaTruncated: Record<string, unknown> = {
+      ...original,
+      warnings: ["response_meta_truncated"],
+      warningsDetails: {
+        response_meta_truncated: {
+          fields: ["analysisCoverage.fragmentFiles"],
+        },
+      },
+    };
+    const result = applyCoverageBudget({
+      response: responseWithMetaTruncated,
+      hardCeilingChars: HARD_CEILING,
+    });
+    expect(result.truncated).toBe(true);
+    const slim = result.response as Record<string, unknown>;
+    const warnings = slim.warnings as readonly string[];
+    expect(warnings).toContain("response_meta_truncated");
+    expect(warnings).toContain("response_dropped_files_oversize");
+
+    // Slim payload's `metaTruncationSeeAlso` points at the meta-array
+    // reporter's `fields` payload — so an agent reading the slim
+    // reporter discovers the array reporter without scanning the full
+    // warnings list.
+    const slimPayload = readDropPayload(slim);
+    expect(slimPayload.metaTruncationSeeAlso).toBe(
+      "warningsDetails.response_meta_truncated.fields",
+    );
+
+    // Symmetric `seeAlso` on the meta-array reporter points at the
+    // slim reporter's `metaFieldsDropped` payload — so an agent
+    // reading the array reporter discovers the slim drop too.
+    const details = slim["warningsDetails"] as Record<string, unknown>;
+    const metaTruncatedPayload = details["response_meta_truncated"] as {
+      readonly fields: readonly string[];
+      readonly seeAlso?: string;
+    };
+    expect(metaTruncatedPayload.fields).toEqual(["analysisCoverage.fragmentFiles"]);
+    expect(metaTruncatedPayload.seeAlso).toBe(
+      "warningsDetails.response_dropped_files_oversize.metaFieldsDropped",
+    );
+  });
+
+  // Negative case: when `response_meta_truncated` did NOT fire, the
+  // slim envelope must NOT ship `metaTruncationSeeAlso` (no cross-link
+  // when there is nothing on the other side). Pins the present-when-
+  // meaningful contract — empty cross-link strings would be a
+  // dishonest field shape per CLAUDE.md §1 "Ambiguous field shapes
+  // are dishonest."
+  it("omits metaTruncationSeeAlso when response_meta_truncated did not co-fire", () => {
+    const result = applyChecklistBudget({
+      response: buildOversizeChecklistResponse(),
+      hardCeilingChars: HARD_CEILING,
+    });
+    expect(result.truncated).toBe(true);
+    const slim = result.response as Record<string, unknown>;
+    const warnings = slim.warnings as readonly string[];
+    expect(warnings).not.toContain("response_meta_truncated");
+    const payload = readDropPayload(slim);
+    expect(payload.metaTruncationSeeAlso).toBeUndefined();
   });
 });

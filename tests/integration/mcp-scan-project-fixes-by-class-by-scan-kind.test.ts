@@ -28,9 +28,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -104,21 +104,24 @@ function sumLane(lanes: FixesByClass, kind: keyof Lane): number {
 
 describe("scan_project: fixesByClass per-scan-kind cross-surface invariant", () => {
   it("each lane carries `{ source, buildArtifact }` and the per-kind sums agree with violationsByScanKind", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-fixes-by-class-by-scan-kind-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-fixes-by-class-by-scan-kind-"));
     try {
       // Authored HTML — `<img>` without `alt` (mechanical lane,
       // wcag22:1.1.1). Lands in the `source` lane on every surface.
-      writeFileSync(join(root, "page.html"), '<html><body><img src="hero.png"></body></html>\n');
+      writeFileSync(
+        posixJoin(root, "page.html"),
+        '<html><body><img src="hero.png"></body></html>\n',
+      );
       // Authored CSS — black-on-grey contrast (guidance lane,
       // wcag22:1.4.3). Lands in the `source` lane.
       writeFileSync(
-        join(root, "site.css"),
+        posixJoin(root, "site.css"),
         ".muted { color: #555555; background-color: #4a4a4a; }\n",
       );
       // Build artifact CSS — same contrast violation, but on a `.min.`
       // file so the classifier routes findings into `buildArtifact`.
       writeFileSync(
-        join(root, "vendor.min.css"),
+        posixJoin(root, "vendor.min.css"),
         ".faded { color: #444444; background-color: #5a5a5a; }\n",
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -163,11 +166,11 @@ describe("scan_project: fixesByClass per-scan-kind cross-surface invariant", () 
     }
   });
 
-  it("on a no-vendor scan, every lane's buildArtifact half is zero and violationsByScanKind is omitted", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-fixes-by-class-no-vendor-"));
+  it("on a no-vendor scan, every lane's buildArtifact half is zero and violationsByScanKind ships deterministically", async () => {
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-fixes-by-class-no-vendor-"));
     try {
       // One authored file, no vendor / build-artifact paths.
-      writeFileSync(join(root, "page.html"), '<html><body><img src="x.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "page.html"), '<html><body><img src="x.png"></body></html>\n');
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);
@@ -185,16 +188,22 @@ describe("scan_project: fixesByClass per-scan-kind cross-surface invariant", () 
       expect(fixesByClass.runtimeOnly.buildArtifact).toBe(0);
       expect(fixesByClass.verifyInSource.buildArtifact).toBe(0);
 
-      // The aggregate `violationsByScanKind` is omitted on a
-      // no-artifacts scan per CLAUDE.md §1 "Ambiguous field shapes
-      // are dishonest" — the per-lane sub-tally already conveys
-      // "every finding routed to source," so the redundant aggregate
-      // adds no signal.
-      expect(plan["violationsByScanKind"]).toBeUndefined();
+      // Per the deterministic-headline doctrine — a missing headline
+      // forces silent recomputation from `plan.fixesByClass`
+      // arithmetic — `plan.violationsByScanKind` ships on every
+      // scan_project response, including no-vendor scans where the
+      // `buildArtifact` half reads 0. Honest signal: axis was tallied
+      // and found zero.
+      const violationsByScanKind = plan["violationsByScanKind"] as Lane | undefined;
+      expect(violationsByScanKind).toBeDefined();
+      if (!violationsByScanKind) throw new Error("violationsByScanKind missing");
+      expect(violationsByScanKind.buildArtifact).toBe(0);
 
-      // The `source`-half sum is positive (one finding emitted).
+      // The `source`-half sum is positive (one finding emitted) and
+      // matches the aggregate.
       const sourceSum = sumLane(fixesByClass, "source");
       expect(sourceSum).toBeGreaterThan(0);
+      expect(sourceSum).toBe(violationsByScanKind.source);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

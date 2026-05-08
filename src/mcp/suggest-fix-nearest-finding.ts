@@ -39,12 +39,33 @@ const DID_YOU_MEAN_CAP = 3;
  *     across ties)
  *   - zero (or no findings list provided) → `{}` (no breadcrumb)
  *
- * Closes. The two field shapes are
- * mutually exclusive — `nearestFinding` is the singular case the agent
- * can act on directly; `didYouMean` is the plural case where the agent
- * has to choose. Conditional-spread per CLAUDE.md §1 "Ambiguous field
- * shapes are dishonest" — the field is absent when no breadcrumb fits,
- * never `nearestFinding: null` or `didYouMean: []`.
+ * Two integrity invariants on the candidate set BEFORE ranking:
+ *
+ *   1. **Self-exclude.** Findings at the exact `requestedLine` are
+ *      dropped. A breadcrumb pointing back at the line the agent just
+ *      queried is not actionable — `suggest_fix(line: N)` returned
+ *      `kind: "none"` precisely because no match resolved at line N, so
+ *      a `didYouMean` row pointing to line N would form a 2-cycle with
+ *      a sibling call (`suggest_fix(line: M)` then routes back at N,
+ *      and the agent oscillates indefinitely).
+ *   2. **Dedupe by line.** Multiple findings emitted on the same line
+ *      (a common shape when one element triggers several distinct
+ *      sub-emissions) collapse to a single breadcrumb row. The
+ *      breadcrumb addresses a *line*, not a finding — three rows of
+ *      `{line: 7}` consume the cap without offering distinct
+ *      navigation.
+ *
+ * Together these enforce the per-finding-addressability contract: each
+ * breadcrumb row is a unique, non-self-referential line the agent can
+ * navigate to. When neither invariant leaves a candidate, the field is
+ * absent (`{}`) — empty `didYouMean: []` is dishonest per CLAUDE.md §1
+ * "Ambiguous field shapes are dishonest".
+ *
+ * The two field shapes are mutually exclusive — `nearestFinding` is
+ * the singular case the agent can act on directly; `didYouMean` is the
+ * plural case where the agent has to choose. Conditional-spread —
+ * the field is absent when no breadcrumb fits, never
+ * `nearestFinding: null` or `didYouMean: []`.
  */
 export function nearestFindingSpread(
   ruleId: string,
@@ -55,12 +76,20 @@ export function nearestFindingSpread(
   readonly didYouMean?: ReadonlyArray<{ readonly ruleId: string; readonly line: number }>;
 } {
   if (!sameFileFindings || sameFileFindings.length === 0) return {};
-  const inWindow = sameFileFindings
-    .filter(
-      (v) =>
-        v.ruleId === ruleId && Math.abs(v.location.line - requestedLine) <= NEAREST_FINDING_WINDOW,
-    )
-    .map((v) => ({ ruleId: v.ruleId, line: v.location.line }));
+  // Self-exclude: drop findings at the requested line itself —
+  // pointing back at the queried line forms a 2-cycle with a sibling
+  // call. Then dedupe by line so duplicate-line emissions don't
+  // consume the cap without offering distinct navigation.
+  const seenLines = new Set<number>();
+  const inWindow: Array<{ ruleId: string; line: number }> = [];
+  for (const v of sameFileFindings) {
+    if (v.ruleId !== ruleId) continue;
+    if (v.location.line === requestedLine) continue;
+    if (Math.abs(v.location.line - requestedLine) > NEAREST_FINDING_WINDOW) continue;
+    if (seenLines.has(v.location.line)) continue;
+    seenLines.add(v.location.line);
+    inWindow.push({ ruleId: v.ruleId, line: v.location.line });
+  }
   if (inWindow.length === 0) return {};
   if (inWindow.length === 1) {
     const only = inWindow[0];

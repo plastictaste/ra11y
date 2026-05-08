@@ -1,0 +1,28 @@
+# Pin every text file to LF on every platform's checkout.
+#
+# Without this, Git for Windows defaults `core.autocrlf=true` and rewrites
+# LF -> CRLF on checkout. The repo is authored on Linux/macOS with LF line
+# endings, so the CRLF-converted Windows checkout flags every line of every
+# file as "wrongly formatted" to Biome, blowing up the verify step and
+# burying real Windows-specific test failures under format noise.
+#
+# `text=auto` lets Git auto-detect text vs. binary; `eol=lf` then forces
+# LF on text files for every checkout, which matches `.editorconfig`.
+* text=auto eol=lf
+
+# Common binary types — declare them explicitly so Git never tries to
+# normalize them, even if `text=auto` misclassifies any of them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

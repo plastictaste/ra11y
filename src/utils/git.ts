@@ -183,11 +183,25 @@ export function filesChangedSince(ref: string, cwd: string = process.cwd()): str
 }
 
 function parseFileList(stdout: string, root: string): string[] {
+  // Normalize to POSIX so the changed-set keys agree with the
+  // attestation-record `filePath` shape produced by the discovery layer
+  // (which also normalizes). Windows runs on `git rev-parse
+  // --show-toplevel` output (forward slashes) intermixed with
+  // `path.resolve` (backslashes); without one canonical form the
+  // staleness probe's `Set.has()` lookup misses on Windows.
+  //
+  // Canonicalize `root` via `realpathSync.native` first so 8.3 short
+  // names (`RUNNER~1`) get expanded to the long form git emits.
+  // GitHub Actions Windows runners hit this path: `os.tmpdir()`
+  // returns short-form, `git --show-toplevel` returns long-form, and
+  // without normalizing one to the other the changed-set keys never
+  // line up with caller-supplied paths.
+  const rootReal = safeRealpath(root);
   return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((rel) => resolve(root, rel));
+    .map((rel) => resolve(rootReal, rel).split(/[\\/]/).join("/"));
 }
 
 // ─── Hunk-intersection mode ────────────────────────────────────────────────
@@ -272,21 +286,21 @@ export function parseDiffOutput(
   stdout: string,
   repoRoot: string,
 ): ReadonlyMap<string, readonly HunkRange[]> {
+  // Pre-split into LF-terminated logical lines. Strip a trailing `\r`
+  // up-front so CRLF diff output (the default shape on Windows when
+  // `core.autocrlf=true`, which git-for-windows ships by default)
+  // parses identically to LF input. The `@@` regex doesn't anchor to
+  // end-of-string so the hunk header matched either way before this
+  // strip — but the `diff --git a/<pre> b/<post>` line would otherwise
+  // produce a key with a literal `\r` suffix, and every downstream
+  // `isInsideHunk` lookup against the un-suffixed file path would miss.
+  // Idempotent on POSIX-ending input.
+  const lines = stdout.split("\n").map(stripTrailingCarriageReturn);
   const byFile = new Map<string, HunkRange[]>();
   let current: string | null = null;
-  for (const raw of stdout.split("\n")) {
+  for (const raw of lines) {
     if (raw.startsWith("diff --git ")) {
-      // Parse post-image path: `diff --git a/<pre> b/<post>`. We match
-      // the trailing ` b/<post>` so a filename containing spaces still
-      // resolves — git quotes paths with spaces, but even without that
-      // guard the `b/` prefix is unambiguous at the end.
-      const idx = raw.lastIndexOf(" b/");
-      if (idx === -1) {
-        current = null;
-      } else {
-        const post = raw.slice(idx + 3);
-        current = resolve(repoRoot, post);
-      }
+      current = parsePostImagePath(raw, repoRoot);
       continue;
     }
     if (raw.startsWith("@@ ") && current !== null) {
@@ -298,6 +312,43 @@ export function parseDiffOutput(
     }
   }
   return byFile;
+}
+
+/** Drops a single trailing `\r` (CRLF → LF-only). Idempotent on LF input. */
+function stripTrailingCarriageReturn(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+/**
+ * Parses the post-image path from a `diff --git a/<pre> b/<post>` line.
+ * Returns the POSIX-shaped absolute path resolved against `repoRoot`,
+ * or null when the line has no `b/<post>` segment to anchor on. We
+ * match the trailing ` b/<post>` so a filename containing spaces still
+ * resolves — git quotes paths with spaces, but even without that guard
+ * the `b/` prefix is unambiguous at the end.
+ */
+function parsePostImagePath(line: string, repoRoot: string): string | null {
+  const idx = line.lastIndexOf(" b/");
+  if (idx === -1) return null;
+  const post = line.slice(idx + 3);
+  // Keep keys POSIX-shaped. `resolve(...)` on Windows returns a
+  // backslash path even though the diff body is POSIX; the caller's
+  // lookup path comes from `discoverFiles` which now emits POSIX too,
+  // so both sides agree on one separator.
+  return posixResolve(repoRoot, post);
+}
+
+/**
+ * Like `path.resolve` but normalizes the result to forward slashes so
+ * the hunk-key shape stays in lock-step with the POSIX paths emitted by
+ * the discovery layer. Node's `fs` accepts forward-slash absolute paths
+ * on Windows, so the normalization has no observable downstream effect
+ * other than making the cross-platform string comparison honest.
+ */
+function posixResolve(...segments: readonly string[]): string {
+  return resolve(...segments)
+    .split(/[\\/]/)
+    .join("/");
 }
 
 /**
@@ -341,10 +392,20 @@ export function getChangedHunks(ref: string, cwd: string = process.cwd()): Chang
  * helper whose job is "canonicalize when possible." A non-canonical
  * fallback just means we'd miss cross-symlink-space comparisons,
  * which was the pre-canonicalization baseline anyway.
+ *
+ * Uses `realpathSync.native` rather than the pure-JS `realpathSync`
+ * because the native variant goes through libuv's `uv_fs_realpath`,
+ * which on Windows resolves 8.3 short-name aliases (`RUNNER~1` →
+ * `runneradmin`) via `GetFinalPathNameByHandleW`. The pure-JS variant
+ * walks symlinks step-by-step but does NOT resolve 8.3 aliases, so on
+ * GitHub Actions Windows runners (where `os.tmpdir()` returns the
+ * 8.3 form while `git rev-parse --show-toplevel` returns the long
+ * form) the lookup-side path stayed in short form and never matched
+ * the long-form hunk keys.
  */
-function safeRealpath(path: string): string {
+export function safeRealpath(path: string): string {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return path;
   }
@@ -366,7 +427,18 @@ export function isInsideHunk(
   // between caller-supplied cwd and `git rev-parse --show-toplevel`
   // output. The hunk map keys are already in canonical space (the
   // helper call site canonicalized the repo root before joining).
-  const ranges = hunksByFile.get(filePath) ?? hunksByFile.get(safeRealpath(filePath));
+  // On Windows, the keys are POSIX-shaped (parseDiffOutput normalizes);
+  // normalize the lookup path to match so backslash-vs-slash drift
+  // between caller input and our key shape doesn't break the lookup.
+  // The realpath fallback also needs POSIX normalization on Windows —
+  // `realpathSync` returns native-separator output (`C:\Users\...`)
+  // even when given a forward-slash input, so without normalization
+  // the third lookup key shape disagrees with the POSIX hunk keys when
+  // Windows short-name expansion (`RUNNER~1` → `runneradmin`) is the
+  // only diff between caller path and git's view.
+  const posix = filePath.split(/[\\/]/).join("/");
+  const realposix = safeRealpath(filePath).split(/[\\/]/).join("/");
+  const ranges = hunksByFile.get(posix) ?? hunksByFile.get(filePath) ?? hunksByFile.get(realposix);
   if (ranges === undefined) return false;
   for (const r of ranges) {
     if (line >= r.start && line <= r.end) return true;

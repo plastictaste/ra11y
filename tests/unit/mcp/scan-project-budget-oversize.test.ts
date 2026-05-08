@@ -27,7 +27,7 @@ import type { ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
 function buildMinimalFormatted(): ScanFormatted {
   return {
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -197,7 +197,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 4, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -293,7 +293,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 1, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -378,7 +378,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 2, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -448,7 +448,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 0, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -634,7 +634,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     );
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 250, buildArtifact: 0 },
           guidance: { source: 100, buildArtifact: 0 },
@@ -961,6 +961,85 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     expect(response.filesArrayDropped).toBeUndefined();
   });
 
+  it("preserves `restrictToPathsApplied` on the slim envelope so scope-confirmation telemetry survives the meta-clip", () => {
+    // — when the caller passes a non-empty
+    // `restrictToPaths` param and the post-density-cap envelope still
+    // crosses the host ceiling, the slim builder's meta-clip must keep
+    // `restrictToPathsApplied` intact. Without it, an agent reading the
+    // surviving slim block sees `filesScanned: N` against a full-corpus
+    // search base and cannot distinguish "restrict scoped to N files"
+    // from "restrict silently ignored, full corpus scanned" — the
+    // canonical "Truncated containers must rename or sentinel, not
+    // retain" silent-miss failure mode for scope-confirmation telemetry.
+    const session = new McpSession();
+    const formatted = buildMinimalFormatted();
+    const hugePayload = "x".repeat(200_000);
+    const restrictToPathsApplied = {
+      paths: ["src/components/button.tsx"],
+      filesBeforeRestrict: 4936,
+      filesAfterRestrict: 1,
+    };
+    const response = assembleScanProjectResponse({
+      params: {
+        cwd: "/tmp/example-project",
+        restrictToPaths: ["src/components/button.tsx"],
+      },
+      session,
+      formatted,
+      hoisted: {
+        files: formatted.files,
+        referenceGuide: undefined,
+      },
+      page: {
+        files: formatted.files,
+        paginationFields: {
+          truncated: false,
+          totalFilesWithFindings: 1,
+        },
+      },
+      pageOffset: 0,
+      fullMeta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 1,
+        durationMs: 5,
+        configSource: null,
+        bloatedField: hugePayload,
+        restrictToPathsApplied,
+      },
+      nextStep: "Call suggest_fix on the first finding.",
+    }) as Record<string, unknown>;
+
+    // Slim envelope engaged.
+    expect(response.filesArrayDropped).toBe(true);
+    const warnings = response.warnings as readonly string[];
+    expect(warnings).toContain("response_dropped_files_oversize");
+
+    // The scope-confirmation payload survives the meta-clip — same
+    // shape on the slim envelope as it would have shipped on a clean
+    // pass-through. Field identity, paths, and the pre/post counters
+    // all ride together so the agent's scope-confirmation read is
+    // identical regardless of which clip pass fired.
+    const meta = response.meta as Record<string, unknown>;
+    expect(meta.restrictToPathsApplied).toEqual(restrictToPathsApplied);
+
+    // Symmetric negative — `restrictToPathsApplied` must NOT also appear
+    // in the dropped-keys list. A field that survives the slim AND lands
+    // in `metaFieldsDropped` would be the same dishonest shape this
+    // test is guarding against, just at the warning-channel layer.
+    const details = response.warningsDetails as Record<string, Record<string, unknown>>;
+    const dropPayload = details.response_dropped_files_oversize;
+    const droppedFields =
+      (dropPayload as { metaFieldsDropped?: readonly string[] }).metaFieldsDropped ?? [];
+    expect(droppedFields).not.toContain("restrictToPathsApplied");
+    // The bloat field still gets dropped — pinning that the
+    // preservation is targeted, not blanket meta retention.
+    expect(droppedFields).toContain("bloatedField");
+    expect(meta).not.toHaveProperty("bloatedField");
+  });
+
   it("emits `truncated_files_dropped` with rule-level arithmetic on the slim envelope path when files-with-findings get dropped", () => {
     // Q9 — the slim envelope ships
     // `files: []`, dropping the entire `formatted.files` set from the
@@ -972,7 +1051,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     const session = new McpSession();
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 4, buildArtifact: 0 },
           guidance: { source: 0, buildArtifact: 0 },
@@ -1100,7 +1179,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
       }));
     const formatted: Parameters<typeof assembleScanProjectResponse>[0]["formatted"] = {
       plan: {
-        notes: 0,
+        infoSeverityFindings: 0,
         fixesByClass: {
           mechanical: { source: 0, buildArtifact: 0 },
           guidance: { source: 10, buildArtifact: 0 },

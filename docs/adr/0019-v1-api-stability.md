@@ -22,22 +22,24 @@ The public surface for `@ra11y/core` v1.0 is frozen at the exact set of named ex
 
 ### Entry point `@ra11y/core` (resolves to `src/index.ts`)
 
-| Symbol        | Kind      | Source file      | Stability |
-|---------------|-----------|------------------|-----------|
-| `Criterion`   | type      | `src/index.ts`   | stable    |
-| `ReportData`  | type      | `src/index.ts`   | stable    |
-| `ScanResult`  | type      | `src/index.ts`   | stable    |
-| `Severity`    | type      | `src/index.ts`   | stable    |
-| `Standard`    | type      | `src/index.ts`   | stable    |
-| `Violation`   | type      | `src/index.ts`   | stable    |
-| `scan`        | function  | `src/index.ts`   | stable    |
-| `ScanOptions` | interface | `src/index.ts`   | stable    |
+| Symbol         | Kind      | Source file      | Stability |
+|----------------|-----------|------------------|-----------|
+| `Criterion`    | type      | `src/index.ts`   | stable    |
+| `ReportData`   | type      | `src/index.ts`   | stable    |
+| `ScanResult`   | type      | `src/index.ts`   | stable    |
+| `Severity`     | type      | `src/index.ts`   | stable    |
+| `Standard`     | type      | `src/index.ts`   | stable    |
+| `Violation`    | type      | `src/index.ts`   | stable    |
+| `scan`         | function  | `src/index.ts`   | stable    |
+| `ScanOptions`  | interface | `src/index.ts`   | stable    |
+| `defineConfig` | function  | `src/index.ts`   | stable    |
 
 Notes on this entry:
 
 - The six type re-exports pass through `./types/index.ts`. Their authoring definitions live in `src/types/standard.ts` (`Criterion`, `Standard`), `src/types/violation.ts` (`ReportData`, `ScanResult`, `Severity`, `Violation`).
 - `scan` currently throws `"not implemented yet"` — v1.0 preserves the existing signature so that when the implementation lands post-v1.0 the signature addition is drop-in. The signature (`(options: ScanOptions) => Promise<ScanResult>`) is part of the freeze.
 - `ScanOptions` has three fields today (`paths`, `standards?`, `level?`). Adding a new optional field is minor. Removing or renaming any existing field is major.
+- `defineConfig` is re-exported here from `./api/plugin.ts` so that `import { defineConfig } from "@ra11y/core"` — the form the docs and bootstrap-class tools emit in suggested config — resolves to the same identity helper plugin authors reach via `@ra11y/core/plugin`. Listed in both entry-point tables; one symbol, two reachable names.
 
 ### Entry point `@ra11y/core/plugin` (resolves to `src/api/plugin.ts`)
 

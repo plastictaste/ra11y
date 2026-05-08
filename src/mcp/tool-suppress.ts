@@ -19,7 +19,7 @@
  */
 
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { relative } from "node:path";
+import { posixRelative } from "../utils/path.ts";
 import { requireBooleanParam } from "./param-validators.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import type { McpSession } from "./session.ts";
@@ -185,10 +185,12 @@ export const suppressTool: McpTool = {
       // ambiguous-field failure mode ai-first-consumer.md warns
       // against). Conditional spread keeps the field present-when-
       // meaningful.
-      ...(applied ? { revertHint: `git checkout -- ${relative(cwd, resolved) || resolved}` } : {}),
+      ...(applied
+        ? { revertHint: `git checkout -- ${posixRelative(cwd, resolved) || resolved}` }
+        : {}),
       meta: {
         cwd,
-        relativeFilePath: relative(cwd, resolved),
+        relativeFilePath: posixRelative(cwd, resolved),
         ruleId,
         reason,
       },

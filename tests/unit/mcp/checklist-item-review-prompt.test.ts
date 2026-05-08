@@ -43,7 +43,7 @@ function mkTmp(): string {
 }
 
 interface ChecklistItemEnvelope {
-  readonly criterionId?: string;
+  readonly criteria?: readonly string[];
   readonly reviewPrompt?: string;
   readonly candidates?: ReadonlyArray<unknown>;
 }
@@ -135,7 +135,7 @@ describe("checklist tool: items[].reviewPrompt", () => {
     const checklistData = parseChecklist(checklistResult.content[0]?.text ?? "{}");
     const reviewData = parseReviewCandidates(reviewResult.content[0]?.text ?? "{}");
 
-    const item = (checklistData.items ?? []).find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = (checklistData.items ?? []).find((i) => i.criteria?.[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     expect(typeof item?.reviewPrompt).toBe("string");
 

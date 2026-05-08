@@ -25,6 +25,10 @@ import { extensionMatches } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 // biome-ignore format: kept on one line for the file-line budget
 import { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLimitation } from "./external-handler-limitation.ts";
+import {
+  type ActionableManualLane,
+  splitActionableCriteriaByLane,
+} from "./manual-criteria-tally.ts";
 import { capMetaArray, type MetaArrayTruncationSummary } from "./meta-array-cap.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { splitFixesByClassByScanKind } from "./scan-assembly-fixes-by-scan-kind.ts";
@@ -41,6 +45,11 @@ export { EXTERNAL_HANDLER_RESOLUTION_UNAVAILABLE, shouldSurfaceExternalHandlerLi
 // stamping `plan.findingsByFile` next to `withTopRules` on one import.
 // biome-ignore format: kept on one line for the file-line budget
 export { computeFindingsByFile, FINDINGS_BY_FILE_DEFAULT_LIMIT, type FindingsByFileEntry, withFindingsByFile } from "./findings-by-file.ts";
+// Re-export from `./findings-by-rule.ts` — same file-size-budget split
+// rationale. Keeps callers stamping the full per-rule count map
+// `plan.findingsByRule` next to the rank-ordered `withTopRules` head.
+// biome-ignore format: kept on one line for the file-line budget
+export { computeFindingsByRule, withFindingsByRule } from "./findings-by-rule.ts";
 // Re-export the linked-stylesheet detector + its result shape so call
 // sites that already import from `scan-assembly.ts` (response-assembler,
 // scan-time-warnings, tool-scan-project) keep one canonical entry
@@ -62,17 +71,66 @@ export { computeTopDirectories, TOP_DIRECTORIES_DEFAULT_LIMIT, type TopDirectory
 /**
  * Packs the `plan` block for `ScanFormatted`. Downstream tool handlers
  * consume the result verbatim — the `limitations` prose, the
- * `actionableManualItems`/`untargetedCriteria` split, and the honest
- * counters-are-conditional rules all live here so every callable
- * surface (scan, scan_file, scan_project, scan_diff) emits the same
- * shape without re-stating the rules.
+ * `actionableManualItemsBySource` / `untargetedCriteriaForProject` /
+ * `untargetedCriteriaForFile` split, and the honest counters-are-
+ * conditional rules all live here so every callable surface (scan,
+ * scan_file, scan_project, scan_diff) emits the same shape without
+ * re-stating the rules.
+ *
+ * The `scope` discriminator picks the field name on the wire:
+ * `"project"` emits `untargetedCriteriaForProject` (project-walk
+ * surfaces — `scan_project`, `scan_diff`); `"file"` emits
+ * `untargetedCriteriaForFile` (explicit-paths surfaces — `scan`,
+ * `scan_file`). The split exists because per-file untargeted counts
+ * cannot logically equal project-rooted ones — when the input is one
+ * file, more criteria are "untargeted" because finders ground per-file.
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+ * naming the same concept must use one shape" + "Composite headline
+ * counts are dishonest": one field name per slice. The previous bare
+ * `untargetedCriteria` field shipped both slices under one name, so
+ * `scan_file` on a single HTML in the same corpus would report 18
+ * while `scan_project` on the project root reported 7 — same field
+ * name, two different concepts.
+ *
+ * `actionableManualBySource` is the per-scan-kind tally that ships as
+ * `plan.actionableManualItemsBySource: { source, buildArtifact }`.
+ * The bare `actionableManualItems` headline was dropped (the same
+ * deletion-not-renaming precedent on `plan.totalFindings` /
+ * `plan.safeEditsAvailable` / `plan.violations` / `plan.summary` /
+ * `plan.untargetedCriteria`) because on a `scan_file` of
+ * `dist/*.min.css` it read `actionableManualItems: 1` while every
+ * contributing candidate sat on the `buildArtifact` lane — the same
+ * "Composite headline counts are dishonest" miss the per-lane
+ * `fixesByClass` split was created to surface. Callers that want the
+ * flat criteria-with-shipped-evidence count sum the two sub-keys
+ * themselves (`source + buildArtifact`).
  */
 export function buildScanPlan(args: {
   readonly violations: number;
   readonly notes: number;
   readonly violationsWithoutAnyFix: number;
-  readonly actionableManual: number;
+  /**
+   * Per-scan-kind tally for the "criteria with at least one shipped
+   * grounded candidate or low-confidence verify-token finding" axis.
+   * Mirrors {@link FixesByClassLane}'s `{ source, buildArtifact }`
+   * shape. Pre-vendor-classification, every contributor routes to
+   * `source` and `buildArtifact` reads 0 — the same default the
+   * upstream `splitFixesByClassByScanKind` pass produces on no-vendor
+   * scans. The post-classification rewrite ships from
+   * {@link withActionableManualItemsBySource}, similar to how
+   * {@link withViolationsByScanKind} rewrites the per-kind
+   * `fixesByClass` lanes.
+   */
+  readonly actionableManualBySource: ActionableManualLane;
   readonly untargetedCriteria: number;
+  /**
+   * `"project"` for project-walk surfaces (scan_project, scan_diff);
+   * `"file"` for explicit-paths surfaces (scan, scan_file). Picks
+   * whether the per-scope untargeted-criteria count emits as
+   * `untargetedCriteriaForProject` or `untargetedCriteriaForFile`. See
+   * the docblock above for rationale.
+   */
+  readonly scope: "project" | "file";
   /**
    * Per-{@link FixClass} tally surfaced as the structured sibling
    * `plan.fixesByClass`. Replaces the former `guidanceFixesAvailable`
@@ -110,7 +168,7 @@ export function buildScanPlan(args: {
   readonly perRuleCoverage?: readonly PerRuleCoverage[];
 }): Record<string, unknown> {
   // biome-ignore format: kept on one line for the file-line budget
-  const { violations, notes, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage } = args;
+  const { violations, notes, violationsWithoutAnyFix, actionableManualBySource, untargetedCriteria, scope, fixesByClass, perRuleCoverage } = args;
   // `fixesByClass` is meaningful only when the scan actually produced
   // violations to bucket — emitting an all-zeros tally on a clean scan
   // is noise that forces the agent to read a field whose only signal
@@ -150,7 +208,8 @@ export function buildScanPlan(args: {
   // same reason: it embedded 5+ counts (per-lane fixClass tally,
   // notes, actionable manual review, untargeted criteria) duplicating
   // structured siblings (`fixesByClass`, `notes`, `actionableManualItems`,
-  // `untargetedCriteria`) into a single composite sentence the agent
+  // `untargetedCriteriaForProject` / `untargetedCriteriaForFile`)
+  // into a single composite sentence the agent
   // would read first. Two surfaces (the prose and the structured
   // tally) framed as "how many of X" disagree silently whenever the
   // numbers drift between assembly steps, and an agent budgeting
@@ -175,14 +234,44 @@ export function buildScanPlan(args: {
   // `emitFixesByClass` gate above) but is NOT emitted onto the wire
   // — it's the upstream count the consumer-visible `fixesByClass`
   // sums to, kept local-only so the public shape stays honest.
+  // Scope-disambiguated untargeted-criteria field name: the bare
+  // `untargetedCriteria` shipped two categorically different slices
+  // (project-walk vs single-file) under one name, and on a bulk
+  // corpus a `scan_file` per-file count of 18 sat alongside a
+  // `scan_project` project-total of 7 — same field, two concepts. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+  // the same concept must use one shape" + "Composite headline counts
+  // are dishonest," each slice gets its own name and the composite is
+  // dropped (no `untargetedCriteria` sibling — same precedent as
+  // `plan.totalFindings` / `plan.safeEditsAvailable` / `plan.violations`
+  // / `plan.summary` deletion-not-renaming).
+  const untargetedField =
+    scope === "project"
+      ? { untargetedCriteriaForProject: untargetedCriteria }
+      : { untargetedCriteriaForFile: untargetedCriteria };
   return {
-    notes,
+    infoSeverityFindings: notes,
     ...(emitFixesByClass ? { fixesByClass } : {}),
     ...(violationsWithoutAnyFix > 0
       ? { violationsWithoutSuggestion: violationsWithoutAnyFix }
       : {}),
-    actionableManualItems: actionableManual,
-    untargetedCriteria,
+    // Per-scan-kind manual-review tally. The bare `actionableManualItems`
+    // headline was dropped (same deletion-not-renaming precedent as
+    // `plan.totalFindings` / `plan.safeEditsAvailable` /
+    // `plan.violations` / `plan.summary` / `plan.untargetedCriteria`)
+    // because on a `scan_file` of `dist/*.min.css` it read 1 while
+    // every contributing candidate sat on the `buildArtifact` lane —
+    // the same dishonest-composite shape the per-lane `fixesByClass`
+    // split was created to surface (`docs/kb/architecture/ai-first-
+    // consumer.md` "Composite headline counts are dishonest").
+    // Pre-vendor-classification, every contributor routes to `source`
+    // and `buildArtifact` reads 0 — the post-classification rewrite
+    // ships from `withActionableManualItemsBySource`, similar to
+    // how `withViolationsByScanKind` rewrites the per-kind `fixesByClass`
+    // lanes. Callers that want the flat criteria-with-shipped-evidence
+    // count sum the two sub-keys themselves.
+    actionableManualItemsBySource: actionableManualBySource,
+    ...untargetedField,
     limitations: [
       "Static analysis can prove failure but not conformance: a clean scan is necessary, not sufficient. Do not claim WCAG conformance on this result alone.",
       "Runtime-only checks — live-region announcements, focus traps, ARIA state transitions, post-render contrast — are out of scope here.",
@@ -1038,6 +1127,12 @@ export function isPerRuleCoverageUniformlyHigh(rows: readonly PerRuleCoverage[])
  * default-honest behavior is "the file you wrote." This avoids the
  * silent-miss failure mode where a misclassified vendor file silently
  * routes a real authored-code finding into the dismissable bucket.
+ *
+ * Stamped deterministically on every scan response — on a no-vendor
+ * scan the field reads `{ source: N, buildArtifact: 0 }` rather than
+ * being omitted, so the agent reads one stable headline instead of
+ * having to disambiguate "field absent because no artifacts" from
+ * "field absent because the wiring missed a path."
  */
 export interface ViolationsByScanKind {
   readonly source: number;
@@ -1100,22 +1195,29 @@ export function splitViolationsByScanKind(
  * `vendorPaths` and the per-file finding buckets — the seam where
  * both are in scope is the post-classifier point in
  * `tool-scan-project.ts` (between the build-artifact pass and
- * `assembleScanProjectResponse`). Conditional-spread per CLAUDE.md §1
- * "Ambiguous field shapes are dishonest": the
- * `violationsByScanKind` aggregate sibling is omitted when no
- * artifacts were classified (the existing `meta.scannedBuildArtifacts`
- * absence already conveys "no artifacts"). The per-lane
- * `fixesByClass` rewrite ALWAYS runs — every lane already ships the
+ * `assembleScanProjectResponse`). The aggregate
+ * `violationsByScanKind` is stamped UNCONDITIONALLY: the headline
+ * is the deterministic per-lane error+warning total an agent reads
+ * to budget triage without round-tripping through `plan.fixesByClass`
+ * arithmetic or the per-file array. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest" — the inverse failure mode applies too:
+ * a missing headline forces silent recomputation. On a no-artifacts
+ * scan the field reads `{ source: N, buildArtifact: 0 }` — honest
+ * signal that the axis was tallied and found zero, not that the
+ * field was clipped. The earlier conditional-spread (omit when
+ * `vendorPaths.size === 0`) was tightened so the wire shape is
+ * stable across no-vendor and vendor scans alike.
+ *
+ * The per-lane `fixesByClass` rewrite still only runs when artifacts
+ * were classified — every lane already ships the
  * `{ source: N, buildArtifact: 0 }` shape upstream from
  * `response-assembler` (which calls `countFixesByClass` with an empty
- * vendor path set), so on a no-artifacts scan the rewrite is a no-op
- * by value. When artifacts ARE classified, the upstream's
+ * vendor path set), so on a no-artifacts scan the rewrite would be
+ * a no-op by value and we keep the helper identity-stable on the
+ * `fixesByClass` axis. When artifacts ARE classified, the upstream's
  * empty-vendor-path tally is wrong (every finding routed to `source`)
  * and the rewrite restores the honest split.
- *
- * Identity-stable when the rewrite is a no-op (no artifacts), so
- * callers can route through this helper unconditionally without
- * paying for a shallow copy on the common case.
  *
  * Cross-surface invariant: for each scan-kind X,
  * `sum(plan.fixesByClass[*].X) === plan.violationsByScanKind[X]`.
@@ -1135,7 +1237,14 @@ export function withViolationsByScanKind(
   }[],
   vendorPaths: ReadonlySet<string>,
 ): Record<string, unknown> {
-  if (vendorPaths.size === 0) return plan;
+  // Always compute the aggregate split — on no-vendor scans every
+  // finding routes to `source` and `buildArtifact` reads 0, which is
+  // honest signal (axis tallied, found zero) rather than the silent
+  // omission the agent would have to derive around.
+  const split = splitViolationsByScanKind(files, vendorPaths);
+  if (vendorPaths.size === 0) {
+    return { ...plan, violationsByScanKind: split };
+  }
   // Re-derive `fixesByClass` per-scan-kind from the per-file findings.
   // The upstream `response-assembler` call to `countFixesByClass` ran
   // with an empty vendor-path set (the classifier hadn't run yet), so
@@ -1143,10 +1252,10 @@ export function withViolationsByScanKind(
   // `vendorPaths` now resolved, we redo the split honestly so each
   // lane carries the same `{ source, buildArtifact }` axis the
   // cross-lane `violationsByScanKind` aggregate carries. The rewrite
-  // only runs when artifacts WERE classified (the `vendorPaths.size
-  // === 0` short-circuit above) — the no-artifacts common case keeps
-  // the upstream tally and the helper stays identity-stable on it.
-  const split = splitViolationsByScanKind(files, vendorPaths);
+  // only runs when artifacts WERE classified — the no-artifacts
+  // common case keeps the upstream tally (already
+  // `{ source: N, buildArtifact: 0 }` everywhere) and the helper
+  // stays identity-stable on the `fixesByClass` axis.
   const fixesByClassRewritten = splitFixesByClassByScanKind(files, vendorPaths);
   const planWithFixesByClass =
     plan["fixesByClass"] === undefined ? plan : { ...plan, fixesByClass: fixesByClassRewritten };
@@ -1156,6 +1265,48 @@ export function withViolationsByScanKind(
 // `splitFixesByClassByScanKind` lives in
 // `./scan-assembly-fixes-by-scan-kind.ts` so this file stays under
 // the 500-line file budget enforced by `scripts/check-limits.ts`.
+
+/**
+ * Stamps the post-vendor-classification
+ * `plan.actionableManualItemsBySource: { source, buildArtifact }`
+ * tally onto a `plan` record produced by {@link buildScanPlan}.
+ *
+ * Mirrors {@link withViolationsByScanKind} on the manual-review axis:
+ * the upstream `buildScanPlan` ran with an empty vendor-path set (the
+ * classifier hadn't run yet), so every actionable criterion routed to
+ * the `source` lane and `buildArtifact` read 0 by construction. With
+ * `vendorPaths` now resolved, this helper re-derives the lane split
+ * from the per-criterion path index (`actionableCriteriaPaths`,
+ * threaded through {@link import("./scan-collect.ts").ScanCollected#actionableCriteriaPaths}
+ * and `assembleScanFamilyResponse`'s
+ * {@link import("./response-assembler.ts").ScanFamilyResponseInput#actionableCriteriaPaths}).
+ *
+ * Identity-stable on no-vendor scans (vendorPaths.size === 0) — the
+ * upstream `{ source: N, buildArtifact: 0 }` tally already matches
+ * the post-classification answer, so the helper returns the input
+ * plan unchanged. When artifacts ARE classified, the rewrite restores
+ * the honest split.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+ * counts are dishonest" — pre-split, `plan.actionableManualItems` on a
+ * `scan_file` of `dist/*.min.css` read 1 while every contributing
+ * candidate sat on the `buildArtifact` lane, the same dishonest-
+ * composite shape the per-lane `fixesByClass` split was created to
+ * surface. The bare `actionableManualItems` field was dropped (same
+ * deletion-not-renaming precedent on `plan.totalFindings` /
+ * `plan.safeEditsAvailable` / `plan.violations` / `plan.summary` /
+ * `plan.untargetedCriteria`); the `actionableManualItemsBySource` pair
+ * is the honest replacement.
+ */
+export function withActionableManualItemsBySource(
+  plan: Record<string, unknown>,
+  actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>,
+  vendorPaths: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (vendorPaths.size === 0) return plan;
+  const lane = splitActionableCriteriaByLane(actionableCriteriaPaths, vendorPaths);
+  return { ...plan, actionableManualItemsBySource: lane };
+}
 
 /**
  * Default cap for the {@link computeTopRules} headline rollup. Bulk-
@@ -1184,26 +1335,29 @@ export const TOP_RULES_DEFAULT_LIMIT = 10;
  * `plan.fixesByClass` headline tallies. Without the filter, an
  * info-only rule (e.g. `wrappers/inferred`) would crowd the top of
  * the list with non-actionable context — the agent reads
- * "{@link AgentPlan.notes}" for that surface separately.
+ * "{@link AgentPlan.infoSeverityFindings}" for that surface separately.
  *
- * `fixClass` mirrors the rule's declared remediation lane (the same
- * value `Violation.fixClass` carries on every per-finding emission)
- * so the agent reading the headline can partition `topRules[]` by
- * remediation lane and reach the per-rule subset of the
- * `plan.fixesByClass.<lane>` headline tally without paging through
- * `files[]` or `referenceGuide.fixDescriptions`. Per AI-first doctrine
- * "Per-call shape must agree with per-class plan tally": when
- * `plan.fixesByClass.mechanical: 14` advertises 14 mechanical
- * findings, the topRules entries carrying `fixClass: "mechanical"`
- * partition the per-rule axis of those 14 findings. Present-when-
- * meaningful: omitted on the (theoretically degenerate) bucket where
- * the rollup observed no findings carrying a `fixClass` token.
+ * `fixClass` mirrors the per-finding remediation lane (the same value
+ * `AgentFinding.fixClass` carries) so the agent reading the headline
+ * can partition `topRules[]` by remediation lane and reach the per-rule
+ * subset of the `plan.fixesByClass.<lane>` headline tally without
+ * paging through `files[]` or `referenceGuide.fixDescriptions`. Per
+ * AI-first doctrine "Per-call shape must agree with per-class plan
+ * tally": when `plan.fixesByClass.mechanical: 14` advertises 14
+ * mechanical findings, the topRules entries carrying `fixClass:
+ * "mechanical"` partition the per-rule axis of those 14 findings. The
+ * union includes `"suppress-recommended"` because the per-finding
+ * lane reroutes suppression-flavored emissions into that bucket — see
+ * `AgentFinding#fixClass` and `src/output/agent-response/build-finding.ts`
+ * `resolveFixClass`. Present-when-meaningful: omitted on the
+ * (theoretically degenerate) bucket where the rollup observed no
+ * findings carrying a `fixClass` token.
  */
 export interface TopRule {
   readonly ruleId: string;
   readonly count: number;
   readonly topFile?: string;
-  readonly fixClass?: FixClass;
+  readonly fixClass?: FixClass | "suppress-recommended";
 }
 
 /**
@@ -1236,7 +1390,7 @@ export function computeTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,
@@ -1272,17 +1426,19 @@ export function computeTopRules(
  * the count axis and the densest-file selection stay aligned with
  * the error+warning surface `plan.fixesByClass` tallies.
  *
- * `fixClass` capture: the rule registry stamps a single `fixClass`
- * onto every emission a rule produces (`Violation.fixClass` is
- * required), so the first observed finding's `fixClass` is the
- * rule's declared lane. Recording the first-seen value is enough —
- * the per-violation suppression-flavored override that
- * `countFixesByClass` re-routes via emission-text predicates lives
- * downstream of the rule's declared lane and is intentionally not
- * surfaced here (the rollup describes the rule's remediation lane,
- * not the per-emission re-route — agents reading
- * `plan.fixesByClass.suppressRecommended` get the per-emission view
- * separately).
+ * `fixClass` capture: the per-finding `fixClass` carries the
+ * rerouted lane (the rule's declared `Violation.fixClass` for normal
+ * emissions; `"suppress-recommended"` when `buildAgentFinding`'s
+ * `resolveFixClass` predicate routed the emission into the
+ * suppression-flavored lane). Recording the first-seen value is
+ * enough for the per-rule rollup — when a rule emits a mix of normal
+ * and suppression-flavored findings the first observed lane sets the
+ * topRules attribution, mirroring the per-finding label the agent
+ * reads on the bulk of that rule's emissions. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally," the rollup uses the same lane
+ * partition the per-finding `fixClass` and `plan.fixesByClass`
+ * surfaces use.
  */
 function tallyTopRules(
   files: readonly {
@@ -1290,17 +1446,17 @@ function tallyTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
 ): {
   readonly totals: ReadonlyMap<string, number>;
   readonly perFile: ReadonlyMap<string, ReadonlyMap<string, number>>;
-  readonly fixClass: ReadonlyMap<string, FixClass>;
+  readonly fixClass: ReadonlyMap<string, FixClass | "suppress-recommended">;
 } {
   const totals = new Map<string, number>();
   const perFile = new Map<string, Map<string, number>>();
-  const fixClass = new Map<string, FixClass>();
+  const fixClass = new Map<string, FixClass | "suppress-recommended">();
   for (const file of files) {
     for (const finding of file.findings) {
       if (finding.severity === "info") continue;
@@ -1364,7 +1520,7 @@ export function withTopRules(
     readonly findings: readonly {
       readonly ruleId: string;
       readonly severity: string;
-      readonly fixClass?: FixClass;
+      readonly fixClass?: FixClass | "suppress-recommended";
     }[];
   }[],
   limit: number = TOP_RULES_DEFAULT_LIMIT,

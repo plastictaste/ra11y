@@ -32,8 +32,8 @@
  * replacement.
  */
 
-import { extname, relative, sep } from "node:path";
-
+import { extname } from "node:path";
+import { posixRelative } from "../utils/path.ts";
 /**
  * Canonical {@link GroupBy} param values. Schema-enforced at the
  * tool-handler seam; this list is the authority for spelling.
@@ -103,14 +103,15 @@ export function groupKeyFor(path: string, root: string, strategy: GroupBy): stri
     const ext = extname(path).toLowerCase();
     return ext.startsWith(".") ? ext.slice(1) : ext;
   }
-  const rel = relative(root, path);
-  // Path lay outside `root` — `relative()` produced a `..`-prefixed
+  const rel = posixRelative(root, path);
+  // Path lay outside `root` — `posixRelative()` produced a `..`-prefixed
   // path. `additionalPaths` may contribute files outside the project
   // root; bucketing them under `..` would lose information, so name
   // the regime explicitly.
   if (rel.startsWith("..")) return "<external>";
   if (rel === "" || rel === ".") return ".";
-  const segments = rel.split(sep).filter((s) => s.length > 0);
+  // rel is POSIX from posixRelative; split on "/" not native sep.
+  const segments = rel.split("/").filter((s) => s.length > 0);
   if (segments.length === 0) return ".";
   if (strategy === "firstChildDir") {
     // Single-segment paths (file directly at root) bucket under "."

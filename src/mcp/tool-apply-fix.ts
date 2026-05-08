@@ -39,9 +39,9 @@
  */
 
 import { writeFile } from "node:fs/promises";
-import { relative } from "node:path";
 import { parseInlineDisables } from "../config/index.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
+import { posixRelative } from "../utils/path.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import {
   buildNextStep,
@@ -184,7 +184,7 @@ export const applyFixTool: McpTool = {
       delta: formatDelta(delta, { before: beforeSrc, after: afterSrc }),
       meta: {
         cwd,
-        relativeFilePath: relative(cwd, resolved),
+        relativeFilePath: posixRelative(cwd, resolved),
         standards: [...standards].sort(),
         // Post-edit scan state drives `rulesEvaluated` — the agent
         // reading the response wants to know what the tree looks like

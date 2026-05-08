@@ -16,27 +16,27 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   nearestConfigAncestorPath,
   sawProjectMarkerInWalk,
 } from "../../../src/mcp/config-search-marker.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function makeTmpDir(prefix: string): Promise<string> {
-  return mkdtemp(join(tmpdir(), `${prefix}-`));
+  return mkdtemp(posixJoin(tmpdir(), `${prefix}-`));
 }
 
 describe("sawProjectMarkerInWalk", () => {
   it("returns true when a package.json sits at the starting directory", async () => {
     const dir = await makeTmpDir("ra11y-marker-direct");
-    await writeFile(join(dir, "package.json"), "{}");
+    await writeFile(posixJoin(dir, "package.json"), "{}");
     expect(sawProjectMarkerInWalk(dir)).toBe(true);
   });
 
   it("returns true when a package.json sits at an ancestor directory (walk-up)", async () => {
     const root = await makeTmpDir("ra11y-marker-ancestor");
-    await writeFile(join(root, "package.json"), "{}");
-    const nested = join(root, "a", "b", "c");
+    await writeFile(posixJoin(root, "package.json"), "{}");
+    const nested = posixJoin(root, "a", "b", "c");
     await mkdir(nested, { recursive: true });
     expect(sawProjectMarkerInWalk(nested)).toBe(true);
   });
@@ -50,13 +50,13 @@ describe("sawProjectMarkerInWalk", () => {
     // stronger guard is the `.git`-stop test below which is
     // deterministic.
     const root = await makeTmpDir("ra11y-marker-none");
-    const nested = join(root, "a", "b", "c");
+    const nested = posixJoin(root, "a", "b", "c");
     await mkdir(nested, { recursive: true });
     // Drop a `.git` DIR at the scratch root so the walk stops there
     // rather than continuing into tmpdir() (which might incidentally
     // carry a package.json on some systems). The `.git` stop mirrors
     // the loader's walk-up semantics exactly.
-    await mkdir(join(root, ".git"));
+    await mkdir(posixJoin(root, ".git"));
     expect(sawProjectMarkerInWalk(nested)).toBe(false);
   });
 
@@ -68,19 +68,19 @@ describe("sawProjectMarkerInWalk", () => {
     // the loader's reach, so the probe must also pretend it's
     // invisible.
     const outer = await makeTmpDir("ra11y-marker-git-stop");
-    await writeFile(join(outer, "package.json"), "{}"); // outside the probe's reach
-    const repo = join(outer, "repo");
+    await writeFile(posixJoin(outer, "package.json"), "{}"); // outside the probe's reach
+    const repo = posixJoin(outer, "repo");
     await mkdir(repo);
-    await mkdir(join(repo, ".git"));
-    const nested = join(repo, "src");
+    await mkdir(posixJoin(repo, ".git"));
+    const nested = posixJoin(repo, "src");
     await mkdir(nested);
     expect(sawProjectMarkerInWalk(nested)).toBe(false);
   });
 
   it("recognizes ra11y.config.ts as a marker even without a package.json (config-dotfiles tree)", async () => {
     const dir = await makeTmpDir("ra11y-marker-configdotfiles");
-    await writeFile(join(dir, "ra11y.config.ts"), "export default {};");
-    await mkdir(join(dir, ".git")); // stop probe at the scratch root
+    await writeFile(posixJoin(dir, "ra11y.config.ts"), "export default {};");
+    await mkdir(posixJoin(dir, ".git")); // stop probe at the scratch root
     expect(sawProjectMarkerInWalk(dir)).toBe(true);
   });
 
@@ -89,8 +89,8 @@ describe("sawProjectMarkerInWalk", () => {
     // stop. If both exist at the same directory, the marker wins —
     // that directory IS the project root.
     const dir = await makeTmpDir("ra11y-marker-plus-git");
-    await writeFile(join(dir, "package.json"), "{}");
-    await mkdir(join(dir, ".git"));
+    await writeFile(posixJoin(dir, "package.json"), "{}");
+    await mkdir(posixJoin(dir, ".git"));
     expect(sawProjectMarkerInWalk(dir)).toBe(true);
   });
 });
@@ -103,18 +103,18 @@ describe("sawProjectMarkerInWalk", () => {
 describe("nearestConfigAncestorPath", () => {
   it("returns the parent directory when an ancestor carries a `ra11y.config.ts`", async () => {
     const root = await makeTmpDir("ra11y-ancestor-config");
-    await writeFile(join(root, "ra11y.config.ts"), "export default {};");
-    await mkdir(join(root, ".git")); // stop probe at the scratch root
-    const nested = join(root, "src");
+    await writeFile(posixJoin(root, "ra11y.config.ts"), "export default {};");
+    await mkdir(posixJoin(root, ".git")); // stop probe at the scratch root
+    const nested = posixJoin(root, "src");
     await mkdir(nested);
     expect(nearestConfigAncestorPath(nested)).toBe(root);
   });
 
   it("returns the nearest ancestor when a `package.json` sits two levels up", async () => {
     const root = await makeTmpDir("ra11y-ancestor-pkg");
-    await writeFile(join(root, "package.json"), "{}");
-    await mkdir(join(root, ".git"));
-    const nested = join(root, "a", "b");
+    await writeFile(posixJoin(root, "package.json"), "{}");
+    await mkdir(posixJoin(root, ".git"));
+    const nested = posixJoin(root, "a", "b");
     await mkdir(nested, { recursive: true });
     expect(nearestConfigAncestorPath(nested)).toBe(root);
   });
@@ -124,8 +124,8 @@ describe("nearestConfigAncestorPath", () => {
     // scan target — not evidence the caller pointed at the wrong
     // place. Strict-ancestor semantics means the probe ignores it.
     const dir = await makeTmpDir("ra11y-ancestor-self-only");
-    await writeFile(join(dir, "package.json"), "{}");
-    await mkdir(join(dir, ".git"));
+    await writeFile(posixJoin(dir, "package.json"), "{}");
+    await mkdir(posixJoin(dir, ".git"));
     expect(nearestConfigAncestorPath(dir)).toBeUndefined();
   });
 
@@ -134,19 +134,19 @@ describe("nearestConfigAncestorPath", () => {
     // repo boundary is invisible to the loader and must be invisible
     // here too.
     const outer = await makeTmpDir("ra11y-ancestor-git-stop");
-    await writeFile(join(outer, "package.json"), "{}"); // outside the probe's reach
-    const repo = join(outer, "repo");
+    await writeFile(posixJoin(outer, "package.json"), "{}"); // outside the probe's reach
+    const repo = posixJoin(outer, "repo");
     await mkdir(repo);
-    await mkdir(join(repo, ".git"));
-    const nested = join(repo, "src");
+    await mkdir(posixJoin(repo, ".git"));
+    const nested = posixJoin(repo, "src");
     await mkdir(nested);
     expect(nearestConfigAncestorPath(nested)).toBeUndefined();
   });
 
   it("returns undefined when no ancestor carries a marker (scratch directory)", async () => {
     const root = await makeTmpDir("ra11y-ancestor-none");
-    await mkdir(join(root, ".git")); // stop probe at the scratch root
-    const nested = join(root, "src");
+    await mkdir(posixJoin(root, ".git")); // stop probe at the scratch root
+    const nested = posixJoin(root, "src");
     await mkdir(nested);
     expect(nearestConfigAncestorPath(nested)).toBeUndefined();
   });

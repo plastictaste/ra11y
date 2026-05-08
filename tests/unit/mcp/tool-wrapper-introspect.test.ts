@@ -23,13 +23,13 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { wrapperIntrospectTool } from "../../../src/mcp/tool-wrapper-introspect.ts";
 import {
   clearWrapperIntrospectCache,
   wrapperIntrospectCacheSize,
 } from "../../../src/mcp/wrapper-introspect-cache.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface IntrospectRecord {
   readonly name: string;
@@ -52,7 +52,7 @@ interface IntrospectResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-wrapper-introspect-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-wrapper-introspect-"));
   try {
     return await fn(dir);
   } finally {
@@ -78,33 +78,33 @@ describe("wrapper_introspect: classification by observedRoot", () => {
     await withScratch(async (dir) => {
       // Confirmed: native <button> root.
       await writeFile(
-        join(dir, "ButtonWrap.tsx"),
+        posixJoin(dir, "ButtonWrap.tsx"),
         "export const ButtonWrap = (p: { onClick: () => void }) => " +
           "<button onClick={p.onClick}>hi</button>;\n",
       );
       // Confirmed: native <a> root.
       await writeFile(
-        join(dir, "LinkWrap.tsx"),
+        posixJoin(dir, "LinkWrap.tsx"),
         "export const LinkWrap = (p: { href: string }) => <a href={p.href}>text</a>;\n",
       );
       // Confirmed: <input> root (form-control bucket collapses onto
       // `observedRoot: "input"`).
       await writeFile(
-        join(dir, "TextField.tsx"),
+        posixJoin(dir, "TextField.tsx"),
         "export const TextField = (p: { value: string; onChange: (v: string) => void }) => " +
           "<input value={p.value} onChange={(e) => p.onChange(e.target.value)} />;\n",
       );
       // Assumed + div: the file exists, renders a <div>. Real DOM
       // element, just not interactive.
       await writeFile(
-        join(dir, "DivWrap.tsx"),
+        posixJoin(dir, "DivWrap.tsx"),
         "export const DivWrap = (p: { onClick: () => void }) => " +
           "<div onClick={p.onClick}>fake button</div>;\n",
       );
       // Assumed + opaque: root is another PascalCase component. One-
       // hop discipline — we DO NOT follow through.
       await writeFile(
-        join(dir, "OpaqueWrap.tsx"),
+        posixJoin(dir, "OpaqueWrap.tsx"),
         "export const OpaqueWrap = (p: { children: unknown }) => " +
           "<ButtonWrap onClick={() => {}}>{p.children}</ButtonWrap>;\n",
       );
@@ -119,31 +119,31 @@ describe("wrapper_introspect: classification by observedRoot", () => {
 
       expect(byName.get("ButtonWrap")).toEqual({
         name: "ButtonWrap",
-        definitionFile: join(dir, "ButtonWrap.tsx"),
+        definitionFile: posixJoin(dir, "ButtonWrap.tsx"),
         observedRoot: "button",
         confidence: "confirmed",
       });
       expect(byName.get("LinkWrap")).toEqual({
         name: "LinkWrap",
-        definitionFile: join(dir, "LinkWrap.tsx"),
+        definitionFile: posixJoin(dir, "LinkWrap.tsx"),
         observedRoot: "a",
         confidence: "confirmed",
       });
       expect(byName.get("TextField")).toEqual({
         name: "TextField",
-        definitionFile: join(dir, "TextField.tsx"),
+        definitionFile: posixJoin(dir, "TextField.tsx"),
         observedRoot: "input",
         confidence: "confirmed",
       });
       expect(byName.get("DivWrap")).toEqual({
         name: "DivWrap",
-        definitionFile: join(dir, "DivWrap.tsx"),
+        definitionFile: posixJoin(dir, "DivWrap.tsx"),
         observedRoot: "div",
         confidence: "assumed",
       });
       expect(byName.get("OpaqueWrap")).toEqual({
         name: "OpaqueWrap",
-        definitionFile: join(dir, "OpaqueWrap.tsx"),
+        definitionFile: posixJoin(dir, "OpaqueWrap.tsx"),
         observedRoot: "opaque",
         confidence: "assumed",
       });
@@ -165,13 +165,16 @@ describe("wrapper_introspect: classification by observedRoot", () => {
   // `observedRoot`.
   it("classifies a file with no JSX root as observedRoot: 'unknown', confidence: 'assumed'", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "NoRender.tsx"), "export function NoRender() { return null; }\n");
+      await writeFile(
+        posixJoin(dir, "NoRender.tsx"),
+        "export function NoRender() { return null; }\n",
+      );
       const session = new McpSession();
       const body = await callTool(session, { cwd: dir, names: ["NoRender"] });
       expect(body.records).toEqual([
         {
           name: "NoRender",
-          definitionFile: join(dir, "NoRender.tsx"),
+          definitionFile: posixJoin(dir, "NoRender.tsx"),
           observedRoot: "unknown",
           confidence: "assumed",
         },
@@ -185,10 +188,10 @@ describe("wrapper_introspect: classification by observedRoot", () => {
   it("introspects every basename-matched file when `names` is omitted", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "Alpha.tsx"),
+        posixJoin(dir, "Alpha.tsx"),
         "export const Alpha = () => <button>alpha</button>;\n",
       );
-      await writeFile(join(dir, "Beta.tsx"), "export const Beta = () => <div>beta</div>;\n");
+      await writeFile(posixJoin(dir, "Beta.tsx"), "export const Beta = () => <div>beta</div>;\n");
       const session = new McpSession();
       const body = await callTool(session, { cwd: dir });
       expect(body.records.map((r) => r.name)).toEqual(["Alpha", "Beta"]);
@@ -205,7 +208,7 @@ describe("wrapper_introspect: per-file-hash cache", () => {
   it("returns cached records for repeated calls on unchanged files", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "ButtonWrap.tsx"),
+        posixJoin(dir, "ButtonWrap.tsx"),
         "export const ButtonWrap = () => <button>ok</button>;\n",
       );
       const session = new McpSession();
@@ -233,7 +236,7 @@ describe("wrapper_introspect: per-file-hash cache", () => {
   // but we need the AST layer to reflect the new content first.
   it("re-computes after file contents change (natural hash invalidation)", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Flipper.tsx");
+      const filePath = posixJoin(dir, "Flipper.tsx");
       // First content: native button root.
       await writeFile(filePath, "export const Flipper = () => <button>v1</button>;\n");
       const session = new McpSession();
@@ -267,7 +270,10 @@ describe("wrapper_introspect: per-file-hash cache", () => {
   // session. The WeakMap-keyed store is the invariant.
   it("scopes cache entries per session — a fresh session has an empty cache", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Alpha.tsx"), "export const Alpha = () => <button>a</button>;\n");
+      await writeFile(
+        posixJoin(dir, "Alpha.tsx"),
+        "export const Alpha = () => <button>a</button>;\n",
+      );
       const sessionA = new McpSession();
       await callTool(sessionA, { cwd: dir, names: ["Alpha"] });
       expect(wrapperIntrospectCacheSize(sessionA)).toBe(1);
@@ -292,7 +298,10 @@ describe("wrapper_introspect: response shape discipline", () => {
   // alone. Every code path in `buildNextStep` must set both.
   it("emits nextStep and nextStepStructured as a pair on every response", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Alpha.tsx"), "export const Alpha = () => <button>a</button>;\n");
+      await writeFile(
+        posixJoin(dir, "Alpha.tsx"),
+        "export const Alpha = () => <button>a</button>;\n",
+      );
       const session = new McpSession();
       const body = await callTool(session, { cwd: dir, names: ["Alpha"] });
       expect(typeof body.nextStep).toBe("string");
@@ -305,7 +314,10 @@ describe("wrapper_introspect: response shape discipline", () => {
   // Guards the "all confirmed" nextStep branch → `propose_config`.
   it("routes to propose_config when every record is confirmed", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Alpha.tsx"), "export const Alpha = () => <button>a</button>;\n");
+      await writeFile(
+        posixJoin(dir, "Alpha.tsx"),
+        "export const Alpha = () => <button>a</button>;\n",
+      );
       const session = new McpSession();
       const body = await callTool(session, { cwd: dir, names: ["Alpha"] });
       expect(body.nextStepStructured.tool).toBe("propose_config");
@@ -316,8 +328,11 @@ describe("wrapper_introspect: response shape discipline", () => {
   // Guards the "mixed" nextStep branch → `detect_native_wrappers`.
   it("routes to detect_native_wrappers when confidence is mixed", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "Alpha.tsx"), "export const Alpha = () => <button>a</button>;\n");
-      await writeFile(join(dir, "Beta.tsx"), "export const Beta = () => <div>b</div>;\n");
+      await writeFile(
+        posixJoin(dir, "Alpha.tsx"),
+        "export const Alpha = () => <button>a</button>;\n",
+      );
+      await writeFile(posixJoin(dir, "Beta.tsx"), "export const Beta = () => <div>b</div>;\n");
       const session = new McpSession();
       const body = await callTool(session, {
         cwd: dir,

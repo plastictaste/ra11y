@@ -39,8 +39,8 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { ScanResult, Violation } from "../types/violation.ts";
+import { posixResolve } from "../utils/path.ts";
 import { VERSION } from "../version.ts";
 
 export const BASELINE_FILENAME = ".ra11y-baseline.json";
@@ -195,7 +195,7 @@ export function pruneBaseline(
   const removed: BaselineEntry[] = [];
   const kept: BaselineEntry[] = [];
   for (const entry of baseline.violations) {
-    const absolute = resolve(scanRoot, entry.filePath);
+    const absolute = posixResolve(scanRoot, entry.filePath);
     if (fileExists(absolute)) kept.push(entry);
     else removed.push(entry);
   }

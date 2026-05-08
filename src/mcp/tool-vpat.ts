@@ -33,6 +33,7 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { detectApplicability } from "./manual-applicability.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import type { McpSession } from "./session.ts";
 import {
   applyRuleSettings,
@@ -266,7 +267,15 @@ function buildVpatWarningsDetails(args: {
   const out: Record<string, unknown> = {};
   for (const code of args.codes) {
     if (code === "no_config_found") {
-      out[code] = { searchedFrom: args.configSearchedFromForWarning };
+      // Present-when-meaningful gate via shared helper: VPAT receives
+      // `cwd` as the search base, which is also the caller-supplied
+      // value, so the rich payload drops to the empty record. The
+      // bare warning code carries the signal; the caller already has
+      // `cwd` from its own input.
+      out[code] = noConfigFoundWarningDetail({
+        searchedFrom: args.configSearchedFromForWarning,
+        callerCwd: args.configSearchedFromForWarning,
+      });
     } else {
       out[code] = fallThroughDetailEntry(code);
     }

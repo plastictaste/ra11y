@@ -82,7 +82,7 @@ function body<T>(resp: JsonRpcResponse): T {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly candidates: readonly unknown[];
 }
 
@@ -90,10 +90,11 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
   readonly items: readonly ChecklistItem[];
   readonly truncated?: true;
@@ -168,7 +169,7 @@ describe("checklist invariant: items.length agrees with summary.actionable.crite
     expect(itemsLen).toBe(headline);
     // Cross-check: the partial-automatable criterion must materialize
     // as an item — pre-fix this was elided.
-    const itemCriteria = new Set(checklistBody.items.map((i) => i.criterionId));
+    const itemCriteria = new Set(checklistBody.items.flatMap((i) => i.criteria));
     expect(itemCriteria.has("wcag22:1.1.1")).toBe(true);
     expect(itemCriteria.has("wcag22:3.3.8")).toBe(true);
   });

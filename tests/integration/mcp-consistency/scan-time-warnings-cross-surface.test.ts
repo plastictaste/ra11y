@@ -1,6 +1,7 @@
 /**
  * Cross-surface invariant: the scan-time warning code SET is identical
- * across `scan_project` / `checklist` / `coverage` on the same cwd.
+ * across `scan_project` / `checklist` / `coverage` / `propose_config` /
+ * `bootstrap` on the same cwd.
  *
  * Doctrine: `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
  * count invariant" (warning-channel extension) — when scope-level
@@ -186,7 +187,38 @@ async function makeMinimalCleanFixture(): Promise<string> {
   return dir;
 }
 
-describe("scan-time warning code parity across scan_project / checklist / coverage", () => {
+/**
+ * Codes legitimately tool-local to `propose_config` /
+ * `bootstrap` — emitted by the bootstrap-class lane only when the
+ * bootstrap-output predicate fires (no Node toolchain in the corpus,
+ * leg failure on a sub-tool, dry-run on baseline). They must be
+ * filtered out of the parity comparison the same way response-instance
+ * codes are. Per the dispatch-prompt-quoted closure: "surface-specific
+ * truncation codes are the only legitimate divergence" — extended here
+ * to surface-specific bootstrap-output codes that have no analogue
+ * elsewhere.
+ */
+const BOOTSTRAP_LOCAL_CODES: ReadonlySet<string> = new Set([
+  "foreign_ecosystem_detected",
+  "bootstrap_detect_failed",
+  "bootstrap_propose_config_failed",
+  "bootstrap_baseline_failed",
+  "baseline_dry_run",
+]);
+
+function bootstrapClassScanTimeCodeSet(env: {
+  readonly warnings?: readonly string[];
+}): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const code of env.warnings ?? []) {
+    if (RESPONSE_INSTANCE_CODES.has(code)) continue;
+    if (BOOTSTRAP_LOCAL_CODES.has(code)) continue;
+    out.add(code);
+  }
+  return out;
+}
+
+describe("scan-time warning code parity across scan_project / checklist / coverage / propose_config / bootstrap", () => {
   it("emits the same scan-time warning set on a build-artifact fixture", async () => {
     const dir = await makeBuildArtifactFixture();
     const responses = await mcpSession([
@@ -194,14 +226,20 @@ describe("scan-time warning code parity across scan_project / checklist / covera
       toolCall(2, "scan_project", { cwd: dir }),
       toolCall(3, "coverage", { cwd: dir }),
       toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "propose_config", { cwd: dir }),
+      toolCall(6, "bootstrap", { cwd: dir }),
     ]);
     const scanProj = body<WarningEnvelope>(responses[1]);
     const coverage = body<WarningEnvelope>(responses[2]);
     const checklist = body<WarningEnvelope>(responses[3]);
+    const propose = body<WarningEnvelope>(responses[4]);
+    const boot = body<WarningEnvelope>(responses[5]);
 
     const sp = scanTimeCodeSet(scanProj);
     const cv = scanTimeCodeSet(coverage);
     const cl = scanTimeCodeSet(checklist);
+    const pc = bootstrapClassScanTimeCodeSet(propose);
+    const bs = bootstrapClassScanTimeCodeSet(boot);
 
     // Sanity: at least one canonical scan-time code must fire on
     // scan_project, otherwise the parity assertion below is vacuous.
@@ -215,19 +253,32 @@ describe("scan-time warning code parity across scan_project / checklist / covera
 
     expect([...cv].sort()).toEqual([...sp].sort());
     expect([...cl].sort()).toEqual([...sp].sort());
+    // Closure invariant: every scan-time code on scan_project rides
+    // through propose_config + bootstrap on identical cwd. The
+    // bootstrap-class tools may carry tool-local codes
+    // (foreign_ecosystem_detected, bootstrap_<leg>_failed,
+    // baseline_dry_run) which are filtered above.
+    for (const code of sp) {
+      expect(pc.has(code)).toBe(true);
+      expect(bs.has(code)).toBe(true);
+    }
   });
 
-  it("emits `linked_stylesheet_local_unresolved` AND `linked_stylesheet_external_cdn_skipped` identically across scan_project / coverage / checklist", async () => {
+  it("emits `linked_stylesheet_local_unresolved` AND `linked_stylesheet_external_cdn_skipped` identically across scan_project / coverage / checklist / propose_config / bootstrap", async () => {
     const dir = await makeLinkedStylesheetFixture();
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "scan_project", { cwd: dir }),
       toolCall(3, "coverage", { cwd: dir }),
       toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "propose_config", { cwd: dir }),
+      toolCall(6, "bootstrap", { cwd: dir }),
     ]);
     const sp = scanTimeCodeSet(body<WarningEnvelope>(responses[1]));
     const cv = scanTimeCodeSet(body<WarningEnvelope>(responses[2]));
     const cl = scanTimeCodeSet(body<WarningEnvelope>(responses[3]));
+    const pc = bootstrapClassScanTimeCodeSet(body<WarningEnvelope>(responses[4]));
+    const bs = bootstrapClassScanTimeCodeSet(body<WarningEnvelope>(responses[5]));
 
     // Sanity: scan_project fires BOTH split codes on the fixture
     // (one HTML page declaring a relative-path `<link>` AND an external
@@ -242,6 +293,17 @@ describe("scan-time warning code parity across scan_project / checklist / covera
     expect(cl.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
     expect([...cv].sort()).toEqual([...sp].sort());
     expect([...cl].sort()).toEqual([...sp].sort());
+    // Q16 closure: bootstrap-class tools must surface the
+    // corpus-level scan-time codes their `scan_project` /
+    // `coverage` / `checklist` siblings emit on identical cwd.
+    expect(pc.has("linked_stylesheet_local_unresolved")).toBe(true);
+    expect(pc.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
+    expect(bs.has("linked_stylesheet_local_unresolved")).toBe(true);
+    expect(bs.has("linked_stylesheet_external_cdn_skipped")).toBe(true);
+    for (const code of sp) {
+      expect(pc.has(code)).toBe(true);
+      expect(bs.has(code)).toBe(true);
+    }
   });
 
   it("emits the same scan-time warning set on a minimal clean fixture", async () => {
@@ -251,13 +313,21 @@ describe("scan-time warning code parity across scan_project / checklist / covera
       toolCall(2, "scan_project", { cwd: dir }),
       toolCall(3, "coverage", { cwd: dir }),
       toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "propose_config", { cwd: dir }),
+      toolCall(6, "bootstrap", { cwd: dir }),
     ]);
     const sp = scanTimeCodeSet(body<WarningEnvelope>(responses[1]));
     const cv = scanTimeCodeSet(body<WarningEnvelope>(responses[2]));
     const cl = scanTimeCodeSet(body<WarningEnvelope>(responses[3]));
+    const pc = bootstrapClassScanTimeCodeSet(body<WarningEnvelope>(responses[4]));
+    const bs = bootstrapClassScanTimeCodeSet(body<WarningEnvelope>(responses[5]));
 
     expect([...cv].sort()).toEqual([...sp].sort());
     expect([...cl].sort()).toEqual([...sp].sort());
+    for (const code of sp) {
+      expect(pc.has(code)).toBe(true);
+      expect(bs.has(code)).toBe(true);
+    }
   });
 });
 

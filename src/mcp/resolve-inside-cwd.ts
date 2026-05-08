@@ -27,8 +27,8 @@
  */
 
 import { realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-
+import { isAbsolute } from "node:path";
+import { posixRelative, posixResolve } from "../utils/path.ts";
 /**
  * Sync variant — tolerates missing files on either side by falling
  * back to a pure `path.resolve` / `path.relative` check. Returns the
@@ -37,9 +37,9 @@ import { isAbsolute, relative, resolve } from "node:path";
  * {@link resolveInsideCwd} which layers realpath on top.
  */
 export function resolveInsideCwdSync(filePath: string, cwd: string): string | null {
-  const absCwd = isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
-  const abs = isAbsolute(filePath) ? filePath : resolve(absCwd, filePath);
-  const rel = relative(absCwd, abs);
+  const absCwd = isAbsolute(cwd) ? cwd : posixResolve(process.cwd(), cwd);
+  const abs = isAbsolute(filePath) ? filePath : posixResolve(absCwd, filePath);
+  const rel = posixRelative(absCwd, abs);
   if (rel.startsWith("..") || isAbsolute(rel)) return null;
   return abs;
 }
@@ -58,7 +58,7 @@ export function resolveInsideCwdSync(filePath: string, cwd: string): string | nu
 export async function resolveInsideCwd(filePath: string, cwd: string): Promise<string | null> {
   const structural = resolveInsideCwdSync(filePath, cwd);
   if (structural === null) return null;
-  const absCwd = isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
+  const absCwd = isAbsolute(cwd) ? cwd : posixResolve(process.cwd(), cwd);
   let realCwd: string;
   try {
     realCwd = await realpath(absCwd);
@@ -76,7 +76,7 @@ export async function resolveInsideCwd(filePath: string, cwd: string): Promise<s
     // afterwards handles the honest not-found envelope.
     return structural;
   }
-  const realRel = relative(realCwd, realTarget);
+  const realRel = posixRelative(realCwd, realTarget);
   if (realRel.startsWith("..") || isAbsolute(realRel)) return null;
   return structural;
 }

@@ -17,10 +17,10 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { scanFileTool } from "../../../src/mcp/tool-scan-file.ts";
 import { suggestFixTool } from "../../../src/mcp/tool-suggest-fix.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ErrorStructured {
   readonly code?: string;
@@ -31,9 +31,9 @@ async function withScratchPair<T>(fn: (inside: string, outside: string) => Promi
   // Realpath the tmpdir so the macOS `/tmp` → `/private/tmp` symlink
   // is already canonicalised — otherwise test assertions about the
   // symlink branch would be swallowed by the default realpath pass.
-  const root = await realpath(await mkdtemp(join(tmpdir(), "ra11y-cwd-containment-")));
-  const inside = join(root, "inside");
-  const outside = join(root, "outside");
+  const root = await realpath(await mkdtemp(posixJoin(tmpdir(), "ra11y-cwd-containment-")));
+  const inside = posixJoin(root, "inside");
+  const outside = posixJoin(root, "outside");
   await mkdir(inside, { recursive: true });
   await mkdir(outside, { recursive: true });
   try {
@@ -46,7 +46,7 @@ async function withScratchPair<T>(fn: (inside: string, outside: string) => Promi
 describe("scan_file: cwd containment", () => {
   it("accepts a path that resolves inside cwd", async () => {
     await withScratchPair(async (inside) => {
-      const file = join(inside, "page.html");
+      const file = posixJoin(inside, "page.html");
       await writeFile(file, "<img src=x>\n");
       const session = new McpSession();
       const result = await scanFileTool.handler({ path: "page.html", cwd: inside }, session);
@@ -56,7 +56,7 @@ describe("scan_file: cwd containment", () => {
 
   it("rejects `path-escapes-cwd` when a relative path climbs above cwd via `..`", async () => {
     await withScratchPair(async (inside, outside) => {
-      const target = join(outside, "escape.html");
+      const target = posixJoin(outside, "escape.html");
       await writeFile(target, "<img src=x>\n");
       const session = new McpSession();
       const result = await scanFileTool.handler(
@@ -73,7 +73,7 @@ describe("scan_file: cwd containment", () => {
 
   it("rejects absolute paths outside cwd with `path-escapes-cwd`", async () => {
     await withScratchPair(async (inside, outside) => {
-      const target = join(outside, "abs.html");
+      const target = posixJoin(outside, "abs.html");
       await writeFile(target, "<img src=x>\n");
       const session = new McpSession();
       const result = await scanFileTool.handler({ path: target, cwd: inside }, session);
@@ -88,9 +88,9 @@ describe("scan_file: cwd containment", () => {
     // itself sits inside cwd under a name that passes the structural
     // `..` check. The guard must realpath the target before deciding.
     await withScratchPair(async (inside, outside) => {
-      const realTarget = join(outside, "real.html");
+      const realTarget = posixJoin(outside, "real.html");
       await writeFile(realTarget, "<img src=x>\n");
-      const link = join(inside, "link.html");
+      const link = posixJoin(inside, "link.html");
       await symlink(realTarget, link);
       const session = new McpSession();
       const result = await scanFileTool.handler({ path: "link.html", cwd: inside }, session);
@@ -104,7 +104,7 @@ describe("scan_file: cwd containment", () => {
 describe("suggest_fix: cwd containment", () => {
   it("rejects `path-escapes-cwd` when a relative path climbs above cwd via `..`", async () => {
     await withScratchPair(async (inside, outside) => {
-      const target = join(outside, "escape.html");
+      const target = posixJoin(outside, "escape.html");
       await writeFile(target, "<img src=x>\n");
       const session = new McpSession();
       const result = await suggestFixTool.handler(
@@ -126,7 +126,7 @@ describe("suggest_fix: cwd containment", () => {
 
   it("rejects absolute paths outside cwd with `path-escapes-cwd`", async () => {
     await withScratchPair(async (inside, outside) => {
-      const target = join(outside, "abs.html");
+      const target = posixJoin(outside, "abs.html");
       await writeFile(target, "<img src=x>\n");
       const session = new McpSession();
       const result = await suggestFixTool.handler(
@@ -141,9 +141,9 @@ describe("suggest_fix: cwd containment", () => {
 
   it("rejects `path-escapes-cwd` when a symlink inside cwd resolves outside cwd", async () => {
     await withScratchPair(async (inside, outside) => {
-      const realTarget = join(outside, "real.html");
+      const realTarget = posixJoin(outside, "real.html");
       await writeFile(realTarget, "<img src=x>\n");
-      const link = join(inside, "link.html");
+      const link = posixJoin(inside, "link.html");
       await symlink(realTarget, link);
       const session = new McpSession();
       const result = await suggestFixTool.handler(

@@ -367,10 +367,25 @@ describe("classifyBuildArtifact — `likely-bundler-output-dir` classification (
     );
   });
 
-  it("classifies a path under `/public/` (Hugo / Nuxt generated tree)", () => {
-    expect(classifyBuildArtifact("/proj/public/main.css", ".a {}")).toBe(
-      "likely-bundler-output-dir",
-    );
+  it("does NOT classify a path under `/public/` (static-assets convention, not bundler-output)", () => {
+    // Astro / Vite / Next / Nuxt all treat `public/` as a static-assets
+    // directory: user-authored files (favicons, brand marks, hero
+    // images) copied as-is to the build root. An authored `hero.jpg`,
+    // `brand-mark.svg`, or `favicon.png` under `public/` would
+    // mis-classify under a `public/ → bundler-output` predicate and
+    // silently land under `scannedBuildArtifacts`, which downstream
+    // tools treat as "not user-fixable." The path-segment signal is
+    // dropped; the deterministic vendor signals (`.min.` infix,
+    // hashed filename, sourcemap-sibling) still classify when
+    // applicable, and framework-specific markers (`.output/`,
+    // `_site/`) still fire when `public/` sits inside a generated
+    // tree (covered by the `.output/` test above). Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Heuristic-mislabeled
+    // meta sub-fields are dishonest."
+    expect(classifyBuildArtifact("/proj/public/main.css", ".a {}")).toBe(null);
+    expect(classifyBuildArtifact("/proj/public/hero.jpg", "")).toBe(null);
+    expect(classifyBuildArtifact("public/brand-mark.svg", "<svg></svg>")).toBe(null);
+    expect(classifyBuildArtifact("/proj/public/favicon.png", "")).toBe(null);
   });
 
   it("classifies a path under `/node_modules/`", () => {

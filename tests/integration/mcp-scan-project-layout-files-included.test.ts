@@ -27,9 +27,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -90,9 +90,9 @@ describe("scan_project: same-basename layout files included from sibling dirs", 
     // `BaseLayout.astro`. Both emit a missing-lang finding so the dedupe
     // was previously collapsing them by `(basename, ruleId, patternId)`
     // and dropping the lex-larger path from the response.
-    const root = mkdtempSync(join(tmpdir(), "ra11y-layout-drop-"));
-    const siteDir = join(root, "site", "src", "layouts");
-    const examplesDir = join(root, "examples", "starter", "src", "layouts");
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-layout-drop-"));
+    const siteDir = posixJoin(root, "site", "src", "layouts");
+    const examplesDir = posixJoin(root, "examples", "starter", "src", "layouts");
     mkdirSync(siteDir, { recursive: true });
     mkdirSync(examplesDir, { recursive: true });
     // Missing `lang` on <html> fires `parsing/html-has-lang` in both files.
@@ -108,8 +108,8 @@ describe("scan_project: same-basename layout files included from sibling dirs", 
       "</html>",
       "",
     ].join("\n");
-    writeFileSync(join(siteDir, "BaseLayout.astro"), layoutSource);
-    writeFileSync(join(examplesDir, "BaseLayout.astro"), layoutSource);
+    writeFileSync(posixJoin(siteDir, "BaseLayout.astro"), layoutSource);
+    writeFileSync(posixJoin(examplesDir, "BaseLayout.astro"), layoutSource);
 
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
     const scan = responses.find((r) => r.id === 2);
@@ -138,9 +138,9 @@ describe("scan_project: same-basename layout files included from sibling dirs", 
     // Jekyll shape: two project dirs each with their own
     // `_layouts/default.html`. Authored HTML partials, not vendor drops;
     // neither should collapse.
-    const root = mkdtempSync(join(tmpdir(), "ra11y-jekyll-layout-drop-"));
-    const projectA = join(root, "project-a", "_layouts");
-    const projectB = join(root, "project-b", "_layouts");
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-jekyll-layout-drop-"));
+    const projectA = posixJoin(root, "project-a", "_layouts");
+    const projectB = posixJoin(root, "project-b", "_layouts");
     mkdirSync(projectA, { recursive: true });
     mkdirSync(projectB, { recursive: true });
     const defaultLayout = [
@@ -151,8 +151,8 @@ describe("scan_project: same-basename layout files included from sibling dirs", 
       "</html>",
       "",
     ].join("\n");
-    writeFileSync(join(projectA, "default.html"), defaultLayout);
-    writeFileSync(join(projectB, "default.html"), defaultLayout);
+    writeFileSync(posixJoin(projectA, "default.html"), defaultLayout);
+    writeFileSync(posixJoin(projectB, "default.html"), defaultLayout);
 
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
     const scan = responses.find((r) => r.id === 2);

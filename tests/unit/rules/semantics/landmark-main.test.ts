@@ -400,6 +400,43 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
     });
 
+    it("downgrades to info on a markdown post with `layout:` frontmatter (no <main> visible in residue)", () => {
+      // Jekyll-style markdown post: `---\nlayout: post\n---` frontmatter
+      // declares the parent layout supplies the document envelope. The
+      // markdown adapter strips the frontmatter and ATX headings before
+      // this rule runs, so the rule sees only the embedded-HTML residue
+      // — `<main>` lives in `_layouts/post.html` from a sibling file.
+      // Per docs/kb/architecture/ai-first-consumer.md "Reason text and
+      // severity must agree" (conceded-uncertainty extension), the
+      // emit's reason concedes "the composed page may carry <main> from
+      // a sibling file" — so severity must downgrade to `info` to match
+      // that concession on the markdown branch.
+      const v = runRule(
+        rule,
+        [
+          "---",
+          "layout: post",
+          "title: Hello world",
+          "---",
+          "",
+          "# Hello world",
+          "",
+          "Some prose.",
+          "",
+          '<table><tr><th scope="col">Col</th></tr></table>',
+        ].join("\n"),
+        { filePath: "_posts/2026-05-05-hello.md" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toEqual([
+        "partial_or_layout_file_requires_composed_check",
+        "markdown_residue_no_main_visible",
+      ]);
+      expect(v[0]?.message).toContain("markdown source");
+      expect(v[0]?.message).toContain("layout wrapper or template partial");
+    });
+
     it("fires on a full-document error page with no <main>, WITHOUT partial tag", () => {
       // Regression guard: `error.html`-style content pages that have
       // every page-shape signal but no <main> must still fire at full

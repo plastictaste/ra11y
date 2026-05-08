@@ -1,0 +1,6 @@
+/* Sanitized vendor-shaped CSS drop. Repeated byte-identically across
+   sibling site dirs to exercise the file-fingerprint dedupe pre-pass.
+   The .btn-warning rule below carries a contrast pair (#aabbcc on #ffffff)
+   that flunks WCAG 1.4.3 — the rule's emission per copy without dedupe
+   is the exact pattern Q15 closes. */
+.btn-warning { color: #aabbcc; background-color: #ffffff; }

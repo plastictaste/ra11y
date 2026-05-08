@@ -44,6 +44,14 @@ export interface SynthesizeInheritedInputs {
   readonly violations: readonly Violation[];
   readonly files: readonly InheritFile[];
   readonly nativeWrapperElements: Readonly<Record<string, string>>;
+  /**
+   * Caller-supplied scan root for path normalization in the per-emission
+   * `findingId` hash. See `src/utils/finding-id.ts` for path-shape
+   * semantics; plumbed here so inherited-findings ids agree with the
+   * primary stamps when scan_file's relative `parsed.filePath` is
+   * resolved to absolute via the same root the scanner used.
+   */
+  readonly scanRoot?: string;
 }
 
 /**
@@ -64,7 +72,7 @@ export function synthesizeInheritedFindings(inputs: SynthesizeInheritedInputs): 
 
   const out: Violation[] = [];
   for (const v of inputs.violations) {
-    emitInheritedFor(v, definitionPathToName, callSitesByWrapper, fileByPath, out);
+    emitInheritedFor(v, definitionPathToName, callSitesByWrapper, fileByPath, out, inputs.scanRoot);
   }
   return out;
 }
@@ -91,13 +99,15 @@ function emitInheritedFor(
   callSitesByWrapper: ReadonlyMap<string, readonly CallSite[]>,
   fileByPath: ReadonlyMap<string, InheritFile>,
   out: Violation[],
+  scanRoot: string | undefined,
 ): void {
   if (!shouldInherit(v)) return;
   const wrapperName = definitionPathToName.get(v.location.filePath);
   if (wrapperName === undefined) return;
   const callSites = callSitesByWrapper.get(wrapperName);
   if (!callSites || callSites.length === 0) return;
-  for (const site of callSites) out.push(buildInheritedViolation(v, site, wrapperName, fileByPath));
+  for (const site of callSites)
+    out.push(buildInheritedViolation(v, site, wrapperName, fileByPath, scanRoot));
 }
 
 /** Inheritable = not `wrapper/drift`, not a rule crash, not already inherited. */
@@ -186,6 +196,7 @@ function buildInheritedViolation(
   site: CallSite,
   wrapperName: string,
   fileByPath: ReadonlyMap<string, InheritFile>,
+  scanRoot: string | undefined,
 ): Violation {
   const file = fileByPath.get(site.filePath);
   const shape = resolveShape(file?.ast, site.line, site.column);
@@ -194,12 +205,14 @@ function buildInheritedViolation(
     filePath: site.filePath,
     line: site.line,
     column: site.column,
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   const findingGroupId = computeFindingGroupId({
     ruleId: source.ruleId,
     filePath: site.filePath,
     source: file?.source ?? "",
     line: site.line,
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   const groupKey = computeGroupKey({ ruleId: source.ruleId, shape });
   return {

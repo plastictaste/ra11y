@@ -126,6 +126,100 @@ describe("runCli", () => {
     expect(r.stdout).toContain("media/alt-text-missing");
   });
 
+  // Guards CLI-side argument routing for `--format <name>`. v1.0 ships
+  // 8 builtin formatters as a public surface; a regression in the
+  // `--format` switch or in formatter registration would not surface
+  // until release without an end-to-end CLI exercise. The snapshot
+  // tests at tests/snapshot/formatters.test.ts cover formatter content;
+  // this suite covers the CLI seam each formatter sits behind.
+  describe("--format <name> end-to-end through the CLI", () => {
+    // Enumerated from src/output/formatters/index.ts — keep in lockstep
+    // with BuiltinFormatters when a new formatter lands. When the union
+    // grows, this list should grow too.
+    const FORMATTERS = [
+      "terminal",
+      "plain",
+      "json",
+      "sarif",
+      "junit",
+      "markdown",
+      "html",
+      "agent",
+    ] as const;
+
+    for (const name of FORMATTERS) {
+      it(`--format ${name} produces non-empty stdout against a real fixture`, async () => {
+        const r = await runCli(["bad/alt-text-missing", "--format", name]);
+        // Bad fixtures fire violations; default --fail-on=error → exit 1.
+        expect(r.exitCode).toBe(1);
+        expect(r.stdout.length).toBeGreaterThan(0);
+      });
+    }
+
+    it("--format sarif emits a SARIF 2.1.0 log with a populated runs[] array", async () => {
+      const r = await runCli(["bad/alt-text-missing", "--format", "sarif"]);
+      expect(r.exitCode).toBe(1);
+      const parsed = JSON.parse(r.stdout) as {
+        version: string;
+        runs: { results: unknown[] }[];
+      };
+      expect(parsed.version).toBe("2.1.0");
+      expect(parsed.runs.length).toBeGreaterThan(0);
+      expect(Array.isArray(parsed.runs[0]?.results)).toBe(true);
+    });
+
+    it("--format junit emits a <testsuites> XML envelope with at least one suite", async () => {
+      const r = await runCli(["bad/alt-text-missing", "--format", "junit"]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toContain('<?xml version="1.0"');
+      expect(r.stdout).toContain("<testsuites");
+      expect(r.stdout).toContain("<testsuite ");
+      expect(r.stdout).toContain("</testsuites>");
+    });
+
+    it("--format agent emits parseable JSON with plan, files, reviewCandidates, meta", async () => {
+      const r = await runCli(["bad/alt-text-missing", "--format", "agent"]);
+      expect(r.exitCode).toBe(1);
+      const parsed = JSON.parse(r.stdout) as {
+        plan: unknown;
+        files: unknown[];
+        reviewCandidates: unknown[];
+        meta: unknown;
+      };
+      expect(parsed.plan).toBeDefined();
+      expect(Array.isArray(parsed.files)).toBe(true);
+      expect(parsed.meta).toBeDefined();
+    });
+
+    it("--format markdown emits a header readable in PR comment renderers", async () => {
+      const r = await runCli(["bad/alt-text-missing", "--format", "markdown"]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toContain("## ra11y accessibility report");
+    });
+
+    it("--format html emits a self-contained <html> document", async () => {
+      const r = await runCli(["bad/alt-text-missing", "--format", "html"]);
+      expect(r.exitCode).toBe(1);
+      expect(r.stdout).toContain("<html");
+      expect(r.stdout).toContain("</html>");
+    });
+
+    it("--format with an unknown name silently falls back to terminal (per normalizeFormat)", async () => {
+      // normalizeFormat() maps any unrecognized value to "terminal"; the
+      // CLI does not error on unknown formats. This pins that behavior
+      // so a future tightening (exit 2 on unknown) is a deliberate change.
+      const r = await runCli([
+        "bad/alt-text-missing",
+        "--format",
+        "definitely-not-a-real-formatter",
+      ]);
+      expect(r.exitCode).toBe(1);
+      // Terminal output is not JSON; agent/json/sarif outputs would parse.
+      // Asserting non-JSON is the cheapest fallback proof.
+      expect(() => JSON.parse(r.stdout)).toThrow();
+    });
+  });
+
   describe("processes config threading", () => {
     // Guards the CLI-side wiring: `runScan({ processes })` must receive
     // `LoadedConfig.processes` so project-scoped finders (WCAG 3.2.3 /

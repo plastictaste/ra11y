@@ -78,6 +78,15 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
  *   - `article.html`: reasoned criterion-scoped
  * Returns the dir path so tests can tear it down in `finally`.
  */
+/**
+ * Build a POSIX-shaped expected absolute path. Mirrors `join(dir, ...segments)`
+ * but normalizes the result so it matches the POSIX-shaped paths the
+ * scanner emits on Windows.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [dir.split(/[\\/]/).join("/"), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 async function scratchWithThreePragmas(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "ra11y-list-suppressions-int-"));
   await writeFile(
@@ -131,13 +140,13 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
       // File ordering: `article.html` sorts before `page.html`.
       // Within page.html, bare first (line 1), wildcard second (line 3).
       expect(body.suppressions.length).toBe(3);
-      expect(body.suppressions[0]?.file).toBe(join(dir, "article.html"));
+      expect(body.suppressions[0]?.file).toBe(posixJoin(dir, "article.html"));
       expect(body.suppressions[0]?.criterionId).toBe("wcag22:1.4.3");
       expect(body.suppressions[0]?.ruleId).toBeNull();
       expect(body.suppressions[0]?.reason).toBe("contrast verified by design system");
       expect(body.suppressions[0]?.wildcard).toBe(false);
 
-      expect(body.suppressions[1]?.file).toBe(join(dir, "page.html"));
+      expect(body.suppressions[1]?.file).toBe(posixJoin(dir, "page.html"));
       expect(body.suppressions[1]?.line).toBe(1);
       expect(body.suppressions[1]?.ruleId).toBe("media/alt-text-missing");
       expect(body.suppressions[1]?.criterionId).toBeNull();
@@ -146,7 +155,7 @@ describe("MCP list_suppressions tool: end-to-end JSON-RPC round-trip", () => {
       // emit `reason: ""` / `reason: null`.
       expect("reason" in body.suppressions[1]).toBe(false);
 
-      expect(body.suppressions[2]?.file).toBe(join(dir, "page.html"));
+      expect(body.suppressions[2]?.file).toBe(posixJoin(dir, "page.html"));
       expect(body.suppressions[2]?.line).toBe(3);
       expect(body.suppressions[2]?.ruleId).toBeNull();
       expect(body.suppressions[2]?.criterionId).toBeNull();

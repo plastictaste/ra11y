@@ -100,7 +100,7 @@ describe("MCP session: full agent workflow", () => {
     const list = responses[1];
     expect(list.id).toBe(2);
     const tools = (list.result as { tools: unknown[] }).tools;
-    expect(tools.length).toBe(29);
+    expect(tools.length).toBe(34);
 
     // 3. Scan response — should find violations
     const scan = responses[2];
@@ -108,7 +108,7 @@ describe("MCP session: full agent workflow", () => {
     const scanResult = (scan.result as { content: Array<{ text: string }> }).content[0];
     const scanData = JSON.parse(scanResult.text) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -120,7 +120,7 @@ describe("MCP session: full agent workflow", () => {
     };
     // The flat `plan.violations`
     // headline is gone; sum the per-lane tally for the error+warning
-    // total alongside `plan.notes`.
+    // total alongside `plan.infoSeverityFindings`.
     const lanes = scanData.plan.fixesByClass;
     const errorWarning = lanes
       ? lanes.mechanical.source +
@@ -129,7 +129,7 @@ describe("MCP session: full agent workflow", () => {
         (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
         (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
-    expect(errorWarning + scanData.plan.notes).toBeGreaterThan(0);
+    expect(errorWarning + scanData.plan.infoSeverityFindings).toBeGreaterThan(0);
 
     // 4. Explain rule response
     const explain = responses[3];

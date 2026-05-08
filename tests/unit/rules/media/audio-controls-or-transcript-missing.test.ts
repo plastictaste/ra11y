@@ -12,9 +12,19 @@ describe("rule media/audio-controls-or-transcript-missing", () => {
       );
       expect(violations).toHaveLength(1);
       expect(violations[0]?.ruleId).toBe("media/audio-controls-or-transcript-missing");
-      expect(violations[0]?.severity).toBe("error");
+      // Severity is `warning` (not `error`) because fix.description
+      // hedges with "If the audio is purely decorative or supplemental
+      // and a text alternative already exists in the surrounding
+      // prose..." — per AI-first doctrine "Reason / priority /
+      // fix-description must agree across all three channels." See
+      // rule-level comment.
+      expect(violations[0]?.severity).toBe("warning");
       expect(violations[0]?.message).toMatch(/no `controls`/);
       expect(violations[0]?.suggestion).toMatch(/transcript/i);
+      // Suggestion still names the source-level pragma path so the
+      // agent can durably dismiss after verifying the in-prose
+      // alternative.
+      expect(violations[0]?.suggestion).toMatch(/ra11y-disable/);
     });
 
     it("a JSX <audio> has no controls and no <track>, with no transcript anchor", () => {
@@ -175,6 +185,51 @@ describe("rule media/audio-controls-or-transcript-missing", () => {
       );
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toMatch(/ep2\.mp3/);
+    });
+  });
+
+  describe("rule definition", () => {
+    it("is a node-scoped warning rule with verify-in-source fixClass", () => {
+      // Severity is `warning` (not `error`) because the rule's
+      // fix.description hedges. Per AI-first doctrine "Reason /
+      // priority / fix-description must agree across all three
+      // channels," the attention-budget signal must match the
+      // predicate strength when in-prose text alternatives are out of
+      // reach for static analysis. See the rule-level comment.
+      expect(rule.severity).toBe("warning");
+      expect(rule.scope).toBe("node");
+      expect(rule.fixClass).toBe("verify-in-source");
+    });
+
+    it("severity matches the per-emit severity (no error/warning drift)", () => {
+      const violations = runRule(
+        rule,
+        `<!DOCTYPE html><html><body><audio src="ep.mp3"></audio></body></html>`,
+        { filePath: "input.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.severity).toBe(rule.severity);
+    });
+
+    it("fix.description hedge token co-occurs with non-error severity", () => {
+      // Cross-channel invariant: when the suggestion text concedes
+      // the predicate may not hold ("once you have verified..."),
+      // severity must NOT be `error`. If a future edit removes the
+      // hedge, the severity downgrade can be reconsidered — and this
+      // test will fire as the trigger.
+      const violations = runRule(
+        rule,
+        `<!DOCTYPE html><html><body><audio src="ep.mp3"></audio></body></html>`,
+        { filePath: "input.html" },
+      );
+      const v = violations[0];
+      expect(v).toBeDefined();
+      const hedges =
+        (v?.suggestion?.includes("once you have verified") ?? false) ||
+        (v?.suggestion?.includes("If the audio is purely decorative") ?? false);
+      if (hedges) {
+        expect(v?.severity).not.toBe("error");
+      }
     });
   });
 });

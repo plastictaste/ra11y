@@ -24,6 +24,7 @@
 
 import { isWellKnownTextualNoExtFilename } from "../input/discover.ts";
 import { shouldEmitNoConfigFound } from "./config-search-marker.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 
 export type ScanWarningCode =
   | "scanned_zero_files"
@@ -31,6 +32,45 @@ export type ScanWarningCode =
   | "no_config_found"
   | "tailwind_detected_css_undercounted"
   | "template_files_parsed_as_literal"
+  // Per-token-style splits of `template_files_parsed_as_literal`. Each
+  // names the dialect family the line evidence carries so an agent
+  // scoping around a specific engine can route on the per-style code
+  // rather than re-walking the corpus. Per AI-first doctrine "Routing
+  // skips that drop content are the symmetric twin of suppression"
+  // (split-by-predicate closure path): the parent code is a single
+  // bucket; an agent reading "template_files_parsed_as_literal: {{x}}
+  // 3396, {%x%} 704, <%x%> 9" cannot tell which engine to scope around
+  // without descending into `meta.analysisCoverage.templateInterpolationFound`.
+  // The per-style codes ship the same evidence at the warning-channel
+  // surface so the routing pivot is visible in one read.
+  //
+  // Co-fire semantics: each per-style code fires INDEPENDENTLY when
+  // its overlap subset is non-empty AND the parent
+  // `template_files_parsed_as_literal` predicate held — frontmatter-
+  // only files (no directive overlap) surface only on the parent code.
+  // Per-style codes never fire alone; they always co-fire with the
+  // parent so an agent reading either surface gets a consistent
+  // picture.
+  //
+  // Liquid covers `{% ... %}` family — Jinja, Liquid, Nunjucks, Twig.
+  // The surface token is unambiguous across these dialects so the
+  // warning name picks the most common member; the agent reads the
+  // file to disambiguate dialect.
+  | "liquid_directives_unparsed"
+  // ERB covers `<% ... %>` (and `<%= ... %>` / `<%# ... %>` / `<%- ... %>`
+  // variants) — ERB, EJS. The surface token is unambiguous across these
+  // dialects so the warning name picks the most common member.
+  | "erb_directives_unparsed"
+  // Curly-double covers `{{ ... }}` interpolation — Handlebars,
+  // Mustache, Liquid plain interpolation, Jinja interpolation, Vue,
+  // Angular. The surface token is STRUCTURALLY ambiguous between these
+  // dialects (per `analysis-coverage-template-tokens.ts`'s docblock —
+  // family attribution fails the "provable from the code" bar), so the
+  // warning name is engine-agnostic and the payload's `reason` field
+  // names the ambiguity explicitly per AI-first doctrine "Heuristic-
+  // mislabeled meta sub-fields are dishonest" — the agent reads the
+  // file to pick a dialect.
+  | "curly_double_directives_unparsed"
   // at least one scanned `.php` / `.phtml` file ran through the
   // {@link parsePhp} adapter's island-stripping pass and contained at
   // least one PHP block (`<?php … ?>`, `<?= … ?>`, or `<? … ?>`).
@@ -88,7 +128,69 @@ export type ScanWarningCode =
   // residual asset bucket — surfaces both honestly so the agent can
   // route on the text subset without rereading the full ext map. The
   // two warnings can fire simultaneously on heterogeneous corpora.
+  //
+  // Three peer codes narrow the text-source predicate by classifier
+  // (each classifier provable from extension alone, no overlap):
+  //   - `source_language_unsupported` — Ruby / Python / Go ecosystem
+  //     dominance.
+  //   - `parser_routable_extensions_skipped` — text-island substrates
+  //     ra11y could plausibly route (`.vue`, `.svelte`, `.coffee`,
+  //     `.rmd`, `.feature`, `.hbs`, `.haml`, etc.). The agent's lever
+  //     for re-routing.
+  //   - `config_or_data_files_skipped` — config / data files
+  //     (`.json`, `.yml`, `.yaml`, `.toml`, `.csv`) — non-markup by
+  //     spec.
+  // The parent `text_source_skipped` keeps firing as the load-bearing
+  // presence bit that agents new to the warning vocabulary read first;
+  // the peers fire whenever their predicate's subset of the skipped
+  // map is non-empty so an agent already familiar with the wire can
+  // branch directly on the actionable classifier without descending
+  // into the parent's `parserRoutableExtensions[]` slice.
   | "text_source_skipped"
+  // a predicate-narrowed peer of `text_source_skipped`: at least one
+  // entry in `skippedByExtension` is in
+  // {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS} — substrates whose
+  // format spec defines an HTML / JSX surface that ra11y could
+  // plausibly route through a parser if support were added (`.vue`,
+  // `.svelte`, `.coffee`, `.rmd`, `.feature`, `.hbs`, `.haml`, etc.).
+  // The agent's load-bearing lever for re-routing — the one peer the
+  // closure text names as the "agent's lever for re-routing." Without
+  // this peer code, an agent reading `text_source_skipped` on a
+  // static-site-generator corpus with `.yml: 60` + `.feature: 28` +
+  // `.vue: 12` had no way to budget against the actionable subset
+  // without descending into `warningsDetails.text_source_skipped.
+  // parserRoutableExtensions`. Paired payload:
+  // `warningsDetails.parser_routable_extensions_skipped` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalSkipped }` — same shape contract as the parent
+  // `text_source_skipped` payload, scoped to the substrate subset.
+  // Co-fires with `text_source_skipped` (parent) and may co-fire
+  // with `source_language_unsupported` / `config_or_data_files_skipped`
+  // when the corpus mixes substrates with ecosystem-foreign sources
+  // / data files.
+  | "parser_routable_extensions_skipped"
+  // a predicate-narrowed peer of `text_source_skipped`: at least one
+  // entry in `skippedByExtension` is in
+  // {@link CONFIG_OR_DATA_EXTENSIONS} — config / data file extensions
+  // (`.json`, `.yml`, `.yaml`, `.toml`, `.csv`). Surfaced so an agent
+  // reading a corpus where the skipped map is dominated by config /
+  // data (Jekyll `_config.yml`, GitHub-Actions `*.yml`, Hugo
+  // `config.toml`, npm `package.json`) can branch on "this is data,
+  // not a parser-coverage gap" without re-deriving the partition from
+  // the parent's `extensions[]` slice. Per AI-first "Skipped-extension
+  // warnings are split by predicate" + "Labeled buckets are
+  // suppression too" — the alternative (lumping data files under the
+  // generic parent only) makes the actionable subset
+  // (`parser_routable_extensions_skipped`) hard to read against the
+  // data-only tail; splitting by deterministic classifier keeps each
+  // peer honest. Paired payload:
+  // `warningsDetails.config_or_data_files_skipped` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalSkipped }` — same shape contract as the parent
+  // `text_source_skipped` payload, scoped to the config / data
+  // subset. Co-fires with `text_source_skipped` (parent) and may
+  // co-fire with the other peers on heterogeneous corpora.
+  | "config_or_data_files_skipped"
   // the walker considered N binary-asset
   // files (image/font/audio/video/archive/binary-doc) that cleared
   // dir-ignore + user-excludes and rejected them on the parseable-
@@ -506,11 +608,19 @@ export type ScanWarningCode =
   // the source tree (`additionalPaths` to `src/`, narrower `cwd`)
   // instead of triaging finding-by-finding on un-editable bytes. Pairs
   // with — and is strictly narrower than — `scanned_build_artifacts_present`:
-  // both fire together when the dist-only condition holds, but this
-  // code names the dominance regime the broader presence label cannot.
-  // Binary-presence: the file list lives in `meta.scannedBuildArtifacts`
-  // already, so no payload is needed beyond the bare fired bit.
-  | "dist_only_scan_detected"
+  // both fire together when the build-artifact-only condition holds,
+  // but this code names the dominance regime the broader presence
+  // label cannot. The predicate is "100% of parsed files classified as
+  // build artifacts" — `dist/` is the canonical example but the
+  // classifier matches on `.min.` infix, hashed filenames, sourcemap
+  // pairs, and other deterministic signals regardless of path segment;
+  // naming the code after the predicate (`build_artifact_only`) keeps
+  // the wire shape honest per AI-first doctrine "Heuristic-mislabeled
+  // meta sub-fields are dishonest." Payload-bearing —
+  // {@link ScanWarningDetails.build_artifact_only_scan_detected}
+  // carries `filesScanned`, the dominant `classifierReason`, and a
+  // top-N pivot mirroring the build-artifact summary.
+  | "build_artifact_only_scan_detected"
   // `filesScanned === 0` AND
   // the config-resolution walk-up landed on a `ra11y.config.*` /
   // `package.json` at a strict ancestor of the resolved scan root —
@@ -816,7 +926,68 @@ export type ScanWarningCode =
   // `{ fileCount, files: [{ path, propNames, matchCount }], propNames }`
   // so an agent has the load-bearing pivot (which docs files, which prop
   // names appeared) in one read.
-  | "jsx_code_demo_prop_parsed_as_live_dom";
+  | "jsx_code_demo_prop_parsed_as_live_dom"
+  // At least one scanned HTML page matches the canonical vanilla-JS
+  // demo shell shape: body has ≤3 non-script visible children AND
+  // contains an empty `<div id="...">` (or empty `<main id>` /
+  // `<section id>` / `<article id>`) AND has a sibling
+  // `<script src="...">` referencing an external JS file. Without this
+  // code, a demo page where every interactive control is built at
+  // runtime by the script (canonical shape: `<div id="buttons"></div>` +
+  // `<script src="script.js"></script>`) returns zero findings and
+  // reads as "clean page" when the truthful answer is "static scan
+  // cannot evaluate runtime-generated DOM" — the canonical
+  // "Zero-output success is ambiguous failure" shape one layer deeper
+  // than `scanned_zero_files` (discovery returned files; the files
+  // are structurally runtime-rendered shells). Per AI-first doctrine
+  // "Zero-output success is ambiguous failure" the warning channel
+  // surfaces the substrate so an agent can route a follow-up at the
+  // runtime layer (browser-driven probe, manual review of the cited
+  // script(s)) rather than concluding "no findings, clean codebase."
+  // Paired payload: `warningsDetails.dynamic_content_container_detected`
+  // carries `{ files: [{ path, bodyChildCount, emptyContainerIds,
+  // scriptSources }], fileCount }` — the agent reads the per-file
+  // pivot in one read without descending into individual file
+  // contents to re-derive the shell shape. Distinct from the runtime-
+  // mutation-on-populated-DOM axis (which fires on a page with
+  // authored content the script then mutates); this code names the
+  // never-populated-at-parse-time axis specifically.
+  | "dynamic_content_container_detected"
+  // The discovery walker filtered at least one parser-routable file
+  // (`.html` / `.css` / `.tsx` / `.jsx` / `.scss` / `.less` / `.mdx`
+  // / `.astro` / etc. — anything in
+  // {@link import("../utils/path.ts").PARSEABLE_EXTENSIONS}) by a
+  // pattern in {@link DEFAULT_EXCLUDED_PATTERNS}, the project's
+  // `.gitignore`, or a user-supplied `exclude` glob. Without this
+  // code, a tutorial-style HTML/CSS/JS corpus where 7 of 8 candidate
+  // HTML files match a default-exclude pattern returns `findings: []`
+  // with zero signal at the top-level warnings channel that the
+  // walker dropped the dominant-extension subset before any rule
+  // saw it — the canonical "Default-exclude globs are suppression
+  // too" silent-miss vector (per `docs/kb/architecture/ai-first-
+  // consumer.md`). Symmetric to {@link binary_assets_skipped}
+  // (which fires for low-leverage binaries the agent can't route)
+  // and {@link default_excluded_artifact_paths} (build-artifact
+  // directory exclusions): both already surface honestly at the
+  // warnings channel; this code closes the gap for the per-file
+  // pattern-exclusion axis. Per AI-first doctrine "Routing skips
+  // that drop content are the symmetric twin of suppression" — the
+  // exclusion stays in place (the patterns encode genuine intent —
+  // `.gitignore`, fixture mocks, user excludes) but the agent gets
+  // an additive signal it can branch on. Paired meta:
+  // `meta.analysisCoverage.excludedByPatternByExtension` carries the
+  // full ext↦count map. Structured payload under
+  // `warningsDetails.text_source_excluded_by_default_pattern` carries
+  // `{ extensions, perExtensionCounts, topExtension?, topCount?,
+  // totalExcluded }` — same shape contract as
+  // {@link text_source_skipped} so an agent reading either channel
+  // uses one mental model. The map keys are dotted parseable
+  // extensions only by construction (the discovery walker gates on
+  // {@link import("../utils/path.ts").hasParseableExtension} before
+  // recording; non-parseable matches are accounted under
+  // `skippedByExtension`), so the predicate fires whenever the map
+  // is non-empty.
+  | "text_source_excluded_by_default_pattern";
 
 export interface WarningInputs {
   /** Count of parseable files the scan actually evaluated. */
@@ -862,8 +1033,38 @@ export interface WarningInputs {
    * case the payload drops conservatively and the bare code stays the
    * only signal). The value is surfaced on the warning channel
    * deterministically — no second filesystem walk.
+   *
+   * Pairs with {@link noConfigFoundCallerCwd} / {@link noConfigFoundScannedRoot}
+   * for the present-when-meaningful predicate: when the search base
+   * equals either of those (the common case — `searchedFrom` would
+   * just echo the caller's `cwd` or a `scanned.root` already on the
+   * response), the payload drops to the {@link BinaryPresenceMarker}
+   * `{}` shape and the bare warning code carries the signal.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Caller-supplied `cwd` from the tool's params. Drives the present-
+   * when-meaningful gate on the `no_config_found.searchedFrom` payload:
+   * when the loader's walk-up base equals `cwd`, the agent already has
+   * the search base from its own input and `searchedFrom` echoes it.
+   * Pass `undefined` when the tool has no caller-supplied cwd (e.g.
+   * `scan_project` auto-promoted from a host-root or git-root fallback
+   * — pass the resolved {@link noConfigFoundScannedRoot} instead so
+   * the omit predicate fires off the on-response `scanned.root`).
+   *
+   * Mirrors the meta-channel predicate in
+   * {@link import("./scanner-meta.ts").configSearchedFromField}.
+   */
+  readonly noConfigFoundCallerCwd?: string;
+  /**
+   * The resolved `scanned.root` for project-mode scans. Drives the
+   * present-when-meaningful gate on the `no_config_found.searchedFrom`
+   * payload: when the loader's walk-up base equals `scanned.root`,
+   * the agent already has the search base from `meta.scanned.root`
+   * and `searchedFrom` echoes it. Pass `undefined` for tools with no
+   * project-mode resolution (e.g. `scan` against arbitrary `paths`).
+   */
+  readonly noConfigFoundScannedRoot?: string;
   /**
    * The analysisCoverage block as returned by `buildAnalysisCoverage` —
    * we read `hints` for the Tailwind signal and `templateInterpolationFound`
@@ -1040,6 +1241,32 @@ export interface WarningInputs {
    */
   readonly templateLiteralFiles?: readonly string[];
   /**
+   * Per-style splits of {@link templateLiteralFiles} keyed by the
+   * dialect family the line evidence carried — `liquid` for `{% ... %}`
+   * (Jinja / Liquid / Nunjucks / Twig), `erb` for `<% ... %>` (ERB /
+   * EJS), `curlyDouble` for `{{ ... }}` (Handlebars / Mustache / Liquid /
+   * Jinja / Vue / Angular interpolation). Each list drives its
+   * corresponding `*_directives_unparsed` warning code + paired
+   * `warningsDetails.<code>: { fileCount, files }` payload so an agent
+   * scoping around a specific token style routes off the warning
+   * channel rather than re-walking
+   * `meta.analysisCoverage.templateInterpolationFound`. The lists are a
+   * disjoint OR overlapping partition of `templateLiteralFiles`'s
+   * directive-overlap subset (a single file carrying multiple styles
+   * appears in every matching list) — frontmatter-only files surface on
+   * the parent code only and never appear here.
+   *
+   * Pass `undefined` (or omit) when the caller didn't materialize per-
+   * style evidence (e.g. derivative tools that consume only the parent
+   * `templateLiteralFiles` list). Empty arrays are treated identically
+   * to `undefined` — neither fires the corresponding per-style code.
+   */
+  readonly liquidLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly erbLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly curlyDoubleLiteralFiles?: readonly string[];
+  /**
    * Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: true when the walk-up from the
    * scan root saw a `package.json` (or a `ra11y.config.*` that for some
    * reason didn't load) anywhere along the same directory range the
@@ -1187,7 +1414,7 @@ export interface WarningInputs {
    * flag). Pass `true` only when both halves of the predicate hold:
    * `entries.length === filesScanned` AND `filesScanned > 0`. Pass
    * `false` (or omit) when even one parsed file was authored source —
-   * the dist-only signal would be a lie in that case.
+   * the build-artifact-only signal would be a lie in that case.
    */
   readonly scannedBuildArtifactsAllFiles?: boolean;
   /**
@@ -1360,6 +1587,32 @@ export interface WarningInputs {
     readonly naturalParser?: string;
     readonly evidence: "non_jsx_in_tsx_route" | "parse_errors";
   };
+  /**
+   * caller-supplied list of per-file evidence records produced by
+   * {@link import("./dynamic-content-container.ts").detectDynamicContentContainers}.
+   * Each entry names a scanned HTML file matching the canonical
+   * runtime-render shell shape: body has ≤3 non-script visible
+   * children AND contains an empty `<div id>` (or other layout/
+   * landmark mount-point candidate) AND has a sibling
+   * `<script src="...">` referencing an external JS file. Drives the
+   * `dynamic_content_container_detected` warning code AND its paired
+   * `warningsDetails` payload.
+   *
+   * The detector lives at the assembly seam so this module stays pure
+   * over its inputs — the predicate walks parsed HTML ASTs and returns
+   * the deterministic per-file evidence shape directly. Pass an empty
+   * list (or omit) when no scanned file matched; the warning code
+   * drops conservatively in that case per the AI-first doctrine
+   * "Empty `warningsDetails.<code>: {}` is dishonest" — the predicate
+   * gate on a non-empty list ensures the payload is populated whenever
+   * the warning fires.
+   */
+  readonly dynamicContentContainerEntries?: readonly {
+    readonly path: string;
+    readonly bodyChildCount: number;
+    readonly emptyContainerIds: readonly string[];
+    readonly scriptSources: readonly string[];
+  }[];
 }
 
 // MARKER_PROBE_002
@@ -1560,6 +1813,7 @@ function isBinaryAssetExtension(ext: string): boolean {
 const PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS: ReadonlySet<string> = new Set([
   ".coffee",
   ".eex",
+  ".feature",
   ".gohtml",
   ".haml",
   ".handlebars",
@@ -1583,6 +1837,51 @@ const PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS: ReadonlySet<string> = new Set([
   ".twig",
   ".vue",
 ]);
+
+/**
+ * Config / data file extensions ra11y intentionally does not parse —
+ * `.json`, `.yml`, `.yaml`, `.toml`, `.csv`. Surfaced under the
+ * dedicated `config_or_data_files_skipped` warning rather than lumped
+ * under the generic `text_source_skipped` parent so an agent reading
+ * a static-site corpus where `.yml: 60` + `.toml: 12` dominates the
+ * skipped map can branch on "this is config / data, not a parser-
+ * coverage gap" without re-deriving from the per-extension breakdown.
+ *
+ * Each entry's rationale:
+ *   - `.json` — JSON data files; never carry a11y-relevant markup.
+ *   - `.yml` / `.yaml` — YAML config (CI workflows, Jekyll / Hugo
+ *     front-matter sources, Kubernetes manifests).
+ *   - `.toml` — TOML config (Rust `Cargo.toml`, Hugo `config.toml`,
+ *     Python `pyproject.toml`).
+ *   - `.csv` — comma-separated data files; tabular data, not markup.
+ *
+ * Per AI-first "Skipped-extension warnings are split by predicate":
+ * the partition is provable from the extension alone (each format
+ * spec defines a non-markup data substrate) — no content inspection.
+ * The set is mutually exclusive with
+ * {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS} (no entry carries an
+ * HTML / JSX surface) and with
+ * {@link UNSUPPORTED_LANGUAGE_EXTENSIONS} (no entry names a
+ * programming-language ecosystem) — the three classifiers carve up
+ * the text-source predicate space without overlap.
+ */
+const CONFIG_OR_DATA_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".csv",
+  ".json",
+  ".toml",
+  ".yaml",
+  ".yml",
+]);
+
+/**
+ * Predicate for {@link CONFIG_OR_DATA_EXTENSIONS} membership. Centralized
+ * so the partition logic doesn't drift between the predicate gate and
+ * the summarizer's filter. Lower-cases the input so a `.YAML` from a
+ * Windows-authored repo classifies the same as `.yaml`.
+ */
+function isConfigOrDataExtension(ext: string): boolean {
+  return CONFIG_OR_DATA_EXTENSIONS.has(ext.toLowerCase());
+}
 
 /**
  * Predicate for {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}
@@ -1756,11 +2055,13 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `text_source_skipped`, `response_token_budget_truncated`,
  *     `content_files_skipped`, `source_language_unsupported`,
  *     `vendor_css_dominates_findings`, `parse_errors_present`,
+ *     `partial_parse_files_present`,
  *     `scanned_build_artifacts_present`, `scanned_minified_file`,
  *     `bulk_catalog_detected`,
  *     `animation_library_without_reduced_motion_guard`,
  *     `response_dropped_files_oversize`,
- *     `cwd_appears_misrooted`, and
+ *     `cwd_appears_misrooted`, `build_artifact_only_scan_detected`,
+ *     `baseline_dry_run`, and
  *     `response_meta_truncated` (carries the dotted field paths of
  *     the meta sub-arrays that were elided so the agent can re-fetch
  *     under `verboseMeta: true` without probing blind).
@@ -1778,12 +2079,9 @@ export const ANIMATION_LIB_GUARD_FINDING_FLOOR = 21;
  *     `no_hunks_in_comparison`, `storybook_preset_active`,
  *     `session_wrappers_configured_for_different_cwd`,
  *     `redundant_additional_paths`, `restrict_to_paths_no_matches`,
- *     `baseline_dry_run`,
- *     `partial_parse_files_present`,
  *     `parser_bailed_zero_findings`,
- *     `scss_unresolved_variables` (the file list it carries is
- *     declared payload-bearing — see helper),
- *     and `dist_only_scan_detected`. Each names a condition whose
+ *     and `scss_unresolved_variables` (the file list it carries is
+ *     declared payload-bearing — see helper). Each names a condition whose
  *     remediation is documented in the code's prose comment alongside
  *     its declaration; meta sub-fields named there carry any
  *     incidental detail (paths, ext maps, directive lists) that an
@@ -1933,6 +2231,62 @@ export interface ScanWarningDetails {
     readonly totalSkipped: number;
   };
   /**
+   * Dense summary of the parser-routable text-island substrate subset
+   * of `skippedByExtension` behind the
+   * `parser_routable_extensions_skipped` code. Same shape contract as
+   * {@link text_source_skipped} (extensions / perExtensionCounts /
+   * topExtension / topCount / totalSkipped); the split is by predicate,
+   * not by payload shape, so agents reading either channel use one
+   * mental model. Entries cover the actionable subset whose format
+   * spec defines an HTML / JSX surface ra11y could plausibly route
+   * (`.vue`, `.svelte`, `.coffee`, `.rmd`, `.feature`, `.hbs`,
+   * `.haml`, etc. — see {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}).
+   * Per AI-first "Heuristic-mislabeled meta sub-fields are dishonest"
+   * the partition is provable from the extension alone — each entry
+   * has a documented HTML / JSX surface — not a heuristic on contents.
+   *
+   * `noExtensionFiles` is intentionally omitted from this peer payload —
+   * no well-known textual no-extension filename (LICENSE, Makefile,
+   * Dockerfile, README, etc.) defines an HTML / JSX surface, so the
+   * field would always be absent. The shape contract on
+   * {@link text_source_skipped} keeps `noExtensionFiles` for parity with
+   * binary-assets, but on the substrate-narrowed peer the field has no
+   * meaningful value — declared absent rather than carrying an empty
+   * sentinel.
+   */
+  readonly parser_routable_extensions_skipped?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalSkipped: number;
+  };
+  /**
+   * Dense summary of the config / data file subset of
+   * `skippedByExtension` behind the `config_or_data_files_skipped`
+   * code. Same shape contract as {@link text_source_skipped}
+   * (extensions / perExtensionCounts / topExtension / topCount /
+   * totalSkipped); the split is by predicate, not by payload shape,
+   * so agents reading either channel use one mental model. Entries
+   * cover the data-only tail (`.json`, `.yml`, `.yaml`, `.toml`,
+   * `.csv` — see {@link CONFIG_OR_DATA_EXTENSIONS}). Per AI-first
+   * "Skipped-extension warnings are split by predicate" the partition
+   * is provable from the extension alone — each entry's format spec
+   * defines a non-markup data substrate.
+   *
+   * `noExtensionFiles` is intentionally omitted on this peer payload
+   * for the same reason as {@link parser_routable_extensions_skipped}:
+   * no well-known textual no-extension filename is a config / data
+   * format, so the field has no meaningful value.
+   */
+  readonly config_or_data_files_skipped?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalSkipped: number;
+  };
+  /**
    * Payload for `sourcemap_files_excluded`. Carries the count of
    * `.map` sourcemap files the discovery walk encountered + a head-
    * sliced subset of the absolute paths (capped at
@@ -1971,6 +2325,36 @@ export interface ScanWarningDetails {
       readonly fileCount: number;
       readonly sampleFiles: readonly string[];
     }[];
+  };
+  /**
+   * Payload for `text_source_excluded_by_default_pattern`. Mirrors the
+   * shape of {@link text_source_skipped} (extensions /
+   * perExtensionCounts / topExtension / topCount / totalExcluded) so
+   * agents reading either channel use one mental model. Carries the
+   * dense per-extension distribution of parser-routable files the
+   * discovery walker filtered via {@link DEFAULT_EXCLUDED_PATTERNS},
+   * `.gitignore`, or user-supplied `exclude` globs. The full ext↦count
+   * map still lives under `meta.analysisCoverage.excludedByPatternByExtension`.
+   *
+   * `extensions` is sorted by descending count (alphabetical tie-break)
+   * so the agent's eye lands on the dominant exclusion first;
+   * `topExtension` + `topCount` mirror the same pivot at the scalar
+   * level for one-read triage on bulk responses.
+   *
+   * Field shape parity with {@link text_source_skipped} is deliberate
+   * — `noExtensionFiles` and `parserRoutableExtensions` are NOT carried
+   * here because the bookkeeping is pre-filtered at the discovery seam:
+   * every entry is by construction a dotted parser-routable extension,
+   * so the parser-routable subset would echo `extensions` and the
+   * no-extension subset is unreachable. The `totalExcluded` slot names
+   * the corresponding total at the wire surface.
+   */
+  readonly text_source_excluded_by_default_pattern?: {
+    readonly extensions: readonly string[];
+    readonly perExtensionCounts?: Readonly<Record<string, number>>;
+    readonly topExtension?: string;
+    readonly topCount?: number;
+    readonly totalExcluded: number;
   };
   /**
    * Density-cap settlement for the `response_token_budget_truncated`
@@ -2320,6 +2704,26 @@ export interface ScanWarningDetails {
     readonly totalFilesWithFindings: number;
     readonly metaFieldsDropped?: readonly string[];
     /**
+     * Cross-link to the canonical co-firing truncation reporter when the
+     * meta-array cap (`response_meta_truncated`) ALSO trimmed sub-array
+     * meta fields on the same response. Populated by
+     * {@link oversizeEnvelopeWarningsField} when both reporters co-fire
+     * — points at the dotted payload path
+     * (`warningsDetails.response_meta_truncated.fields`) so an agent
+     * reading the slim drop reporter knows the OTHER reporter carries
+     * the sub-array truncation evidence on a different scope (top-level
+     * meta-key drops here vs. sub-array head-slice there). The two
+     * reporters address disjoint scopes by construction; the `seeAlso`
+     * cross-links exist so an agent reading either side discovers the
+     * other without enumerating every warning code blind. Per
+     * `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+     * must reconcile across warnings" — multiple truncation channels on
+     * the same response reconcile by reference rather than by
+     * independent enumeration. Present-when-meaningful: omitted when
+     * the meta-array cap did not fire on this response.
+     */
+    readonly metaTruncationSeeAlso?: string;
+    /**
      * Per-field truncation summaries for verbose collections the slim
      * builder head-sliced after dropping `files[]`. Even with `files[]`
      * gone, the surviving envelope can still serialize over the
@@ -2356,15 +2760,33 @@ export interface ScanWarningDetails {
    * having to call back with a wider `limit` to inspect the dropped
    * subset (which is gone from this response's `files[]`).
    *
-   * - `droppedFileCount` — number of files-with-findings the
-   *   truncation pass discarded. Pairs with the byte-level
+   * - `droppedFileCount` — canonical count of files-with-findings the
+   *   truncation pass kept off the wire on this response: equal to
+   *   `totalFilesWithFindings - files.length`, NOT just the page-internal
+   *   tail-trim. On a paginated bulk-vendor scan where the paginator
+   *   already restricted the page to a subset of the full inventory, the
+   *   page-internal tail-trim alone undercounts the silent drop — agents
+   *   reading the smaller number budget against a fraction of the actual
+   *   gap. The canonical formulation reconciles with the
+   *   `totalFilesWithFindings` denominator on the same response so an
+   *   agent can compute "shipped vs. unshipped" by subtracting
+   *   `files.length` directly. Pairs with the byte-level
    *   `response_token_budget_truncated.requestedLimit/effectiveLimit`
    *   and `response_dropped_files_oversize.droppedFileCountFromRequestedLimit`
-   *   on the same response: the byte counters answer "how many
-   *   entries did the cap drop"; this counter answers the same
-   *   question on the rule-impact axis (always equal to the byte
-   *   counter when both fire on the same pass; carried separately so
-   *   downstream consumers don't have to cross-read).
+   *   on the same response.
+   * - `pageClipFromRequestedLimit` — present-when-meaningful: count of
+   *   files the density cap or slim path trimmed from THIS page
+   *   specifically (the page-internal subset of `droppedFileCount`).
+   *   Omitted when it equals `droppedFileCount` (slim envelope drops
+   *   the entire inventory; full-inventory page that fits in
+   *   `requestedLimit` has no paginator-skip gap), since the two
+   *   counters carrying the same value would violate "Sibling fields
+   *   naming the same concept must use one shape." Useful for triage
+   *   when a paginated page saw a partial inventory: the gap between
+   *   `droppedFileCount` and `pageClipFromRequestedLimit` is the
+   *   paginator-skipped subset (recoverable via `nextOffset`); the
+   *   `pageClipFromRequestedLimit` portion is the density-cap or slim
+   *   tail-trim (recoverable via narrower scope).
    * - `ruleFamiliesAffected` — unique rule-family prefixes (the
    *   token before `/` in `ruleId`, e.g. `keyboard`, `aria`,
    *   `forms`) across every finding on every dropped file. Sorted
@@ -2395,6 +2817,7 @@ export interface ScanWarningDetails {
    */
   readonly truncated_files_dropped?: {
     readonly droppedFileCount: number;
+    readonly pageClipFromRequestedLimit?: number;
     readonly ruleFamiliesAffected: readonly string[];
     readonly topDroppedRules: readonly {
       readonly ruleId: string;
@@ -2528,10 +2951,26 @@ export interface ScanWarningDetails {
    * inconsistency where some emitters paired the warning with `cwd` on
    * the meta block and others with `scanned.root`. Pure shape-builder;
    * the value is the same `cwd`/`root` the loader was handed.
+   *
+   * Dual-shaped slot: when the loader's walk-up base equals the caller-
+   * supplied `cwd` OR the resolved `scanned.root` (the common case —
+   * an agent reading the response already has the value on the meta
+   * block), the warning-detail drops to the
+   * {@link BinaryPresenceMarker} shape `{}`. Same present-when-
+   * meaningful contract as the meta-channel `configSearchedFrom` field
+   * (see `scanner-meta.ts`'s {@link import("./scanner-meta.ts").configSearchedFromField}):
+   * the warning code itself fully specifies the condition, and an
+   * agent has the canonical search base on `meta.scanned.root` /
+   * `cwd`. Per `docs/kb/architecture/ai-first-consumer.md` "Verbose
+   * meta is signal, not clutter — `configSearchedFrom` is
+   * present-when-meaningful — omitted when it would just echo the
+   * caller's `cwd` or a `scanned.root` already in the response."
    */
-  readonly no_config_found?: {
-    readonly searchedFrom: string;
-  };
+  readonly no_config_found?:
+    | {
+        readonly searchedFrom: string;
+      }
+    | BinaryPresenceMarker;
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
   /**
    * Payload for `template_files_parsed_as_literal`. Names the files whose
@@ -2562,6 +3001,55 @@ export interface ScanWarningDetails {
         readonly extensions: readonly string[];
       }
     | BinaryPresenceMarker;
+  /**
+   * Payload for `liquid_directives_unparsed`. Names every file whose
+   * source carried a `{% ... %}` line that intersected an emitted
+   * finding — i.e. the literal-template-parse touched the same line a
+   * rule reported on. Companion per-style payload to
+   * {@link template_files_parsed_as_literal}; the parent code aggregates
+   * across every directive style + frontmatter fence, this code narrows
+   * to the Liquid / Jinja / Nunjucks / Twig family specifically so an
+   * agent scoping around the dialect routes off the warning channel
+   * directly. `fileCount` always carries the full count;
+   * `files` is sorted alphabetically for deterministic wire output. Per
+   * AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest"
+   * — populated whenever the warning fires; the empty-list branch
+   * returns `undefined` from the summarizer so the dispatch falls
+   * through to the schema-discipline sentinel rather than shipping an
+   * ambiguous `{}`.
+   */
+  readonly liquid_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+  };
+  /**
+   * Payload for `erb_directives_unparsed`. Names every file whose
+   * source carried a `<% ... %>` line that intersected an emitted
+   * finding — same shape as {@link liquid_directives_unparsed} but
+   * narrowing to the ERB / EJS family. See that field's docblock for
+   * the full contract.
+   */
+  readonly erb_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+  };
+  /**
+   * Payload for `curly_double_directives_unparsed`. Names every file
+   * whose source carried a `{{ ... }}` line that intersected an emitted
+   * finding. Same shape as {@link liquid_directives_unparsed} with one
+   * extension: a `reason` field naming the dialect ambiguity
+   * `{{ ... }}` carries (Handlebars / Mustache / Liquid plain
+   * interpolation / Jinja interpolation / Vue / Angular) so the agent
+   * reads the file to disambiguate dialect — per AI-first doctrine
+   * "Heuristic-mislabeled meta sub-fields are dishonest," the warning
+   * surface name does NOT pick a dialect family and the payload makes
+   * the ambiguity explicit.
+   */
+  readonly curly_double_directives_unparsed?: {
+    readonly fileCount: number;
+    readonly files: readonly string[];
+    readonly reason: string;
+  };
   /**
    * Payload for `php_islands_stripped`. Names the parsed `.php` /
    * `.phtml` files whose source contained at least one PHP island
@@ -2724,9 +3212,98 @@ export interface ScanWarningDetails {
    */
   readonly response_meta_truncated?: {
     readonly fields: readonly string[];
+    /**
+     * Cross-link to the canonical co-firing truncation reporter when the
+     * slim envelope ALSO discarded top-level meta keys on the same
+     * response. Populated by {@link oversizeEnvelopeWarningsField} when
+     * `response_dropped_files_oversize` co-fires — points at the dotted
+     * payload path
+     * (`warningsDetails.response_dropped_files_oversize.metaFieldsDropped`)
+     * so an agent reading this reporter knows the OTHER reporter also
+     * carries truncation evidence on a different scope (sub-array
+     * head-slice here vs. top-level meta-key drop there). Per
+     * `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+     * must reconcile across warnings" — multiple truncation channels on
+     * the same response reconcile by reference rather than by
+     * independent enumeration. Present-when-meaningful: omitted when
+     * the slim envelope did not fire on this response.
+     */
+    readonly seeAlso?: string;
   };
-  readonly baseline_dry_run?: BinaryPresenceMarker;
-  readonly partial_parse_files_present?: BinaryPresenceMarker;
+  /**
+   * Payload for `baseline_dry_run`. Carries the load-bearing routing
+   * identity an agent reads to triage why no `.ra11y-baseline.json`
+   * landed: a deterministic `didWrite: false` (the predicate's "fired"
+   * branch) plus `wouldHaveAdded` — the count of violations the
+   * `baseline create` leg would have written had `writeBaseline: true`
+   * been passed. Without this payload, an agent reading the bare code
+   * learns "dry run" but cannot answer "would the create have produced
+   * a non-empty baseline?" without another round trip. With the count
+   * inline, the agent budgets the follow-up `bootstrap({ writeBaseline:
+   * true })` call against a concrete number — a 0-finding scan in
+   * dry-run mode reads as "no baseline needed" rather than "create
+   * blocked."
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — without a payload, the warning name implies
+   * specifics (which baseline state, how many findings) that the
+   * empty-object marker does not deliver. The bootstrap call site
+   * is the predicate authority; it threads the count from the same
+   * scan output the response carries, so no second derivation is
+   * required.
+   */
+  readonly baseline_dry_run?: {
+    readonly didWrite: false;
+    readonly wouldHaveAdded: number;
+  };
+  /**
+   * Payload for `partial_parse_files_present`. Carries the partial-
+   * parse subset evidence an agent reads to triage the regime: which
+   * files contributed, and which parser owned the partial-parse mass.
+   * Without this payload, the bare code names "partial parses
+   * happened somewhere" but the agent has to descend into
+   * `meta.analysisCoverage.partialParseFiles[]` to enumerate them —
+   * and on bulk-vendor corpora that array may have been replaced by
+   * the `partialParseTopReasons` rollup, so the per-file identity
+   * stays absent.
+   *
+   * - `partialParseFileCount` — total count of files in the partial-
+   *   parse bucket. Sourced from
+   *   `analysisCoverage.partialParseFileCount`, the authoritative
+   *   scalar at every wire shape (present even when the inline
+   *   `partialParseFiles[]` array was replaced by the
+   *   `partialParseTopReasons` rollup at large counts per
+   *   {@link import("./analysis-coverage-parse-errors.ts").PARSE_ERROR_INLINE_THRESHOLD}).
+   * - `partialParseByParser` — per-parser breakdown of the count so
+   *   an agent can answer "is every .mdx file partial-parsing?"
+   *   without paging through the per-file array. Lifted off the
+   *   coverage block via the same helper that populates
+   *   `parse_errors_present.partialParseByParser`. Conditional-spread
+   *   per AI-first doctrine "Ambiguous field shapes are dishonest"
+   *   — omitted when the coverage block is producer-side stale (e.g.
+   *   derivative tools that only ship the scalar count). Same
+   *   alphabet (`tsx`, `html`, `css`, `jsx`, `ts`, `js`) as the
+   *   per-entry `parser` tag on
+   *   `analysisCoverage.partialParseFiles[]`.
+   *
+   * Pairs with `parse_errors_present.partialParseFileCount` (the
+   * union code carries the same scalar in its rich payload). This
+   * code is the more specific predicate that fires on the partial-
+   * parse subset alone; the agent reads either payload and gets the
+   * same scalar.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires off
+   * `analysisCoverage.partialParseFileCount > 0`. The summarizer
+   * returns `undefined` only when the coverage block is absent or
+   * the count is zero (defensive); in either case the schema-
+   * discipline fall-through stamps the disambiguating sentinel
+   * rather than the empty-object marker.
+   */
+  readonly partial_parse_files_present?: {
+    readonly partialParseFileCount: number;
+    readonly partialParseByParser?: Readonly<Record<string, number>>;
+  };
   /**
    * Payload for `parser_bailed_zero_findings`. Carries the load-bearing
    * routing-decision identity an agent needs to triage the
@@ -2770,7 +3347,63 @@ export interface ScanWarningDetails {
     readonly topFiles?: readonly string[];
     readonly reason: string;
   };
-  readonly dist_only_scan_detected?: BinaryPresenceMarker;
+  /**
+   * Payload for `build_artifact_only_scan_detected`. Carries the load-bearing
+   * routing identity an agent reads to triage the build-artifact-only
+   * regime: the scanned-file count, the dominant build-artifact classifier
+   * verdict, and a head-slice of the affected paths so an agent
+   * branches on which generated tree the caller misrooted into without
+   * descending into `meta.scannedBuildArtifacts`.
+   *
+   * - `filesScanned` — total parsed-file count (every entry of which
+   *   was classified as a build artifact when this code fires —
+   *   `scannedBuildArtifactsAllFiles === true` AND `filesScanned > 0`).
+   *   Without this scalar, an agent reading the bare code knows the
+   *   regime fired but not the magnitude — an `additionalPaths` re-
+   *   route on a 1000-file generated tree is a different cost than on
+   *   a 3-file leaf.
+   * - `classifierReason` — the dominant classifier verdict across the
+   *   build-artifact list (the most-frequent
+   *   {@link import("./build-artifacts.ts").BuildArtifactClassification}
+   *   token: `definite-min-infix`, `likely-vendor-distribution`,
+   *   `definite-bundler-output`, etc.). Lifted from the same per-
+   *   entry classifier the agent would otherwise re-derive. Per AI-
+   *   first doctrine "Heuristic-mislabeled meta sub-fields are
+   *   dishonest" — the field is provable from the scan's evidence
+   *   (deterministic argmax over the per-entry classifications), no
+   *   heuristic synthesis at the warnings seam. Conditional-spread
+   *   per AI-first doctrine "Ambiguous field shapes are dishonest"
+   *   — omitted when the build-artifact summary is absent (the bare
+   *   code's predicate can fire off the binary `scannedBuildArtifacts
+   *   AllFiles` flag alone in derivative-tool surfaces that don't
+   *   thread the per-entry list).
+   * - `top` — the head-slice of `{path, reason}` records lifted
+   *   verbatim from the build-artifact summary's `top` field (capped
+   *   at {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP}). Mirrors the
+   *   `scanned_build_artifacts_present.top` shape so an agent calling
+   *   `scan_project` once gets the load-bearing pivot for the build-
+   *   artifact-only triage on either code's payload. Conditional-
+   *   spread per AI-first "Sibling fields naming the same concept must
+   *   use one shape" — when the top slice is empty (build-artifact list
+   *   absent), the field omits rather than shipping a `top: []`
+   *   sentinel.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — without this payload, the warning channel reads
+   * `build_artifact_only_scan_detected: {}` and forces the agent to cross-
+   * reference `meta.filesScanned` and `meta.scannedBuildArtifacts`
+   * to recover information already known at predicate time. With
+   * the payload, the warning channel carries the full triage
+   * pivot in one read.
+   */
+  readonly build_artifact_only_scan_detected?: {
+    readonly filesScanned: number;
+    readonly classifierReason?: import("./build-artifacts.ts").BuildArtifactClassification;
+    readonly top?: readonly {
+      readonly path: string;
+      readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+    }[];
+  };
   /**
    * Payload for `js_innerhtml_template_literal_unparsed`. Carries up to
    * five `{ path, line, pattern }` samples drawn from JS/TS source
@@ -2840,6 +3473,49 @@ export interface ScanWarningDetails {
       readonly matchCount: number;
     }[];
     readonly propNames: readonly string[];
+  };
+  /**
+   * Payload for `dynamic_content_container_detected`. Carries the
+   * per-file evidence the predicate fired on — body-child count, the
+   * empty-mount-point id list, and the external-script src list — so
+   * the agent reads the scan-shell shape directly off the warning
+   * channel without re-deriving the predicate from the file contents.
+   *
+   * - `fileCount` — total HTML pages in the scan that matched the
+   *   conjunction. Always carries the full count (no cap) so the
+   *   scalar reads honestly off the warning channel.
+   * - `files` — sorted-ascending per-file evidence records:
+   *     - `path` — absolute path to the matching HTML file.
+   *     - `bodyChildCount` — number of non-script visible children
+   *       directly under `<body>` (always ≤ 3 — predicate gate).
+   *     - `emptyContainerIds` — sorted-ascending, de-duplicated list
+   *       of `id` values from the empty mount-point candidates the
+   *       predicate matched (`<div id>` / `<main id>` / `<section id>` /
+   *       `<article id>`). Always carries at least one entry per
+   *       record.
+   *     - `scriptSources` — sorted-ascending, de-duplicated list of
+   *       `src` values from the external `<script src>` siblings.
+   *       Always carries at least one entry per record.
+   *
+   * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+   * dishonest" — populated whenever the warning fires. The predicate
+   * gate at the call site ensures the payload is non-empty before the
+   * warning code is emitted, so the wire never carries the empty
+   * `{}` shape. Mirrors the surface contract of
+   * `linked_stylesheet_local_unresolved` (per-file actionable
+   * evidence with deterministic sort) and
+   * `jsx_code_demo_prop_parsed_as_live_dom` (per-file mount-point
+   * evidence) — the agent reads each one with the same shape
+   * vocabulary.
+   */
+  readonly dynamic_content_container_detected?: {
+    readonly fileCount: number;
+    readonly files: readonly {
+      readonly path: string;
+      readonly bodyChildCount: number;
+      readonly emptyContainerIds: readonly string[];
+      readonly scriptSources: readonly string[];
+    }[];
   };
   /**
    * Payload for `linked_stylesheet_local_unresolved`. Carries the
@@ -3086,9 +3762,6 @@ const BINARY_PRESENCE_CODES: ReadonlySet<ScanWarningCode> = new Set<ScanWarningC
   "storybook_preset_active",
   "session_wrappers_configured_for_different_cwd",
   "restrict_to_paths_no_matches",
-  "baseline_dry_run",
-  "partial_parse_files_present",
-  "dist_only_scan_detected",
   "coverage_confidence_uniformly_high_with_parse_errors",
 ]);
 
@@ -3127,11 +3800,16 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "no_config_found",
   "tailwind_detected_css_undercounted",
   "template_files_parsed_as_literal",
+  "liquid_directives_unparsed",
+  "erb_directives_unparsed",
+  "curly_double_directives_unparsed",
   "php_islands_stripped",
   "scanned_build_artifacts_present",
   "no_hunks_in_comparison",
   "storybook_preset_active",
   "text_source_skipped",
+  "parser_routable_extensions_skipped",
+  "config_or_data_files_skipped",
   "binary_assets_skipped",
   "sourcemap_files_excluded",
   "parse_errors_present",
@@ -3152,7 +3830,7 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "animation_library_without_reduced_motion_guard",
   "partial_parse_files_present",
   "parser_bailed_zero_findings",
-  "dist_only_scan_detected",
+  "build_artifact_only_scan_detected",
   "cwd_appears_misrooted",
   "js_innerhtml_template_literal_unparsed",
   "linked_stylesheet_local_unresolved",
@@ -3165,6 +3843,8 @@ const SCAN_WARNING_CODES: ReadonlySet<string> = new Set<ScanWarningCode>([
   "erb_islands_unrendered",
   "astro_islands_unrendered",
   "jsx_code_demo_prop_parsed_as_live_dom",
+  "dynamic_content_container_detected",
+  "text_source_excluded_by_default_pattern",
 ]);
 
 function isScanWarningCode(code: string): code is ScanWarningCode {
@@ -3347,10 +4027,19 @@ function coverageConfidenceUniformlyHighWithParseErrors(inputs: WarningInputs): 
 function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (hasTextSourceSkipped(inputs.analysisCoverage)) out.push("text_source_skipped");
+  if (hasParserRoutableExtensionsSkipped(inputs.analysisCoverage)) {
+    out.push("parser_routable_extensions_skipped");
+  }
+  if (hasConfigOrDataFilesSkipped(inputs.analysisCoverage)) {
+    out.push("config_or_data_files_skipped");
+  }
   if (hasBinaryAssetsSkipped(inputs.analysisCoverage)) out.push("binary_assets_skipped");
   if (hasSourcemapFilesExcluded(inputs.analysisCoverage)) out.push("sourcemap_files_excluded");
   if (hasDefaultExcludedArtifactPaths(inputs.analysisCoverage)) {
     out.push("default_excluded_artifact_paths");
+  }
+  if (hasTextSourceExcludedByDefaultPattern(inputs.analysisCoverage)) {
+    out.push("text_source_excluded_by_default_pattern");
   }
   return out;
 }
@@ -3362,17 +4051,19 @@ function discoverySkipCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
  * cognitive-complexity cap (same pattern as
  * {@link contentDistributionCodes} and {@link parseErrorCodes}). Both
  * codes name a regime where the success-shape is ambiguous about whether
- * the scan reached authored source — `dist_only_scan_detected` for "every
- * parsed file was generated bytes," `cwd_appears_misrooted` for "no
- * parseable files but a parent dir likely would have produced them."
+ * the scan reached authored source — `build_artifact_only_scan_detected`
+ * for "every parsed file was classified as build artifact,"
+ * `cwd_appears_misrooted` for "no parseable files but a parent dir
+ * likely would have produced them."
  *
  * Order matches declaration order on `ScanWarningCode` for stable
- * `warnings[]` sequencing across runs: dist-only first, misrooted second.
+ * `warnings[]` sequencing across runs: build-artifact-only first,
+ * misrooted second.
  */
 function scanShapeCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
   const out: ScanWarningCode[] = [];
   if (inputs.scannedBuildArtifactsAllFiles === true && inputs.filesScanned > 0) {
-    out.push("dist_only_scan_detected");
+    out.push("build_artifact_only_scan_detected");
   }
   if (inputs.filesScanned === 0 && typeof inputs.nearestConfigAncestor === "string") {
     out.push("cwd_appears_misrooted");
@@ -3408,6 +4099,31 @@ function substrateIslandCodes(inputs: WarningInputs): readonly ScanWarningCode[]
   }
   if (hasAstroIslandsUnrendered(inputs.analysisCoverage)) {
     out.push("astro_islands_unrendered");
+  }
+  return out;
+}
+
+/**
+ * Sub-chain extracted from {@link computeScanWarnings} to keep its
+ * cognitive complexity under the lint cap. Emits per-token-style
+ * splits of `template_files_parsed_as_literal` whenever the
+ * corresponding overlap file list is non-empty. Each code fires
+ * independently and co-fires with the parent code; the parent fires
+ * on the broader frontmatter-OR-overlap predicate so frontmatter-only
+ * files surface on the parent alone. Emit order matches declaration
+ * order on {@link ScanWarningCode} for stable `warnings[]` sequencing:
+ * liquid first, erb second, curly-double third.
+ */
+function perStyleTemplateLiteralCodes(inputs: WarningInputs): readonly ScanWarningCode[] {
+  const out: ScanWarningCode[] = [];
+  if (inputs.liquidLiteralFiles !== undefined && inputs.liquidLiteralFiles.length > 0) {
+    out.push("liquid_directives_unparsed");
+  }
+  if (inputs.erbLiteralFiles !== undefined && inputs.erbLiteralFiles.length > 0) {
+    out.push("erb_directives_unparsed");
+  }
+  if (inputs.curlyDoubleLiteralFiles !== undefined && inputs.curlyDoubleLiteralFiles.length > 0) {
+    out.push("curly_double_directives_unparsed");
   }
   return out;
 }
@@ -3456,6 +4172,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
     // only.
     out.push("template_files_parsed_as_literal");
   }
+  // Per-style splits of `template_files_parsed_as_literal` — co-fire
+  // with the parent code when a per-style overlap subset is non-empty.
+  // Each independent: a corpus carrying `{%x%}` AND `<%x%>` in
+  // separate files surfaces both `liquid_directives_unparsed` AND
+  // `erb_directives_unparsed`. Frontmatter-only files (no directive
+  // overlap) surface on the parent code alone — the per-style codes
+  // measure overlap evidence, not parser-level substrate, so a file
+  // with a frontmatter fence and no directives doesn't appear here.
+  // Per AI-first doctrine "Routing skips that drop content are the
+  // symmetric twin of suppression" (split-by-predicate closure path):
+  // the parent code is a single bucket; the per-style codes ship the
+  // routing pivot at the warning-channel surface so an agent scoping
+  // around a specific engine reads the per-style file list directly
+  // without descending into `meta.analysisCoverage.templateInterpolationFound`.
+  out.push(...perStyleTemplateLiteralCodes(inputs));
   // Substrate-island code family — see `substrateIslandCodes`. Three
   // branches extracted into the helper so this function's cognitive
   // complexity stays under the lint cap as new substrate detectors
@@ -3612,6 +4343,21 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
   if (hasCodeDemoPropMatches(inputs.codeDemoPropMatches)) {
     out.push("jsx_code_demo_prop_parsed_as_live_dom");
   }
+  // Dynamic-content-container shell shape
+  // (`dynamic_content_container_detected`). Per AI-first doctrine
+  // "Zero-output success is ambiguous failure" the warning channel
+  // surfaces the substrate when an HTML page is structurally a
+  // runtime-render shell (empty `<div id>` mount + sibling external
+  // `<script src>`); without this code, a page where every interactive
+  // control is built at runtime reads as a clean scan when the truthful
+  // answer is "static scan cannot evaluate runtime-generated DOM."
+  // The predicate detector lives at the assembly seam
+  // (`./dynamic-content-container.ts`) so this module stays pure over
+  // its inputs — the call site materializes the per-file evidence list
+  // and the warnings module fires the code when the list is non-empty.
+  if (hasDynamicContentContainerEntries(inputs.dynamicContentContainerEntries)) {
+    out.push("dynamic_content_container_detected");
+  }
   return out;
 }
 
@@ -3625,6 +4371,22 @@ export function computeScanWarnings(inputs: WarningInputs): readonly ScanWarning
  */
 function hasCodeDemoPropMatches(matches: WarningInputs["codeDemoPropMatches"]): boolean {
   return matches !== undefined && matches.size > 0;
+}
+
+/**
+ * Predicate for `dynamic_content_container_detected`. Returns `true`
+ * when the caller-supplied per-file evidence list carries at least
+ * one entry — empty or undefined drops conservatively per AI-first
+ * doctrine "Empty `warningsDetails.<code>: {}` is dishonest." The
+ * shell-shape predicate (body child shape, empty mount-point, sibling
+ * external script) lives at the call site
+ * (`detectDynamicContentContainers` in `./dynamic-content-container.ts`);
+ * this module stays pure over its inputs.
+ */
+function hasDynamicContentContainerEntries(
+  entries: WarningInputs["dynamicContentContainerEntries"],
+): boolean {
+  return entries !== undefined && entries.length > 0;
 }
 
 /**
@@ -3930,6 +4692,45 @@ function hasBinaryAssetsSkipped(coverage: Record<string, unknown> | undefined): 
 }
 
 /**
+ * `parser_routable_extensions_skipped` predicate: at least one entry
+ * in `skippedByExtension` is a parser-routable text-island substrate
+ * (per {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}). Narrows the
+ * `text_source_skipped` parent to the actionable subset the agent
+ * could re-route via parser support — `.vue`, `.svelte`, `.coffee`,
+ * `.rmd`, `.feature`, `.hbs`, `.haml`, etc. Mutually independent of
+ * {@link hasConfigOrDataFilesSkipped} and
+ * {@link dominantUnsupportedLanguage}; the three peers carve up the
+ * text-source predicate space without overlap so a corpus mixing
+ * substrates with config files and ecosystem-foreign sources fires
+ * all three peers alongside the parent.
+ */
+function hasParserRoutableExtensionsSkipped(
+  coverage: Record<string, unknown> | undefined,
+): boolean {
+  const skipped = readSkippedMap(coverage);
+  for (const token of skipped.keys()) {
+    if (token.startsWith(".") && isParserRoutableTextIslandExtension(token)) return true;
+  }
+  return false;
+}
+
+/**
+ * `config_or_data_files_skipped` predicate: at least one entry in
+ * `skippedByExtension` is a config / data file extension (per
+ * {@link CONFIG_OR_DATA_EXTENSIONS}). Narrows the
+ * `text_source_skipped` parent to the data-only subset (`.json`,
+ * `.yml`, `.yaml`, `.toml`, `.csv`). Symmetric to
+ * {@link hasParserRoutableExtensionsSkipped}.
+ */
+function hasConfigOrDataFilesSkipped(coverage: Record<string, unknown> | undefined): boolean {
+  const skipped = readSkippedMap(coverage);
+  for (const token of skipped.keys()) {
+    if (token.startsWith(".") && isConfigOrDataExtension(token)) return true;
+  }
+  return false;
+}
+
+/**
  * `sourcemap_files_excluded` predicate: at least one `.map` path
  * appears under `analysisCoverage.sourcemapFiles`. The discovery
  * walker routes `.map` files into a dedicated bucket rather than
@@ -3954,6 +4755,55 @@ function hasSourcemapFilesExcluded(coverage: Record<string, unknown> | undefined
  */
 function hasDefaultExcludedArtifactPaths(coverage: Record<string, unknown> | undefined): boolean {
   return readDefaultExcludedArtifactPaths(coverage).length > 0;
+}
+
+/**
+ * `text_source_excluded_by_default_pattern` predicate: at least one
+ * entry appears under `analysisCoverage.excludedByPatternByExtension`
+ * with a positive count. The discovery walker pre-filters the
+ * recorded entries to parser-routable extensions only (gates on
+ * {@link import("../utils/path.ts").hasParseableExtension} before
+ * recording), so this predicate fires whenever the map is non-empty —
+ * any non-zero entry is by construction parser-routable file content
+ * the agent could re-route via `additionalPaths` or by relaxing the
+ * excluding pattern. Symmetric to {@link hasDefaultExcludedArtifactPaths}
+ * (which fires for build-artifact directory exclusions); the two
+ * predicates are independent so a heterogeneous corpus can fire both.
+ *
+ * Same fail-soft contract as {@link readSkippedMap} — any shape
+ * mismatch returns `false`; never throws.
+ */
+function hasTextSourceExcludedByDefaultPattern(
+  coverage: Record<string, unknown> | undefined,
+): boolean {
+  const map = readExcludedByPatternMap(coverage);
+  for (const count of map.values()) {
+    if (count > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Reads `excludedByPatternByExtension` as a numeric ext↦count map.
+ * Returns an empty map on any of "no coverage block", "no field",
+ * "wrong shape", so callers can operate on the returned map without
+ * re-checking shape invariants. Only keys whose values are numbers
+ * > 0 survive — the same hostile-input defense {@link readSkippedMap}
+ * applies.
+ */
+function readExcludedByPatternMap(
+  coverage: Record<string, unknown> | undefined,
+): ReadonlyMap<string, number> {
+  const out = new Map<string, number>();
+  if (coverage === undefined) return out;
+  const raw = coverage["excludedByPatternByExtension"];
+  if (raw === null || typeof raw !== "object") return out;
+  for (const [ext, count] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof count === "number" && count > 0 && typeof ext === "string" && ext.length > 0) {
+      out.set(ext, count);
+    }
+  }
+  return out;
 }
 
 /**
@@ -4218,48 +5068,208 @@ function shouldEmitTemplateFilesLiteral(inputs: WarningInputs): boolean {
 }
 
 /**
- * Matches any template-directive token on a line. Intentionally looser
- * than the per-file family classifier in
- * `src/mcp/analysis-coverage.ts::detectTemplateInterpolation` — here we only
- * need to know "does this line contain a directive the parser treated as
- * literal text?", not which family it belongs to.
+ * Per-style directive openers — used to classify which token style fired
+ * the overlap on a given line. `liquid` covers `{% ... %}` family
+ * (Jinja / Liquid / Nunjucks / Twig — the surface token is unambiguous
+ * across these dialects so the warning name picks the most common
+ * member); `erb` covers `<% ... %>` (ERB / EJS — likewise unambiguous);
+ * `curlyDouble` covers `{{ ... }}` (Handlebars / Mustache / Liquid plain
+ * interpolation / Jinja interpolation / Vue / Angular — the surface
+ * token is structurally ambiguous between these dialects, so the
+ * warning name is engine-agnostic and the payload's `reason` field
+ * names the ambiguity per AI-first doctrine "Heuristic-mislabeled meta
+ * sub-fields are dishonest").
  *
- * Three shapes count:
- *   - `{% ... %}` Jinja / Liquid / Nunjucks control blocks (plus the
- *     whitespace-control `{%-`, `-%}` variants).
- *   - `{{ ... }}` Handlebars / Mustache / Liquid interpolation (plus
- *     the Liquid whitespace-control `{{-`, `-}}` variant). We accept
- *     the interpolation unconditionally (no JSX-attribute-spread
- *     filter) because the `hasTemplateDirectives` gate upstream
- *     already confirmed directives were detected — at the overlap
- *     step we're asking "does this specific line carry one?" and a
- *     false positive would at worst keep the warning firing on a
- *     benign JSX spread, not hide a real one.
- *   - `<% ... %>` ERB / EJS.
- *
- * Pattern alternation is anchored by the distinctive opener so a line
- * containing a bare `{` inside JSX or literal text doesn't match.
+ * The per-style split exists so we can attribute each overlap to the
+ * dialect family the line carries, not to invent a per-engine
+ * classification we cannot honestly establish from the surface token
+ * alone. Each per-style entry matches an opener OR a closer for that
+ * style — file-level qualification (paired-token presence) is enforced
+ * separately by {@link presentPairedStyles} so a single-half match
+ * (e.g. `}}` from a nested at-rule closure in minified CSS) never
+ * counts as directive evidence.
  */
-const TEMPLATE_DIRECTIVE_LINE_RE = /\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>/;
+const TEMPLATE_DIRECTIVE_PER_STYLE_RE = {
+  liquid: /\{%-?|-?%\}/,
+  erb: /<%[=-]?|%>/,
+  curlyDouble: /\{\{-?|-?\}\}/,
+} as const;
+
+/**
+ * Per-style file-level paired-token presence predicates. Each style is
+ * counted on a file ONLY when the source contains BOTH a corresponding
+ * opener AND a corresponding closer somewhere in the file — i.e. the
+ * paired template-directive shape `{{ ... }}`, `{% ... %}`, or
+ * `<% ... %>`. The pairing need not be on the same line (multi-line
+ * directives like `{%-` … `-%}` block forms are common), but a file
+ * carrying only one half of the token pair never qualifies.
+ *
+ * This is the file-level honest-predicate gate that the per-line
+ * regexes in {@link TEMPLATE_DIRECTIVE_PER_STYLE_RE} cannot enforce on
+ * their own. Without the gate, minified CSS sources containing nested
+ * at-rule closures like `@media{.a{x:y}}` falsely match the curly-
+ * double closer pattern (`}}`) on a single-line minified payload, even
+ * though the source contains no `{{` opener and no template directive.
+ * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+ * dishonest" — the per-style codes name a deterministic classification
+ * (`{{ ... }}` directives present), so the predicate must require the
+ * paired evidence the surface name promises.
+ *
+ * The opener/closer alternation tolerates the whitespace-control
+ * variants (`{{-` / `-}}` for Liquid, `{%-` / `-%}` for Liquid /
+ * Jinja / Nunjucks, `<%=` / `<%-` for ERB) so a file using only the
+ * trim variants still qualifies.
+ */
+const TEMPLATE_DIRECTIVE_PER_STYLE_OPENER_RE: Readonly<Record<TemplateDirectiveStyle, RegExp>> = {
+  liquid: /\{%-?/,
+  erb: /<%[=-]?/,
+  curlyDouble: /\{\{-?/,
+};
+const TEMPLATE_DIRECTIVE_PER_STYLE_CLOSER_RE: Readonly<Record<TemplateDirectiveStyle, RegExp>> = {
+  liquid: /-?%\}/,
+  erb: /%>/,
+  curlyDouble: /-?\}\}/,
+};
+
+/**
+ * Path-anchored carve-out: minified-stylesheet basenames
+ * (`.min.css`, `.min.scss`) are definitionally not template directive
+ * substrates. Without the carve-out, single-line minified CSS payloads
+ * containing nested at-rule closures (`@media{.a{x:y}}`) trip the
+ * `}}` half of the curly-double closer pattern and emit
+ * `curly_double_directives_unparsed` (and the parent
+ * `template_files_parsed_as_literal`) on files that contain zero
+ * template directives.
+ *
+ * Path-level rather than content-level because the predicate is
+ * structurally true: a file authored as `.min.css` / `.min.scss` is
+ * post-processor output, not a template source. Per AI-first doctrine
+ * "Heuristic-mislabeled meta sub-fields are dishonest" — the code's
+ * surface name promises a deterministic classification, so files where
+ * the predicate is structurally false (minified stylesheets) must be
+ * excluded by construction. Belt-and-suspenders companion to the
+ * paired-token file-level gate above; either one would catch the
+ * canonical regression alone but path-anchoring keeps the predicate
+ * cheap on bulk vendor catalogs (no per-line regex pass needed for
+ * the excluded files).
+ */
+const MINIFIED_STYLESHEET_PATH_RE = /\.min\.(?:css|scss)$/iu;
+
+/**
+ * Token-style discriminator for {@link computeTemplateDirectiveOverlap}'s
+ * per-style overlap file map. Each key names the directive shape the
+ * line carries; payload codes route by this discriminator.
+ */
+export type TemplateDirectiveStyle = keyof typeof TEMPLATE_DIRECTIVE_PER_STYLE_RE;
+
+/**
+ * Returns the styles for which `source` contains BOTH a corresponding
+ * opener AND a corresponding closer — the file-level paired-token
+ * predicate that gates the per-line scans below. A file that carries
+ * only one half of the pair (canonically: minified CSS like
+ * `@media{.a{x:y}}` matching `}}` but with no `{{` opener) does not
+ * qualify for any style and is treated as having no directive lines.
+ *
+ * Pure over its input. Cheap (one regex `.test()` per opener and
+ * closer per style; six tests total).
+ */
+function presentPairedStyles(source: string): ReadonlySet<TemplateDirectiveStyle> {
+  const out = new Set<TemplateDirectiveStyle>();
+  if (source.length === 0) return out;
+  const styles: readonly TemplateDirectiveStyle[] = ["liquid", "erb", "curlyDouble"];
+  for (const style of styles) {
+    if (
+      TEMPLATE_DIRECTIVE_PER_STYLE_OPENER_RE[style].test(source) &&
+      TEMPLATE_DIRECTIVE_PER_STYLE_CLOSER_RE[style].test(source)
+    ) {
+      out.add(style);
+    }
+  }
+  return out;
+}
 
 /**
  * Set of 1-based line numbers in `source` that contain at least one
  * template-directive opener or closer. Pure over its input; used by
  * {@link computeTemplateDirectiveOverlap} to decide whether an emitted
  * finding's line sits inside the literal-parsed region.
+ *
+ * Gated by the file-level paired-token predicate
+ * {@link presentPairedStyles}: a file that carries only one half of a
+ * directive token pair (e.g. a minified CSS source matching `}}` from
+ * a nested at-rule closure but no `{{` opener) never has any directive
+ * line counted. The optional `paired` parameter lets the caller thread
+ * the pre-computed style set so this function and
+ * {@link templateDirectiveLinesByStyle} share the same file-level
+ * decision; when omitted, the predicate is computed locally.
  */
-function templateDirectiveLines(source: string): ReadonlySet<number> {
+function templateDirectiveLines(
+  source: string,
+  paired?: ReadonlySet<TemplateDirectiveStyle>,
+): ReadonlySet<number> {
   const out = new Set<number>();
   if (source.length === 0) return out;
+  const styles = paired ?? presentPairedStyles(source);
+  if (styles.size === 0) return out;
   const lines = source.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i];
-    if (lineText !== undefined && TEMPLATE_DIRECTIVE_LINE_RE.test(lineText)) {
-      // Line numbers in `Violation.location.line` are 1-based.
-      out.add(i + 1);
+    if (lineText === undefined) continue;
+    // Only count a line as directive-bearing if at least one of the
+    // PRESENT-PAIRED styles matches it. A line carrying `}}` in a
+    // minified CSS file with no `{{` opener does NOT qualify — that
+    // style was filtered out at the file-level gate.
+    for (const style of styles) {
+      if (TEMPLATE_DIRECTIVE_PER_STYLE_RE[style].test(lineText)) {
+        out.add(i + 1);
+        break;
+      }
     }
   }
   return out;
+}
+
+/**
+ * Per-style line-set companion to {@link templateDirectiveLines}. Returns
+ * three sets keyed by token-style discriminator — `liquid` for
+ * `{% ... %}` family lines, `erb` for `<% ... %>` family lines,
+ * `curlyDouble` for `{{ ... }}` family lines. A single line carrying
+ * multiple styles (rare but legal — e.g. `{% if x %}{{ y }}{% endif %}`)
+ * appears in every matching set so the per-style warning attribution
+ * stays honest with the line evidence. Pure over its input.
+ *
+ * Gated by the file-level paired-token predicate
+ * {@link presentPairedStyles}: a style whose opener+closer pair is not
+ * present in the source contributes the empty set, so a minified CSS
+ * file matching `}}` without a `{{` opener never reports any
+ * curly-double lines. The optional `paired` parameter lets the caller
+ * thread the pre-computed style set; when omitted, the predicate is
+ * computed locally.
+ */
+function templateDirectiveLinesByStyle(
+  source: string,
+  paired?: ReadonlySet<TemplateDirectiveStyle>,
+): Readonly<Record<TemplateDirectiveStyle, ReadonlySet<number>>> {
+  const liquid = new Set<number>();
+  const erb = new Set<number>();
+  const curlyDouble = new Set<number>();
+  if (source.length === 0) return { liquid, erb, curlyDouble };
+  const styles = paired ?? presentPairedStyles(source);
+  if (styles.size === 0) return { liquid, erb, curlyDouble };
+  const lines = source.split("\n");
+  const checkLiquid = styles.has("liquid");
+  const checkErb = styles.has("erb");
+  const checkCurlyDouble = styles.has("curlyDouble");
+  for (let i = 0; i < lines.length; i++) {
+    const lineText = lines[i];
+    if (lineText === undefined) continue;
+    const lineNum = i + 1;
+    if (checkLiquid && TEMPLATE_DIRECTIVE_PER_STYLE_RE.liquid.test(lineText)) liquid.add(lineNum);
+    if (checkErb && TEMPLATE_DIRECTIVE_PER_STYLE_RE.erb.test(lineText)) erb.add(lineNum);
+    if (checkCurlyDouble && TEMPLATE_DIRECTIVE_PER_STYLE_RE.curlyDouble.test(lineText))
+      curlyDouble.add(lineNum);
+  }
+  return { liquid, erb, curlyDouble };
 }
 
 /**
@@ -4286,27 +5296,62 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
 export function computeTemplateDirectiveOverlap(args: {
   readonly findings: Iterable<{ readonly filePath: string; readonly line: number }>;
   readonly sourcesByPath: ReadonlyMap<string, string>;
-}): { readonly overlap: boolean; readonly overlapFiles: ReadonlySet<string> } {
+}): {
+  readonly overlap: boolean;
+  readonly overlapFiles: ReadonlySet<string>;
+  readonly overlapByStyle: Readonly<Record<TemplateDirectiveStyle, ReadonlySet<string>>>;
+} {
   const linesByPath = new Map<string, ReadonlySet<number>>();
+  const linesByStyleByPath = new Map<
+    string,
+    Readonly<Record<TemplateDirectiveStyle, ReadonlySet<number>>>
+  >();
   const overlapFiles = new Set<string>();
+  const liquidFiles = new Set<string>();
+  const erbFiles = new Set<string>();
+  const curlyDoubleFiles = new Set<string>();
   for (const finding of args.findings) {
     let directiveLines = linesByPath.get(finding.filePath);
-    if (directiveLines === undefined) {
+    let perStyleLines = linesByStyleByPath.get(finding.filePath);
+    if (directiveLines === undefined || perStyleLines === undefined) {
       const source = args.sourcesByPath.get(finding.filePath);
-      if (source === undefined) {
+      if (source === undefined || MINIFIED_STYLESHEET_PATH_RE.test(finding.filePath)) {
         // The file doesn't live in our parsed-file index (e.g. a
-        // synthetic finding targeting a generated path). Record an
-        // empty set so we don't repeat the lookup, and move on —
-        // without source we cannot prove overlap.
+        // synthetic finding targeting a generated path), OR the file
+        // is a minified stylesheet (`.min.css` / `.min.scss`) — by
+        // construction not a template-directive substrate. Record
+        // empty sets so we don't repeat the lookup or emit a spurious
+        // overlap on `}}` from nested at-rule closures.
         directiveLines = new Set<number>();
+        perStyleLines = {
+          liquid: new Set<number>(),
+          erb: new Set<number>(),
+          curlyDouble: new Set<number>(),
+        };
       } else {
-        directiveLines = templateDirectiveLines(source);
+        // Compute the file-level paired-token predicate ONCE per file
+        // and thread it into both helpers so they share the decision.
+        const paired = presentPairedStyles(source);
+        directiveLines = templateDirectiveLines(source, paired);
+        perStyleLines = templateDirectiveLinesByStyle(source, paired);
       }
       linesByPath.set(finding.filePath, directiveLines);
+      linesByStyleByPath.set(finding.filePath, perStyleLines);
     }
     if (directiveLines.has(finding.line)) overlapFiles.add(finding.filePath);
+    if (perStyleLines.liquid.has(finding.line)) liquidFiles.add(finding.filePath);
+    if (perStyleLines.erb.has(finding.line)) erbFiles.add(finding.filePath);
+    if (perStyleLines.curlyDouble.has(finding.line)) curlyDoubleFiles.add(finding.filePath);
   }
-  return { overlap: overlapFiles.size > 0, overlapFiles };
+  return {
+    overlap: overlapFiles.size > 0,
+    overlapFiles,
+    overlapByStyle: {
+      liquid: liquidFiles,
+      erb: erbFiles,
+      curlyDouble: curlyDoubleFiles,
+    },
+  };
 }
 
 /**
@@ -4344,6 +5389,16 @@ type ScanMetaWarningArgs = {
    * warnings module stays pure over its inputs.
    */
   readonly templateLiteralFiles?: readonly string[];
+  /**
+   * Pass-through for the per-style `{% ... %}` overlap subset. Drives
+   * `warningsDetails.liquid_directives_unparsed`. See
+   * {@link WarningInputs.liquidLiteralFiles}.
+   */
+  readonly liquidLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly erbLiteralFiles?: readonly string[];
+  /** see {@link liquidLiteralFiles}. */
+  readonly curlyDoubleLiteralFiles?: readonly string[];
   readonly additionalPathsRedundant?: boolean;
   /**
    * Pass-through for the per-input redundant-paths list that drives the
@@ -4359,6 +5414,18 @@ type ScanMetaWarningArgs = {
    * {@link WarningInputs.configSearchedFromForWarning}.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Pass-through for the present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom`. See
+   * {@link WarningInputs.noConfigFoundCallerCwd}.
+   */
+  readonly noConfigFoundCallerCwd?: string;
+  /**
+   * Pass-through for the present-when-meaningful gate on
+   * `warningsDetails.no_config_found.searchedFrom`. See
+   * {@link WarningInputs.noConfigFoundScannedRoot}.
+   */
+  readonly noConfigFoundScannedRoot?: string;
   readonly metaArrayTruncatedFields?: readonly string[];
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
@@ -4446,6 +5513,15 @@ type ScanMetaWarningArgs = {
    * other tools leave it undefined.
    */
   readonly scanFileParserBailNoFindings?: WarningInputs["scanFileParserBailNoFindings"];
+  /**
+   * Pass-through for the per-file evidence list that drives
+   * `dynamic_content_container_detected`. See
+   * {@link WarningInputs.dynamicContentContainerEntries} for the contract.
+   * The detector runs at the assembly seam (`detectDynamicContentContainers`
+   * in `./dynamic-content-container.ts`) so this module stays pure over
+   * its inputs.
+   */
+  readonly dynamicContentContainerEntries?: WarningInputs["dynamicContentContainerEntries"];
 };
 
 /**
@@ -4469,11 +5545,16 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "vendorCssNoise",
   "templateDirectivesOverlap",
   "templateLiteralFiles",
+  "liquidLiteralFiles",
+  "erbLiteralFiles",
+  "curlyDoubleLiteralFiles",
   "additionalPathsRedundant",
   "redundantAdditionalPathsList",
   "restrictToPathsEmpty",
   "configSearchSawProjectMarker",
   "configSearchedFromForWarning",
+  "noConfigFoundCallerCwd",
+  "noConfigFoundScannedRoot",
   "metaArrayTruncatedFields",
   "scssUnresolvedVariableFiles",
   "scannedMinifiedFiles",
@@ -4489,6 +5570,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "parserBailedJsTsxRouteFiles",
   "perRuleCoverageUniformlyHighWithParseErrors",
   "scanFileParserBailNoFindings",
+  "dynamicContentContainerEntries",
 ] as const satisfies readonly (keyof ScanMetaWarningArgs & keyof WarningInputs)[];
 
 /**
@@ -4553,22 +5635,7 @@ function buildScanWarningDetailsDispatch(
   inputs: WarningInputs,
 ): readonly ScanWarningDetailsDispatchRow[] {
   return [
-    {
-      code: "text_source_skipped",
-      summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "binary_assets_skipped",
-      summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
-    },
-    {
-      code: "sourcemap_files_excluded",
-      summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
-    },
-    {
-      code: "default_excluded_artifact_paths",
-      summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
-    },
+    ...discoverySkipDispatchRows(inputs),
     {
       code: "content_files_skipped",
       summarize: () => summarizeContentFiles(inputs.analysisCoverage),
@@ -4584,6 +5651,10 @@ function buildScanWarningDetailsDispatch(
     {
       code: "parse_errors_present",
       summarize: () => summarizeParseErrors(inputs.analysisCoverage),
+    },
+    {
+      code: "partial_parse_files_present",
+      summarize: () => summarizePartialParseFilesPresent(inputs.analysisCoverage),
     },
     {
       code: "parser_bailed_zero_findings",
@@ -4613,10 +5684,7 @@ function buildScanWarningDetailsDispatch(
       code: "scanned_minified_file",
       summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
     },
-    {
-      code: "template_files_parsed_as_literal",
-      summarize: () => summarizeTemplateFilesParsedAsLiteral(inputs.templateLiteralFiles),
-    },
+    ...templateLiteralDispatchRows(inputs),
     {
       code: "bulk_catalog_detected",
       summarize: () => summarizeBulkCatalog(inputs.bulkCatalogDetection),
@@ -4625,13 +5693,10 @@ function buildScanWarningDetailsDispatch(
       code: "animation_library_without_reduced_motion_guard",
       summarize: () => summarizeAnimationLibraryGuard(inputs.animationLibraryGuardCandidates),
     },
-    {
-      code: "cwd_appears_misrooted",
-      summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
-    },
+    ...scanShapeDispatchRows(inputs),
     {
       code: "no_config_found",
-      summarize: () => summarizeNoConfigFound(inputs.configSearchedFromForWarning),
+      summarize: () => summarizeNoConfigFoundFromInputs(inputs),
     },
     {
       code: "redundant_additional_paths",
@@ -4653,6 +5718,11 @@ function buildScanWarningDetailsDispatch(
       code: "jsx_code_demo_prop_parsed_as_live_dom",
       summarize: () => summarizeJsxCodeDemoPropParsedAsLiveDom(inputs.codeDemoPropMatches),
     },
+    {
+      code: "dynamic_content_container_detected",
+      summarize: () =>
+        summarizeDynamicContentContainerDetected(inputs.dynamicContentContainerEntries),
+    },
     ...linkedStylesheetDispatchRows(inputs),
     {
       code: "scan_file_parser_bail_no_findings",
@@ -4661,6 +5731,78 @@ function buildScanWarningDetailsDispatch(
     {
       code: "parser_bailed_on_non_jsx_in_tsx_route",
       summarize: () => summarizeParserBailedOnNonJsxInTsxRoute(inputs.parserBailedJsTsxRouteFiles),
+    },
+  ];
+}
+
+/**
+ * Template-literal dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the file-budget effective-line cap. Pairs the parent
+ * `template_files_parsed_as_literal` row with the three per-token-style
+ * payload rows; all four route off the same overlap-derived per-style
+ * file lists threaded onto `WarningInputs`. Order matches declaration
+ * order on {@link ScanWarningCode} for stable wire-key sequencing:
+ * parent first, then liquid / erb / curly_double.
+ */
+function templateLiteralDispatchRows(
+  inputs: WarningInputs,
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "template_files_parsed_as_literal",
+      summarize: () => summarizeTemplateFilesParsedAsLiteral(inputs.templateLiteralFiles),
+    },
+    {
+      code: "liquid_directives_unparsed",
+      summarize: () => summarizeLiquidDirectivesUnparsed(inputs.liquidLiteralFiles),
+    },
+    {
+      code: "erb_directives_unparsed",
+      summarize: () => summarizeErbDirectivesUnparsed(inputs.erbLiteralFiles),
+    },
+    {
+      code: "curly_double_directives_unparsed",
+      summarize: () => summarizeCurlyDoubleDirectivesUnparsed(inputs.curlyDoubleLiteralFiles),
+    },
+  ];
+}
+
+/**
+ * Scan-shape dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the file-budget effective-line cap. Pairs the two scan-shape
+ * codes whose payloads ride on the same set of build-artifact-summary
+ * + filesScanned + nearestConfigAncestor inputs:
+ *
+ *   - `build_artifact_only_scan_detected` — fires when every parsed
+ *     file was classified as a build artifact; payload carries the
+ *     dominant classifier reason + top-N pivot.
+ *   - `cwd_appears_misrooted` — fires when filesScanned is zero AND
+ *     a strict-ancestor project marker resolved; payload carries the
+ *     ancestor path the agent re-scopes to.
+ *
+ * Order matches declaration order on {@link ScanWarningCode} for
+ * stable wire-key sequencing across runs.
+ */
+function scanShapeDispatchRows(inputs: WarningInputs): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "build_artifact_only_scan_detected",
+      summarize: () =>
+        summarizeBuildArtifactOnlyScanDetected({
+          ...(inputs.scannedBuildArtifactsAllFiles === undefined
+            ? {}
+            : { scannedBuildArtifactsAllFiles: inputs.scannedBuildArtifactsAllFiles }),
+          filesScanned: inputs.filesScanned,
+          ...(inputs.scannedBuildArtifactsSummary === undefined
+            ? {}
+            : { scannedBuildArtifactsSummary: inputs.scannedBuildArtifactsSummary }),
+        }),
+    },
+    {
+      code: "cwd_appears_misrooted",
+      summarize: () => summarizeCwdAppearsMisrooted(inputs.nearestConfigAncestor),
     },
   ];
 }
@@ -4692,6 +5834,62 @@ function linkedStylesheetDispatchRows(
       code: "template_expression_in_href",
       summarize: () =>
         summarizeTemplateExpressionInHref(inputs.linkedStylesheetsUnresolvedForContrast),
+    },
+  ];
+}
+
+/**
+ * Discovery-skip dispatch rows extracted from
+ * {@link buildScanWarningDetailsDispatch} so the orchestrator stays
+ * under the per-function effective-line cap (same pattern as
+ * {@link templateLiteralDispatchRows} / {@link scanShapeDispatchRows} /
+ * {@link linkedStylesheetDispatchRows}). Pairs each
+ * `skippedByExtension`-derived code with its summarizer:
+ *
+ *   - `text_source_skipped` — parent presence bit covering every
+ *     non-binary skipped extension.
+ *   - `parser_routable_extensions_skipped` — predicate-narrowed peer
+ *     for parser-routable text-island substrates (the agent's lever).
+ *   - `config_or_data_files_skipped` — predicate-narrowed peer for
+ *     config / data file extensions.
+ *   - `binary_assets_skipped` — image/font/audio/video/archive subset.
+ *   - `sourcemap_files_excluded` — `.map` sourcemap subset.
+ *   - `default_excluded_artifact_paths` — build-artifact directories.
+ *
+ * Order matches declaration order on {@link ScanWarningCode} for
+ * stable wire-key sequencing across runs.
+ */
+function discoverySkipDispatchRows(
+  inputs: WarningInputs,
+): readonly ScanWarningDetailsDispatchRow[] {
+  return [
+    {
+      code: "text_source_skipped",
+      summarize: () => summarizeTextSourceSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "parser_routable_extensions_skipped",
+      summarize: () => summarizeParserRoutableExtensionsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "config_or_data_files_skipped",
+      summarize: () => summarizeConfigOrDataFilesSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "binary_assets_skipped",
+      summarize: () => summarizeBinaryAssetsSkipped(inputs.analysisCoverage),
+    },
+    {
+      code: "sourcemap_files_excluded",
+      summarize: () => summarizeSourcemapFilesExcluded(inputs.analysisCoverage),
+    },
+    {
+      code: "default_excluded_artifact_paths",
+      summarize: () => summarizeDefaultExcludedArtifactPaths(inputs.analysisCoverage),
+    },
+    {
+      code: "text_source_excluded_by_default_pattern",
+      summarize: () => summarizeTextSourceExcludedByDefaultPattern(inputs.analysisCoverage),
     },
   ];
 }
@@ -4903,6 +6101,144 @@ function summarizeScannedBuildArtifacts(summary: WarningInputs["scannedBuildArti
 }
 
 /**
+ * Builds the `build_artifact_only_scan_detected` payload. The predicate fires
+ * only when `scannedBuildArtifactsAllFiles === true && filesScanned > 0`,
+ * so the bare scan-shape signal is always honest; the payload adds
+ * the routing pivot the agent reads to triage which generated tree
+ * to re-scope around. Returns `undefined` when the predicate did not
+ * fire (defensive — the dispatch table only invokes this for codes
+ * `computeScanWarnings` actually emitted, but the helper stays pure).
+ *
+ * - `filesScanned` always rides (the predicate gate guarantees > 0).
+ * - `classifierReason` rides as the dominant
+ *   {@link import("./build-artifacts.ts").BuildArtifactClassification}
+ *   token across the per-entry list — a deterministic argmax over
+ *   the `top` slice's classifications. Conditional-spread per AI-first
+ *   "Heuristic-mislabeled meta sub-fields are dishonest" — omitted
+ *   when the build-artifact summary is absent (the warning fires
+ *   off the bare boolean alone in derivative-tool surfaces that don't
+ *   thread the per-entry list).
+ * - `top` mirrors `scanned_build_artifacts_present.top` so an agent
+ *   reading either code's payload gets the same load-bearing pivot
+ *   for the build-artifact-only triage.
+ */
+function summarizeBuildArtifactOnlyScanDetected(inputs: {
+  readonly scannedBuildArtifactsAllFiles?: boolean;
+  readonly filesScanned: number;
+  readonly scannedBuildArtifactsSummary?: WarningInputs["scannedBuildArtifactsSummary"];
+}):
+  | {
+      readonly filesScanned: number;
+      readonly classifierReason?: import("./build-artifacts.ts").BuildArtifactClassification;
+      readonly top?: readonly {
+        readonly path: string;
+        readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+      }[];
+    }
+  | undefined {
+  if (inputs.scannedBuildArtifactsAllFiles !== true) return undefined;
+  if (inputs.filesScanned <= 0) return undefined;
+  const summary = inputs.scannedBuildArtifactsSummary;
+  const top = summary?.top;
+  // Deterministic argmax over the `top` slice's classifier reasons —
+  // alphabetical tie-break across equal-frequency tokens so the wire
+  // shape stays stable across runs even when two reasons tie for the
+  // dominant slot. Empty-when-unavailable: the field omits when
+  // `top` is absent so the agent reads "warning fired but the
+  // build-artifact summary wasn't threaded on this surface" via the
+  // missing field, not a misleading `null`.
+  const classifierReason = top !== undefined && top.length > 0 ? dominantReason(top) : undefined;
+  return {
+    filesScanned: inputs.filesScanned,
+    ...(classifierReason === undefined ? {} : { classifierReason }),
+    ...(top === undefined || top.length === 0 ? {} : { top }),
+  };
+}
+
+/**
+ * Returns the lexically-smallest most-frequent
+ * {@link import("./build-artifacts.ts").BuildArtifactClassification}
+ * token across the supplied `{path, reason}` records — the
+ * deterministic argmax used by
+ * {@link summarizeBuildArtifactOnlyScanDetected.classifierReason}. Tie-break
+ * is alphabetical (every classification token is a stable kebab-case
+ * identifier), so the wire shape stays consistent across runs even
+ * when two reasons tie. Pure over its input; no I/O.
+ */
+function dominantReason(
+  top: readonly {
+    readonly path: string;
+    readonly reason: import("./build-artifacts.ts").BuildArtifactClassification;
+  }[],
+): import("./build-artifacts.ts").BuildArtifactClassification {
+  const counts = new Map<import("./build-artifacts.ts").BuildArtifactClassification, number>();
+  for (const entry of top) {
+    counts.set(entry.reason, (counts.get(entry.reason) ?? 0) + 1);
+  }
+  let best: import("./build-artifacts.ts").BuildArtifactClassification | undefined;
+  let bestCount = -1;
+  // Sorting the keys before iteration guarantees the alphabetical
+  // tie-break — without it, Map iteration order is insertion order
+  // and the argmax would drift with the upstream classifier's emit
+  // order.
+  const keys = [...counts.keys()].sort();
+  for (const key of keys) {
+    const count = counts.get(key) ?? 0;
+    if (count > bestCount) {
+      bestCount = count;
+      best = key;
+    }
+  }
+  // The non-empty-input contract above ensures `best` is always
+  // defined here; the `as` cast is a type-narrowing convenience.
+  return best as import("./build-artifacts.ts").BuildArtifactClassification;
+}
+
+/**
+ * Builds the `partial_parse_files_present` payload from the
+ * analysis-coverage block. The predicate fires off
+ * `partialParseFileCount > 0` (independent of `parseErrorFileCount`),
+ * so the payload always carries the load-bearing scalar and — when
+ * the coverage block populated it — the per-parser breakdown lifted
+ * from `partialParseByParser`. Returns `undefined` when the coverage
+ * block is absent or the count is zero (defensive — the dispatch
+ * table only invokes this for codes `computeScanWarnings` actually
+ * emitted, but the helper stays pure).
+ *
+ * Per AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+ * dishonest" — without this payload, the bare code names "partial
+ * parses happened somewhere" but the agent must descend into
+ * `meta.analysisCoverage.partialParseFiles[]` to enumerate them, and
+ * on bulk-vendor corpora that array may have been replaced by the
+ * `partialParseTopReasons` rollup so the per-file identity stays
+ * absent. The payload's per-parser breakdown lets the agent answer
+ * "is every .mdx file partial-parsing?" without paging through the
+ * per-file array.
+ *
+ * Pairs structurally with
+ * {@link summarizeParseErrors} (the union code's payload carries the
+ * same scalar in its `partialParseFileCount` slot); this code is the
+ * more specific predicate that fires on the partial-parse subset
+ * alone.
+ */
+function summarizePartialParseFilesPresent(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly partialParseFileCount: number;
+      readonly partialParseByParser?: Readonly<Record<string, number>>;
+    }
+  | undefined {
+  if (coverage === undefined) return undefined;
+  const partial = coverage["partialParseFileCount"];
+  const partialParseFileCount = typeof partial === "number" && partial > 0 ? partial : 0;
+  if (partialParseFileCount === 0) return undefined;
+  const partialParseByParser = readNonEmptyParserMap(coverage, "partialParseByParser");
+  return {
+    partialParseFileCount,
+    ...(partialParseByParser === undefined ? {} : { partialParseByParser }),
+  };
+}
+
+/**
  * Builds the `scss_unresolved_variables` payload from the caller-
  * supplied file list. Returns `undefined` when the list is missing
  * or empty so the dispatch table conditional-spreads the entry away
@@ -4980,6 +6316,56 @@ function summarizeTemplateFilesParsedAsLiteral(
     if (ext.length > 1) extSet.add(ext);
   }
   return { files: sortedFiles, extensions: [...extSet].sort() };
+}
+
+/**
+ * Builds the `liquid_directives_unparsed` payload from the caller-
+ * supplied per-style file list. Returns `undefined` when the list is
+ * absent or empty so the dispatch falls through to the
+ * schema-discipline sentinel — populating an empty `{}` would lie per
+ * AI-first doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+ * `files` is sorted alphabetically for deterministic wire output.
+ */
+function summarizeLiquidDirectivesUnparsed(
+  files: WarningInputs["liquidLiteralFiles"],
+): NonNullable<ScanWarningDetails["liquid_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return { fileCount: sortedFiles.length, files: sortedFiles };
+}
+
+/** see {@link summarizeLiquidDirectivesUnparsed}. */
+function summarizeErbDirectivesUnparsed(
+  files: WarningInputs["erbLiteralFiles"],
+): NonNullable<ScanWarningDetails["erb_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return { fileCount: sortedFiles.length, files: sortedFiles };
+}
+
+/**
+ * Builds the `curly_double_directives_unparsed` payload — same shape as
+ * {@link summarizeLiquidDirectivesUnparsed} with an additional `reason`
+ * field naming the dialect ambiguity per AI-first doctrine "Heuristic-
+ * mislabeled meta sub-fields are dishonest." The `{{ ... }}` token is
+ * structurally ambiguous between Handlebars / Mustache / Liquid plain
+ * interpolation / Jinja interpolation / Vue / Angular; the warning
+ * surface name is engine-agnostic and the `reason` field makes the
+ * ambiguity explicit so the agent reads the file to pick a dialect.
+ */
+function summarizeCurlyDoubleDirectivesUnparsed(
+  files: WarningInputs["curlyDoubleLiteralFiles"],
+): NonNullable<ScanWarningDetails["curly_double_directives_unparsed"]> | undefined {
+  if (files === undefined || files.length === 0) return undefined;
+  const sortedFiles = [...files].sort();
+  return {
+    fileCount: sortedFiles.length,
+    files: sortedFiles,
+    reason:
+      "{{ ... }} is structurally ambiguous between Handlebars, Mustache, " +
+      "Liquid plain interpolation, Jinja interpolation, Vue, and Angular — " +
+      "read the cited files to disambiguate dialect.",
+  };
 }
 
 /**
@@ -5073,25 +6459,56 @@ function summarizeCwdAppearsMisrooted(
 
 /**
  * Builds the `no_config_found` payload from the caller-supplied
- * `configSearchedFromForWarning` path. Returns `undefined` when the
- * input is absent or empty so the dispatch table conditional-spreads
- * the entry away — the bare code still carries the signal in that case
- * (the predicate that fires the code is independent from this payload
- * helper). Pure shape-builder; surfaces the value the loader was
- * handed without re-walking.
+ * `configSearchedFromForWarning` path, applying the present-when-
+ * meaningful predicate from the meta-channel sibling
+ * {@link import("./scanner-meta.ts").configSearchedFromField}: when
+ * the search base equals the caller-supplied `cwd` OR the resolved
+ * `scanned.root` (the common case — both already ride on the
+ * response), the rich `{ searchedFrom }` payload would just echo an
+ * input the agent has and the helper returns `{}` (the
+ * {@link BinaryPresenceMarker} shape) so the bare warning code
+ * carries the signal.
+ *
+ * Returns `undefined` when the search base input is absent or empty so
+ * the dispatch table falls through to the disambiguating truncation
+ * sentinel (`{ truncated: true, reason: "summarizer_inputs_unavailable" }`)
+ * — a payload-bearing slot whose summarizer was called without inputs
+ * is structurally distinct from the dual-shape "redundant payload
+ * dropped" case the empty record signals.
+ *
+ * Pure shape-builder; surfaces the value the loader was handed without
+ * re-walking.
  *
  * Drives the cross-surface invariant: every project-rooted tool that
  * emits `no_config_found` ships the same `searchedFrom: cwd` payload
- * so the agent has one canonical answer regardless of which tool
- * emitted the warning. Closes the inconsistency where some emitters
- * left the agent re-deriving the search root from `scanned.root` /
- * `meta.cwd` / response-level `cwd`.
+ * (or the empty record when redundant) so the agent has one canonical
+ * answer regardless of which tool emitted the warning. Closes the
+ * inconsistency where some emitters left the agent re-deriving the
+ * search root from `scanned.root` / `meta.cwd` / response-level `cwd`.
+ *
+ * See `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
+ * signal, not clutter — `configSearchedFrom` is present-when-meaningful,
+ * omitted when it would just echo the caller's `cwd` or a `scanned.root`
+ * already in the response."
  */
 function summarizeNoConfigFound(
   searchedFrom: WarningInputs["configSearchedFromForWarning"],
+  callerCwd: WarningInputs["noConfigFoundCallerCwd"],
+  scannedRoot: WarningInputs["noConfigFoundScannedRoot"],
 ): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
   if (typeof searchedFrom !== "string" || searchedFrom.length === 0) return undefined;
-  return { searchedFrom };
+  return noConfigFoundWarningDetail({ searchedFrom, callerCwd, scannedRoot });
+}
+
+/** {@link buildScanWarningDetailsDispatch} adapter — one-liner row in the table. */
+function summarizeNoConfigFoundFromInputs(
+  inputs: WarningInputs,
+): NonNullable<ScanWarningDetails["no_config_found"]> | undefined {
+  return summarizeNoConfigFound(
+    inputs.configSearchedFromForWarning,
+    inputs.noConfigFoundCallerCwd,
+    inputs.noConfigFoundScannedRoot,
+  );
 }
 
 /**
@@ -5254,6 +6671,49 @@ function summarizeJsxCodeDemoPropParsedAsLiveDom(
     fileCount,
     files: trimmed,
     propNames: [...corpusPropNames].sort(),
+  };
+}
+
+/**
+ * Hard cap on the number of per-file evidence records surfaced on
+ * `warningsDetails.dynamic_content_container_detected.files`. Mirrors
+ * {@link CODE_DEMO_PROP_FILES_CAP} — twenty entries are enough for an
+ * agent to see whether the runtime-render shells cluster by directory
+ * (every `examples/<demo>/index.html` matches the canonical shape) or
+ * are heterogeneous one-offs without re-reading every cited file.
+ * `fileCount` carries the authoritative scalar at every wire shape,
+ * so the cap is a wire-shape concern only.
+ */
+const DYNAMIC_CONTENT_CONTAINER_FILES_CAP = 20;
+
+/**
+ * Builds the `dynamic_content_container_detected` payload from the
+ * caller-supplied per-file evidence list. Returns `undefined` when the
+ * list is absent or empty so the dispatch table conditional-spreads
+ * the entry away — the warning code's predicate fires off the same
+ * list, so the payload-and-code never disagree (per AI-first doctrine
+ * "Empty `warningsDetails.<code>: {}` is dishonest").
+ *
+ * Per-file records arrive sorted-ascending by path from the detector;
+ * the summarizer re-sorts defensively (cheap on a presorted array) so
+ * the wire shape stays deterministic regardless of upstream order.
+ * `fileCount` is the authoritative count (distinct from `files.length`
+ * only when the cap trims).
+ */
+function summarizeDynamicContentContainerDetected(
+  entries: WarningInputs["dynamicContentContainerEntries"],
+): NonNullable<ScanWarningDetails["dynamic_content_container_detected"]> | undefined {
+  if (entries === undefined || entries.length === 0) return undefined;
+  const sorted = [...entries].sort((a, b) => a.path.localeCompare(b.path));
+  const trimmed = sorted.slice(0, DYNAMIC_CONTENT_CONTAINER_FILES_CAP);
+  return {
+    fileCount: entries.length,
+    files: trimmed.map((e) => ({
+      path: e.path,
+      bodyChildCount: e.bodyChildCount,
+      emptyContainerIds: e.emptyContainerIds,
+      scriptSources: e.scriptSources,
+    })),
   };
 }
 
@@ -5593,6 +7053,69 @@ function summarizeBinaryAssetsSkipped(coverage: Record<string, unknown> | undefi
 }
 
 /**
+ * Collapses the parser-routable-substrate subset of
+ * `skippedByExtension` into the dense summary the
+ * `parser_routable_extensions_skipped` warning ships under
+ * `warningsDetails`. Predicate-narrowed peer of
+ * {@link summarizeTextSourceSkipped}; the only difference is the
+ * extension filter — parser-routable text-island substrates only
+ * (`.vue`, `.svelte`, `.coffee`, `.rmd`, `.feature`, etc., per
+ * {@link PARSER_ROUTABLE_TEXT_ISLAND_EXTENSIONS}). The
+ * `noExtensionFiles` slot is unreachable on this peer (no well-known
+ * textual no-extension filename defines an HTML / JSX surface) so the
+ * shape contract on the type-level interface omits it; the shared
+ * core's `noExtensionFiles` output is dropped at the seam below.
+ */
+function summarizeParserRoutableExtensionsSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  const base = summarizeSkippedSubset(
+    coverage,
+    (token) => token.startsWith(".") && isParserRoutableTextIslandExtension(token),
+  );
+  if (base === undefined) return undefined;
+  // Drop `noExtensionFiles` from the shared-core output — unreachable on
+  // this peer by construction (filter rejects any non-dotted token).
+  const { noExtensionFiles: _drop, ...rest } = base;
+  return rest;
+}
+
+/**
+ * Collapses the config/data subset of `skippedByExtension` into the
+ * dense summary the `config_or_data_files_skipped` warning ships
+ * under `warningsDetails`. Predicate-narrowed peer of
+ * {@link summarizeTextSourceSkipped}; the only difference is the
+ * extension filter — config / data file extensions only (`.json`,
+ * `.yml`, `.yaml`, `.toml`, `.csv`, per
+ * {@link CONFIG_OR_DATA_EXTENSIONS}). Same shape-contract reasoning
+ * as {@link summarizeParserRoutableExtensionsSkipped} for the
+ * `noExtensionFiles` omission.
+ */
+function summarizeConfigOrDataFilesSkipped(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalSkipped: number;
+    }
+  | undefined {
+  const base = summarizeSkippedSubset(
+    coverage,
+    (token) => token.startsWith(".") && isConfigOrDataExtension(token),
+  );
+  if (base === undefined) return undefined;
+  const { noExtensionFiles: _drop, ...rest } = base;
+  return rest;
+}
+
+/**
  * Builds the `sourcemap_files_excluded` payload from the coverage
  * block's `sourcemapFiles` list. Returns `undefined` when the field is
  * absent, malformed, or empty so the dispatch table conditional-
@@ -5805,6 +7328,53 @@ function summarizeDefaultExcludedArtifactPaths(coverage: Record<string, unknown>
       fileCount: e.fileCount,
       sampleFiles: e.sampleFiles,
     })),
+  };
+}
+
+/**
+ * Builds the `text_source_excluded_by_default_pattern` payload from
+ * the coverage block's `excludedByPatternByExtension` map. Returns
+ * `undefined` when the field is absent, malformed, or every entry has
+ * a non-positive count so the dispatch table conditional-spreads the
+ * entry away (payload-vs-binary contract).
+ *
+ * Mirrors the shape contract of {@link summarizeBinaryAssetsSkipped}
+ * minus the `noExtensionFiles` slot — the discovery walker pre-filters
+ * the recorded entries to dotted parser-routable extensions only
+ * (gates on
+ * {@link import("../utils/path.ts").hasParseableExtension} before
+ * recording), so the no-extension subset is unreachable. Determinism:
+ * `extensions` is sorted by descending count with alphabetical tie-
+ * break so the agent's eye lands on the dominant exclusion first;
+ * `topExtension` + `topCount` mirror the same pivot at the scalar
+ * level for one-read triage.
+ */
+function summarizeTextSourceExcludedByDefaultPattern(coverage: Record<string, unknown> | undefined):
+  | {
+      readonly extensions: readonly string[];
+      readonly perExtensionCounts?: Readonly<Record<string, number>>;
+      readonly topExtension?: string;
+      readonly topCount?: number;
+      readonly totalExcluded: number;
+    }
+  | undefined {
+  const map = readExcludedByPatternMap(coverage);
+  if (map.size === 0) return undefined;
+  const entries = [...map.entries()].sort(
+    ([aExt, aCount], [bExt, bCount]) => bCount - aCount || aExt.localeCompare(bExt),
+  );
+  let totalExcluded = 0;
+  for (const [, count] of entries) totalExcluded += count;
+  if (totalExcluded === 0) return undefined;
+  const extensions = entries.map(([ext]) => ext);
+  const perExtensionCounts: Record<string, number> = {};
+  for (const [ext, count] of entries) perExtensionCounts[ext] = count;
+  const top = entries[0];
+  return {
+    extensions,
+    perExtensionCounts,
+    ...(top === undefined ? {} : { topExtension: top[0], topCount: top[1] }),
+    totalExcluded,
   };
 }
 
@@ -6120,10 +7690,21 @@ export const TRUNCATED_FILES_TOP_DROPPED_RULES_CAP = 10;
  * @param droppedFileFindings — flat list of `{ ruleId }` records
  *   across every dropped file's findings. Order doesn't matter; the
  *   helper aggregates by rule and re-sorts deterministically.
- * @param droppedFileCount — count of files whose findings the
- *   helper just ate. Stamped on the payload as the file-count
- *   denominator so the agent doesn't have to re-derive it; pairs
- *   with the per-pass byte-level counters on the same wire.
+ * @param droppedFileCount — canonical count of files-with-findings the
+ *   truncation pass kept off the wire on this response: equal to
+ *   `totalFilesWithFindings - files.length`. Pairs with the per-pass
+ *   byte-level counters on the same wire. The caller is responsible
+ *   for computing this against the FULL pre-pagination inventory size,
+ *   not just the page-internal tail-trim.
+ * @param pageClipFromRequestedLimit — optional. Count of files the
+ *   density cap or slim path trimmed from THIS page specifically (the
+ *   page-internal subset of `droppedFileCount`). When `undefined` or
+ *   when it equals `droppedFileCount`, the helper omits the field on
+ *   the payload — sibling fields naming the same quantity violate
+ *   "Sibling fields naming the same concept must use one shape." Pass
+ *   the page-internal trim count when the paginator restricted the
+ *   page to a subset of the full inventory; the gap between this and
+ *   `droppedFileCount` is the paginator-skipped subset.
  *
  * Returns `undefined` when no rule-bearing findings were dropped —
  * the caller suppresses both the code and the payload via
@@ -6133,8 +7714,9 @@ export const TRUNCATED_FILES_TOP_DROPPED_RULES_CAP = 10;
 export function truncatedFilesDroppedDetailsField(args: {
   readonly droppedFileFindings: readonly { readonly ruleId: string }[];
   readonly droppedFileCount: number;
+  readonly pageClipFromRequestedLimit?: number;
 }): NonNullable<ScanWarningDetails["truncated_files_dropped"]> | undefined {
-  const { droppedFileFindings, droppedFileCount } = args;
+  const { droppedFileFindings, droppedFileCount, pageClipFromRequestedLimit } = args;
   if (droppedFileFindings.length === 0) return undefined;
   const perRuleCounts = new Map<string, number>();
   const families = new Set<string>();
@@ -6155,8 +7737,15 @@ export function truncatedFilesDroppedDetailsField(args: {
     .slice(0, TRUNCATED_FILES_TOP_DROPPED_RULES_CAP)
     .map(([ruleId, droppedCount]) => ({ ruleId, droppedCount }));
   const ruleFamiliesAffected = [...families].sort((a, b) => a.localeCompare(b));
+  // Omit `pageClipFromRequestedLimit` when it carries no extra signal
+  // beyond `droppedFileCount` — same concept, same value, two field
+  // names is the "Sibling fields naming the same concept must use one
+  // shape" anti-pattern. Present-when-meaningful per CLAUDE.md §1.
+  const includePageClip =
+    pageClipFromRequestedLimit !== undefined && pageClipFromRequestedLimit !== droppedFileCount;
   return {
     droppedFileCount,
+    ...(includePageClip ? { pageClipFromRequestedLimit } : {}),
     ruleFamiliesAffected,
     topDroppedRules,
   };

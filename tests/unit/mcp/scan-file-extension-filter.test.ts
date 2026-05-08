@@ -25,9 +25,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -49,8 +49,8 @@ interface ScanFileBody {
 
 describe("scan_file: meta.perRuleCoverage extension filter", () => {
   it("verbose mode: drops rows whose extension gate doesn't match the scanned .tsx file", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-ext-filter-tsx-"));
-    const filePath = join(dir, "App.tsx");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-ext-filter-tsx-"));
+    const filePath = posixJoin(dir, "App.tsx");
     await writeFile(
       filePath,
       ["export function App() {", "  return <div onClick={() => {}}>Click</div>;", "}", ""].join(
@@ -85,8 +85,8 @@ describe("scan_file: meta.perRuleCoverage extension filter", () => {
   });
 
   it("default verbosity: narrows perRuleCoverageSummary.ruleIds to extension-matching rules", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-ext-filter-default-"));
-    const filePath = join(dir, "App.tsx");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-ext-filter-default-"));
+    const filePath = posixJoin(dir, "App.tsx");
     await writeFile(filePath, "export function App() { return <div />; }\n");
 
     const tool = findTool("scan_file");
@@ -112,8 +112,8 @@ describe("scan_file: meta.perRuleCoverage extension filter", () => {
     // Mirror case for the .html substrate — the canonical signal that
     // the filter operates on the alias-aware extension match (.html →
     // [".html", ".htm"]) rather than literal string equality.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-ext-filter-html-"));
-    const filePath = join(dir, "page.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-ext-filter-html-"));
+    const filePath = posixJoin(dir, "page.html");
     await writeFile(
       filePath,
       `<!DOCTYPE html><html lang="en"><head><title>x</title></head><body><h1>Hi</h1></body></html>\n`,
@@ -147,8 +147,8 @@ describe("scan_file: meta.perRuleCoverage extension filter", () => {
     // Even when no rows would be dropped (theoretical), the counter
     // rides at zero so the agent has a deterministic field to read on
     // every scan-file response shape.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-ext-filter-presence-"));
-    const filePath = join(dir, "App.tsx");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-ext-filter-presence-"));
+    const filePath = posixJoin(dir, "App.tsx");
     await writeFile(filePath, "export const x = 1;\n");
 
     const tool = findTool("scan_file");

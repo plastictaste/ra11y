@@ -291,8 +291,12 @@ describe("MCP invariant: cross-surface meta-block parity", () => {
       // Field must be absent when its value would echo
       // `dirname(scanned.file)` — under Q8 the omission predicate
       // covers that case in addition to the caller-cwd echo.
+      // Use `path.dirname` (rather than a forward-slash slice) so the
+      // assertion holds on Windows, where `meta.scanned.file` is a
+      // backslash-separated absolute.
       if (typeof meta.configSearchedFrom === "string" && typeof meta.scanned?.file === "string") {
-        const fileDir = meta.scanned.file.slice(0, meta.scanned.file.lastIndexOf("/"));
+        const { dirname } = await import("node:path");
+        const fileDir = dirname(meta.scanned.file);
         expect(meta.configSearchedFrom).not.toBe(fileDir);
       }
     } finally {

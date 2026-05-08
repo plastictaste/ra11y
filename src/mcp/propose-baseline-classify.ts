@@ -6,9 +6,9 @@
  */
 
 import { createHash } from "node:crypto";
-import { relative } from "node:path";
 import type { Violation } from "../types/violation.ts";
 import type { compileGlobs } from "../utils/glob.ts";
+import { posixRelative } from "../utils/path.ts";
 
 /**
  * Length of the truncated SHA-256 digest used to key the `rationales`
@@ -276,7 +276,7 @@ function matchAssumedWrapperName(
 }
 
 function toRelPath(filePath: string, root: string): string {
-  const rel = relative(root, filePath);
+  const rel = posixRelative(root, filePath);
   if (rel === "" || rel.startsWith("..")) return filePath;
   return rel.split("\\").join("/");
 }

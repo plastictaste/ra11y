@@ -1,7 +1,11 @@
 /**
  * Shape the `suggest_fix` response from a resolved violation match.
  *
- * Three outcomes:
+ * Six outcomes — the per-call `kind` discriminator mirrors the
+ * `plan.fixesByClass` lane keys so the per-call shape and per-class
+ * plan tally use the same vocabulary (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally"):
  *   - `kind: "none"` — no violation at that line (or unmatched rule).
  *     OMITS `verifyCommandStructured`: a "no finding here" response
  *     with a populated verify hint reads as "you already fixed it and
@@ -12,7 +16,8 @@
  *     recommendation is, which is structurally undefined on the
  *     negative answer. "Low confidence we have no fix" is a category
  *     error — confidence belongs with positive answers (`kind:
- *     "edit"` / `"guidance"` / `"suppress-recommended"`), not with
+ *     "edit"` / `"guidance"` / `"verify-in-source"` /
+ *     `"runtime-only"` / `"suppress-recommended"`), not with
  *     `kind: "none"`. See CLAUDE.md §1 "Ambiguous field shapes are
  *     dishonest" + "Sibling fields naming the same concept must use
  *     one shape." When the per-file finding list carries one or more
@@ -22,22 +27,42 @@
  *     breadcrumb so paginated scans / line-drift / rule renames don't
  *     produce a dead-end response.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
- *     `primary.edit`; the agent can apply it via Edit directly. The
- *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
- *     before serialization so apply_fix's literal find-and-replace
- *     matches exactly once. When no unique anchor fits in the cap, the
+ *     `primary.edit`; the agent can apply it via Edit directly.
+ *     Mirrors `plan.fixesByClass.mechanical`. The edit is widened to
+ *     a unique anchor window via `widenToUniqueAnchor` before
+ *     serialization so apply_fix's literal find-and-replace matches
+ *     exactly once. When no unique anchor fits in the cap, the
  *     payload carries a `caveat` string so the agent can disambiguate
  *     before applying.
- *   - `kind: "guidance"` — fixPaths without mechanical edits, or
- *     prose-only suggestion. The response shape mirrors the tool's
- *     advertised contract: a ranked `primary` approach carrying the
- *     `approach` label + `explanation` prose + `sourceContext` +
- *     `confidence`, plus an optional `alternatives` array (omitted when
- *     only one approach is reasonable — CLAUDE.md §1 "Ambiguous field
- *     shapes are dishonest"). `verifyCommandStructured` stays at top
- *     level.
+ *   - `kind: "verify-in-source"` — the rule's `fixClass` routes into
+ *     the verify-in-source lane (`plan.fixesByClass.verifyInSource`):
+ *     the agent must read adjacent code (cross-file handler binding,
+ *     parent-element placement, list re-nesting) to compose the right
+ *     edit. Same `primary` + `alternatives` payload shape as `kind:
+ *     "guidance"`; the discriminator differs so an agent budgeting
+ *     from the per-class plan tally lands in the right lane.
+ *   - `kind: "runtime-only"` — the rule's `fixClass` routes into the
+ *     runtime-only lane (`plan.fixesByClass.runtimeOnly`): only
+ *     runtime verification (rendered DOM, manual QA) can decide the
+ *     fix; the agent should route to a runtime harness rather than
+ *     the edit queue. Same payload shape as `kind: "guidance"`.
+ *   - `kind: "guidance"` — judgment-required prose fix (contrast
+ *     ratios, copy rewrites, restructure decisions). Mirrors
+ *     `plan.fixesByClass.guidance`. The response shape carries a
+ *     ranked `primary` approach with the `approach` label +
+ *     `explanation` prose + `sourceContext` + `confidence`, plus an
+ *     optional `alternatives` array (omitted when only one approach is
+ *     reasonable — CLAUDE.md §1 "Ambiguous field shapes are
+ *     dishonest"). `verifyCommandStructured` stays at top level.
+ *   - `kind: "suppress-recommended"` — the rule's evidence model has
+ *     conceded the criterion may not apply on this substrate and the
+ *     deterministic dismissal path is the source-level disable pragma.
+ *     Mirrors `plan.fixesByClass.suppressRecommended`. See
+ *     `suggest-fix-suppress-recommended.ts` for the predicate doctrine.
  *
- * The `kind: "edit"` and `kind: "guidance"` outcomes carry a
+ * The `kind: "edit"`, `kind: "verify-in-source"`,
+ * `kind: "runtime-only"`, `kind: "guidance"`, and
+ * `kind: "suppress-recommended"` outcomes carry a
  * `verifyCommandStructured` (`{ tool: "scan_file", args: { path },
  * verifyRuleId }`) field naming the canonical re-check the agent
  * should run after applying the fix. The `kind: "none"` outcome OMITS
@@ -57,7 +82,11 @@
  * directly.
  */
 
-import type { VerifyCommandStructured } from "./suggest-fix-guidance-shape.ts";
+import type { CandidateMatch } from "./suggest-fix-candidate-match.ts";
+import {
+  deriveApproachFromProse,
+  type VerifyCommandStructured,
+} from "./suggest-fix-guidance-shape.ts";
 import { buildInheritedHintExplanation } from "./suggest-fix-inherited-hint.ts";
 import { nearestFindingSpread } from "./suggest-fix-nearest-finding.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
@@ -80,10 +109,11 @@ export type { BuildSuggestFixPayloadArgs, VerifyCommandStructured };
 
 /**
  * Builds the `verifyCommandStructured` machine form naming `scan_file`
- * on the fix target. Always emitted on every `suggest_fix` `kind:
- * "edit"` / `kind: "guidance"` response — there is always a way to
- * re-check after applying the fix, so the field is never ambiguous on
- * those lanes. The `kind: "none"` lane omits it entirely (see file
+ * on the fix target. Always emitted on every positive `suggest_fix`
+ * outcome (`kind: "edit"` / `"guidance"` / `"verify-in-source"` /
+ * `"runtime-only"` / `"suppress-recommended"`) — there is always a way
+ * to re-check after applying the fix, so the field is never ambiguous
+ * on those lanes. The `kind: "none"` lane omits it entirely (see file
  * doc).
  *
  * The prose `verifyCommand` sibling that previously rode alongside
@@ -132,6 +162,7 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     sameFileFindings,
     vendorContext,
     inheritedFromWrapper,
+    candidateMatch,
   } = args;
   const verify = buildVerifyCommand(filePath, ruleId);
   // Response-level `warnings` for the zero-output-success doctrine
@@ -162,62 +193,147 @@ export function buildSuggestFixPayload(args: BuildSuggestFixPayloadArgs): Record
     vendorContextField,
   };
   if (!match) {
-    // omit the verify pair on
-    // `kind: "none"`. A populated `verifyCommand` next to "no
-    // violation found at this line" reads as "you already fixed it
-    // and verified," which is indistinguishable from "the finding
-    // never existed." Present-when-meaningful (CLAUDE.md §1
-    // "Ambiguous field shapes are dishonest") — the verify pair only
-    // belongs on the lanes that actually applied a fix.
-    //
-    // walk the per-file findings
-    // for same-rule matches within ±NEAREST_FINDING_WINDOW lines of the
-    // requested line. Single match → `nearestFinding: { ruleId, line }`;
-    // multi match → `didYouMean[]`. Without these breadcrumbs the
-    // response is a dead end forcing the agent to re-scan when paginated
-    // scans drifted the line, the agent lost the original line, or a
-    // rule rename swapped the ID. Conditional-spread so the field is
-    // absent when no nearby same-rule finding exists (CLAUDE.md §1
-    // "Ambiguous field shapes are dishonest").
-    const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
-    // when the requested
-    // (filePath, line) resolves to a registered native-element wrapper
-    // call site, the multi-file scan synthesized the finding via the
-    // inherited-findings post-pass — the rule never fired at this line
-    // single-file. The inherited-hint payload tells the agent the rule
-    // lives at the wrapper component definition so the next call can
-    // re-target there rather than re-running the same dead-end lookup.
-    // See `src/mcp/suggest-fix-inherited-hint.ts` and the doctrine
-    // "Cross-surface count invariant" applied to the per-finding lookup
-    // channel.
-    const inheritedSpread = inheritedFromWrapper
-      ? { inheritedFromWrapper: { wrapperName: inheritedFromWrapper.wrapperName } }
-      : {};
-    const explanation = inheritedFromWrapper
-      ? buildInheritedHintExplanation(ruleId, line, inheritedFromWrapper.wrapperName)
-      : `No violation for ${ruleId} at line ${line}.`;
-    return {
-      kind: "none",
-      explanation,
-      // `confidence` is OMITTED on `kind: "none"`. The field is
-      // semantically meaningful only on the positive answers
-      // (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`)
-      // where it grades how confident the fix recommendation is.
-      // "Low confidence we have no fix" is a category error — the
-      // negative answer is "no violation matches at the queried
-      // location," and confidence on that statement is structurally
-      // undefined. Per CLAUDE.md §1 "Ambiguous field shapes are
-      // dishonest" + "Sibling fields naming the same concept must
-      // use one shape": a field that's sometimes meaningful and
-      // sometimes a category error forces the agent to disambiguate
-      // and the silent-miss failure mode is identical to the
-      // `newText: ""` / `snippet: ""` mistakes.
-      ...inheritedSpread,
-      ...nearestSpread,
-      ...warningsField,
-      ...disambiguationNoteField,
-      ...vendorContextField,
-    };
+    // Review-candidate match path: when the rule did not fire at the
+    // queried line BUT a manual-review candidate at the same
+    // coordinate carries a criterion the rule satisfies, return
+    // `kind: "guidance"` derived from the candidate's prose so the
+    // agent gets the same actionable framing the manual-review
+    // surface promised. Closes the checklist→suggest_fix lane parity
+    // gap per AI-first doctrine "Per-call shape must agree with
+    // per-class plan tally" extended one hop. The verify pair rides
+    // along — once the agent edits source after reading the
+    // candidate's reason, `scan_file` is the canonical re-check.
+    if (candidateMatch !== undefined) {
+      return buildCandidateGuidancePayload({
+        ruleId,
+        line,
+        filePath,
+        candidateMatch,
+        shared,
+      });
+    }
+    return buildNoMatchPayload({
+      ruleId,
+      line,
+      sameFileFindings,
+      inheritedFromWrapper,
+      warningsField,
+      disambiguationNoteField,
+      vendorContextField,
+    });
   }
   return routeMatchedPayload({ args, match, shared });
+}
+
+/**
+ * `kind: "none"` payload assembler — the dead-end path when neither a
+ * rule violation nor a review candidate matches the queried line.
+ * Walks `sameFileFindings` for nearby same-rule emissions and builds
+ * the `nearestFinding` / `didYouMean` breadcrumbs so the response is
+ * never a true dead end (paginated scans drift the line, agents lose
+ * the original line, rule renames swap the ID — the breadcrumb
+ * recovers from all three). When the queried line resolves to a
+ * registered wrapper-call site, `inheritedFromWrapper` re-routes the
+ * agent to the wrapper definition. Extracted from the parent so the
+ * candidate-match branch above stays readable; the field set returned
+ * here is unchanged from the prior inline shape.
+ */
+function buildNoMatchPayload(args: {
+  readonly ruleId: string;
+  readonly line: number;
+  readonly sameFileFindings: BuildSuggestFixPayloadArgs["sameFileFindings"];
+  readonly inheritedFromWrapper: BuildSuggestFixPayloadArgs["inheritedFromWrapper"];
+  readonly warningsField: { readonly warnings?: readonly string[] };
+  readonly disambiguationNoteField: { readonly disambiguationNote?: string };
+  readonly vendorContextField: { readonly vendorContext?: VendorContext };
+}): Record<string, unknown> {
+  const {
+    ruleId,
+    line,
+    sameFileFindings,
+    inheritedFromWrapper,
+    warningsField,
+    disambiguationNoteField,
+    vendorContextField,
+  } = args;
+  const nearestSpread = nearestFindingSpread(ruleId, line, sameFileFindings);
+  const inheritedSpread = inheritedFromWrapper
+    ? { inheritedFromWrapper: { wrapperName: inheritedFromWrapper.wrapperName } }
+    : {};
+  const explanation = inheritedFromWrapper
+    ? buildInheritedHintExplanation(ruleId, line, inheritedFromWrapper.wrapperName)
+    : `No violation for ${ruleId} at line ${line}.`;
+  return {
+    kind: "none",
+    explanation,
+    // `confidence` is OMITTED on `kind: "none"`. The field is
+    // semantically meaningful only on the positive answers
+    // (`kind: "edit"` / `"guidance"` / `"verify-in-source"` /
+    // `"runtime-only"` / `"suppress-recommended"`) where it grades
+    // how confident the fix recommendation is.
+    // "Low confidence we have no fix" is a category error — the
+    // negative answer is "no violation matches at the queried
+    // location," and confidence on that statement is structurally
+    // undefined. Per CLAUDE.md §1 "Ambiguous field shapes are
+    // dishonest" + "Sibling fields naming the same concept must
+    // use one shape": a field that's sometimes meaningful and
+    // sometimes a category error forces the agent to disambiguate
+    // and the silent-miss failure mode is identical to the
+    // `newText: ""` / `snippet: ""` mistakes.
+    ...inheritedSpread,
+    ...nearestSpread,
+    ...warningsField,
+    ...disambiguationNoteField,
+    ...vendorContextField,
+  };
+}
+
+/**
+ * Build the `kind: "guidance"` payload for the review-candidate match
+ * path. Mirrors the shape the prose-only fallback produces in
+ * `routeMatchedPayload`'s tail — the agent reads the same `primary`
+ * block (`approach` + `explanation` + `confidence` + optional
+ * `sourceContext`) regardless of whether the guidance came from a
+ * rule's `match.suggestion` or from a finder's review prose. The
+ * candidate's `reason` becomes the explanation; the `approach` label
+ * is derived from the same {@link deriveApproachFromProse} helper so
+ * the terse-summary surface stays consistent across guidance lanes.
+ *
+ * Confidence is sourced from the candidate's framing: review
+ * candidates are always investigation prompts ("verify X"), never
+ * deterministic fix recipes — `medium` matches that framing across
+ * the existing guidance shapes (the prose-only fallback uses
+ * `confidence === "high"` only for severity-`error` rule matches; a
+ * candidate is structurally a softer signal than a rule violation).
+ *
+ * The verify pair rides along — once the agent edits source after
+ * reading the candidate's reason, `scan_file` is the canonical
+ * re-check. The same `warningsField` / `disambiguationNoteField` /
+ * `vendorContextField` spreads ride here as on every guidance lane so
+ * scan-confidence telemetry stays consistent across branches.
+ */
+function buildCandidateGuidancePayload(args: {
+  readonly ruleId: string;
+  readonly line: number;
+  readonly filePath: string;
+  readonly candidateMatch: CandidateMatch;
+  readonly shared: PayloadSharedFields;
+}): Record<string, unknown> {
+  const { line, filePath, candidateMatch, shared } = args;
+  const explanation = candidateMatch.reviewPrompt
+    ? `${candidateMatch.reason}\n\n${candidateMatch.reviewPrompt}`
+    : candidateMatch.reason;
+  return {
+    kind: "guidance",
+    primary: {
+      approach: deriveApproachFromProse(candidateMatch.reason),
+      explanation,
+      sourceContext: `Manual-review candidate at ${filePath}:${line} (criterion ${candidateMatch.criterionId}).`,
+      confidence: "medium",
+    },
+    ...shared.verify,
+    ...shared.warningsField,
+    ...shared.disambiguationNoteField,
+    ...shared.vendorContextField,
+  };
 }

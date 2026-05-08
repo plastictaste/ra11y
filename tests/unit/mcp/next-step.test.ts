@@ -133,7 +133,7 @@ describe("buildNextStep", () => {
     // notes-only handling.
     const result = buildNextStep(
       formatted({
-        plan: { notes: 3 },
+        plan: { infoSeverityFindings: 3 },
         files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
       }),
     );
@@ -144,14 +144,28 @@ describe("buildNextStep", () => {
   });
 
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.structured).toEqual({ tool: "checklist", args: {} });
   });
 
   it("returns checklist when the actionable-manual count is non-zero", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 4 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 4, buildArtifact: 0 },
+        },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).toContain("4 manual-review");
@@ -276,7 +290,14 @@ describe("buildNextStep", () => {
     // No-violations branch is outside the dedupe predicate's scope —
     // the flag is computed but irrelevant, and the clean-scan
     // recommendation (`checklist`) must not be affected.
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
+      }),
+    );
 
     expect(result.prose).toContain("checklist");
     expect(result.prose).not.toContain("suggest_fix");
@@ -320,7 +341,14 @@ describe("buildNextStep", () => {
   // caught here before they ship.
 
   it("clean scan with manual candidates mentions ra11y/triage prompt", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 3 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 3, buildArtifact: 0 },
+        },
+      }),
+    );
     expect(result.prose).toContain("ra11y/triage");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at the MCP tool (checklist); the prompt
@@ -329,7 +357,14 @@ describe("buildNextStep", () => {
   });
 
   it("clean scan with zero manual candidates mentions ra11y/audit prompt", () => {
-    const result = buildNextStep(formatted({ plan: { notes: 0, actionableManualItems: 0 } }));
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 0, buildArtifact: 0 },
+        },
+      }),
+    );
     expect(result.prose).toContain("ra11y/audit");
     expect(result.prose).toContain("prompts/get");
     // Structured still points at checklist — the canonical next MCP call.
@@ -405,10 +440,15 @@ describe("buildNextStep", () => {
         files: [{ path: "B.tsx", findings: [sampleFinding] }],
       }),
       formatted({
-        plan: { notes: 1 },
+        plan: { infoSeverityFindings: 1 },
         files: [{ path: "C.tsx", findings: [sampleFinding] }],
       }),
-      formatted({ plan: { notes: 0, actionableManualItems: 2 } }),
+      formatted({
+        plan: {
+          infoSeverityFindings: 0,
+          actionableManualItemsBySource: { source: 2, buildArtifact: 0 },
+        },
+      }),
     ];
     for (const f of cases) {
       const result = buildNextStep(f);
@@ -951,6 +991,62 @@ describe("buildNextStep", () => {
       expect(result.prose).toContain("vendor code");
       expect(result.prose).toContain("no authored-source candidates");
       expect(result.prose).toContain("additionalPaths");
+    });
+
+    it("reroutes to the DENSEST file for the dominant rule, not the alphabetically-first file containing it", () => {
+      // Field-report repro: on a vanilla-stack catalog, the dominant
+      // rule is `keyboard/handler-missing` and its densest file is
+      // `drawing-app/script.js` (5 fires here, 43 in the field report).
+      // The alphabetically-first file containing that rule is
+      // `3d-boxes/script.js` (1 fire). Pre-fix the picker walked files
+      // in alphabetical order and returned the first one whose rule
+      // matched the top count, so it landed on the alphabetical first.
+      // The fix: pick the (rule, file) pair where file is the densest
+      // for the dominant rule — `topRules[0].topFile` semantics.
+      const handlerFinding = (line: number) => ({
+        ruleId: "keyboard/handler-missing",
+        line,
+        column: 1,
+        severity: "error" as const,
+        fixClass: "guidance" as const,
+      });
+      const result = buildNextStep(
+        formatted({
+          plan: {
+            fixesByClass: lanes({ guidance: 6 }),
+          },
+          files: [
+            // Alphabetical first: 1 fire of the dominant rule.
+            { path: "3d-boxes-background/script.js", findings: [handlerFinding(7)] },
+            // Densest file: 5 fires of the dominant rule. Sorts
+            // alphabetically AFTER 3d-boxes-background.
+            {
+              path: "drawing-app/script.js",
+              findings: [
+                handlerFinding(10),
+                handlerFinding(20),
+                handlerFinding(30),
+                handlerFinding(40),
+                handlerFinding(50),
+              ],
+            },
+          ],
+        }),
+        { truncated: true },
+      );
+      // Reroute lands on the densest file for the dominant rule —
+      // `drawing-app/script.js`, the file `topRules[0].topFile` would
+      // name. Pre-fix the test would have asserted
+      // `3d-boxes-background/script.js` (alphabetical first), which is
+      // the bug the dispatch guidance pins against.
+      expect(result.structured?.args).toEqual({
+        ruleId: "keyboard/handler-missing",
+        file: "drawing-app/script.js",
+        line: 10,
+      });
+      expect(result.prose).toContain("drawing-app/script.js");
+      expect(result.prose).toContain("3d-boxes-background/script.js");
+      expect(result.prose).toContain("response is truncated");
     });
 
     it("routes to scope-down on truncated:true when no non-vendor finding exists at all", () => {

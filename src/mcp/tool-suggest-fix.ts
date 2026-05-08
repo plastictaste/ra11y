@@ -6,13 +6,16 @@
 
 import { runScan } from "../engine/scanner.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
-import { collectSuggestFixContext } from "./suggest-fix-context.ts";
-import { applyCriterionBridge, optionalSuggestFixFields } from "./suggest-fix-criterion-bridge.ts";
+import { resolveCandidateMatchForHandler } from "./suggest-fix-candidate-match.ts";
+import { collectSuggestFixContext, suggestFixRerouteSpread } from "./suggest-fix-context.ts";
+import {
+  optionalSuggestFixFields,
+  resolveCriterionBridgeOrEarlyExit,
+} from "./suggest-fix-criterion-bridge.ts";
 import { buildSuggestFixPayload } from "./tool-suggest-fix-internals.ts";
 import {
   applyRuleSettings,
   errorResult,
-  findRule,
   type McpTool,
   type McpToolResult,
   numParam,
@@ -71,7 +74,7 @@ export const suggestFixTool: McpTool = {
   def: {
     name: "suggest_fix",
     description:
-      "Get resolution paths for a violation. Returns one of four kinds: `kind: 'edit'` with a direct oldText/newText pair that Edit can apply; `kind: 'guidance'` with a ranked `primary` fix and `alternatives` — each a short labeled path you can act on; `kind: 'suppress-recommended'` when the rule's evidence model has conceded the criterion may not apply on this substrate and the deterministic dismissal path is the source-level disable pragma (carries `pragma` + `criterionId` siblings ready to paste, NO edit); or `kind: 'none'` when no violation matched the requested line. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.\n\nThe `ruleId` parameter accepts EITHER a rule ID (e.g. `keyboard/handler-missing`) OR a criterion ID (e.g. `wcag22:2.4.5`, `section508:1194.22.c`, `en301549:9.2.4.5`) — pass through whatever the manual-review candidate carries. When a criterion ID is passed and multiple rules satisfy it, the handler resolves to the most-specific rule (smallest `satisfies` list, alphabetic tiebreak) and attaches a `disambiguationNote` naming the chosen rule and the others; singleton resolution leaves the note absent.",
+      "Get resolution paths for a violation. Returns one of six kinds, mirroring `plan.fixesByClass` lane keys so the per-call shape and per-class plan tally use the same vocabulary: `kind: 'edit'` with a direct oldText/newText pair that Edit can apply (mirrors `fixesByClass.mechanical`); `kind: 'verify-in-source'` with a ranked `primary` fix the agent must adapt after reading adjacent code (cross-file handler binding, list re-nesting — mirrors `fixesByClass.verifyInSource`); `kind: 'runtime-only'` when only runtime verification can decide the fix and the agent should route to a runtime harness rather than the edit queue (mirrors `fixesByClass.runtimeOnly`); `kind: 'guidance'` with judgment-required prose (contrast ratios, copy rewrites, restructure decisions — mirrors `fixesByClass.guidance`); `kind: 'suppress-recommended'` when the rule's evidence model has conceded the criterion may not apply on this substrate and the deterministic dismissal path is the source-level disable pragma (carries `pragma` + `criterionId` siblings ready to paste, NO edit — mirrors `fixesByClass.suppressRecommended`); or `kind: 'none'` when no violation matched the requested line. The `verify-in-source`, `runtime-only`, and `guidance` kinds share the same `primary` + `alternatives` payload shape — they differ only in the lane discriminator so an agent budgeting from `plan.fixesByClass` lands in the right slot. Prefer the primary; fall through alternatives when context rules it out. The `sourceContext` and `snippet` are included so you can compose the edit yourself when no mechanical fix is available.\n\nThe `ruleId` parameter accepts EITHER a rule ID (e.g. `keyboard/handler-missing`) OR a criterion ID (e.g. `wcag22:2.4.5`, `section508:1194.22.c`, `en301549:9.2.4.5`) — pass through whatever the manual-review candidate carries. When a criterion ID is passed and multiple rules satisfy it, the handler resolves to the most-specific rule (smallest `satisfies` list, alphabetic tiebreak) and attaches a `disambiguationNote` naming the chosen rule and the others; singleton resolution leaves the note absent. When the criterion is manual-only (no automated rule satisfies it — every `automatable: \"manual\"` row), the response is `kind: 'guidance'` framed as 'manual-review only — verify against the normative spec text', with the criterion's title, description, and URL embedded so the agent has the spec hand-off without a second tool call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -104,31 +107,16 @@ export const suggestFixTool: McpTool = {
       return checkRequiredParams(inputRuleId, filePath, line) as McpToolResult;
     }
 
-    // Criterion-id bridge: when the caller passes a criterion ID
-    // (`wcag22:N.N.N`, `section508:…`, `en301549:…`) instead of a rule
-    // ID, resolve it to the most-specific rule that satisfies it.
-    // Manual-review candidates carry criterion IDs; without this bridge
-    // the handoff `review_candidates → suggest_fix` hard-errors with
-    // `Rule not found. Call list_rules.` See
-    // `docs/kb/architecture/ai-first-consumer.md`: "One tool call
-    // should answer 'what next?'" + "Surface, don't suppress."
-    const bridge = applyCriterionBridge(inputRuleId, session);
-    if ("error" in bridge) return bridge.error;
-    const { ruleId, disambiguationNote } = bridge;
+    // Criterion-id bridge resolution + three early-exit branches
+    // (error / manual-only-criterion guidance / rule-not-found on a
+    // resolved-but-missing rule). See
+    // `suggest-fix-criterion-bridge.ts` for the doctrine.
+    const resolved = resolveCriterionBridgeOrEarlyExit(inputRuleId, filePath, line, session);
+    if ("earlyExit" in resolved) return resolved.earlyExit;
+    const { ruleId, disambiguationNote } = resolved;
 
-    if (!findRule(ruleId, session)) {
-      return errorResult({
-        code: "rule-not-found",
-        message: `Rule '${ruleId}' not found.`,
-        details: { requested: ruleId },
-        remediation: "Call `list_rules` to discover valid rule IDs.",
-      });
-    }
-
-    // reject paths that escape the
-    // declared `cwd` sandbox before any parse or fs access. See the
-    // matching comment in tool-scan-file.ts for the read-only vs
-    // write-tool enforcement difference.
+    // reject paths that escape the declared `cwd` sandbox before any
+    // parse or fs access.
     const suggestFixCwd = strParam(params, "cwd");
     const escapeError = await checkCwdContainment(filePath, suggestFixCwd);
     if (escapeError !== null) return escapeError;
@@ -145,7 +133,7 @@ export const suggestFixTool: McpTool = {
     }
 
     const standards = resolveStandards(undefined, session);
-    const { result } = runScan({
+    const { result, report } = runScan({
       standards: session.registry.standards,
       rules: applyRuleSettings(session.registry.rules, session.config.rules),
       enabled: standards,
@@ -154,6 +142,17 @@ export const suggestFixTool: McpTool = {
     });
 
     const match = result.violations.find((v) => v.ruleId === ruleId && v.location.line === line);
+    // Review-candidate fallback resolver — closes checklist→suggest_fix
+    // lane parity. Mutually exclusive with `match`. See
+    // `src/mcp/suggest-fix-candidate-match.ts` for doctrine.
+    const candidateMatch = resolveCandidateMatchForHandler({
+      match,
+      ruleId,
+      filePath,
+      line,
+      session,
+      candidates: report.candidates ?? [],
+    });
     const ctx = await collectSuggestFixContext({
       session,
       parsed,
@@ -179,15 +178,8 @@ export const suggestFixTool: McpTool = {
       // suggest_fix scan is single-file, so `result.violations` IS the
       // per-file set — no further filtering needed here.
       sameFileFindings: result.violations,
-      ...(ctx.inheritedFromWrapper === null
-        ? {}
-        : { inheritedFromWrapper: ctx.inheritedFromWrapper }),
-      ...(ctx.templateDirectiveContext === null
-        ? {}
-        : { templateDirectiveContext: ctx.templateDirectiveContext }),
-      ...(ctx.markdownHeadingCollision === null
-        ? {}
-        : { markdownHeadingCollision: ctx.markdownHeadingCollision }),
+      ...(candidateMatch === null ? {} : { candidateMatch }),
+      ...suggestFixRerouteSpread(ctx),
       ...optionalSuggestFixFields(ctx.scanWarnings, ctx.vendorContext, disambiguationNote),
     });
     return textResult(payload as Record<string, unknown>);

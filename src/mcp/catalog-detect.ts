@@ -44,7 +44,7 @@
  */
 
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { posixJoin } from "../utils/path.ts";
 import type { Hint } from "./hint-codes.ts";
 
 /**
@@ -122,7 +122,7 @@ export function detectCatalogShape(root: string): CatalogHint | null {
   const qualifying: string[] = [];
   for (const name of entries) {
     if (name.startsWith(".")) continue;
-    const subdir = join(root, name);
+    const subdir = posixJoin(root, name);
     if (!isSiteShapedDir(subdir)) continue;
     qualifying.push(name);
   }
@@ -153,9 +153,9 @@ function isSiteShapedDir(subdir: string): boolean {
     return false;
   }
   if (!info.isDirectory()) return false;
-  if (!existsSync(join(subdir, "index.html"))) return false;
+  if (!existsSync(posixJoin(subdir, "index.html"))) return false;
   for (const asset of ASSET_DIR_NAMES) {
-    const path = join(subdir, asset);
+    const path = posixJoin(subdir, asset);
     if (!existsSync(path)) continue;
     try {
       if (statSync(path).isDirectory()) return true;

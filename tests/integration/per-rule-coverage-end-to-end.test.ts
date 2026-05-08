@@ -647,11 +647,12 @@ describe("per-rule coverage end-to-end", () => {
   // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
   // must reflect per-rule coverage limitations." When a rule's
   // adjusted `coverageConfidence !== "high"`, every per-finding emission
-  // of that rule in the same response must either downgrade
-  // `confidence` to match OR include the per-rule reason in
-  // `couldBeWrongBecause`. Closure path (b) is the smaller blast
-  // radius — propagate the reason code into `couldBeWrongBecause`.
-  // The fixture exercises a substrate-axis downgrade
+  // of that rule in the same response must downgrade `confidence` to
+  // match the per-rule label AND include the per-rule reason in
+  // `couldBeWrongBecause`. The two paths close the contradiction at
+  // different layers: `couldBeWrongBecause` carries the reason for the
+  // agent's triage read, `confidence` keeps the attention-budget
+  // channel honest. The fixture exercises a substrate-axis downgrade
   // (`coverageConfidenceReason: "file-parse-error"`) and a rule-family
   // axis downgrade (`reason: "cross_file_listener_resolution_not_attempted_by_rule"`)
   // simultaneously: a `keyboard/handler-missing` finding on an HTML
@@ -728,6 +729,170 @@ describe("per-rule coverage end-to-end", () => {
     // The broken-file finding's couldBeWrongBecause MUST include the
     // substrate code — its file is in `partialParseFiles[]`.
     expect(brokenFinding!.couldBeWrongBecause ?? []).toContain("partial_parse");
+  });
+
+  // Per-finding confidence downgrade invariant — doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations." When a rule is
+  // tagged `crossFileCapable: false`, its per-rule
+  // `coverageConfidence` drops to `"medium"` with a structured reason
+  // (`cross_file_evidence_bounded_not_attempted_by_rule` fallback or a
+  // per-family code from `CROSS_FILE_BOUND_REASONS`). Every per-finding
+  // emission from that rule shipping at `confidence: "high",
+  // severity: "error"` contradicts the per-rule label — the agent
+  // budgets against severity, reads the per-rule row, discovers the
+  // budget was misallocated. Closure: the per-finding `confidence` is
+  // downgraded to match the per-rule label so the attention-budget
+  // channel agrees with the scan-confidence telemetry.
+  it("downgrades per-finding confidence to match per-rule label for crossFileCapable:false rules with no rule-family code in CROSS_FILE_BOUND_REASONS", () => {
+    // `aria/tab-controls-missing` declares `crossFileCapable: false`
+    // and is NOT in `CROSS_FILE_BOUND_REASONS`, so it falls back to
+    // `cross_file_evidence_bounded_not_attempted_by_rule`. Per-rule
+    // coverage downgrades to `"medium"`. The fixture is a single HTML
+    // file with a `<button role="tab">` missing aria-controls — the
+    // canonical case from Q15-PERFINDING-CONFIDENCE-HIGH-WITH-CROSSFILE-
+    // NOT-ATTEMPTED-LIMITATION.
+    const tabsHtml = `<!doctype html><html lang="en"><head><title>t</title></head><body>
+<div role="tablist">
+  <button role="tab" aria-selected="true">Tab 1</button>
+  <button role="tab" aria-selected="false">Tab 2</button>
+  <button role="tab" aria-selected="false">Tab 3</button>
+</div>
+<div role="tabpanel" id="panel-1" aria-labelledby="tab-1">Panel</div>
+</body></html>`;
+    const files = [htmlFile("site/tabs.html", tabsHtml)];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+    const ruleId = "aria/tab-controls-missing";
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    const row = adjustedRows.find((r) => r.ruleId === ruleId);
+    expect(row).toBeDefined();
+    expect(row!.coverageConfidence).toBe("medium");
+    // Per-finding emissions from the rule must NOT ship at
+    // `confidence: "high"` — that would contradict the per-rule label.
+    const tabsFile = response.files.find((f) => f.path === "site/tabs.html");
+    expect(tabsFile).toBeDefined();
+    const findings = tabsFile!.findings.filter((v) => v.ruleId === ruleId);
+    expect(findings.length).toBeGreaterThan(0);
+    for (const finding of findings) {
+      expect(finding.confidence).not.toBe("high");
+      // Q15 closure also propagates the reason into couldBeWrongBecause —
+      // the two channels (`confidence` and `couldBeWrongBecause`) must
+      // BOTH carry the limitation, not just one.
+      expect(finding.couldBeWrongBecause ?? []).toContain(
+        "cross_file_evidence_bounded_not_attempted_by_rule",
+      );
+    }
+  });
+
+  // Cross-rule generalization — doctrine source: same as above. The Q15
+  // closure must propagate from `CROSS_FILE_BOUND_REASONS` (the
+  // registry in `src/engine/per-rule-coverage.ts`) to per-finding
+  // emission shape generically — not per-rule patches. Pin the
+  // invariant with ANY rule whose `crossFileCapable: false` triggers a
+  // medium downgrade: every finding for that rule ships
+  // `confidence !== "high"` in the response.
+  it("every per-finding emission from any crossFileCapable:false rule ships confidence !== high in the response", () => {
+    // Mixed fixture exercising several `crossFileCapable: false` rules:
+    //   - `keyboard/handler-missing` on `<div onclick=…>`
+    //   - `aria/tab-controls-missing` on `<button role="tab">`
+    //   - `aria/labelledby-target-exists` on `aria-labelledby="missing"`
+    //   - `navigation/skip-link` on the doc-level skip pattern
+    const html = `<!doctype html><html lang="en"><head><title>t</title></head><body>
+<a href="#main">Skip</a>
+<div onclick="doit()">click me</div>
+<button role="tab" aria-selected="true">Tab 1</button>
+<button role="tab" aria-selected="false">Tab 2</button>
+<button role="tab" aria-selected="false">Tab 3</button>
+<input id="email" aria-labelledby="missing-label" />
+</body></html>`;
+    const files = [htmlFile("site/page.html", html)];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+    const response = assembleScanFamilyResponse({
+      violations: result.violations,
+      rawViolations: result.violations,
+      parsedFiles: files,
+      activeRules: BUILTIN_RULES,
+      durationMs: result.durationMs,
+      enabledStandards: result.enabledStandards,
+      perRuleCoverage,
+      reviewCandidates: [],
+      wrappers: {
+        wrappers: [],
+        sessionOnly: [],
+        bySource: {
+          fromConfig: [],
+          fromSession: [],
+          fromAutoDetect: { confirmed: [], assumed: [] },
+        },
+        elements: {},
+      },
+      unusedWrappers: [],
+      suppressions: [],
+      verboseMeta: true,
+      preset: undefined,
+      actionableManual: 0,
+      untargetedCriteria: 0,
+      configSource: null,
+      rootSource: "explicit",
+    });
+    const adjustedRows = (response.meta["perRuleCoverage"] as readonly PerRuleCoverage[]) ?? [];
+    // Collect every rule whose adjusted aggregate is below "high" —
+    // these are the rules whose per-finding emissions must downgrade.
+    const degradedAggregateRuleIds = new Set(
+      adjustedRows.filter((r) => r.coverageConfidence !== "high").map((r) => r.ruleId),
+    );
+    expect(degradedAggregateRuleIds.size).toBeGreaterThan(0);
+    let observedFindings = 0;
+    for (const file of response.files) {
+      for (const finding of file.findings) {
+        if (!degradedAggregateRuleIds.has(finding.ruleId)) continue;
+        observedFindings += 1;
+        // Per-finding confidence must reflect the per-rule label — no
+        // finding from a degraded rule ships at `"high"`.
+        expect(finding.confidence).not.toBe("high");
+      }
+    }
+    // Sanity: at least one finding from a degraded rule fires on this
+    // fixture; otherwise the test is vacuous.
+    expect(observedFindings).toBeGreaterThan(0);
   });
 
   // Fragment-input per-rule confidence downgrade — doctrine source:

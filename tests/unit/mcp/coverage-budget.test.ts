@@ -41,9 +41,14 @@ function buildSyntheticCoverageResponse(
     criteriaEvaluated: 40,
     criteriaClean: 40,
     criteriaWithFindings: 0,
-    criteriaUntestable: 0,
-    actionableManualItems: 5,
-    untargetedCriteria: 5,
+    // The `criteriaUntestable` and `actionableManualItems` scalar
+    // twins were dropped from the live coverage entry — the
+    // criteria-axis count rides via `summary.actionable.criteria`
+    // and `manualWithCandidates.length`; the untestable count rides
+    // via `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+    // and `untestableCriteria.length`. Synthetic fixture stays
+    // aligned with the live wire shape.
+    untargetedCriteriaForProject: 5,
     untargetedCriteriaList: [{ criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" }],
     manualWithCandidates: [
       { criterionId: "wcag22:1.3.1", title: "Info and Relationships", level: "A" },
@@ -57,7 +62,7 @@ function buildSyntheticCoverageResponse(
     // verbatim.
     summary: {
       actionable: { criteria: 5 },
-      untargetedCriteria: 5,
+      untargetedCriteriaForProject: 5,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",
@@ -115,8 +120,14 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     const slim = result.response as Record<string, unknown>;
     // The slim shape keeps scalar counters + `summary` + slimmed `meta`
     // + `nextStep` + the warnings channel. Per-criterion fans drop.
-    expect(slim.actionableManualItems).toBe(5);
-    expect(slim.untargetedCriteria).toBe(5);
+    // The `actionableManualItems` and `criteriaUntestable` scalar
+    // twins are no longer shipped on the live envelope, so the slim
+    // path no longer retains them either — the criteria-axis count
+    // is read off `summary.actionable.criteria`.
+    expect(slim.actionableManualItems).toBeUndefined();
+    expect(slim.criteriaUntestable).toBeUndefined();
+    expect((slim.summary as { actionable: { criteria: number } }).actionable.criteria).toBe(5);
+    expect(slim.untargetedCriteriaForProject).toBe(5);
     expect(slim.criteriaAutomatable).toBe(40);
     expect(slim.criteriaEvaluated).toBe(40);
     expect(slim.criteriaClean).toBe(40);
@@ -172,14 +183,18 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     expect(meta.cwd).toBe("/tmp/example-project");
   });
 
-  it("routes nextStep to checklist (different surface) when the slim guard fires", () => {
-    // Routing back to `coverage` would land the agent on the same tool
-    // that just transport-failed. The slim envelope's structured
-    // next-call routes to `checklist` — the manual-review-half angle
-    // that doesn't traverse the per-rule coverage envelope.
+  it("falls back to propose_config({}) when neither narrowingDir nor cwd is supplied", () => {
+    // Last-resort fallback per Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW:
+    // when no scope evidence flowed through to the helper, the slim
+    // envelope routes at `propose_config` with empty args — propose_config
+    // resolves its own scan root from the spawn directory. Still cycle-
+    // safe (NOT routed at the sibling `checklist`/`coverage` that would
+    // re-trigger the slim guard) but acknowledged as the worst routing
+    // decision available. The call site is expected to supply `cwd`
+    // (and ideally a `narrowingDir`) so this branch fires only on
+    // helper-direct invocations without context.
     const response = buildSyntheticCoverageResponse(10, {
       metaBloat: true,
-      cwd: "/tmp/example-project",
     });
     const result = applyCoverageBudget({ response });
     const slim = result.response as Record<string, unknown>;
@@ -190,21 +205,67 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
       args: Record<string, unknown>;
     };
     expect(structured).toBeDefined();
-    expect(structured.tool).toBe("checklist");
-    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).toBe("propose_config");
+    expect(structured.args).toEqual({});
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 
-  it("ships empty args when meta carries no cwd (defensive)", () => {
-    const response = buildSyntheticCoverageResponse(10, { metaBloat: true });
-    (response.meta as Record<string, unknown>).cwd = undefined;
-    const result = applyCoverageBudget({ response });
-    const slim = result.response as Record<string, unknown>;
-    const structured = slim.nextStepStructured as {
+  it("routes to propose_config({cwd}) when only cwd is supplied (no narrowing dir)", () => {
+    // Q16 closure step 2: when the caller's `cwd` is known but no
+    // dominant non-vendor top-level directory was honestly derivable
+    // (every top dir vendor-classified, files all sit at root, top-
+    // dir tally ties), the slim envelope routes to `propose_config`
+    // WITH cwd. Strictly narrower than `propose_config({})` — the
+    // agent gets a deterministic re-scan target without re-deriving
+    // cwd.
+    const response = buildSyntheticCoverageResponse(10, {
+      metaBloat: true,
+    });
+    const result = applyCoverageBudget({
+      response,
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("checklist");
-    expect(structured.args).toEqual({});
+    expect(structured.tool).toBe("propose_config");
+    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
+  });
+
+  it("routes to scan_project({restrictToPaths,cwd}) when narrowingDir + cwd are supplied", () => {
+    // Q16 closure step 1: when the call site identified a dominant
+    // non-vendor top-level directory in the corpus, the slim envelope
+    // routes the agent at `scan_project({restrictToPaths:
+    // [narrowingDir], cwd})` directly — the most direct scope-
+    // narrowing call available. Skips the `propose_config` round-
+    // trip entirely. Mirrors `scan_project`'s bulk-vendor scope-down
+    // override so the slim envelope's recovery path stays identical
+    // across project-rooted tools per "Per-tool lane and warning-set
+    // classification must agree."
+    const response = buildSyntheticCoverageResponse(10, {
+      metaBloat: true,
+    });
+    const result = applyCoverageBudget({
+      response,
+      narrowingDir: "src",
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("scan_project");
+    expect(structured.args).toEqual({
+      restrictToPaths: ["src"],
+      cwd: "/tmp/example-project",
+    });
+    // Cycle-break invariant still holds.
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 });
 

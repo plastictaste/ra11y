@@ -13,9 +13,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { applyFixTool } from "../../../src/mcp/tool-apply-fix.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ErrorBody {
   readonly error: string;
@@ -35,7 +35,7 @@ interface SuccessBody {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-edges-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-edges-"));
   try {
     return await fn(dir);
   } finally {
@@ -101,9 +101,9 @@ describe("apply_fix: path-escape guard", () => {
 
   it("rejects absolute paths outside cwd with `path-escapes-cwd`", async () => {
     await withScratch(async (dir) => {
-      const outside = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-outside-"));
+      const outside = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-outside-"));
       try {
-        const file = join(outside, "x.html");
+        const file = posixJoin(outside, "x.html");
         await writeFile(file, "<p>x</p>");
         const { isError, code } = await call(allowWriteSession(), {
           file,
@@ -122,7 +122,7 @@ describe("apply_fix: path-escape guard", () => {
 describe("apply_fix: edit-shape validation", () => {
   it("rejects `edit-shape-invalid` when `edit` is missing", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "a.html");
+      const file = posixJoin(dir, "a.html");
       await writeFile(file, "<p>x</p>");
       const { isError, code } = await call(allowWriteSession(), { file, cwd: dir });
       expect(isError).toBe(true);
@@ -132,7 +132,7 @@ describe("apply_fix: edit-shape validation", () => {
 
   it("rejects `edit-shape-invalid` when `oldText` is empty", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "a.html");
+      const file = posixJoin(dir, "a.html");
       await writeFile(file, "<p>x</p>");
       const { isError, code } = await call(allowWriteSession(), {
         file,
@@ -146,7 +146,7 @@ describe("apply_fix: edit-shape validation", () => {
 
   it("rejects `edit-shape-invalid` when `newText` is not a string", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "a.html");
+      const file = posixJoin(dir, "a.html");
       await writeFile(file, "<p>x</p>");
       const { isError, code } = await call(allowWriteSession(), {
         file,
@@ -162,7 +162,7 @@ describe("apply_fix: edit-shape validation", () => {
 describe("apply_fix: file existence + extension", () => {
   it("rejects unsupported extensions with `file-unsupported`", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "data.json");
+      const file = posixJoin(dir, "data.json");
       await writeFile(file, "{}");
       const { isError, code } = await call(allowWriteSession(), {
         file,
@@ -176,7 +176,7 @@ describe("apply_fix: file existence + extension", () => {
 
   it("rejects a missing file with `file-read-failed`", async () => {
     await withScratch(async (dir) => {
-      const ghost = join(dir, "does-not-exist.html");
+      const ghost = posixJoin(dir, "does-not-exist.html");
       const { isError, code } = await call(allowWriteSession(), {
         file: ghost,
         edit: { oldText: "x", newText: "y" },
@@ -191,7 +191,7 @@ describe("apply_fix: file existence + extension", () => {
 describe("apply_fix: per-extension parse branches", () => {
   it("applies a CSS edit through the CSS parser branch", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "styles.css");
+      const file = posixJoin(dir, "styles.css");
       await writeFile(file, ".x { color: red; }\n");
       const { isError, body } = await call(allowWriteSession(), {
         file,
@@ -207,7 +207,7 @@ describe("apply_fix: per-extension parse branches", () => {
 
   it("applies a TSX edit through the tsx parser branch without introducing parse errors", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "App.tsx");
+      const file = posixJoin(dir, "App.tsx");
       await writeFile(file, 'export const App = () => <button aria-label="hi">click</button>;\n');
       const { isError, body } = await call(allowWriteSession(), {
         file,
@@ -226,7 +226,7 @@ describe("apply_fix: per-extension parse branches", () => {
 describe("apply_fix: explicit level override", () => {
   it("accepts an explicit `level` override (AAA) and runs the scan on that level", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "page.html");
+      const file = posixJoin(dir, "page.html");
       await writeFile(file, '<html><body><img src="/logo.png"></body></html>\n');
       const { isError, body } = await call(allowWriteSession(), {
         file,

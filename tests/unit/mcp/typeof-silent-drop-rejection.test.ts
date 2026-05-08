@@ -201,6 +201,8 @@ describe("MCP typeof-guard silent-drop closure: number fields", () => {
 });
 
 describe("MCP typeof-guard silent-drop closure: omitting the field is honest", () => {
+  // Both tests below scan the whole ra11y repo in-process and are
+  // close to bun:test's 5s default on slower machines / CI runners.
   it("scan_project: omitting autoDetectWrappers leaves the default in place", async () => {
     const tool = findTool("scan_project");
     const session = new McpSession();
@@ -216,7 +218,7 @@ describe("MCP typeof-guard silent-drop closure: omitting the field is honest", (
         expect(structured.details?.param).not.toBe("autoDetectWrappers");
       }
     }
-  });
+  }, 30_000);
 
   it("checklist: omitting limit leaves the default in place", async () => {
     const tool = findTool("checklist");
@@ -228,5 +230,5 @@ describe("MCP typeof-guard silent-drop closure: omitting the field is honest", (
         expect(structured.details?.param).not.toBe("limit");
       }
     }
-  });
+  }, 30_000);
 });

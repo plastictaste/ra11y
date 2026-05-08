@@ -20,8 +20,8 @@
  * Default head-slice cap for `plan.findingsByFile`. Twenty entries is
  * the published surface — wide enough that an agent paging by file on a
  * mid-size monorepo sees the dominant clusters in one read, narrow
- * enough that the per-entry cost (`{ path, count }` ≈ 60–120 chars) stays
- * under ~2.4 KB on the wire. The slim-envelope path (see
+ * enough that the per-entry cost (`{ path, errorWarningCount }` ≈ 60–120
+ * chars) stays under ~2.4 KB on the wire. The slim-envelope path (see
  * `scan-project-budget.ts` `SLIM_FINDINGS_BY_FILE_CAP`) trims further
  * when the bulk-vendor regime fires.
  */
@@ -42,10 +42,24 @@ export const FINDINGS_BY_FILE_DEFAULT_LIMIT = 20;
  * `plan.fixesByClass` headline tallies. Without the filter, an
  * info-only file (e.g. one that only fired `wrappers/inferred`) would
  * crowd the top of the list with non-actionable context.
+ *
+ * Field name — `errorWarningCount` (not bare `count`) names the slice
+ * explicitly. The same conceptual counter ships from `scan_file` as
+ * `totalFindings` (paging-load-bearing, includes info-severity), so
+ * before the rename two surfaces shipped one-line-named integers that
+ * disagreed on info-heavy corpora (252 vs 264 on an MDX docs corpus).
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+ * naming the same concept must use one shape" + "Cross-surface count
+ * invariant," the field name carries the slice so an agent comparing
+ * the two surfaces sees the asymmetry on the wire. Same precedent as
+ * the `untargetedCriteriaForProject` / `untargetedCriteriaForFile`
+ * split — one slice per name. The cross-surface identity is
+ * `errorWarningCount === scan_file({path}).totalFindings -
+ * plan.infoSeverityFindings`.
  */
 export interface FindingsByFileEntry {
   readonly path: string;
-  readonly count: number;
+  readonly errorWarningCount: number;
 }
 
 interface FileShape {
@@ -78,11 +92,11 @@ export function computeFindingsByFile(
       if (finding.severity === "info") continue;
       count += 1;
     }
-    if (count > 0) ranked.push({ path: file.path, count });
+    if (count > 0) ranked.push({ path: file.path, errorWarningCount: count });
   }
   // Count desc; path asc tiebreak so the wire shape stays stable across
   // runs even when the underlying scanner reorders discovery.
-  ranked.sort((a, b) => b.count - a.count || a.path.localeCompare(b.path));
+  ranked.sort((a, b) => b.errorWarningCount - a.errorWarningCount || a.path.localeCompare(b.path));
   return ranked.slice(0, limit);
 }
 
@@ -102,8 +116,8 @@ export function computeFindingsByFile(
  * agent can distinguish "this is the complete inventory" from "the
  * head-slice clipped a longer tail." Sibling boolean rather than
  * embedding the count in the array shape — keeps the array contract
- * for `findingsByFile` (always a `{ path, count }` array) intact for
- * every consumer that already iterates it. The
+ * for `findingsByFile` (always a `{ path, errorWarningCount }` array)
+ * intact for every consumer that already iterates it. The
  * `totalFilesWithFindings` scalar already on `scan_project` carries the
  * full pre-slice denominator; this flag is the present-when-meaningful
  * "did this slice clip" signal.

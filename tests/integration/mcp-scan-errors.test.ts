@@ -30,11 +30,11 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
-const BAD_ALT_FILE = join(BAD_ALT_DIR, "img-no-alt.html");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const BAD_ALT_FILE = posixJoin(BAD_ALT_DIR, "img-no-alt.html");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -113,7 +113,7 @@ describe("scan_project hard-errors when cwd does not exist", () => {
   });
 
   it("still succeeds (warnings path) on a valid empty directory", async () => {
-    const empty = mkdtempSync(join(tmpdir(), "ra11y-p0f-empty-"));
+    const empty = mkdtempSync(posixJoin(tmpdir(), "ra11y-p0f-empty-"));
     try {
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: empty })]);
       const result = resultOf(responses[1]);
@@ -134,7 +134,7 @@ describe("scan_project hard-errors when cwd does not exist", () => {
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
       plan?: {
-        notes?: number;
+        infoSeverityFindings?: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -145,10 +145,10 @@ describe("scan_project hard-errors when cwd does not exist", () => {
     };
     // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
-    // is that the plan exists with a numeric `notes` counter (and
-    // optionally a `fixesByClass` per-lane tally, present-when-
-    // meaningful).
-    expect(typeof body.plan?.notes).toBe("number");
+    // is that the plan exists with a numeric `infoSeverityFindings`
+    // counter (and optionally a `fixesByClass` per-lane tally,
+    // present-when-meaningful).
+    expect(typeof body.plan?.infoSeverityFindings).toBe("number");
   });
 });
 
@@ -181,7 +181,7 @@ describe("scan hard-errors when every path is missing", () => {
     expect(result.isError).toBeUndefined();
     const body = JSON.parse(result.content[0].text) as {
       plan?: {
-        notes?: number;
+        infoSeverityFindings?: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -192,14 +192,14 @@ describe("scan hard-errors when every path is missing", () => {
     };
     // The flat `plan.violations`
     // top-level integer was deleted. The honest "scan ran" signal
-    // is that the plan exists with a numeric `notes` counter (and
-    // optionally a `fixesByClass` per-lane tally, present-when-
-    // meaningful).
-    expect(typeof body.plan?.notes).toBe("number");
+    // is that the plan exists with a numeric `infoSeverityFindings`
+    // counter (and optionally a `fixesByClass` per-lane tally,
+    // present-when-meaningful).
+    expect(typeof body.plan?.infoSeverityFindings).toBe("number");
   });
 
   it("still emits the warnings envelope on a valid-but-empty directory", async () => {
-    const empty = mkdtempSync(join(tmpdir(), "ra11y-p0f-scan-empty-"));
+    const empty = mkdtempSync(posixJoin(tmpdir(), "ra11y-p0f-scan-empty-"));
     try {
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [empty] })]);
       const result = resultOf(responses[1]);
@@ -242,8 +242,8 @@ describe("scan_file error-code discrimination (Q-SHARED-SCAN-FILE-ERROR-DISCRIMI
     // The envelope must name this failure mode distinctly from path-
     // not-found so the agent knows to pick a different file, not to
     // double-check the path.
-    const dir = mkdtempSync(join(tmpdir(), "ra11y-scan-file-ext-"));
-    const yamlPath = join(dir, "config.yaml");
+    const dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-file-ext-"));
+    const yamlPath = posixJoin(dir, "config.yaml");
     await Bun.write(yamlPath, "key: value\n");
     try {
       const responses = await mcpSession([

@@ -13,9 +13,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -66,9 +66,9 @@ function body<T>(resp: JsonRpcResponse): T {
 }
 
 async function makeFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-cov-check-consistency-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cov-check-consistency-"));
   await writeFile(
-    join(dir, "page.html"),
+    posixJoin(dir, "page.html"),
     `<html><body><img src="a.png"><video src="x.mp4"></video><p>hi</p></body></html>`,
   );
   return dir;
@@ -83,7 +83,7 @@ async function makeFixture(): Promise<string> {
  * regardless of the metadata automatable flag.
  */
 async function makeManualCriterionFailureFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-manual-criterion-failure-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-manual-criterion-failure-"));
   // `.text-danger` is Bootstrap's "paint the text red as a status"
   // utility. The visible text ("Access denied") names no status word
   // and the element has no icon / aria-label / role=alert / sr-only
@@ -93,7 +93,7 @@ async function makeManualCriterionFailureFixture(): Promise<string> {
   // shape; we inline it here so the fixture stays self-describing
   // next to the invariant it proves.
   await writeFile(
-    join(dir, "page.html"),
+    posixJoin(dir, "page.html"),
     `<!DOCTYPE html>
 <html lang="en"><body><main>
   <span class="text-danger">Access denied</span>
@@ -137,13 +137,19 @@ interface CoverageBody {
   readonly standardId: string;
   // The legacy composite `criteriaManualReviewRequired` was deleted
   // in favor of the same two-counter split scan_project and checklist
-  // already ship.
-  readonly actionableManualItems: number;
-  readonly untargetedCriteria: number;
+  // already ship. The redundant top-level `actionableManualItems`
+  // scalar (and its sibling `criteriaUntestable`) were then deleted
+  // per AI-first doctrine "Sibling fields naming the same concept
+  // must use one shape" — the criteria-axis count rides through the
+  // structured `summary.actionable.criteria` path that mirrors
+  // `checklist.summary.actionable.criteria`, and
+  // `manualWithCandidates.length` exposes the same count via the
+  // array form.
+  readonly untargetedCriteriaForProject: number;
   // Structured `summary` dict — mirrors `checklist.summary`'s key
   // shape so an agent reading `summary.actionable.criteria` /
-  // `summary.untargetedCriteria` / `summary.likelyIrrelevant` /
-  // `summary.automatedCoverage` resolves the same path on either
+  // `summary.untargetedCriteriaForProject` / `summary.likelyIrrelevant`
+  // / `summary.automatedCoverage` resolves the same path on either
   // tool. Pre-fix this field shipped as a prose string while
   // `checklist.summary` shipped as a dict — same field name on
   // sibling tools, two shapes, the canonical "Sibling fields naming
@@ -152,7 +158,7 @@ interface CoverageBody {
   // `summary.headline`.
   readonly summary: {
     readonly actionable: { readonly criteria: number };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
     readonly likelyIrrelevant: number;
     readonly automatedCoverage: {
       readonly standardId: string;
@@ -163,10 +169,15 @@ interface CoverageBody {
     readonly headline: string;
   };
   // Canonical field name is `criterionId` — matches
-  // `checklist.items[].criterionId` and the namespaced-id convention
+  // `checklist.items[].criteria[0]` (the row's owning criterion ID,
+  // shaped as a length-1 array per the cross-surface field-name
+  // alignment) and the namespaced-id convention
   // (`wcag22:1.4.3`) used elsewhere. The legacy `id` alias was dropped;
-  // entries carry `criterionId` only.
-  readonly manualWithCandidates: readonly { readonly criterionId: string }[];
+  // entries carry `criterionId` only. Present-when-meaningful:
+  // omitted from the response entirely when no manual criterion
+  // grounded a candidate on this corpus (the array's length, not a
+  // sentinel-empty list, is the canonical signal).
+  readonly manualWithCandidates?: readonly { readonly criterionId: string }[];
   readonly likelyIrrelevantCriteria: readonly {
     readonly criterionId: string;
   }[];
@@ -185,14 +196,15 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
     readonly likelyIrrelevant: number;
   };
-  readonly items: readonly { readonly criterionId: string }[];
-  readonly likelyIrrelevant: readonly { readonly criterionId: string }[];
+  readonly items: readonly { readonly criteria: readonly string[] }[];
+  readonly likelyIrrelevant: readonly { readonly criteria: readonly string[] }[];
   readonly nextStep?: string;
   readonly nextStepStructured?: NextStepStructured;
 }
@@ -200,7 +212,7 @@ interface ChecklistBody {
 describe("ADR 0010 — coverage and checklist stay consistent across the shared boundary", () => {
   it("ships `summary` as a structured dict on both surfaces with mirrored keys", async () => {
     // Cross-surface field-shape invariant: an agent reading
-    // `summary.actionable.criteria`, `summary.untargetedCriteria`,
+    // `summary.actionable.criteria`, `summary.untargetedCriteriaForProject`,
     // `summary.likelyIrrelevant`, and `summary.automatedCoverage`
     // gets the same path resolution on both tools. Pre-fix
     // `coverage.summary` shipped as a prose string while
@@ -214,8 +226,8 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // Cross-surface count invariant ("Cross-surface count
     // invariant"): the structured numbers must agree on identical
     // cwd. `summary.actionable.criteria` here equals
-    // `summary.actionable.criteria` there; `summary.untargetedCriteria`
-    // here equals `summary.untargetedCriteria` there.
+    // `summary.actionable.criteria` there; `summary.untargetedCriteriaForProject`
+    // here equals `summary.untargetedCriteriaForProject` there.
     const dir = await makeFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -232,15 +244,22 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // `actionable.criteria` is the cross-tool canonical count — must
     // resolve identically by both name AND value on either tool.
     expect(coverage.summary.actionable.criteria).toBe(checklist.summary.actionable.criteria);
-    // The structured count must also equal the sibling top-level
-    // scalar on coverage (no internal disagreement within the same
-    // response).
-    expect(coverage.summary.actionable.criteria).toBe(coverage.actionableManualItems);
+    // The structured count must also equal the array-length sibling
+    // on coverage (no internal disagreement within the same
+    // response). The legacy top-level `actionableManualItems` scalar
+    // twin was deleted (it duplicated `manualWithCandidates.length`)
+    // — the array form is the canonical sibling now, present-when-
+    // meaningful (omitted when empty).
+    expect(coverage.summary.actionable.criteria).toBe(coverage.manualWithCandidates?.length ?? 0);
 
-    // `summary.untargetedCriteria` mirrors across tools.
-    expect(coverage.summary.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
+    // `summary.untargetedCriteriaForProject` mirrors across tools.
+    expect(coverage.summary.untargetedCriteriaForProject).toBe(
+      checklist.summary.untargetedCriteriaForProject,
+    );
     // And mirrors the sibling top-level scalar on coverage.
-    expect(coverage.summary.untargetedCriteria).toBe(coverage.untargetedCriteria);
+    expect(coverage.summary.untargetedCriteriaForProject).toBe(
+      coverage.untargetedCriteriaForProject,
+    );
 
     // `summary.likelyIrrelevant` (count) mirrors across tools.
     expect(coverage.summary.likelyIrrelevant).toBe(checklist.summary.likelyIrrelevant);
@@ -273,7 +292,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // Untargeted count must be the same number on both tools — it
     // comes from the same `manualApplicability` pass per ADR 0010.
-    expect(coverage.untargetedCriteria).toBe(checklist.summary.untargetedCriteria);
+    expect(coverage.untargetedCriteriaForProject).toBe(
+      checklist.summary.untargetedCriteriaForProject,
+    );
 
     // likelyIrrelevant list: same criteria are flagged on both surfaces.
     // Q7: read the canonical `criterionId` field; the legacy `id` alias
@@ -281,13 +302,18 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     const coverageIrrelevantIds = new Set(
       coverage.likelyIrrelevantCriteria.map((c) => c.criterionId),
     );
-    const checklistIrrelevantIds = new Set(checklist.likelyIrrelevant.map((c) => c.criterionId));
+    const checklistIrrelevantIds = new Set(checklist.likelyIrrelevant.flatMap((c) => c.criteria));
     expect(coverageIrrelevantIds).toEqual(checklistIrrelevantIds);
 
     // Actionable (checklist items with candidates) lines up with
-    // coverage's `manualWithCandidates`.
-    const coverageActionableIds = new Set(coverage.manualWithCandidates.map((c) => c.criterionId));
-    const checklistActionableIds = new Set(checklist.items.map((i) => i.criterionId));
+    // coverage's `manualWithCandidates`. The array is
+    // present-when-meaningful — when the corpus has no grounded
+    // manual candidates, the field is omitted entirely (treat
+    // absent as the empty set, never an empty-array sentinel).
+    const coverageActionableIds = new Set(
+      (coverage.manualWithCandidates ?? []).map((c) => c.criterionId),
+    );
+    const checklistActionableIds = new Set(checklist.items.flatMap((i) => i.criteria));
     expect(checklistActionableIds).toEqual(coverageActionableIds);
   });
 
@@ -318,7 +344,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // (zero parseable files → zero grounded candidates, regardless of
     // finder behavior). `checklist` then cross-points at `coverage`
     // per ADR 0010 branch 1 on the checklist side.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-to-coverage-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-checklist-to-coverage-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
     if (checklist.summary.actionable.criteria !== 0) {
@@ -344,7 +370,7 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // so agents discover them without a separate prompts/list call.
     // Structured still points at `coverage` (the companion MCP tool) —
     // the prompt names live in prose only per CLAUDE.md §1.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-prompt-link-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-checklist-prompt-link-"));
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklist = body<ChecklistBody>(responses[1]);
     if (checklist.summary.actionable.criteria !== 0) {
@@ -512,7 +538,10 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     >(responses[1]);
 
     const arrays = [
-      coverage.manualWithCandidates,
+      // `manualWithCandidates` is present-when-meaningful — when
+      // the corpus has no grounded manual candidates, the field is
+      // omitted entirely. Treat absent as the empty set.
+      coverage.manualWithCandidates ?? [],
       coverage.likelyIrrelevantCriteria,
       coverage.failingAutomatedCriteria,
       coverage.warningAutomatedCriteria,

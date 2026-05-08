@@ -33,6 +33,15 @@ async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Build a POSIX-shaped expected absolute path. Mirrors `join(dir, ...segments)`
+ * but normalizes the result so it matches the POSIX-shaped paths the
+ * scanner emits on Windows.
+ */
+function posixJoin(dir: string, ...segments: string[]): string {
+  return [dir.split(/[\\/]/).join("/"), ...segments.flatMap((s) => s.split(/[\\/]/))].join("/");
+}
+
 interface ScanProjectResponse {
   readonly plan: Record<string, unknown>;
   readonly files?: ReadonlyArray<Record<string, unknown>>;
@@ -118,9 +127,9 @@ describe("scan_project — collapseByGroupKey parameter", () => {
       expect(altGroup).toBeDefined();
       expect(altGroup?.occurrenceCount).toBe(3);
       expect(altGroup?.occurrences.map((o) => o.path).sort()).toEqual([
-        join(dir, "templates", "site-a", "index.html"),
-        join(dir, "templates", "site-b", "index.html"),
-        join(dir, "templates", "site-c", "index.html"),
+        posixJoin(dir, "templates", "site-a", "index.html"),
+        posixJoin(dir, "templates", "site-b", "index.html"),
+        posixJoin(dir, "templates", "site-c", "index.html"),
       ]);
       // Canonical findingId is non-empty so suggest_fix can address
       // the group via its first occurrence.

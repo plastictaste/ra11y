@@ -25,9 +25,16 @@
 
 import type { Dirent } from "node:fs";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { compileGlobs } from "../utils/glob.ts";
-import { extension, hasParseableExtension, PARSEABLE_EXTENSIONS } from "../utils/path.ts";
+import {
+  extension,
+  hasParseableExtension,
+  PARSEABLE_EXTENSIONS,
+  posixJoin,
+  posixRelative,
+  posixResolve,
+} from "../utils/path.ts";
 
 /** Per-path skip reason surfaced on `additionalPathsScanned.skipped`. */
 export type AdditionalPathSkip =
@@ -99,13 +106,13 @@ function classifyOneAdditionalPath(
   root: string,
   matcher: ReturnType<typeof compileGlobs>,
 ): AdditionalPathSkip | null {
-  const abs = isAbsolute(entry) ? entry : resolve(root, entry);
+  const abs = isAbsolute(entry) ? entry : posixResolve(root, entry);
   if (!existsSync(abs)) return { path: entry, reason: "not-found" };
   const { isFile, isDir } = safeStat(abs);
   if (isFile && !hasParseableExtension(abs)) {
     return { path: entry, reason: "unsupported-extension" };
   }
-  const relPath = relative(root, abs).replace(/\\/g, "/");
+  const relPath = posixRelative(root, abs).replace(/\\/g, "/");
   if (relPath.length > 0 && matcher.matches(relPath)) {
     return { path: entry, reason: "excluded-by-glob" };
   }
@@ -184,7 +191,7 @@ function walkForExtensions(
   for (const dirent of entries) {
     if (counter.filesSeen >= NO_PARSEABLE_FILES_WALK_CAP) return;
     if (dirent.name.startsWith(".")) continue;
-    const full = join(dir, dirent.name);
+    const full = posixJoin(dir, dirent.name);
     if (dirent.isDirectory()) {
       walkForExtensions(full, histogram, counter);
       continue;

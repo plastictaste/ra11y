@@ -183,7 +183,8 @@ describe("runScanAndFormat — meta block + per-rule coverage shape", () => {
       laneSum(lanes?.["guidance"]) +
       laneSum(lanes?.["runtimeOnly"]) +
       laneSum(lanes?.["verifyInSource"]);
-    const findings = errorWarning + ((formatted.plan["notes"] as number | undefined) ?? 0);
+    const findings =
+      errorWarning + ((formatted.plan["infoSeverityFindings"] as number | undefined) ?? 0);
     expect(findings).toBeGreaterThan(0);
   });
 
@@ -1500,7 +1501,7 @@ describe("splitViolationsByScanKind", () => {
     // The per-kind sibling splits the error+warning axis (the same
     // axis `plan.fixesByClass` tallies), not a different one —
     // otherwise the two lanes wouldn't sum to the structured
-    // per-lane tally the agent reads alongside it. `plan.notes`
+    // per-lane tally the agent reads alongside it. `plan.infoSeverityFindings`
     // (severity-info) tracks a different axis and stays out of the
     // per-kind split. Pre-Q7 this test referenced the flat
     // `plan.violations` headline; that field is gone but the
@@ -1578,7 +1579,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     // findings so the lanes match what `splitViolationsByScanKind`
     // tallies — the cross-surface invariant is the honest shape.
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 8, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -1592,7 +1593,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     ];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/bootstrap.min.css"]));
     expect(out["violationsByScanKind"]).toEqual({ source: 3, buildArtifact: 5 });
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
     // The helper re-derives the per-lane × per-kind tally from the
     // per-file findings; every fixture finding is `mechanical`, so
     // the `mechanical` lane gets the whole split and the others
@@ -1606,14 +1607,17 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     });
   });
 
-  it("returns the input plan by identity (no shallow copy) when no artifacts were classified", () => {
-    // Common-case fast path: the no-artifacts scan pays nothing for
-    // the helper; the conditional-spread doctrine keeps the field off
-    // the wire entirely AND leaves `fixesByClass` untouched (the
-    // upstream `countFixesByClass` already produced the per-kind
-    // shape with `buildArtifact: 0` everywhere).
+  it("stamps `plan.violationsByScanKind` with `buildArtifact: 0` even when no artifacts were classified", () => {
+    // Deterministic-headline doctrine: the aggregate ships on every
+    // scan response, including no-vendor scans, so the agent reads
+    // one stable headline rather than disambiguating "field absent
+    // because no artifacts" from "field absent because wiring missed
+    // a path." `fixesByClass` stays untouched on the no-artifacts
+    // path — the upstream `countFixesByClass` already produced the
+    // per-kind shape with `buildArtifact: 0` everywhere, so the
+    // helper's `fixesByClass` rewrite would be a no-op by value.
     const plan = {
-      notes: 1,
+      infoSeverityFindings: 1,
       fixesByClass: {
         mechanical: { source: 4, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -1622,13 +1626,17 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
       },
     } satisfies Record<string, unknown>;
     const out = withViolationsByScanKind(plan, [{ path: "x", findings: [E] }], new Set());
-    expect(out).toBe(plan);
-    expect(out["violationsByScanKind"]).toBeUndefined();
+    expect(out["violationsByScanKind"]).toEqual({ source: 1, buildArtifact: 0 });
+    // `fixesByClass` is identity-stable on the no-artifacts path —
+    // no rewrite needed when every lane already reads `buildArtifact:
+    // 0` from the upstream `countFixesByClass` call.
+    expect(out["fixesByClass"]).toBe(plan.fixesByClass);
+    expect(out["infoSeverityFindings"]).toBe(1);
   });
 
   it("preserves the input plan's other fields verbatim — additive only", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 1, buildArtifact: 0 },
@@ -1639,7 +1647,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     } satisfies Record<string, unknown>;
     const files = [{ path: "vendor/a.min.css", findings: [Eg, Wv] }];
     const out = withViolationsByScanKind(plan, files, new Set(["vendor/a.min.css"]));
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
     expect(out["summary"]).toBe("x");
     expect(out["violationsByScanKind"]).toEqual({ source: 0, buildArtifact: 2 });
     // The helper re-derives `fixesByClass` from the per-file findings
@@ -1663,7 +1671,7 @@ describe("withViolationsByScanKind — plan-stamping helper", () => {
     // field that conflates "no artifacts in the scan" with "no
     // findings on artifacts."
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 3, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -1755,7 +1763,7 @@ describe("computeTopRules — cross-file rule-frequency rollup", () => {
     expect(computeTopRules([])).toEqual([]);
     expect(computeTopRules([{ path: "src/x.tsx", findings: [] }])).toEqual([]);
     // Info-only scan — same axis as withViolationsByScanKind's
-    // severity filter; `plan.notes` carries that surface separately.
+    // severity filter; `plan.infoSeverityFindings` carries that surface separately.
     expect(computeTopRules([{ path: "src/x.tsx", findings: [I("wrappers/inferred")] }])).toEqual(
       [],
     );
@@ -1813,7 +1821,7 @@ describe("withTopRules — plan-stamping helper", () => {
 
   it("stamps `plan.topRules` when at least one error/warning rule fired", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
     } satisfies Record<string, unknown>;
     const out = withTopRules(plan, [
@@ -1824,7 +1832,7 @@ describe("withTopRules — plan-stamping helper", () => {
       { ruleId: "contrast/minimum", count: 1, topFile: "src/a.tsx" },
     ]);
     // Existing plan fields preserved — additive enrichment only.
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
     expect(out["fixesByClass"]).toEqual({
       mechanical: 3,
       guidance: 0,
@@ -1838,7 +1846,7 @@ describe("withTopRules — plan-stamping helper", () => {
     // clean scans; `[]` would force the agent to read a field whose
     // only signal is "nothing here."
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       summary: "No accessibility violations found.",
     } satisfies Record<string, unknown>;
     const out = withTopRules(plan, [{ path: "src/a.tsx", findings: [] }]);
@@ -1872,9 +1880,9 @@ describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
       { path: "src/m.tsx", findings: [E(), W()] }, // count 2 (tie with zzz)
     ]);
     expect(out.map((entry) => entry.path)).toEqual(["src/a.tsx", "src/m.tsx", "src/zzz.tsx"]);
-    expect(out[0]).toEqual({ path: "src/a.tsx", count: 4 });
-    expect(out[1]).toEqual({ path: "src/m.tsx", count: 2 });
-    expect(out[2]).toEqual({ path: "src/zzz.tsx", count: 2 });
+    expect(out[0]).toEqual({ path: "src/a.tsx", errorWarningCount: 4 });
+    expect(out[1]).toEqual({ path: "src/m.tsx", errorWarningCount: 2 });
+    expect(out[2]).toEqual({ path: "src/zzz.tsx", errorWarningCount: 2 });
   });
 
   it("excludes info-severity findings from the count axis", () => {
@@ -1882,9 +1890,9 @@ describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
     // files would crowd the rollup with non-actionable context.
     const out = computeFindingsByFile([
       { path: "src/a.tsx", findings: [I(), I(), I()] }, // info-only → excluded
-      { path: "src/b.tsx", findings: [E(), I()] }, // count 1 (info skipped)
+      { path: "src/b.tsx", findings: [E(), I()] }, // errorWarningCount 1 (info skipped)
     ]);
-    expect(out).toEqual([{ path: "src/b.tsx", count: 1 }]);
+    expect(out).toEqual([{ path: "src/b.tsx", errorWarningCount: 1 }]);
   });
 
   it("truncates to the limit (default 20) on ranked output", () => {
@@ -1912,7 +1920,7 @@ describe("computeFindingsByFile — per-file finding-frequency rollup", () => {
     expect(computeFindingsByFile([])).toEqual([]);
     expect(computeFindingsByFile([{ path: "src/x.tsx", findings: [] }])).toEqual([]);
     // Info-only scan — same severity filter as `computeTopRules`;
-    // `plan.notes` carries that surface separately.
+    // `plan.infoSeverityFindings` carries that surface separately.
     expect(computeFindingsByFile([{ path: "src/x.tsx", findings: [I()] }])).toEqual([]);
   });
 });
@@ -1923,7 +1931,7 @@ describe("withFindingsByFile — plan-stamping helper", () => {
 
   it("stamps `plan.findingsByFile` when at least one file carries error/warning findings", () => {
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: { mechanical: 3, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
     } satisfies Record<string, unknown>;
     const out = withFindingsByFile(plan, [
@@ -1931,13 +1939,13 @@ describe("withFindingsByFile — plan-stamping helper", () => {
       { path: "src/b.tsx", findings: [E()] },
     ]);
     expect(out["findingsByFile"]).toEqual([
-      { path: "src/a.tsx", count: 2 },
-      { path: "src/b.tsx", count: 1 },
+      { path: "src/a.tsx", errorWarningCount: 2 },
+      { path: "src/b.tsx", errorWarningCount: 1 },
     ]);
     // No truncation flag when the rollup carries the full inventory.
     expect(out["findingsByFileTruncated"]).toBeUndefined();
     // Existing plan fields preserved — additive enrichment only.
-    expect(out["notes"]).toBe(0);
+    expect(out["infoSeverityFindings"]).toBe(0);
     expect(out["fixesByClass"]).toEqual({
       mechanical: 3,
       guidance: 0,
@@ -1966,7 +1974,7 @@ describe("withFindingsByFile — plan-stamping helper", () => {
     // on clean scans; `[]` would force the agent to read a field whose
     // only signal is "nothing here."
     const plan = {
-      notes: 0,
+      infoSeverityFindings: 0,
       summary: "No accessibility violations found.",
     } satisfies Record<string, unknown>;
     const out = withFindingsByFile(plan, [{ path: "src/a.tsx", findings: [] }]);

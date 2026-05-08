@@ -29,10 +29,10 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const CRLF_FIXTURE = join(
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const CRLF_FIXTURE = posixJoin(
   PROJECT_ROOT,
   "tests",
   "fixtures",
@@ -116,8 +116,8 @@ function countCrlf(buf: Buffer): number {
  * resolvedViolations after the edit lands.
  */
 async function scratchBadImg(): Promise<{ dir: string; file: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-"));
-  const file = join(dir, "page.html");
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-"));
+  const file = posixJoin(dir, "page.html");
   await writeFile(file, '<html><body><img src="/logo.png"></body></html>\n');
   return { dir, file };
 }
@@ -265,8 +265,8 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
   });
 
   it("rejects edits that introduce parse errors and leaves the file unchanged", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-"));
-    const file = join(dir, "broken.tsx");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-"));
+    const file = posixJoin(dir, "broken.tsx");
     const before = 'const x = <button aria-label="hi">click</button>;\n';
     await writeFile(file, before);
     try {
@@ -303,8 +303,8 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
   });
 
   it("rejects edits whose oldText matches multiple locations", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-"));
-    const file = join(dir, "dup.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-"));
+    const file = posixJoin(dir, "dup.html");
     // Two identical <img> tags — oldText matches twice.
     const before = '<html><body><img src="/a.png"><img src="/a.png"></body></html>\n';
     await writeFile(file, before);
@@ -351,8 +351,8 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     // test would silently degrade. Assert source has CRLF up front.
     expect(fixtureBytes.includes(0x0d)).toBe(true);
 
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-crlf-"));
-    const file = join(dir, "page.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-crlf-"));
+    const file = posixJoin(dir, "page.html");
     await writeFile(file, fixtureBytes);
     try {
       // Multi-line edit: oldText spans lines (CRLF-bearing in source),
@@ -421,8 +421,8 @@ describe("MCP apply_fix tool: write-gated fix-verify loop", () => {
     // Start with a clean file. The edit will introduce a <img> without
     // alt, so the post-scan should produce a new violation that wasn't
     // in the pre-scan.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-"));
-    const file = join(dir, "clean.html");
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-"));
+    const file = posixJoin(dir, "clean.html");
     const before = "<html><body><p>hello</p></body></html>\n";
     await writeFile(file, before);
     try {

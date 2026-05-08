@@ -29,7 +29,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
       import { textResult } from "./helpers";
       export function handler() {
         return textResult({
-          plan: { violations: 0, notes: 0, summary: "clean" },
+          plan: { violations: 0, infoSeverityFindings: 0, summary: "clean" },
           files: [],
           meta: {},
         });
@@ -49,7 +49,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
       import { textResult } from "./helpers";
       export function handler() {
         return textResult({
-          plan: { violations: 323, notes: 0 },
+          plan: { violations: 323, infoSeverityFindings: 0 },
         });
       }
     `;
@@ -75,6 +75,7 @@ describe("findResponseAssemblyViolations: plan-violations-composite pattern", ()
           violationsWithoutAnyFix: 0,
           actionableManual: 0,
           untargetedCriteria: 0,
+          scope: "project",
           fixClassCounts: { mechanical: 0, guidance: 0, "runtime-only": 0, "verify-in-source": 0 },
           fixesByClass: { mechanical: 0, guidance: 0, runtimeOnly: 0, verifyInSource: 0 },
         });
@@ -203,8 +204,14 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
   test("does NOT flag the sibling `coverage` tool's per-standard `automatedCriteriaPassRate`", () => {
     // The `coverage` tool surfaces `automatedCriteriaPassRate` at the
     // top level of each per-standard entry alongside the structured
-    // four-counter split. That shape is out of scope because the
-    // value never sits under an `automatedCoverage:` key.
+    // three-counter split (criteriaEvaluated / criteriaClean /
+    // criteriaWithFindings). That shape is out of scope because the
+    // value never sits under an `automatedCoverage:` key. Note: the
+    // historical `criteriaUntestable` scalar twin was dropped from
+    // the live envelope (it duplicated `untestableCriteria.length` —
+    // the "Sibling fields naming the same concept must use one
+    // shape" failure mode) — but its presence here is incidental to
+    // what the lint rule actually checks.
     const src = `
       import { textResult } from "./helpers";
       export function handler() {
@@ -214,7 +221,7 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
           criteriaEvaluated: 30,
           criteriaClean: 22,
           criteriaWithFindings: 8,
-          criteriaUntestable: 5,
+          untestableCriteria: [],
         });
       }
     `;

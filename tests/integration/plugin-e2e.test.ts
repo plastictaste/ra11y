@@ -57,9 +57,9 @@ interface ScanPayload {
   // (see `src/mcp/scan-assembly.ts`) and from the agent-formatter
   // `AgentPlan` (see `src/output/agent-response/types.ts`) per
   // CLAUDE.md §1 "Composite headline counts are dishonest" — the plan
-  // exposes split `violations` (severity error/warning) and `notes`
-  // (severity info) counters instead.
-  readonly plan: { readonly violations: number; readonly notes: number };
+  // exposes split `violations` (severity error/warning) and
+  // `infoSeverityFindings` (severity info) counters instead.
+  readonly plan: { readonly violations: number; readonly infoSeverityFindings: number };
   readonly files: ReadonlyArray<{
     readonly path: string;
     readonly findings: readonly ScanFinding[];

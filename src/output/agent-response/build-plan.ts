@@ -163,7 +163,8 @@ export interface FixCounts {
  * Exported so the MCP layer can reuse the same accounting for effort
  * math and `violationsWithoutAnyFix` derivation without rebuilding a
  * full {@link AgentPlan} — its plan wrapper carries MCP-specific fields
- * (actionableManualItems, untargetedCriteria, limitations, etc.) that
+ * (actionableManualItems, untargetedCriteriaForProject /
+ * untargetedCriteriaForFile, limitations, etc.) that
  * the CLI plan deliberately doesn't.
  *
  * Both returned fields are internal signals — neither is surfaced on
@@ -251,7 +252,16 @@ export function countFixesByClass(
     // "Per-call shape must agree with per-class plan tally"). The
     // lanes partition the violation set: a violation lands in exactly
     // one bucket.
-    if (isSuppressionFlavoredSuggestion(v.suggestion)) {
+    //
+    // Carve-out: a violation with a populated `fixPaths.primary.edit`
+    // ships an actual mechanical edit and `suggest_fix` returns
+    // `kind: "edit"` on it (the suppress-flavored predicate inside
+    // `tool-suggest-fix-fixpaths.ts` lives on the no-mechanical-edit
+    // branch only). Counting such findings in `suppressRecommended`
+    // here would make the plan tally lie about the per-call shape —
+    // keep mechanical-fix violations in their declared lane.
+    const hasMechanicalEdit = v.fixPaths?.primary.edit !== undefined;
+    if (!hasMechanicalEdit && isSuppressionFlavoredSuggestion(v.suggestion)) {
       suppressRecommended = {
         source: suppressRecommended.source + (isBuildArtifact ? 0 : 1),
         buildArtifact: suppressRecommended.buildArtifact + (isBuildArtifact ? 1 : 0),
@@ -382,7 +392,7 @@ export function buildAgentPlan(
   // per-lane tally themselves.
   void violationsCount;
   return {
-    notes: notesCount,
+    infoSeverityFindings: notesCount,
     fixesByClass,
     reviewNeeded,
     manualOnly,

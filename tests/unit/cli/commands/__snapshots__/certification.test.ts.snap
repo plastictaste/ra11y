@@ -1,0 +1,50 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`certification snapshot shape pin matches the JSON snapshot for the pinned synthetic scorecard 1`] = `
+[
+  {
+    "automated": {
+      "failing": 1,
+      "passRate": 50,
+      "passing": 1,
+      "total": 2,
+    },
+    "blockingIssues": [
+      "snapstd:1.1.1",
+    ],
+    "manual": {
+      "completionRate": 50,
+      "reviewed": 1,
+      "supporting": 1,
+      "total": 2,
+    },
+    "nextSteps": [
+      "Fix 1 failing automated criterion(s). Run \`ra11y --format terminal\` for locations and suggestions.",
+      "Complete 1 pending manual review(s). Generate the worksheet with \`ra11y --checklist > checklist.md\`.",
+    ],
+    "readiness": 50,
+    "standardId": "snapstd",
+    "standardName": "Snapshot Standard",
+    "targetLevel": "AA",
+  },
+]
+`;
+
+exports[`certification snapshot shape pin matches the markdown snapshot for the pinned synthetic scorecard 1`] = `
+"# Certification Readiness Scorecard
+
+## Snapshot Standard — target Level AA
+
+**Readiness: 50 / 100**
+
+- Automated: 1/2 passing (50%)
+- Manual review: 1/2 complete (50%)
+
+### Blocking issues
+- snapstd:1.1.1
+
+### Next steps
+- Fix 1 failing automated criterion(s). Run \`ra11y --format terminal\` for locations and suggestions.
+- Complete 1 pending manual review(s). Generate the worksheet with \`ra11y --checklist > checklist.md\`.
+"
+`;

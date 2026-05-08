@@ -332,12 +332,34 @@ function isQueryMethod(name: string): boolean {
 }
 
 /**
+ * Tags that name a structural document root (`<html>`, `<body>`).
+ * A click listener attached to one of these via
+ * `document.querySelector("html")` / `getElementsByTagName("body")`
+ * etc. is the documented vendor pattern for delegated outside-click
+ * dismissal — not a missing-role bug. The document root is by-platform
+ * focusable and cannot be converted to `<button>`; emitting on these
+ * tags would produce a structurally invalid suggested fix and the
+ * cross-file evidence chain is composition-speculative.
+ *
+ * Per docs/kb/architecture/ai-first-consumer.md "Heuristic emission is
+ * the symmetric twin of heuristic suppression", the rule's selector-to-
+ * element matching on a document-root selector is too speculative to
+ * justify a deterministic finding — the listener target is the
+ * platform's naturally-focusable root, and converting `<html>` /
+ * `<body>` to `<button>` is structurally invalid.
+ */
+const DOCUMENT_ROOT_TAGS: ReadonlySet<string> = new Set(["html", "body"]);
+
+/**
  * Translates a captured `(method, arg)` into a `CapturedSelector` the
  * host rule can match against HTML elements. Compound selectors
  * (descendant combinators, pseudo-classes, attribute-with-value) fall
  * through to null — the agent reading the file resolves these faster
  * than an in-process tokenizer would, and silently mis-resolving is
  * worse than emitting nothing.
+ *
+ * Tag selectors that name a document root (`html`, `body`) also fall
+ * through to null — see `DOCUMENT_ROOT_TAGS` above.
  */
 function classifySelector(method: string, arg: string): CapturedSelector | null {
   const trimmed = arg.trim();
@@ -353,10 +375,18 @@ function classifySelector(method: string, arg: string): CapturedSelector | null 
   }
   if (method === "getElementsByTagName") {
     if (!/^[a-zA-Z][a-zA-Z0-9-]*$/.test(trimmed)) return null;
-    return { selector: trimmed, kind: "tag", value: trimmed };
+    return buildTagSelector(trimmed);
   }
-  // querySelector / querySelectorAll — accept simple single-token shapes
-  // only.
+  return classifyQuerySelectorArg(trimmed);
+}
+
+/**
+ * Decode a `querySelector` / `querySelectorAll` argument into a
+ * captured selector. Accepts simple single-token shapes only:
+ * `#id`, `.class`, `tag`, `[attr]` (no value comparator). Compound
+ * selectors fall through to null.
+ */
+function classifyQuerySelectorArg(trimmed: string): CapturedSelector | null {
   if (/^#[A-Za-z][\w-]*$/.test(trimmed)) {
     return { selector: trimmed, kind: "id", value: trimmed.slice(1) };
   }
@@ -364,17 +394,25 @@ function classifySelector(method: string, arg: string): CapturedSelector | null 
     return { selector: trimmed, kind: "class", value: trimmed.slice(1) };
   }
   if (/^[a-zA-Z][a-zA-Z0-9-]*$/.test(trimmed)) {
-    return { selector: trimmed, kind: "tag", value: trimmed };
+    return buildTagSelector(trimmed);
   }
   // Bracketed attribute selector with no value comparator (`[data-x]`
   // but NOT `[data-x="y"]`) — value-comparators require attribute-value
   // matching which the simple HTML walker doesn't support yet.
   const attrMatch = /^\[([A-Za-z][\w-]*)\]$/.exec(trimmed);
-  if (attrMatch !== null) {
-    const name = attrMatch[1];
-    if (name !== undefined) return { selector: trimmed, kind: "attribute", value: name };
-  }
-  return null;
+  if (attrMatch === null) return null;
+  const name = attrMatch[1];
+  if (name === undefined) return null;
+  return { selector: trimmed, kind: "attribute", value: name };
+}
+
+/**
+ * Build a tag-selector capture, returning null when the tag names a
+ * document root (`html`, `body`) — see `DOCUMENT_ROOT_TAGS`.
+ */
+function buildTagSelector(tagName: string): CapturedSelector | null {
+  if (DOCUMENT_ROOT_TAGS.has(tagName.toLowerCase())) return null;
+  return { selector: tagName, kind: "tag", value: tagName };
 }
 
 function escapeForRegex(name: string): string {

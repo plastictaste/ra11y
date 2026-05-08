@@ -30,9 +30,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -40,7 +40,7 @@ interface JsonRpcResponse {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly { readonly reason: string }[];
 }
@@ -106,19 +106,19 @@ function reasonHedges(reason: string): boolean {
 
 describe("checklist priority must not contradict hedging in candidate reason text", () => {
   it("downgrades wcag22:2.4.5 priority on a standalone single-page HTML file", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-hedge-2-4-5-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-hedge-2-4-5-"));
     // Single-page file: body + one fragment anchor → multiple-ways
     // finder fires; no sibling-HTML link → reason concedes "if this is
     // a standalone single-page file or SPA, the criterion may not
     // apply". 2.4.5 is Level AA, so the un-hedged priority would be
     // "high".
     await writeFile(
-      join(dir, "index.html"),
+      posixJoin(dir, "index.html"),
       `<html><body><main>Dashboard</main><a href="#top">Top</a></body></html>`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.4.5");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.4.5");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -128,20 +128,20 @@ describe("checklist priority must not contradict hedging in candidate reason tex
   });
 
   it("downgrades wcag22:2.3.1 priority for a one-shot short-cycle CSS animation", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-hedge-2-3-1-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-hedge-2-3-1-"));
     // 200ms animation with `iteration-count: 1` — the finder still
     // emits (per AI-first doctrine, the candidate surfaces with reason
     // enrichment) but the reason concedes "flashing only if
     // iteration-count is set to 'infinite' or a value >3". 2.3.1 is
     // Level A.
     await writeFile(
-      join(dir, "styles.css"),
+      posixJoin(dir, "styles.css"),
       `@keyframes pulse { 0% { opacity: 0; } 100% { opacity: 1; } }
        .blink { animation-name: pulse; animation-duration: 200ms; animation-iteration-count: 1; }`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.3.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.3.1");
     expect(item).toBeDefined();
     if (!item) return;
     if (item.candidates.length === 0) return; // finder may emit no candidate; nothing to assert

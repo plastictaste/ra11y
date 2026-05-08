@@ -92,8 +92,19 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface ScanFileBody {
   readonly plan: {
-    readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    // The bare `actionableManualItems` headline was dropped per
+    // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+    // counts are dishonest" — on a `scan_file` of `dist/*.min.css` it
+    // read 1 while every contributing candidate sat on the
+    // `buildArtifact` lane (Q15-MIN-CSS). Per-scan-kind tally is the
+    // honest replacement; consumers that want the flat count sum the
+    // two lanes themselves.
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
+    // scan_file is per-file scope — emits the per-file slice name.
+    readonly untargetedCriteriaForFile: number;
   };
   readonly reviewCandidates?: ReadonlyArray<{
     readonly criteria: readonly string[];
@@ -106,10 +117,12 @@ interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
-    readonly untargetedCriteria: number;
+    // checklist is project-walk scope — emits the project slice name.
+    readonly untargetedCriteriaForProject: number;
   };
 }
 
@@ -147,7 +160,7 @@ async function makePasswordFormFixture(): Promise<{ dir: string; page: string }>
 }
 
 describe("MCP invariant: scan_file actionable count agrees with checklist on the password-input fixture", () => {
-  it("scan_file.plan.actionableManualItems === checklist.summary.actionable.criteria on a fixture triggering 1.3.6 + 3.3.8 at the same line", async () => {
+  it("scan_file.plan.actionableManualItemsBySource (source+buildArtifact) === checklist.summary.actionable.criteria on a fixture triggering 1.3.6 + 3.3.8 at the same line", async () => {
     const { dir, page } = await makePasswordFormFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -156,12 +169,15 @@ describe("MCP invariant: scan_file actionable count agrees with checklist on the
     ]);
     const scanFileBody = body<ScanFileBody>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    expect(scanFileBody.plan.actionableManualItems).toBe(checklistBody.summary.actionable.criteria);
+    const scanActionable =
+      scanFileBody.plan.actionableManualItemsBySource.source +
+      scanFileBody.plan.actionableManualItemsBySource.buildArtifact;
+    expect(scanActionable).toBe(checklistBody.summary.actionable.criteria);
     // Sanity: the fixture is shaped so both finders fire — the
     // password-input is the only authored input on a non-search type.
     // A 0/0 result here would mean the finders missed the fixture and
     // the parity test would pass vacuously.
-    expect(scanFileBody.plan.actionableManualItems).toBeGreaterThan(0);
+    expect(scanActionable).toBeGreaterThan(0);
   });
 
   it("scan_file.reviewCandidates suppresses 1.3.6 on the password line where forms/autocomplete-missing fires for 1.3.5 (subset dedup), keeping 3.3.8", async () => {

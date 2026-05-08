@@ -31,7 +31,6 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { checklistTool } from "../../../src/mcp/tool-checklist.ts";
 import { coverageTool } from "../../../src/mcp/tool-coverage.ts";
@@ -40,6 +39,7 @@ import { proposeConfigTool } from "../../../src/mcp/tool-propose-config.ts";
 import { scanProjectTool } from "../../../src/mcp/tool-scan-project.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
 import type { McpTool } from "../../../src/mcp/tools-helpers.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ListSuppressionsMetaShape {
   readonly meta: Record<string, unknown>;
@@ -52,7 +52,7 @@ function findTool(name: string) {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-ssot-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-ssot-"));
   try {
     return await fn(dir);
   } finally {
@@ -93,7 +93,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   it("list_rules rule set ⊇ scan_project.perRuleCoverage rule IDs", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!doctype html><html lang="en"><head><title>Hi</title></head><body><img src="/x.png"><button></button></body></html>\n',
       );
       const session = new McpSession();
@@ -146,7 +146,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   it("scan_project, checklist, coverage, propose_config agree on rulesEvaluated.loaded", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!doctype html><html lang="en"><head><title>Hi</title></head><body><img src="/x.png" alt="x"></body></html>\n',
       );
       const session = new McpSession();
@@ -197,7 +197,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   it("honors project-config rule-off uniformly across scan-family surfaces", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!doctype html><html lang="en"><head><title>Hi</title></head><body></body></html>\n',
       );
       // Pick a rule ID present in the default registry. `alt-text/missing`
@@ -213,7 +213,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
       expect(listRules.rules.some((r) => r.id === ruleToSilence)).toBe(true);
 
       await writeFile(
-        join(dir, "ra11y.config.ts"),
+        posixJoin(dir, "ra11y.config.ts"),
         `export default { rules: { "${ruleToSilence}": "off" } };\n`,
       );
 
@@ -271,7 +271,7 @@ describe("rulesEvaluated SSOT: cross-surface invariants", () => {
   it("sessionConfigure.ruleCount agrees with scan_project.rulesEvaluated.loaded", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!doctype html><html lang="en"><head><title>Hi</title></head><body></body></html>\n',
       );
       const session = new McpSession();

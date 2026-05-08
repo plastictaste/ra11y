@@ -30,10 +30,10 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { FINDINGS_BY_FILE_DEFAULT_LIMIT } from "../../src/mcp/scan-assembly.ts";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -86,12 +86,12 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 interface FindingsByFileEntry {
   readonly path: string;
-  readonly count: number;
+  readonly errorWarningCount: number;
 }
 
 describe("scan_project: plan.findingsByFile rollup", () => {
   it("ranks files by count desc, path asc, on a small multi-file fixture", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-file-rank-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-file-rank-"));
     try {
       // Three authored HTML files. `a.html` carries multiple
       // mechanical missing-alt violations (wcag22:1.1.1) plus the
@@ -106,11 +106,11 @@ describe("scan_project: plan.findingsByFile rollup", () => {
       // absolute count, so a future rule addition won't break the
       // ranking contract this rollup ships.
       writeFileSync(
-        join(root, "a.html"),
+        posixJoin(root, "a.html"),
         '<html><body><img src="1.png"><img src="2.png"><img src="3.png"></body></html>\n',
       );
-      writeFileSync(join(root, "m.html"), '<html><body><img src="x.png"></body></html>\n');
-      writeFileSync(join(root, "z.html"), '<html><body><img src="y.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "m.html"), '<html><body><img src="x.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "z.html"), '<html><body><img src="y.png"></body></html>\n');
 
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
@@ -137,7 +137,7 @@ describe("scan_project: plan.findingsByFile rollup", () => {
         const prev = findingsByFile[i - 1];
         const cur = findingsByFile[i];
         if (prev === undefined || cur === undefined) continue;
-        expect(prev.count >= cur.count).toBe(true);
+        expect(prev.errorWarningCount >= cur.errorWarningCount).toBe(true);
       }
 
       // Alphabetical tiebreak — `m.html` and `z.html` carry the same
@@ -151,14 +151,14 @@ describe("scan_project: plan.findingsByFile rollup", () => {
       expect(zEntry).toBeDefined();
       expect(aEntry).toBeDefined();
       if (!(mEntry && zEntry && aEntry)) throw new Error("expected entries missing");
-      expect(mEntry.count).toBe(zEntry.count);
+      expect(mEntry.errorWarningCount).toBe(zEntry.errorWarningCount);
       expect(findingsByFile.indexOf(mEntry)).toBeLessThan(findingsByFile.indexOf(zEntry));
 
       // Top entry — `a.html` has strictly more findings than the tied
       // pair because of the extra missing-alt violations. The rollup's
       // job is to surface "where the work clusters" first.
       expect(findingsByFile[0]).toBe(aEntry);
-      expect(aEntry.count).toBeGreaterThan(mEntry.count);
+      expect(aEntry.errorWarningCount).toBeGreaterThan(mEntry.errorWarningCount);
 
       // No truncation flag when the rollup carries the full inventory
       // (small fixture is well under the 20-entry cap).
@@ -169,14 +169,14 @@ describe("scan_project: plan.findingsByFile rollup", () => {
   });
 
   it("caps at FINDINGS_BY_FILE_DEFAULT_LIMIT and stamps findingsByFileTruncated when the tail clips", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-findings-by-file-cap-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-findings-by-file-cap-"));
     try {
       // Build (cap + 5) files, each carrying one missing-alt finding.
       // The rollup should clip to the cap and stamp the truncation flag.
       const totalFiles = FINDINGS_BY_FILE_DEFAULT_LIMIT + 5;
       for (let i = 0; i < totalFiles; i += 1) {
         const name = `f${String(i).padStart(3, "0")}.html`;
-        writeFileSync(join(root, name), '<html><body><img src="x.png"></body></html>\n');
+        writeFileSync(posixJoin(root, name), '<html><body><img src="x.png"></body></html>\n');
       }
 
       // Bump `limit` past the file-count cap so the response body

@@ -16,3 +16,6 @@
 # Header lines (this block) survive forever; data lines below.
 2026-05-02T18:42:10Z	203b18a9	verify_flaky_mcp_subprocess	no_effect	pre=0.17	post=0.50	window=10
 2026-05-02T19:22:34Z	7a836abd	verify_flaky_mcp_subprocess	no_effect	pre=0.20	post=0.50	window=10
+2026-05-05T08:56:32Z	8fb58ebc	planner_inferred_files_miss	no_effect	pre=0.10	post=0.30	window=10
+2026-05-05T08:56:32Z	3d151966	planner_inferred_files_miss	no_effect	pre=0.20	post=0.20	window=10
+2026-05-05T09:45:16Z	cda465c6	false_positive_pre_existing_red_signal	no_effect	pre=0.12	post=0.40	window=10

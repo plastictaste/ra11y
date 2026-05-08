@@ -16,6 +16,7 @@ import { describe, expect, it } from "bun:test";
 import {
   computeScanWarningDetails,
   computeScanWarnings,
+  computeTemplateDirectiveOverlap,
   type ScanWarningCode,
   TRUNCATED_FILES_TOP_DROPPED_RULES_CAP,
   tokenBudgetTruncatedDetailsField,
@@ -338,6 +339,127 @@ describe("computeScanWarnings", () => {
     expect(codes).not.toContain("template_files_parsed_as_literal");
   });
 
+  // Per-token-style splits of `template_files_parsed_as_literal` —
+  // each fires independently on its overlap subset. The split closes
+  // the doctrine-named gap where the parent warning lumps three
+  // categorically-different engines (Liquid `{% %}`, ERB `<% %>`,
+  // ambiguous `{{ }}`) into a single bucket; the per-style codes ship
+  // the routing pivot at the warning channel surface so an agent can
+  // scope around a specific engine in one read.
+  it("fires `liquid_directives_unparsed` when liquidLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      liquidLiteralFiles: ["/proj/page.liquid"],
+    });
+    expect(codes).toContain("liquid_directives_unparsed");
+  });
+
+  it("fires `erb_directives_unparsed` when erbLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      erbLiteralFiles: ["/proj/page.erb"],
+    });
+    expect(codes).toContain("erb_directives_unparsed");
+  });
+
+  it("fires `curly_double_directives_unparsed` when curlyDoubleLiteralFiles is non-empty", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      curlyDoubleLiteralFiles: ["/proj/page.html"],
+    });
+    expect(codes).toContain("curly_double_directives_unparsed");
+  });
+
+  it("co-fires all three per-style codes alongside parent on a mixed-engine corpus", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        templateInterpolationFound: [
+          { token: "{%x%}", count: 3 },
+          { token: "<%x%>", count: 2 },
+          { token: "{{x}}", count: 4 },
+        ],
+      },
+      filesByExtension: { ".html": 5 },
+      templateDirectivesOverlap: true,
+      liquidLiteralFiles: ["/proj/a.liquid"],
+      erbLiteralFiles: ["/proj/b.erb"],
+      curlyDoubleLiteralFiles: ["/proj/c.html"],
+    });
+    expect(codes).toContain("template_files_parsed_as_literal");
+    expect(codes).toContain("liquid_directives_unparsed");
+    expect(codes).toContain("erb_directives_unparsed");
+    expect(codes).toContain("curly_double_directives_unparsed");
+  });
+
+  it("does NOT fire per-style codes when their lists are empty/absent", () => {
+    const codes = computeScanWarnings({
+      filesScanned: 5,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 5 },
+      liquidLiteralFiles: [],
+      erbLiteralFiles: [],
+      curlyDoubleLiteralFiles: [],
+    });
+    expect(codes).not.toContain("liquid_directives_unparsed");
+    expect(codes).not.toContain("erb_directives_unparsed");
+    expect(codes).not.toContain("curly_double_directives_unparsed");
+  });
+
+  it("ships per-style payloads with sorted files, fileCount, and ambiguity-reason on curly-double", () => {
+    const codes: ScanWarningCode[] = [
+      "liquid_directives_unparsed",
+      "erb_directives_unparsed",
+      "curly_double_directives_unparsed",
+    ];
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".html": 3 },
+      liquidLiteralFiles: ["/proj/b.liquid", "/proj/a.liquid"],
+      erbLiteralFiles: ["/proj/x.erb"],
+      curlyDoubleLiteralFiles: ["/proj/page.html"],
+    });
+    expect(details.liquid_directives_unparsed).toEqual({
+      fileCount: 2,
+      files: ["/proj/a.liquid", "/proj/b.liquid"],
+    });
+    expect(details.erb_directives_unparsed).toEqual({
+      fileCount: 1,
+      files: ["/proj/x.erb"],
+    });
+    expect(details.curly_double_directives_unparsed).toMatchObject({
+      fileCount: 1,
+      files: ["/proj/page.html"],
+    });
+    // The reason field names the dialect ambiguity per AI-first
+    // doctrine "Heuristic-mislabeled meta sub-fields are dishonest" —
+    // `{{ ... }}` is structurally indistinguishable between Handlebars
+    // / Mustache / Liquid / Jinja / Vue / Angular from the surface
+    // token alone, and the warning surface name does NOT pick a
+    // dialect family.
+    expect(details.curly_double_directives_unparsed?.reason ?? "").toContain("Handlebars");
+    expect(details.curly_double_directives_unparsed?.reason ?? "").toContain("ambiguous");
+  });
+
   // Parser-level signal that `.php` / `.phtml` files ran through the
   // {@link parsePhp} adapter's island-stripping pass. Analogous to
   // `hasFrontmatterFence` — fires on the boolean alone, no per-finding
@@ -573,6 +695,106 @@ describe("computeScanWarnings", () => {
     expect(codes).toContain("binary_assets_skipped");
   });
 
+  it("fires `parser_routable_extensions_skipped` when the skipped map carries a parser-routable text-island substrate (.vue / .svelte / .coffee / .rmd / .feature)", () => {
+    // Predicate-narrowed peer of `text_source_skipped`. The agent's
+    // lever for re-routing — the actionable subset whose format spec
+    // defines an HTML / JSX surface ra11y could plausibly route. The
+    // parent `text_source_skipped` co-fires (broader presence bit).
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".vue": 12, ".feature": 28, ".coffee": 3 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("parser_routable_extensions_skipped");
+    expect(codes).toContain("text_source_skipped");
+  });
+
+  it("does NOT fire `parser_routable_extensions_skipped` when the skipped map carries no text-island substrate (.json / .yml / binary only)", () => {
+    // Closure of "Skipped-extension warnings are split by predicate":
+    // each peer's predicate must narrow honestly. A static-site corpus
+    // dominated by config / data files must NOT trip the parser-
+    // routable peer just because the parent `text_source_skipped`
+    // fires.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".json": 80, ".yml": 60, ".png": 30 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).not.toContain("parser_routable_extensions_skipped");
+  });
+
+  it("fires `config_or_data_files_skipped` when the skipped map carries config / data file extensions (.json / .yml / .yaml / .toml / .csv)", () => {
+    // Predicate-narrowed peer of `text_source_skipped` — names the
+    // data-only subset so an agent reading a Jekyll/Hugo/CI corpus
+    // can budget against "this is data, not parser-coverage gap"
+    // without re-deriving from the parent's `extensions[]` slice.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".yml": 60, ".toml": 12, ".csv": 8 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("config_or_data_files_skipped");
+    expect(codes).toContain("text_source_skipped");
+  });
+
+  it("does NOT fire `config_or_data_files_skipped` when the skipped map carries no config / data extensions (substrate-only corpus)", () => {
+    // Mirror of the parser-routable negative case — each peer's
+    // predicate must narrow honestly so co-firing reflects actual
+    // overlap, not lazy ANDing.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: { ".vue": 12, ".svelte": 8, ".coffee": 3 },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).not.toContain("config_or_data_files_skipped");
+  });
+
+  it("co-fires text_source_skipped, parser_routable_extensions_skipped, AND config_or_data_files_skipped on a heterogeneous static-site corpus", () => {
+    // Canonical case from the closure: a static-site-generator corpus
+    // mixing parser-routable substrates (.feature / .coffee / .rmd),
+    // config / data files (.yml / .toml), and source-language
+    // ecosystem dominance (.rb 160 files). All three peers fire so
+    // the agent can branch on the actionable subset without burying
+    // the parent.
+    const codes = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".feature": 28,
+          ".coffee": 5,
+          ".rmd": 3,
+          ".rb": 160,
+          ".yml": 60,
+          ".toml": 12,
+          ".csv": 8,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(codes).toContain("text_source_skipped");
+    expect(codes).toContain("parser_routable_extensions_skipped");
+    expect(codes).toContain("config_or_data_files_skipped");
+    expect(codes).toContain("source_language_unsupported");
+  });
+
   it("fires `sourcemap_files_excluded` when discovery records `.map` paths in the coverage block", () => {
     // The discovery walker routes `.map` files into a dedicated bucket
     // (`analysisCoverage.sourcemapFiles`) so the sourcemap-exclusion
@@ -658,6 +880,46 @@ describe("computeScanWarnings", () => {
     });
     expect(empty).not.toContain("default_excluded_artifact_paths");
     expect(absent).not.toContain("default_excluded_artifact_paths");
+  });
+
+  it("fires `text_source_excluded_by_default_pattern` when discovery records non-empty per-extension counts of pattern-excluded parser-routable files", () => {
+    // The discovery walker buckets every parseable file filtered by
+    // DEFAULT_EXCLUDED_PATTERNS / .gitignore / user excludes under
+    // analysisCoverage.excludedByPatternByExtension. The doctrine
+    // "Default-exclude globs are suppression too" requires the silent-
+    // skip event reach the warnings channel, not just the meta sub-
+    // field — agents calling on a tutorial-style HTML/CSS/JS corpus
+    // where 7 of 8 candidate HTML files default-exclude need a top-
+    // level branching surface.
+    const codes = computeScanWarnings({
+      filesScanned: 1,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        excludedByPatternByExtension: { ".html": 7 },
+      },
+      filesByExtension: { ".html": 1 },
+    });
+    expect(codes).toContain("text_source_excluded_by_default_pattern");
+  });
+
+  it("does NOT fire `text_source_excluded_by_default_pattern` when the map is empty or absent", () => {
+    const empty = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { excludedByPatternByExtension: {} },
+      filesByExtension: { ".tsx": 50 },
+    });
+    const absent = computeScanWarnings({
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(empty).not.toContain("text_source_excluded_by_default_pattern");
+    expect(absent).not.toContain("text_source_excluded_by_default_pattern");
   });
 
   it("does NOT fire `binary_assets_skipped` when the map is text-source only", () => {
@@ -764,6 +1026,56 @@ describe("computeScanWarnings", () => {
     });
     expect(codes).not.toContain("partial_parse_files_present");
     expect(codes).toContain("parse_errors_present");
+  });
+
+  it("populates `warningsDetails.partial_parse_files_present` with partialParseFileCount + per-parser breakdown — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — the bare code names "partial parses happened
+    // somewhere," but without the count + per-parser map an agent
+    // has to descend into `meta.analysisCoverage.partialParseFiles[]`
+    // and on bulk-vendor corpora that list may be replaced by the
+    // `partialParseTopReasons` rollup, so the per-file identity stays
+    // absent. The payload's per-parser breakdown lets the agent
+    // answer "is every .mdx file partial-parsing?" without paging
+    // through the per-file array.
+    const inputs = {
+      filesScanned: 50,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        partialParseFileCount: 4,
+        partialParseByParser: { mdx: 3, html: 1 },
+      },
+      filesByExtension: { ".mdx": 30, ".html": 20 },
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("partial_parse_files_present");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.partial_parse_files_present).toEqual({
+      partialParseFileCount: 4,
+      partialParseByParser: { mdx: 3, html: 1 },
+    });
+  });
+
+  it("`warningsDetails.partial_parse_files_present.partialParseByParser` is omitted when the coverage block doesn't supply the per-parser map", () => {
+    // Derivative tools that ship only the scalar count drop the
+    // per-parser axis under the conditional-spread present-when-
+    // meaningful contract — empty maps would lie about the parser
+    // attribution.
+    const inputs = {
+      filesScanned: 10,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: { partialParseFileCount: 2 },
+      filesByExtension: { ".mdx": 10 },
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.partial_parse_files_present as
+      | { partialParseFileCount: number; partialParseByParser?: Record<string, number> }
+      | undefined;
+    expect(payload?.partialParseFileCount).toBe(2);
+    expect(payload?.partialParseByParser).toBeUndefined();
   });
 
   it("fires `parser_bailed_zero_findings` when parseErrorFileCount > 0 AND totalFindings === 0", () => {
@@ -1605,7 +1917,7 @@ describe("warningsFromScanMeta", () => {
   // one artifact" — neither it nor `scanned_zero_files` (which needs
   // filesScanned: 0) names the dominance regime. The new code surfaces
   // the gap so the agent re-scopes to authored source.
-  it("fires `dist_only_scan_detected` when every parsed file is a build artifact", () => {
+  it("fires `build_artifact_only_scan_detected` when every parsed file is a build artifact", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
@@ -1615,10 +1927,10 @@ describe("warningsFromScanMeta", () => {
       scannedBuildArtifactsPresent: true,
       scannedBuildArtifactsAllFiles: true,
     });
-    expect(codes).toContain("dist_only_scan_detected");
+    expect(codes).toContain("build_artifact_only_scan_detected");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when at least one parsed file is authored source", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when at least one parsed file is authored source", () => {
     const codes = computeScanWarnings({
       filesScanned: 10,
       rootSource: "explicit",
@@ -1628,10 +1940,10 @@ describe("warningsFromScanMeta", () => {
       scannedBuildArtifactsPresent: true,
       scannedBuildArtifactsAllFiles: false,
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when filesScanned is zero (the bare scanned_zero_files stays the honest signal)", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when filesScanned is zero (the bare scanned_zero_files stays the honest signal)", () => {
     const codes = computeScanWarnings({
       filesScanned: 0,
       rootSource: "explicit",
@@ -1643,11 +1955,11 @@ describe("warningsFromScanMeta", () => {
       // this code on top of `scanned_zero_files`.
       scannedBuildArtifactsAllFiles: true,
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
     expect(codes).toContain("scanned_zero_files");
   });
 
-  it("does NOT fire `dist_only_scan_detected` when the flag is omitted (tool didn't run the detector)", () => {
+  it("does NOT fire `build_artifact_only_scan_detected` when the flag is omitted (tool didn't run the detector)", () => {
     const codes = computeScanWarnings({
       filesScanned: 5,
       rootSource: "explicit",
@@ -1655,7 +1967,83 @@ describe("warningsFromScanMeta", () => {
       analysisCoverage: undefined,
       filesByExtension: { ".css": 5 },
     });
-    expect(codes).not.toContain("dist_only_scan_detected");
+    expect(codes).not.toContain("build_artifact_only_scan_detected");
+  });
+
+  it("populates `warningsDetails.build_artifact_only_scan_detected` with filesScanned + dominant classifierReason + top — graduates from BinaryPresenceMarker to a payload-bearing shape", () => {
+    // Per the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+    // dishonest" — without this payload, the agent reading the bare
+    // code learns "every parsed file is a build artifact" but cannot
+    // answer "which generated tree, what magnitude, which classifier
+    // reason dominates" without descending into
+    // `meta.scannedBuildArtifacts`. The payload mirrors the
+    // `scanned_build_artifacts_present.top` shape so an agent reading
+    // either code's payload gets the same load-bearing pivot for the
+    // build-artifact-only triage.
+    const inputs = {
+      filesScanned: 3,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 3 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: true,
+      scannedBuildArtifactsSummary: {
+        count: 3,
+        topPath: "dist/bootstrap.min.css",
+        top: [
+          {
+            path: "dist/bootstrap.min.css",
+            reason: "definite-min-infix" as const,
+          },
+          {
+            path: "dist/font-awesome.min.css",
+            reason: "definite-min-infix" as const,
+          },
+          {
+            path: "dist/jquery.css",
+            reason: "likely-vendor-distribution" as const,
+          },
+        ],
+      },
+    };
+    const codes = computeScanWarnings(inputs);
+    expect(codes).toContain("build_artifact_only_scan_detected");
+    const result = computeScanWarningDetails(codes, inputs);
+    expect(result.build_artifact_only_scan_detected).toEqual({
+      filesScanned: 3,
+      classifierReason: "definite-min-infix",
+      top: inputs.scannedBuildArtifactsSummary.top,
+    });
+  });
+
+  it("`warningsDetails.build_artifact_only_scan_detected.classifierReason` and `.top` are omitted when the build-artifact summary is absent (derivative-tool surface)", () => {
+    // Derivative tools that fire the warning off the bare boolean
+    // alone (without threading the per-entry list) get the load-
+    // bearing scalar `filesScanned` but no top-slice / classifier
+    // attribution. Honest fall-through: the payload doesn't fabricate
+    // a top-slice it never observed.
+    const inputs = {
+      filesScanned: 5,
+      rootSource: "explicit" as const,
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".css": 5 },
+      scannedBuildArtifactsPresent: true,
+      scannedBuildArtifactsAllFiles: true,
+    };
+    const codes = computeScanWarnings(inputs);
+    const result = computeScanWarningDetails(codes, inputs);
+    const payload = result.build_artifact_only_scan_detected as
+      | {
+          filesScanned: number;
+          classifierReason?: string;
+          top?: readonly { path: string; reason: string }[];
+        }
+      | undefined;
+    expect(payload?.filesScanned).toBe(5);
+    expect(payload?.classifierReason).toBeUndefined();
+    expect(payload?.top).toBeUndefined();
   });
 
   // when filesScanned: 0 AND
@@ -2208,6 +2596,120 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
     expect(details.binary_assets_skipped?.totalSkipped).toBe(230);
   });
 
+  it("emits a `parser_routable_extensions_skipped` payload describing the substrate subset only (mirror shape of text_source_skipped)", () => {
+    // Predicate-narrowed peer of text_source_skipped: the data-only
+    // tail (.json, .yml, .toml) must be filtered out of this payload
+    // even though it contributes to the parent.
+    const codes = ["parser_routable_extensions_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".feature": 28,
+          ".vue": 12,
+          ".coffee": 3,
+          ".json": 200, // data — must NOT appear under parser-routable peer
+          ".yml": 60, // data — must NOT appear under parser-routable peer
+          ".png": 30, // binary — must NOT appear under parser-routable peer
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    // Sorted descending by count, alphabetical tie-break on the
+    // substrate-only subset.
+    expect(details.parser_routable_extensions_skipped?.extensions).toEqual([
+      ".feature",
+      ".vue",
+      ".coffee",
+    ]);
+    expect(details.parser_routable_extensions_skipped?.perExtensionCounts).toEqual({
+      ".feature": 28,
+      ".vue": 12,
+      ".coffee": 3,
+    });
+    expect(details.parser_routable_extensions_skipped?.topExtension).toBe(".feature");
+    expect(details.parser_routable_extensions_skipped?.topCount).toBe(28);
+    expect(details.parser_routable_extensions_skipped?.totalSkipped).toBe(43);
+  });
+
+  it("emits a `config_or_data_files_skipped` payload describing the data-only subset only", () => {
+    // Mirror of the parser-routable peer — the data-only subset is
+    // surfaced separately so an agent can branch on "this is config /
+    // data, not a parser-coverage gap" without re-deriving from the
+    // parent.
+    const codes = ["config_or_data_files_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".yml": 60,
+          ".toml": 12,
+          ".csv": 8,
+          ".json": 4,
+          ".vue": 12, // substrate — must NOT appear under config peer
+          ".png": 30, // binary — must NOT appear under config peer
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(details.config_or_data_files_skipped?.extensions).toEqual([
+      ".yml",
+      ".toml",
+      ".csv",
+      ".json",
+    ]);
+    expect(details.config_or_data_files_skipped?.perExtensionCounts).toEqual({
+      ".yml": 60,
+      ".toml": 12,
+      ".csv": 8,
+      ".json": 4,
+    });
+    expect(details.config_or_data_files_skipped?.topExtension).toBe(".yml");
+    expect(details.config_or_data_files_skipped?.topCount).toBe(60);
+    expect(details.config_or_data_files_skipped?.totalSkipped).toBe(84);
+  });
+
+  it("omits `noExtensionFiles` from both peer payloads — the substrate / data partition has no canonical-filename slot by construction", () => {
+    // Per AI-first "Ambiguous field shapes are dishonest" the peer
+    // shapes drop `noExtensionFiles` entirely — no well-known textual
+    // no-extension filename (LICENSE, Makefile, Dockerfile) defines an
+    // HTML / JSX surface or a config / data substrate, so the field
+    // would always be absent. The shape contract on the parent
+    // `text_source_skipped` keeps the slot for parity with binary-
+    // assets; on the peers the field is omitted by construction.
+    const codes = ["parser_routable_extensions_skipped", "config_or_data_files_skipped"] as const;
+    const details = computeScanWarningDetails(codes, {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        skippedByExtension: {
+          ".vue": 12,
+          ".yml": 60,
+          LICENSE: 1,
+          Makefile: 1,
+        },
+      },
+      filesByExtension: { ".tsx": 50 },
+    });
+    expect(
+      Object.hasOwn(
+        details.parser_routable_extensions_skipped as Record<string, unknown>,
+        "noExtensionFiles",
+      ),
+    ).toBe(false);
+    expect(
+      Object.hasOwn(
+        details.config_or_data_files_skipped as Record<string, unknown>,
+        "noExtensionFiles",
+      ),
+    ).toBe(false);
+  });
+
   it("emits a `sourcemap_files_excluded` payload with count + head-sliced topPaths", () => {
     const codes = ["sourcemap_files_excluded"] as const;
     const details = computeScanWarningDetails(codes, {
@@ -2305,6 +2807,57 @@ describe("computeScanWarningDetails (ADR 0023 parallel warningsDetails channel)"
         sampleFiles: ["/proj/dist/page.html", "/proj/dist/app.js"],
       },
     ]);
+  });
+
+  it("emits a `text_source_excluded_by_default_pattern` payload with extensions sorted by descending count, scalar pivot, and totalExcluded", () => {
+    // The canonical regression: a tutorial-style HTML/CSS/JS corpus
+    // where 7 of 8 candidate HTML files match a default-exclude
+    // pattern. The payload mirrors `text_source_skipped` so an agent
+    // reading either channel uses one mental model. `extensions` is
+    // sorted by descending count with alphabetical tie-break so the
+    // agent's eye lands on the dominant exclusion first.
+    const details = computeScanWarningDetails(["text_source_excluded_by_default_pattern"], {
+      filesScanned: 3,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {
+        excludedByPatternByExtension: { ".html": 7, ".css": 2, ".js": 4 },
+      },
+      filesByExtension: { ".html": 1, ".css": 1, ".js": 1 },
+    });
+    expect(details.text_source_excluded_by_default_pattern?.extensions).toEqual([
+      ".html",
+      ".js",
+      ".css",
+    ]);
+    expect(details.text_source_excluded_by_default_pattern?.perExtensionCounts).toEqual({
+      ".html": 7,
+      ".js": 4,
+      ".css": 2,
+    });
+    expect(details.text_source_excluded_by_default_pattern?.topExtension).toBe(".html");
+    expect(details.text_source_excluded_by_default_pattern?.topCount).toBe(7);
+    expect(details.text_source_excluded_by_default_pattern?.totalExcluded).toBe(13);
+  });
+
+  it("`text_source_excluded_by_default_pattern` falls through to the disambiguating sentinel when the map is absent (defensive fall-through)", () => {
+    // Defensive branch: a caller that fired the warning at the
+    // dispatch seam but supplied a coverage block with no map at all.
+    // The dispatch table's fall-through stamps the
+    // `summarizer_inputs_unavailable` sentinel rather than `{}`, per
+    // the doctrine "Empty `warningsDetails.<code>: {}` is dishonest."
+    const details = computeScanWarningDetails(["text_source_excluded_by_default_pattern"], {
+      filesScanned: 50,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: {},
+      filesByExtension: { ".tsx": 50 },
+    });
+    const detailsMap = details as Record<string, unknown>;
+    expect(detailsMap.text_source_excluded_by_default_pattern).toEqual({
+      truncated: true,
+      reason: "summarizer_inputs_unavailable",
+    });
   });
 
   // Per `docs/kb/architecture/ai-first-consumer.md` "Empty
@@ -3188,26 +3741,73 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     });
   });
 
-  it("warnings-details schema discipline — `no_config_found` carries `searchedFrom` when supplied; falls back to the truncation sentinel otherwise", () => {
-    // `no_config_found` is payload-bearing in the schema — the
-    // `searchedFrom: <cwd>` field gives the agent one canonical
-    // answer to "where did the loader walk from." When the caller
-    // threads `configSearchedFromForWarning`, the payload populates;
-    // when it doesn't, the dispatch falls through to the truncation
-    // sentinel (sentinel disambiguation) so the agent can distinguish "the
-    // payload was supposed to be here" from "binary by design."
-    const withPayload = warningsField({
+  it("warnings-details schema discipline — `no_config_found` ships `{ searchedFrom }` only when the value adds signal; drops to `{}` when redundant; falls through to the truncation sentinel when no input was threaded", () => {
+    // `no_config_found` is dual-shaped in the schema — the
+    // `searchedFrom: <path>` field gives the agent one canonical
+    // answer to "where did the loader walk from" WHEN the value is
+    // not already on the response. When the loader's walk-up base
+    // equals the caller-supplied `cwd` OR the resolved `scanned.root`
+    // (the common case — the agent already has the value), the
+    // payload drops to `{}` (the binary-presence shape) so the bare
+    // warning code carries the signal. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
+    // signal, not clutter — `configSearchedFrom` is present-when-
+    // meaningful, omitted when it would just echo the caller's `cwd`
+    // or a `scanned.root` already in the response."
+    const withMeaningfulPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: null,
       configSearchedFromForWarning: "/proj/root",
+      // Neither callerCwd nor scannedRoot match — the payload adds
+      // signal, so the rich shape rides.
+      noConfigFoundCallerCwd: "/elsewhere",
+      noConfigFoundScannedRoot: "/elsewhere/tree",
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: true,
     });
-    expect(withPayload.warnings).toContain("no_config_found");
-    expect(withPayload.warningsDetails?.no_config_found).toEqual({ searchedFrom: "/proj/root" });
+    expect(withMeaningfulPayload.warnings).toContain("no_config_found");
+    expect(withMeaningfulPayload.warningsDetails?.no_config_found).toEqual({
+      searchedFrom: "/proj/root",
+    });
 
+    // Echo case: the search base equals `scanned.root`. The payload
+    // drops to `{}` because `meta.scanned.root` already carries the
+    // search base.
+    const echoesScannedRoot = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchedFromForWarning: "/proj/root",
+      noConfigFoundScannedRoot: "/proj/root",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(echoesScannedRoot.warnings).toContain("no_config_found");
+    expect(echoesScannedRoot.warningsDetails?.no_config_found).toEqual({});
+
+    // Echo case: the search base equals the caller-supplied `cwd`.
+    // Same shape — the agent passed the value, no new signal.
+    const echoesCallerCwd = warningsField({
+      filesScanned: 42,
+      rootSource: "explicit",
+      configSource: null,
+      configSearchedFromForWarning: "/proj/cwd",
+      noConfigFoundCallerCwd: "/proj/cwd",
+      analysisCoverage: undefined,
+      filesByExtension: undefined,
+      configSearchSawProjectMarker: true,
+    });
+    expect(echoesCallerCwd.warnings).toContain("no_config_found");
+    expect(echoesCallerCwd.warningsDetails?.no_config_found).toEqual({});
+
+    // No `configSearchedFromForWarning` threaded at all → the dispatch
+    // falls through to the disambiguating truncation sentinel, NOT to
+    // the empty record. The shape signals "the payload-bearing slot
+    // exists but the input wasn't threaded" so the agent can tell it
+    // apart from the "value was redundant" case above.
     const withoutPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
@@ -4509,5 +5109,182 @@ describe("truncatedFilesDroppedDetailsField — Q9 rule-level truncation impact"
       droppedFileCount: 2,
     });
     expect(out?.ruleFamiliesAffected).toEqual(["another-no-slash", "single-token-rule"]);
+  });
+
+  it("emits `pageClipFromRequestedLimit` only when it differs from `droppedFileCount`", () => {
+    // Per the field-doc on `truncated_files_dropped`: the page-internal
+    // trim count is present-when-meaningful — omitted whenever it
+    // would carry the same value as the canonical `droppedFileCount`,
+    // since two siblings naming the same quantity violate "Sibling
+    // fields naming the same concept must use one shape."
+    const distinct = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 70,
+      pageClipFromRequestedLimit: 24,
+    });
+    expect(distinct?.droppedFileCount).toBe(70);
+    expect(distinct?.pageClipFromRequestedLimit).toBe(24);
+
+    const equal = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 5,
+      pageClipFromRequestedLimit: 5,
+    });
+    expect(equal?.droppedFileCount).toBe(5);
+    expect(equal?.pageClipFromRequestedLimit).toBeUndefined();
+
+    const omitted = truncatedFilesDroppedDetailsField({
+      droppedFileFindings: [{ ruleId: "keyboard/handler-missing" }],
+      droppedFileCount: 5,
+    });
+    expect(omitted?.droppedFileCount).toBe(5);
+    expect(omitted?.pageClipFromRequestedLimit).toBeUndefined();
+  });
+});
+
+describe("computeTemplateDirectiveOverlap — per-style overlap classification", () => {
+  // The per-style return shape attributes each finding-line overlap to
+  // the dialect family the line evidence carries. A corpus carrying
+  // `{% %}` AND `<% %>` AND `{{ }}` in separate files surfaces three
+  // disjoint sets; a single file carrying multiple styles appears in
+  // every matching set so the warning attribution stays honest.
+  it("partitions overlap files by directive token style", () => {
+    const liquidSrc = "<p>{% if x %}\nhello\n{% endif %}</p>";
+    const erbSrc = "<div><% if @user %>\nrails!\n<% end %></div>";
+    const curlySrc = "<p>{{ user.name }}</p>";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        // line 1 of liquidSrc carries `{%` opener — liquid family
+        { filePath: "/proj/a.liquid", line: 1 },
+        // line 1 of erbSrc carries `<%` opener — erb family
+        { filePath: "/proj/b.erb", line: 1 },
+        // line 1 of curlySrc carries `{{ }}` — curlyDouble family
+        { filePath: "/proj/c.html", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/a.liquid", liquidSrc],
+        ["/proj/b.erb", erbSrc],
+        ["/proj/c.html", curlySrc],
+      ]),
+    });
+    expect(result.overlap).toBe(true);
+    expect([...result.overlapFiles].sort()).toEqual([
+      "/proj/a.liquid",
+      "/proj/b.erb",
+      "/proj/c.html",
+    ]);
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/a.liquid"]);
+    expect([...result.overlapByStyle.erb]).toEqual(["/proj/b.erb"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual(["/proj/c.html"]);
+  });
+
+  it("attributes a single line carrying multiple styles to every matching set", () => {
+    // `{% if x %}{{ y }}{% endif %}` carries BOTH `{% %}` and `{{ }}`
+    // openers on the same line — the per-style attribution must
+    // include the file in BOTH `liquid` and `curlyDouble` so the
+    // warning channel stays honest with the line evidence (per the
+    // doctrine: don't invent classification you can't establish from
+    // the surface token).
+    const mixedSrc = "<p>{% if x %}{{ y }}{% endif %}</p>";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [{ filePath: "/proj/mixed.html", line: 1 }],
+      sourcesByPath: new Map([["/proj/mixed.html", mixedSrc]]),
+    });
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/mixed.html"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual(["/proj/mixed.html"]);
+    expect([...result.overlapByStyle.erb]).toEqual([]);
+  });
+
+  it("returns empty per-style sets when no overlap occurred", () => {
+    // Finding line 5; directives are on line 1.
+    const src = "{% if x %}\n\n\n\nhello\n";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [{ filePath: "/proj/a.liquid", line: 5 }],
+      sourcesByPath: new Map([["/proj/a.liquid", src]]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapByStyle.liquid.size).toBe(0);
+    expect(result.overlapByStyle.erb.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
+  });
+
+  // Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+  // dishonest" — the per-style codes promise a deterministic
+  // classification (`{{ ... }}` directives present), so the predicate
+  // must require the paired evidence the surface name promises. Bare
+  // rule-block braces in minified CSS like `@media{.a{x:y}}` carry
+  // `}}` from nested at-rule closures but no `{{` opener — they are
+  // structurally not a template-directive substrate, and the warning
+  // must not fire on them.
+  it("does NOT classify minified CSS with `}}` from nested at-rules as curly-double", () => {
+    // Canonical minified CSS payload: a single long line with nested
+    // at-rule closures producing `}}` but ZERO `{{` opener anywhere.
+    // The previous detector matched on the closer alone and emitted
+    // `curly_double_directives_unparsed` on every minified vendor
+    // stylesheet; the paired-token file-level gate filters it out.
+    const minifiedCss = "@media (min-width:768px){.a{color:red;padding:1px}.b{margin:0}}";
+    const result = computeTemplateDirectiveOverlap({
+      // The finding lands on the only line in the file (single-line
+      // minified payload), which contains the false `}}` match.
+      findings: [{ filePath: "/proj/dist/site.css", line: 1 }],
+      sourcesByPath: new Map([["/proj/dist/site.css", minifiedCss]]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapFiles.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
+    expect(result.overlapByStyle.liquid.size).toBe(0);
+    expect(result.overlapByStyle.erb.size).toBe(0);
+  });
+
+  // Path-anchored carve-out: `.min.css` / `.min.scss` are
+  // post-processor output, not template sources. The carve-out fires
+  // by basename — even if a minified bundle somehow contained a
+  // paired `{{ ... }}` token (e.g. an embedded JSON string literal
+  // that happens to read like Mustache), the file is structurally not
+  // a template-directive substrate.
+  it("excludes `.min.css` and `.min.scss` files by path even with paired `{{ ... }}`", () => {
+    // Payload that WOULD pass the paired-token gate (`{{` and `}}`
+    // both present), but the path-anchored carve-out rejects it
+    // because `.min.css` is by-construction not a template substrate.
+    const pathologicalMinified = ".a{content:'{{ x }}'}";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        { filePath: "/proj/vendor/bootstrap.min.css", line: 1 },
+        { filePath: "/proj/vendor/theme.min.scss", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/vendor/bootstrap.min.css", pathologicalMinified],
+        ["/proj/vendor/theme.min.scss", pathologicalMinified],
+      ]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapFiles.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
+  });
+
+  // Mixed-corpus invariant: a real `.liquid` template alongside a
+  // minified `.min.css` must surface the warning ONLY on the liquid
+  // file, never on the minified stylesheet.
+  it("fires only on the real template when scanned alongside a minified stylesheet", () => {
+    // Liquid `{% if %}` opener + `<img>` finding on the SAME line
+    // (single-line directive — the canonical overlap shape).
+    const liquidSrc = "<p>{% if x %}<img src='x.png'>{% endif %}</p>";
+    // Single-line minified CSS with nested at-rule `}}` — the
+    // pre-fix curly-double regex matched here.
+    const minifiedCss = "@media (min-width:768px){.a{color:red}.b{margin:0}}";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        { filePath: "/proj/page.liquid", line: 1 },
+        { filePath: "/proj/dist/site.min.css", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/page.liquid", liquidSrc],
+        ["/proj/dist/site.min.css", minifiedCss],
+      ]),
+    });
+    expect([...result.overlapFiles]).toEqual(["/proj/page.liquid"]);
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/page.liquid"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual([]);
+    expect([...result.overlapByStyle.erb]).toEqual([]);
   });
 });

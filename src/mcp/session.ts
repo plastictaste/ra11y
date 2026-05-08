@@ -8,7 +8,7 @@
  */
 
 import { readFile, stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { loadConfig } from "../config/index.ts";
 import { parseInlineDisablesDetailed } from "../config/inline-disables.ts";
 import { createBuiltinRegistry, type Registry } from "../engine/registry/registry.ts";
@@ -27,7 +27,7 @@ import {
 } from "../input/parsers/index.ts";
 import type { Ast } from "../types/ast.ts";
 import type { LoadedConfig, RuleSetting } from "../types/config.ts";
-import { stripTemplatingTail } from "../utils/path.ts";
+import { posixResolve, stripTemplatingTail } from "../utils/path.ts";
 import { LoggingState } from "./logging.ts";
 
 /** Cached entry: AST + metadata keyed by absolute path. */
@@ -325,7 +325,7 @@ export class McpSession {
   /**
    * True when session wrappers are registered AND the configured anchor
    * cwd differs from the caller's current resolved root. The comparison
-   * uses `resolve(...)` on both sides so equivalent paths (e.g. trailing
+   * uses `posixResolve(...)` on both sides so equivalent paths (e.g. trailing
    * slashes, relative forms) don't false-positive. Returns false when
    * no wrappers are set or no anchor was captured.
    *
@@ -343,7 +343,7 @@ export class McpSession {
       this.config.nativeWrappers.length > 0 ||
       Object.keys(this.config.nativeWrapperElements).length > 0;
     if (!hasWrappers) return false;
-    return resolve(anchor) !== resolve(currentRoot);
+    return posixResolve(anchor) !== posixResolve(currentRoot);
   }
 
   /**
@@ -355,7 +355,7 @@ export class McpSession {
    * don't collide with the server's spawn-time working directory.
    */
   async parseFile(filePath: string, cwd?: string): Promise<ParsedFile | null> {
-    const abs = isAbsolute(filePath) ? filePath : resolve(cwd ?? process.cwd(), filePath);
+    const abs = isAbsolute(filePath) ? filePath : posixResolve(cwd ?? process.cwd(), filePath);
     const info = await stat(abs);
     const cached = this.cache.get(abs);
     if (cached && cached.mtimeMs === info.mtimeMs) {
@@ -428,7 +428,7 @@ export class McpSession {
  */
 function resolveConfiguredCwd(cwd: string | undefined): string {
   if (cwd === undefined || cwd.length === 0) return process.cwd();
-  return isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
+  return isAbsolute(cwd) ? cwd : posixResolve(process.cwd(), cwd);
 }
 
 /**
@@ -441,8 +441,16 @@ function fileUriToPath(uri: string): string | null {
   if (uri.length === 0) return null;
   if (uri.startsWith("file://")) {
     const rest = uri.slice("file://".length);
-    // file:///abs/path → /abs/path; file://host/path → reject (remote)
-    if (rest.startsWith("/")) return decodeURIComponent(rest);
+    // file:///abs/path → /abs/path; file://host/path → reject (remote).
+    // On Windows, hosts may also send `file:///C:/foo`, `file://C:/foo`,
+    // or `file://C:\foo` — tolerate the drive-letter form even when no
+    // leading slash is present.
+    if (rest.startsWith("/")) {
+      const tail = rest.slice(1);
+      if (isAbsolute(tail)) return decodeURIComponent(tail);
+      return decodeURIComponent(rest);
+    }
+    if (isAbsolute(rest)) return decodeURIComponent(rest);
     return null;
   }
   if (isAbsolute(uri)) return uri;

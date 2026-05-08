@@ -10,7 +10,8 @@
  *   - Pass-through when the response fits under the host ceiling — wire
  *     shape stays byte-identical to the input.
  *   - The slim fallback when the post-build envelope overflows —
- *     `items: []`, `itemsArrayDropped: true`, warnings + payload.
+ *     `itemsTruncated: []` (renamed from `items` so the field name
+ *     signals truncation), `truncationReason`, warnings + payload.
  *   - The slim envelope's structured `nextStep` routes to a different
  *     surface (`coverage`) than the failing tool, per the
  *     "NextStep prioritization on truncated/bulk responses must avoid
@@ -43,10 +44,11 @@ function buildSyntheticChecklistResponse(
     summary: {
       actionable: {
         criteria: itemCount,
-        candidatesUncapped: itemCount,
-        candidatesReturned: itemCount,
+        emissionsTotal: itemCount,
+        emissionsAfterCollapse: itemCount,
+        emissionsReturnedAfterClip: itemCount,
       },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
     },
     items,
     totalCandidates: itemCount,
@@ -93,10 +95,20 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
     expect(result.truncated).toBe(true);
     const slim = result.response as Record<string, unknown>;
     // The slim shape keeps `summary` + slimmed `meta` + `nextStep` +
-    // the warnings channel. `items[]` ships as `[]` (the agent's
-    // recovery is to re-call with narrower scope).
-    expect(slim.items).toEqual([]);
-    expect(slim.itemsArrayDropped).toBe(true);
+    // the warnings channel. The verbose `items[]` array is RENAMED to
+    // `itemsTruncated` (per the doctrine bullet "Truncated containers
+    // must rename or sentinel, not retain") — an agent reading just
+    // `response.items` now gets `undefined` rather than the misleading
+    // `[]` that used to ship under the original field name. The
+    // recovery path is to re-call with narrower scope.
+    expect(slim.items).toBeUndefined();
+    expect(slim.itemsTruncated).toEqual([]);
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
+    // The legacy boolean flag was dropped — the field-rename signals
+    // the same fact at the field level, so a sibling boolean would be
+    // redundant (per "Sibling fields naming the same concept must use
+    // one shape").
+    expect(slim.itemsArrayDropped).toBeUndefined();
     expect(slim.truncated).toBe(true);
     expect(slim.totalCandidates).toBe(3);
     // `summary` is load-bearing — the agent budgets against it for the
@@ -133,15 +145,18 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
     expect(meta.cwd).toBe("/tmp/example-project");
   });
 
-  it("routes nextStep to coverage (different surface) when the slim guard fires", () => {
-    // Routing back to `checklist` would land the agent on the same
-    // tool that just transport-failed even with cosmetically narrower
-    // args. The slim envelope's structured next-call routes to
-    // `coverage` (the manual-review-half tally without the
-    // per-criterion items[] envelope).
+  it("falls back to propose_config({}) when neither narrowingDir nor cwd is supplied", () => {
+    // Last-resort fallback per Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW:
+    // when no scope evidence flowed through to the helper, the slim
+    // envelope routes at `propose_config` with empty args — propose_config
+    // resolves its own scan root from the spawn directory. Still cycle-
+    // safe (NOT routed at the sibling `checklist`/`coverage` that would
+    // re-trigger the slim guard) but acknowledged as the worst routing
+    // decision available. The call site is expected to supply `cwd`
+    // (and ideally a `narrowingDir`) so this branch fires only on
+    // helper-direct invocations without context.
     const response = buildSyntheticChecklistResponse(3, {
       metaBloat: true,
-      cwd: "/tmp/example-project",
     });
     const result = applyChecklistBudget({ response });
     const slim = result.response as Record<string, unknown>;
@@ -152,28 +167,76 @@ describe("applyChecklistBudget — slim fallback fires on oversize envelope", ()
       args: Record<string, unknown>;
     };
     expect(structured).toBeDefined();
-    expect(structured.tool).toBe("coverage");
-    // Echoes the caller's cwd so the recovery call is directly
-    // addressable; per "Ambiguous field shapes are dishonest," the
-    // empty-args case is reserved for when no cwd is recoverable.
-    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).toBe("propose_config");
+    expect(structured.args).toEqual({});
+    // Cycle-break: must NOT route to either project-rooted sibling
+    // that ships from the same scope-classifier.
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 
-  it("ships empty args when meta carries no cwd (defensive)", () => {
-    // When the original meta lacks a cwd, the slim envelope must NOT
-    // fabricate one — empty args is the honest shape per
-    // "Ambiguous field shapes are dishonest."
-    const response = buildSyntheticChecklistResponse(3, { metaBloat: true });
-    // Manually strip cwd from the meta to hit the defensive arm.
-    (response.meta as Record<string, unknown>).cwd = undefined;
-    const result = applyChecklistBudget({ response });
-    const slim = result.response as Record<string, unknown>;
-    const structured = slim.nextStepStructured as {
+  it("routes to propose_config({cwd}) when only cwd is supplied (no narrowing dir)", () => {
+    // Q16 closure step 2: when the caller's `cwd` is known but no
+    // dominant non-vendor top-level directory was honestly derivable
+    // (every top dir vendor-classified, files all sit at root, top-
+    // dir tally ties), the slim envelope routes to `propose_config`
+    // WITH cwd. `propose_config` only accepts `cwd`, so passing it
+    // explicitly avoids the implicit-default ambiguity where the
+    // tool would resolve to the MCP server's spawn directory rather
+    // than the scope the agent just queried. Strictly narrower than
+    // `propose_config({})` — the agent gets a deterministic re-scan
+    // target without re-deriving cwd.
+    const response = buildSyntheticChecklistResponse(3, {
+      metaBloat: true,
+    });
+    const result = applyChecklistBudget({
+      response,
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
       tool: string;
       args: Record<string, unknown>;
     };
-    expect(structured.tool).toBe("coverage");
-    expect(structured.args).toEqual({});
+    expect(structured.tool).toBe("propose_config");
+    expect(structured.args).toEqual({ cwd: "/tmp/example-project" });
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
+  });
+
+  it("routes to scan_project({restrictToPaths,cwd}) when narrowingDir + cwd are supplied", () => {
+    // Q16 closure step 1: when the call site identified a dominant
+    // non-vendor top-level directory in the corpus, the slim envelope
+    // routes the agent at `scan_project({restrictToPaths:
+    // [narrowingDir], cwd})` directly — the most direct scope-
+    // narrowing call available. Skips the `propose_config` round-
+    // trip entirely. Mirrors `scan_project`'s bulk-vendor scope-down
+    // override so the slim envelope's recovery path stays identical
+    // across project-rooted tools per "Per-tool lane and warning-set
+    // classification must agree."
+    const response = buildSyntheticChecklistResponse(3, {
+      metaBloat: true,
+    });
+    const result = applyChecklistBudget({
+      response,
+      narrowingDir: "src",
+      cwd: "/tmp/example-project",
+    });
+    const structured = (result.response as Record<string, unknown>).nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    expect(structured.tool).toBe("scan_project");
+    expect(structured.args).toEqual({
+      restrictToPaths: ["src"],
+      cwd: "/tmp/example-project",
+    });
+    // Cycle-break invariant still holds — must NOT route to either
+    // project-rooted sibling that ships from the same scope-classifier
+    // and re-trigger the slim guard on the same corpus. `scan_project`
+    // with a narrower `restrictToPaths` IS a scope-narrowing call
+    // (different parameters, different file set on the next traversal).
+    expect(structured.tool).not.toBe("coverage");
+    expect(structured.tool).not.toBe("checklist");
   });
 });
 
@@ -189,7 +252,9 @@ describe("applyChecklistBudget — custom hardCeilingChars (test ergonomics)", (
     const result = applyChecklistBudget({ response, hardCeilingChars: 1000 });
     expect(result.truncated).toBe(true);
     const slim = result.response as Record<string, unknown>;
-    expect(slim.items).toEqual([]);
+    expect(slim.items).toBeUndefined();
+    expect(slim.itemsTruncated).toEqual([]);
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
     const warnings = slim.warnings as readonly string[];
     expect(warnings).toContain("response_dropped_files_oversize");
   });

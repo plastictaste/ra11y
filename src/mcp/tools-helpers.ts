@@ -6,7 +6,7 @@
  * on tool schemas and handler logic.
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { readAttestations } from "../config/attestation-store.ts";
 import { type RuleAlias, resolveRuleId } from "../engine/rule-aliases.ts";
 import { type ParsedFile, runScan } from "../engine/scanner.ts";
@@ -30,16 +30,15 @@ import {
 import type { Rule } from "../types/rule.ts";
 import type { Standard } from "../types/standard.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
+import { posixResolve } from "../utils/path.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { fingerprintParsedFiles, stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
-import { tallyManualCriteria } from "./manual-criteria-tally.ts";
-import {
-  buildPerRuleLimitationMap,
-  buildSubstrateFiles,
-  enrichFindingsWithPerRuleLimitations,
-} from "./per-finding-confidence-parity.ts";
+import { defaultActionableManualLane, tallyManualCriteria } from "./manual-criteria-tally.ts";
+import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-parse-boundary.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
@@ -51,11 +50,11 @@ import {
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
-  partitionParseStateFiles,
 } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
 import { collapseVendorCssFindings } from "./vendor-dedupe.ts";
+import { coupleSeverityToVerifyTokens } from "./violation-severity-coupling.ts";
 import { nameMatchesAnyWrapper } from "./wrapper-matcher.ts";
 import {
   buildRunScanOptions,
@@ -339,9 +338,17 @@ export async function parseFilesWithDiagnostics(
   readonly jsInnerHtmlDeclinedCount: number;
   readonly jsInnerHtmlPatternSamples: ReadonlyMap<string, readonly InlineHtmlPatternSample[]>;
   readonly codeDemoPropMatches: ReadonlyMap<string, readonly CodeDemoPropMatch[]>;
+  /**
+   * Byte-fingerprint duplicate map (canonical path → other paths
+   * with the same SHA-1). Drives the post-scan stamp in
+   * `src/mcp/file-fingerprint-stamp.ts` so canonical findings ship
+   * `vendorOccurrences` listing every byte-identical copy. See
+   * `src/input/file-fingerprint.ts` for the helper.
+   */
+  readonly fingerprintDuplicates: ReadonlyMap<string, readonly string[]>;
 }> {
   const base = cwd ?? process.cwd();
-  const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
+  const absPaths = paths.map((p) => (isAbsolute(p) ? p : posixResolve(base, p)));
   const { files: discovered, diagnostics } = await discoverFilesWithDiagnostics(absPaths, {
     excludes: session.config.exclude,
     ...(options.includeStoryFiles === true ? { includeStoryFiles: true } : {}),
@@ -358,8 +365,14 @@ export async function parseFilesWithDiagnostics(
       jsInnerHtmlDeclinedCount += accumulateInlineHtml(result, parsed, jsInnerHtmlPatternSamples);
     accumulateCodeDemoPropMatches(result, codeDemoPropMatches);
   }
+  // Hash already-parsed sources by SHA-1, group byte-identical
+  // eligible-extension copies, thread the map onto
+  // `discoveryDiagnostics` so the post-scan stamp drops non-canonical
+  // duplicate findings and lists every copy on the canonical's
+  // `vendorOccurrences`. See `src/mcp/file-fingerprint-stamp.ts`.
+  const fp = await fingerprintParsedFiles(parsed);
   // biome-ignore format: keep return object on one line — file effective-line budget
-  return { files: parsed, diagnostics, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples, codeDemoPropMatches };
+  return { files: parsed, diagnostics: fp.size === 0 ? diagnostics : { ...diagnostics, fingerprintDuplicates: fp }, jsInnerHtmlDeclinedCount, jsInnerHtmlPatternSamples, codeDemoPropMatches, fingerprintDuplicates: fp };
 }
 
 /**
@@ -374,7 +387,7 @@ export async function parseExplicitPaths(
   cwd?: string,
 ): Promise<readonly ParsedFile[]> {
   const base = cwd ?? process.cwd();
-  const absPaths = paths.map((p) => (isAbsolute(p) ? p : resolve(base, p)));
+  const absPaths = paths.map((p) => (isAbsolute(p) ? p : posixResolve(base, p)));
   const discovered = await discoverExplicitPaths(absPaths, { excludes: session.config.exclude });
   const parsed: ParsedFile[] = [];
   for (const filePath of discovered) {
@@ -439,7 +452,8 @@ export function collectManualCriteria(
  * variant ("pass", "automatedPass") read as "the app is accessible",
  * which is a claim static analysis can't make. The structured counts in
  * `plan` (`fixesByClass`, `notes`, `actionableManualItems`,
- * `untargetedCriteria`) convey the state without a load-bearing
+ * `untargetedCriteriaForProject` / `untargetedCriteriaForFile`) convey
+ * the state without a load-bearing
  * boolean — and without a duplicate prose `summary` headline that
  * collapsed those siblings into a single composite (dropped per
  * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
@@ -595,31 +609,52 @@ export async function runScanAndFormat(
    * without re-walking the adjustment chain.
    */
   readonly adjustedPerRuleCoverage: readonly PerRuleCoverage[];
+  /**
+   * Per-criterion file-path index for the actionable manual-review
+   * set, threaded out so the project-rooted callers
+   * (`tool-scan-project.ts` / `tool-scan-diff.ts`) can drive the
+   * post-vendor-classification rewrite via
+   * {@link import("./scan-assembly.ts").withActionableManualItemsBySource}
+   * once `vendorPaths` resolves. See
+   * {@link import("./manual-criteria-tally.ts").ManualCriteriaTally#actionableCriteriaPaths}.
+   */
+  readonly actionableCriteriaPaths: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Raw post-couple-severity violation list (post-`coupleSeverityToVerifyTokens`,
+   * pre-`dropWrapperNoise`/severity filter). Exposed so callers that
+   * also need to drive the shared {@link import("./scan-time-warnings.ts").buildScanTimeWarnings}
+   * helper (e.g. `propose_config`) can pass through the same violation
+   * stream every other project-rooted tool's scan-time predicate runs
+   * against, without re-running the scanner. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+   * invariant" (warning-channel extension): the scan-time warning code
+   * set must agree across project-rooted tools on identical cwd, which
+   * requires every consumer to thread the same raw violations into the
+   * shared aggregator.
+   */
+  readonly violations: readonly import("../types/violation.ts").Violation[];
 }> {
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
   const attestations = await loadDurableAttestations(cwd ?? process.cwd());
-  const {
-    wrappers,
-    sessionOnly,
-    bySource: wrapperProvenance,
-    elements: wrapperElements,
-  } = resolveWrapperSources(wrapperSources, session);
-  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(
-    buildRunScanOptions({
-      activeRules,
-      enabled,
-      files,
-      level: session.config.level,
-      attestations,
-      processes,
-      wrapperElements,
-      session,
-    }),
-  );
+  // biome-ignore format: keep destructure on one line — file effective-line budget
+  const { wrappers, sessionOnly, bySource: wrapperProvenance, elements: wrapperElements } = resolveWrapperSources(wrapperSources, session);
+  // biome-ignore format: keep destructure on one line — file effective-line budget
+  const { result: rawResult, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan(buildRunScanOptions({ activeRules, enabled, files, level: session.config.level, attestations, processes, wrapperElements, session, ...(cwd === undefined ? {} : { scanRoot: cwd }) }));
+  // Couple severity to verify-in-source tokens upstream of tally /
+  // AgentFinding / response-assembler. Doctrine: see
+  // `src/mcp/violation-severity-coupling.ts`.
+  const result = { ...rawResult, violations: coupleSeverityToVerifyTokens(rawResult.violations) };
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);
+  // Drop findings emitted from non-canonical fingerprint duplicate
+  // paths and stamp `vendorOccurrences` on the canonical's findings.
+  // Runs BEFORE the basename-keyed `collapseVendorCssFindings` so
+  // that pass sees the already-stamped stream — they compose or no-op
+  // depending on whether non-byte-identical sibling copies remain.
+  // biome-ignore format: keep call on two lines — file effective-line budget
+  const fingerprintStamped = stampFingerprintOccurrences(severityFiltered, discoveryDiagnostics?.fingerprintDuplicates ?? new Map());
   // collapse identical findings
   // that repeat across sibling files sharing a basename (canonical case:
   // `bootstrap.css` / `animate.css` copied into 100+ template
@@ -631,7 +666,7 @@ export async function runScanAndFormat(
   // honest (agent sees one canonical finding naming N paths instead of N
   // rows of the same bug). Runs BEFORE the criterion-skip filter so
   // skip-by-criterion semantics operate on the post-dedupe stream.
-  const deduped = collapseVendorCssFindings(severityFiltered);
+  const deduped = collapseVendorCssFindings(fingerprintStamped);
   const filtered = applyCriterionSkip(deduped, skipCriteria);
   const grouped = groupViolationsByFile(filtered);
   // thread per-file source
@@ -706,14 +741,17 @@ export async function runScanAndFormat(
 
   // Plan-side split: grounded candidates (file:line) vs.
   // bare-criterion prompts. Routes through `tallyManualCriteria` so the
-  // count agrees with `coverage[].untargetedCriteria` and
-  // `checklist.summary.untargetedCriteria` on the same input — see
-  // `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface count
-  // invariant" and `tests/integration/mcp-counts-agree.test.ts`. Per
-  // CLAUDE.md §1 "Composite headline counts are dishonest" we ship two
-  // top-level counters so the budget lands honestly:
-  //   - actionableManualItems: candidates with file:line
-  //   - untargetedCriteria:    bare-criterion prompts (no grounding)
+  // count agrees with `coverage[].untargetedCriteriaForProject` and
+  // `checklist.summary.untargetedCriteriaForProject` on the same input
+  // — see `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface
+  // count invariant" and `tests/integration/mcp-counts-agree.test.ts`.
+  // Per CLAUDE.md §1 "Composite headline counts are dishonest" we ship
+  // two top-level counters so the budget lands honestly:
+  //   - actionableManualItems:           candidates with file:line
+  //   - untargetedCriteriaForProject:    bare-criterion prompts (no
+  //                                      grounding); per-file lane
+  //                                      ships `untargetedCriteriaForFile`
+  //                                      from `scan` / `scan_file`.
   // The pre-helper recipe used `collectManualCriteria` which kept fired
   // metadata-manual criteria in the manual queue; coverage and checklist
   // route them into the failing lane, and the off-by-N drift was
@@ -725,8 +763,23 @@ export async function runScanAndFormat(
     scanResult: result,
     applicability: detectApplicability(files),
     candidates: report.candidates ?? [],
+    // Q15-LANDMARK-MAIN: union low-confidence verify-token findings'
+    // criteria (e.g. landmark-main on an isolated-component-demo body
+    // shape) into the actionable count. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant" — every project-rooted surface tallies off the
+    // same raw violation set.
+    violations: result.violations,
   });
-  const actionableManual = tally.actionable;
+  // The flat `tally.actionable` count is no longer threaded into the
+  // plan as `actionableManualItems` — that bare composite was dropped
+  // per the Q15-MIN-CSS closure. The per-scan-kind tally derives
+  // from `tally.actionableCriteriaPaths` once `vendorPaths` resolves
+  // (post-classification rewrite via `withActionableManualItemsBySource`
+  // in `tool-scan-project.ts`); the upstream `buildScanPlan` call
+  // here threads the empty-vendor-paths default ({ source: N,
+  // buildArtifact: 0 }) so the wire shape stays stable on no-vendor
+  // scans without needing a sibling rewrite step.
   const untargetedCriteria = tally.untargeted;
   const suppressions = suppressionAudit(files);
   // Findings keep their `fix.description` inline here. The optional
@@ -817,30 +870,18 @@ export async function runScanAndFormat(
     activeRules,
     cwd,
   );
-  // Per-finding confidence parity with per-rule coverage limitations.
-  // When a rule's adjusted `coverageConfidence !== "high"`, propagate
-  // the structured reason code into every per-finding
-  // `couldBeWrongBecause` for that rule so the per-rule and per-finding
-  // layers don't ship contradictory attention-budget signals in the
-  // same response. Doctrine source:
-  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
-  // must reflect per-rule coverage limitations." Additive — per-finding
-  // `confidence` stays whatever the rule emitted; the cross-file caveat
-  // the agent needs to triage with rides on the `couldBeWrongBecause`
-  // axis. No-op fast path when no rule is degraded.
-  const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
-  // File-scoped gate: substrate codes (`file_parse_error`,
-  // `partial_parse`, `fragment_input_no_document_envelope`) attach
-  // only to findings on files in the named substrate set, so per-rule
-  // and per-finding layers stay honest about the same file. The
-  // `fragment` set mirrors `analysisCoverage.fragmentFiles[]` (shared
-  // classifier in `src/engine/layout-partial.ts`) so a finding on a
-  // full `.html` document never inherits the fragment code.
-  const enrichedFileEntries = enrichFindingsWithPerRuleLimitations(
+  // Per-finding confidence parity passes (per-rule limitations + the
+  // per-line beyond-parse-boundary sibling). See
+  // {@link enrichFindingsWithFullPerFileSubstrate} for the doctrine
+  // pointers — the legacy call site routes through the bundled helper
+  // so the file stays under its effective-line budget.
+  const enrichedFileEntries = enrichFindingsWithFullPerFileSubstrate({
     fileEntries,
-    perRuleLimitations,
-    buildSubstrateFiles(partitionParseStateFiles(files, violationFilePaths), fragmentFiles),
-  );
+    adjustedPerRuleCoverage,
+    files,
+    violationFilePaths,
+    fragmentFiles,
+  });
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative
   // splits the 0-findings rules into "trust the clean tally" vs "scan
@@ -900,8 +941,22 @@ export async function runScanAndFormat(
   // code when any row carries the cross-file listener-resolution
   // reason. Adjusted rows fine: parse-error / scss / fragment
   // adjustments do not strip the cross-file reason code.
+  // `scope: "project"` — `runScanAndFormat` is the project-walk path
+  // consumed by `scan_project` / `scan_diff` / `findings_by_rule` /
+  // `get_finding` / `propose_config`. Picks `untargetedCriteriaForProject`
+  // on the wire so per-file and project-walk slices ship under
+  // distinct names. The per-file lane (`scan` / `scan_file`) routes
+  // through `runScanAndCollect` + `assembleScanFamilyResponse` and
+  // threads `scope: "file"` instead — see `buildScanPlan` docblock for
+  // the cross-surface count invariant rationale.
+  // Empty-vendor-paths default for the per-scan-kind manual-review
+  // tally — every actionable criterion routes to `source` and
+  // `buildArtifact` reads 0. The post-vendor-classification rewrite
+  // ships from {@link withActionableManualItemsBySource} called by
+  // `tool-scan-project.ts` once `vendorPaths` is in scope.
+  const actionableManualBySource = defaultActionableManualLane(tally.actionableCriteriaPaths);
   // biome-ignore format: arg list kept on one line for the file budget
-  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManual, untargetedCriteria, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
+  const planArgs = { violations: violations.length, notes: notes.length, violationsWithoutAnyFix, actionableManualBySource, untargetedCriteria, scope: "project" as const, fixesByClass, perRuleCoverage: adjustedPerRuleCoverage };
   const formatted: ScanFormatted = {
     plan: buildScanPlan(planArgs),
     files: enrichedFileEntries,
@@ -917,6 +972,12 @@ export async function runScanAndFormat(
     reviewCandidates: report.candidates ?? [],
     scssUnresolvedVariableFiles: scssUnresolvedFiles,
     adjustedPerRuleCoverage,
+    actionableCriteriaPaths: tally.actionableCriteriaPaths,
+    // Raw post-couple-severity stream — used by `propose_config` to
+    // drive the shared scan-time-warnings aggregator without a second
+    // scanner pass. See the return-type docblock for the cross-surface
+    // count invariant rationale.
+    violations: result.violations,
   };
 }
 

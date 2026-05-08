@@ -151,14 +151,33 @@ export interface AgentFinding {
   readonly cssPatternId?: string;
   readonly ruleId: string;
   /**
-   * Per-finding remediation lane stamped from the rule's `fixClass`
-   * metadata. Lets agents batch-route at scan time without a per-
-   * finding `suggest_fix` round-trip. See
-   * docs/adr/0007-violation-fix-class-metadata.md. Distinct axis from
-   * `suggest_fix.kind` ("what does the payload contain") — do not
-   * conflate.
+   * Per-finding remediation lane. Stamped from the rule's `fixClass`
+   * metadata in the common case; rerouted to `"suppress-recommended"`
+   * when the violation's `suggestion` prose is suppression-flavored
+   * (mentions the source-level disable pragma — `ra11y-disable` /
+   * `suppress with` — see
+   * `src/utils/suppression-flavored-suggestion.ts`). Lets agents
+   * batch-route at scan time without a per-finding `suggest_fix`
+   * round-trip. See docs/adr/0007-violation-fix-class-metadata.md.
+   *
+   * The per-emission re-route mirrors `suggest_fix`'s `kind:
+   * "suppress-recommended"` discriminator one-to-one and partitions
+   * with the other lanes the same way `plan.fixesByClass` does — a
+   * finding rerouted to `"suppress-recommended"` is NOT also counted
+   * in its rule's declared `fixClass` lane on the plan tally. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+   * agree with per-class plan tally": for every finding `F`,
+   * `suggest_fix(F.ruleId, F.path, F.line).kind` resolves to a value
+   * compatible with `F.fixClass` — `"edit"` / `"guidance"` for
+   * findings whose lane is `mechanical` / `guidance` / `runtime-only`
+   * / `verify-in-source`, and `"suppress-recommended"` for findings
+   * whose lane is `"suppress-recommended"`.
+   *
+   * Distinct axis from `suggest_fix.kind` ("what does the payload
+   * contain") — do not conflate. The lane describes the nature of
+   * the work; `kind` describes the per-call payload shape.
    */
-  readonly fixClass: FixClass;
+  readonly fixClass: FixClass | "suppress-recommended";
   readonly criteria: readonly string[];
   /**
    * Short human titles aligned index-for-index with `criteria`. Present
@@ -513,13 +532,16 @@ export interface AgentReviewCandidate {
  * `buildArtifact: 0` is honest signal — the scope tallied the axis
  * and found zero artifact-side findings on this lane. Distinct from
  * "the scope didn't classify build artifacts at all," which is
- * conveyed by `meta.scannedBuildArtifacts` absence and the omission
- * of `plan.violationsByScanKind` itself. On scopes that don't run
- * the build-artifact classifier (CLI agent format, scan, scan_file,
- * scan_diff), every lane reads `{ source: N, buildArtifact: 0 }`
- * because the default classification routes every file to the
- * `source` lane, matching `splitViolationsByScanKind`'s
- * empty-vendorPaths behavior.
+ * conveyed by `meta.scannedBuildArtifacts` absence (the
+ * `plan.violationsByScanKind` aggregate itself ships deterministically,
+ * including on no-artifacts scans where it reads
+ * `{ source: N, buildArtifact: 0 }` so an agent reads one stable
+ * headline rather than recomputing from `plan.fixesByClass`
+ * arithmetic). On scopes that don't run the build-artifact
+ * classifier (CLI agent format, scan, scan_diff), every lane reads
+ * `{ source: N, buildArtifact: 0 }` because the default classification
+ * routes every file to the `source` lane, matching
+ * `splitViolationsByScanKind`'s empty-vendorPaths behavior.
  */
 export interface FixesByClassLane {
   readonly source: number;
@@ -571,13 +593,20 @@ export interface FixesByClass {
 /**
  * Executive summary for the agent: counts, effort, and a natural-language blurb.
  *
- * `notes` counts `severity: "info"` findings — additive context
- * (e.g. labeled parents, deprecation hints) that share the violations
- * array but do not represent failure. There is no top-level
- * `violations` counter: a flat `violations: N` headline summed
- * categorically different `fixesByClass` lanes (mechanical edits +
- * verify-in-source prose + guidance rewrites + runtime-only) under
- * one number, and agents budgeted against it as if it were N
+ * `infoSeverityFindings` counts `severity: "info"` findings —
+ * additive context (e.g. labeled parents, deprecation hints) that
+ * share the violations array but do not represent failure. The field
+ * was renamed from the opaque `notes`: an agent reading
+ * `plan.notes: 117` on a static-site corpus had no way to derive the
+ * count from sibling fields (it sums info-severity findings, a
+ * categorically different slice from the error+warning lanes that
+ * `fixesByClass` carries — they intentionally don't reconcile). The
+ * self-documenting name reads as "117 info-severity findings" without
+ * the agent having to recall what `notes` measures. There is no
+ * top-level `violations` counter: a flat `violations: N` headline
+ * summed categorically different `fixesByClass` lanes (mechanical
+ * edits + verify-in-source prose + guidance rewrites + runtime-only)
+ * under one number, and agents budgeted against it as if it were N
  * actionable edits. Same shape as the dropped `plan.totalFindings`
  * (severity-distinct lanes under one name) and `plan.safeEditsAvailable`
  * (two editable lanes under one name) precedents — per
@@ -608,7 +637,7 @@ export interface FixesByClass {
  * top-level `violations` counter.
  */
 export interface AgentPlan {
-  readonly notes: number;
+  readonly infoSeverityFindings: number;
   readonly fixesByClass: FixesByClass;
   readonly reviewNeeded: number;
   readonly manualOnly: number;

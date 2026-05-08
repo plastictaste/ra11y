@@ -19,8 +19,15 @@
  *     (link-descriptive-text, alt-text) can flow through the wrapper.
  *
  * Names / keys are sorted lexicographically so the output is stable
- * across runs. Two-space indentation matches project Biome style; each
- * list/object has a trailing comma on its final entry.
+ * across runs. Two-space indentation matches project Biome style. The
+ * final entry of each list/object body emits WITHOUT a trailing
+ * element-comma — per the "Bootstrap output must be paste-safe"
+ * doctrine bullet (`docs/kb/architecture/ai-first-consumer.md`),
+ * paste-safety is the higher bar than emitter convenience: trailing
+ * element-commas can trip downstream linters and snapshot diffs even
+ * though the TS grammar accepts them. The closing `,` after the
+ * `nativeWrappers: ...` entry stays because that comma is the
+ * parent object body's separator, not the list/object's own.
  *
  * The caller decides whether to emit the snippet at all — per CLAUDE.md
  * §1 "Ambiguous field shapes are dishonest," the response omits the
@@ -84,7 +91,15 @@ export function buildNativeWrappersBody(
 
 function buildArrayFormBody(wrappers: readonly ConfirmedWrapperForSnippet[]): readonly string[] {
   const names = [...new Set(wrappers.map((w) => w.component))].sort();
-  const lines = names.map((name) => `${INDENT}${JSON.stringify(name)},`);
+  // No trailing element-comma on the final entry — per the
+  // "Bootstrap output must be paste-safe" doctrine the snippet bears
+  // a higher correctness bar than emitter convenience. Each entry
+  // gets a comma except the last; the `],` that closes the array
+  // still carries its outer object-body comma.
+  const lines = names.map((name, idx) => {
+    const tail = idx === names.length - 1 ? "" : ",";
+    return `${INDENT}${JSON.stringify(name)}${tail}`;
+  });
   return ["nativeWrappers: [", ...lines, "],"];
 }
 
@@ -102,10 +117,106 @@ function buildObjectFormBody(wrappers: readonly ConfirmedWrapperForSnippet[]): r
     if (!byName.has(component)) byName.set(component, mapped);
   }
   const sorted = [...byName.keys()].sort();
-  const entries = sorted.map((name) => {
+  // No trailing element-comma on the final entry — see
+  // {@link buildArrayFormBody} for the rationale.
+  const entries = sorted.map((name, idx) => {
     const element = byName.get(name);
     const value = element === null ? "null" : JSON.stringify(element);
-    return `${INDENT}${JSON.stringify(name)}: ${value},`;
+    const tail = idx === sorted.length - 1 ? "" : ",";
+    return `${INDENT}${JSON.stringify(name)}: ${value}${tail}`;
   });
   return ["nativeWrappers: {", ...entries, "},"];
+}
+
+/**
+ * Trigger discriminator carried on `warningsDetails.bulk_catalog_detected`.
+ * Mirrors `BulkCatalogTrigger` from `src/mcp/bulk-catalog.ts` without
+ * importing it (this module stays a leaf / paste-safe-builder so its
+ * dependency arrows point inward only — `tool-bootstrap.ts` is the
+ * caller that already owns the dependency on the warning surface).
+ */
+export type BulkCatalogTriggerToken =
+  | "slow_and_vendor_heavy"
+  | "bulk_and_vendor_heavy"
+  | "small_demo_catalog";
+
+/**
+ * Inputs to {@link buildBulkCatalogWorkflowRecommendation}. The fields
+ * mirror the {@link import("./bulk-catalog.ts").BulkCatalogDetection}
+ * payload that ships on `warningsDetails.bulk_catalog_detected` — the
+ * caller (`tool-bootstrap.ts`) reads the warning payload off the
+ * scan-leg response and passes it through. Kept as a flat record so
+ * the helper has no upstream dependency.
+ *
+ * `exampleSibling` is populated from `siblingShape.exampleSiblings[0]`
+ * on the `small_demo_catalog` trigger; `undefined` on the vendor-heavy
+ * triggers (where the canonical scope-down lever is exclude rather
+ * than restrictToPaths). The recommendation text branches on its
+ * presence — when set, the example fills the `restrictToPaths: ["..."]`
+ * slot in the recommendation comment; when unset, the slot ships a
+ * placeholder and the agent supplies the path.
+ */
+export interface BulkCatalogWorkflowInputs {
+  readonly trigger: BulkCatalogTriggerToken;
+  readonly exampleSibling?: string;
+}
+
+/**
+ * Builds a paste-safe TS comment block recommending the catalog-shape
+ * narrowing workflow. Returned as a string of `// ...` line comments
+ * separated by `\n` and ending with a trailing newline so the caller
+ * concatenates it directly onto the end of the suggestedConfig string
+ * (which itself ends with the `});` close + a trailing newline). The
+ * comment block lives AFTER `});` so the `defineConfig({...})` body
+ * stays unchanged and the appended lines cannot break the TS grammar
+ * — line comments are valid at the top level after an export
+ * statement.
+ *
+ * Per the AI-first doctrine "Bootstrap output must be paste-safe": the
+ * recommendation text never modifies the `defineConfig({...})` body
+ * itself (which would risk a paste-time syntax error or behavior
+ * change), and never proposes a `defineConfig` field that doesn't
+ * exist (`groupBy` / `restrictToPaths` are runtime `scan_project`
+ * params, not config-file fields — they go in the workflow comment,
+ * not the body).
+ *
+ * Each recommendation block carries:
+ *   1. A header line naming which trigger fired so the agent can
+ *      reconcile the recommendation against its own classification
+ *      reading of `warningsDetails.bulk_catalog_detected.trigger`.
+ *   2. The `groupBy: "firstChildDir"` recommendation as a callable
+ *      `scan_project` invocation — same canonical narrowing lever
+ *      `nextStepStructured` proposes on the small_demo_catalog
+ *      trigger (per `next-step.ts` `smallDemoCatalogGroupByNextStep`),
+ *      reachable from any of the three triggers because the
+ *      catalog-shape rollup applies to all three.
+ *   3. The `restrictToPaths: [...]` recommendation as the per-subdir
+ *      alternative. Populated from `exampleSibling` when the warning
+ *      payload carried a concrete sibling subdir; otherwise
+ *      placeholder-only so the recommendation stays honest about not
+ *      having a concrete pivot to fill in.
+ *
+ * Empty input is not a valid call site — the caller skips the helper
+ * entirely when the warning didn't fire.
+ */
+export function buildBulkCatalogWorkflowRecommendation(inputs: BulkCatalogWorkflowInputs): string {
+  const { trigger, exampleSibling } = inputs;
+  const restrictToPathsExample =
+    exampleSibling !== undefined && exampleSibling.length > 0
+      ? `restrictToPaths: [${JSON.stringify(exampleSibling)}]`
+      : `restrictToPaths: ["<one-sub-project>"]`;
+  const lines = [
+    "",
+    `// Bulk-catalog workflow recommendation (trigger: ${trigger})`,
+    "// The scan classified this corpus as a parallel-sub-project / vendor-heavy catalog.",
+    "// Beyond the severity tuning above, the per-call workflow has two scope-down levers:",
+    '//   - scan_project({ groupBy: "firstChildDir" }) — one whole-tree scan with',
+    "//     per-sub-project rollup (`plan.byGroup`), no paging through every file.",
+    `//   - scan_project({ ${restrictToPathsExample} }) — scope to one sub-project at a time;`,
+    "//     swap the path per sub-project rather than re-scanning the whole catalog.",
+    "// Both are runtime scan_project params, not defineConfig fields — they live in the",
+    "// per-call invocation, not the config body above.",
+    "",
+  ];
+  return lines.join("\n");
 }

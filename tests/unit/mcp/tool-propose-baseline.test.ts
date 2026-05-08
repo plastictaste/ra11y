@@ -13,9 +13,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { proposeBaselineTool } from "../../../src/mcp/tool-propose-baseline.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ProposedEntry {
   readonly filePath: string;
@@ -59,7 +59,7 @@ interface ProposeBaselineResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-propose-baseline-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-propose-baseline-"));
   try {
     return await fn(dir);
   } finally {
@@ -84,7 +84,7 @@ describe("propose_baseline: empty scan → empty proposed array", () => {
   it("emits zero entries with all-zero counts when no violations fire", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
@@ -109,7 +109,7 @@ describe("propose_baseline: third-party-html", () => {
   it("tags .min.html files as third-party-html via the suffix marker", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "bundle.min.html"),
+        posixJoin(dir, "bundle.min.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -127,10 +127,10 @@ describe("propose_baseline: third-party-html", () => {
   // would incorrectly trigger without a `/` boundary).
   it("does not tag findings under regular app paths as third-party-html", async () => {
     await withScratch(async (dir) => {
-      const app = join(dir, "app");
+      const app = posixJoin(dir, "app");
       await mkdir(app, { recursive: true });
       await writeFile(
-        join(app, "page.html"),
+        posixJoin(app, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -146,10 +146,10 @@ describe("propose_baseline: legacy-route", () => {
   // over heuristic reason codes.
   it("tags findings in caller-declared legacyRoutes glob paths", async () => {
     await withScratch(async (dir) => {
-      const legacy = join(dir, "legacy", "admin");
+      const legacy = posixJoin(dir, "legacy", "admin");
       await mkdir(legacy, { recursive: true });
       await writeFile(
-        join(legacy, "dashboard.html"),
+        posixJoin(legacy, "dashboard.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir, { legacyRoutes: ["legacy/**"] });
@@ -169,10 +169,10 @@ describe("propose_baseline: legacy-route", () => {
     await withScratch(async (dir) => {
       // Path contains "legacy" as a literal substring — a heuristic
       // tool would guess. Ours must not.
-      const legacy = join(dir, "legacy", "admin");
+      const legacy = posixJoin(dir, "legacy", "admin");
       await mkdir(legacy, { recursive: true });
       await writeFile(
-        join(legacy, "dashboard.html"),
+        posixJoin(legacy, "dashboard.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -186,10 +186,10 @@ describe("propose_baseline: design-system-internal", () => {
   // matching paths.
   it("tags findings in caller-declared designSystemPaths glob paths", async () => {
     await withScratch(async (dir) => {
-      const ui = join(dir, "packages", "ui", "src");
+      const ui = posixJoin(dir, "packages", "ui", "src");
       await mkdir(ui, { recursive: true });
       await writeFile(
-        join(ui, "Widget.html"),
+        posixJoin(ui, "Widget.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir, { designSystemPaths: ["packages/ui/src/**"] });
@@ -205,10 +205,10 @@ describe("propose_baseline: design-system-internal", () => {
   // heuristic inference from "packages/ui" substring).
   it("does NOT tag any finding as design-system-internal when designSystemPaths is unset", async () => {
     await withScratch(async (dir) => {
-      const ui = join(dir, "packages", "ui", "src");
+      const ui = posixJoin(dir, "packages", "ui", "src");
       await mkdir(ui, { recursive: true });
       await writeFile(
-        join(ui, "Widget.html"),
+        posixJoin(ui, "Widget.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -229,7 +229,7 @@ describe("propose_baseline: wrapper-undetected", () => {
       // interactive element — so the probe cannot confirm and
       // `CustomThing` lands in the `assumed` bucket.
       await writeFile(
-        join(dir, "CustomThing.tsx"),
+        posixJoin(dir, "CustomThing.tsx"),
         "export function CustomThing(props: { onClick: () => void; children?: unknown }) {\n" +
           "  return <div onClick={props.onClick}>{props.children}</div>;\n" +
           "}\n",
@@ -241,7 +241,7 @@ describe("propose_baseline: wrapper-undetected", () => {
       // accepts the space-attribute form, so the classifier tags it
       // `wrapper-undetected`.
       await writeFile(
-        join(dir, "App.tsx"),
+        posixJoin(dir, "App.tsx"),
         'export const App = () => <CustomThing onClick={() => {}} role="button" />;\n',
       );
       const body = await callTool(dir);
@@ -264,7 +264,7 @@ describe("propose_baseline: wrapper-undetected", () => {
   it("does NOT tag findings on confirmed-wrapper components as wrapper-undetected", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "Button.tsx"),
+        posixJoin(dir, "Button.tsx"),
         "export function Button(props: { onClick: () => void; children: unknown }) {\n" +
           "  return <button onClick={props.onClick}>{props.children}</button>;\n" +
           "}\n",
@@ -273,7 +273,7 @@ describe("propose_baseline: wrapper-undetected", () => {
       // wrapper — so `proposed` is non-empty but none of the entries
       // carry wrapper-undetected.
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -306,7 +306,7 @@ describe("propose_baseline: dedupe by findingGroupId", () => {
       // visible-text gate suppresses elements where the trimmed
       // case-insensitive textContent matches the title attribute.
       await writeFile(
-        join(dir, "tooltip.html"),
+        posixJoin(dir, "tooltip.html"),
         '<!DOCTYPE html><html><head></head><body><button title="alpha tooltip">A</button><button title="beta tooltip">B</button><button title="gamma tooltip">C</button></body></html>\n',
       );
       const body = await callTool(dir);
@@ -333,11 +333,11 @@ describe("propose_baseline: dedupe by findingGroupId", () => {
       // Mix of fixture shapes likely to produce a range of findings so
       // the invariant is exercised across rules.
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"><button title="x">X</button></body></html>\n',
       );
       await writeFile(
-        join(dir, "vendor.min.html"),
+        posixJoin(dir, "vendor.min.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -355,7 +355,7 @@ describe("propose_baseline: unclassified default", () => {
   it("falls through to unclassified when no heuristic matches", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -382,11 +382,11 @@ describe("propose_baseline: rationale-hoist dedup", () => {
       // same rule + produces an identical `unclassified` rationale. We
       // expect ≥3 `proposed` entries all sharing one `rationaleKey`.
       await writeFile(
-        join(dir, "page-one.html"),
+        posixJoin(dir, "page-one.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"><img src="/b.png"></body></html>\n',
       );
       await writeFile(
-        join(dir, "page-two.html"),
+        posixJoin(dir, "page-two.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/c.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -408,11 +408,11 @@ describe("propose_baseline: rationale-hoist dedup", () => {
   it("populates a rationale string for every rationaleKey on an entry", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"><button title="x">X</button></body></html>\n',
       );
       await writeFile(
-        join(dir, "bundle.min.html"),
+        posixJoin(dir, "bundle.min.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -431,7 +431,7 @@ describe("propose_baseline: rationale-hoist dedup", () => {
   it("still hoists rationale on a single-finding scan", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -453,7 +453,7 @@ describe("propose_baseline: rationale-hoist dedup", () => {
   it("emits an empty rationales object on a clean scan", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>t</title></head><body></body></html>\n',
       );
       const body = await callTool(dir);
@@ -469,11 +469,11 @@ describe("propose_baseline: rationale-hoist dedup", () => {
   it("keeps `counts` proportional to entries, not to distinct rationales", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "a.html"),
+        posixJoin(dir, "a.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/a.png"></body></html>\n',
       );
       await writeFile(
-        join(dir, "b.html"),
+        posixJoin(dir, "b.html"),
         '<!DOCTYPE html><html><head></head><body><img src="/b.png"></body></html>\n',
       );
       const body = await callTool(dir);

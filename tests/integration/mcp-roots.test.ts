@@ -11,9 +11,12 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+// Normalize to forward slashes — the scanner emits POSIX-style paths
+// in `meta.scanned.root`, so the Windows backslash form would mismatch
+// in expect(...).toEqual on Windows runners.
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..").replace(/\\/g, "/");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -86,9 +89,9 @@ function scanProject(id: number, args: Record<string, unknown>): Record<string, 
  * URI construction by the caller.
  */
 function makeFixtureRoot(): string {
-  const dir = mkdtempSync(join(tmpdir(), "ra11y-roots-"));
+  const dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-roots-"));
   writeFileSync(
-    join(dir, "ok.html"),
+    posixJoin(dir, "ok.html"),
     `<!DOCTYPE html><html lang="en"><head><title>ok</title></head><body><h1>ok</h1></body></html>`,
     "utf8",
   );
@@ -148,6 +151,8 @@ describe("MCP roots: graceful degradation", () => {
     expect(meta.rootsOverlapNote).toBeUndefined();
   });
 
+  // Falls through to scanning PROJECT_ROOT — CI runners need more
+  // headroom than the 5s default.
   it("non-file:// roots (e.g. opaque URIs) do not block scan_project falling through to spawn cwd", async () => {
     const responses = await mcpSession([
       initWithRoots(1, [{ uri: "opaque://project/my-app" }]),
@@ -160,7 +165,7 @@ describe("MCP roots: graceful degradation", () => {
     // root still appears in meta as telemetry.
     expect(meta.hostDeclaredRoots).toEqual(["opaque://project/my-app"]);
     expect(meta.scanned).toEqual({ mode: "project", root: PROJECT_ROOT });
-  });
+  }, 30_000);
 });
 
 describe("MCP roots: notifications/roots push", () => {

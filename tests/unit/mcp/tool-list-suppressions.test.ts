@@ -17,9 +17,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { listSuppressionsTool } from "../../../src/mcp/tool-list-suppressions.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface SuppressionResponse {
   readonly suppressions: readonly {
@@ -44,7 +44,7 @@ interface SuppressionResponse {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-list-suppressions-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-list-suppressions-"));
   try {
     return await fn(dir);
   } finally {
@@ -67,7 +67,7 @@ describe("list_suppressions: empty tree", () => {
   it("returns suppressions: [] when no pragmas exist anywhere", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "index.html"),
+        posixJoin(dir, "index.html"),
         '<html><body><img src="/x.png" alt="ok"></body></html>\n',
       );
       const body = await callTool(dir);
@@ -94,7 +94,7 @@ describe("list_suppressions: bare pragma shape", () => {
   it("omits the reason field when a pragma is bare", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!-- ra11y-disable-next-line media/alt-text-missing -->\n" + '<img src="/hero.jpg">\n',
       );
       const body = await callTool(dir);
@@ -109,7 +109,7 @@ describe("list_suppressions: bare pragma shape", () => {
       expect(entry.criterionId).toBeNull();
       expect(entry.wildcard).toBe(false);
       expect(entry.line).toBe(1);
-      expect(entry.file).toBe(join(dir, "page.html"));
+      expect(entry.file).toBe(posixJoin(dir, "page.html"));
       // nextStep must call out the bare pragma for follow-up.
       expect(body.nextStep).toContain("missing a reason");
       expect(body.nextStep).toContain("review_candidates");
@@ -124,7 +124,7 @@ describe("list_suppressions: reasoned pragma shape", () => {
   it("populates reason when the pragma carries one, via colon separator", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!-- ra11y-disable-next-line media/alt-text-missing: decorative divider -->\n" +
           '<img src="/divider.png">\n',
       );
@@ -140,7 +140,7 @@ describe("list_suppressions: reasoned pragma shape", () => {
   it("populates reason when the pragma uses the -- separator", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!-- ra11y-disable-next-line media/alt-text-missing -- legacy asset -->\n" +
           '<img src="/legacy.png">\n',
       );
@@ -159,7 +159,7 @@ describe("list_suppressions: wildcard pragma", () => {
   it("emits one entry with both ID fields null and wildcard: true", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!-- ra11y-disable-next-line -->\n" + '<img src="/x.png">\n',
       );
       const body = await callTool(dir);
@@ -181,7 +181,7 @@ describe("list_suppressions: criterion vs rule classification", () => {
   it("routes criterion-ID tokens into criterionId and rule tokens into ruleId", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "page.html"),
+        posixJoin(dir, "page.html"),
         "<!-- ra11y-disable-next-line wcag22:1.4.3 -->\n" + '<img src="/x.png">\n',
       );
       const body = await callTool(dir);
@@ -202,12 +202,12 @@ describe("list_suppressions: deterministic ordering", () => {
   it("orders entries file asc, then line asc", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "z-second.html"),
+        posixJoin(dir, "z-second.html"),
         "<!-- ra11y-disable-next-line keyboard/handler-missing -->\n" +
           '<div onclick="x()">b</div>\n',
       );
       await writeFile(
-        join(dir, "a-first.html"),
+        posixJoin(dir, "a-first.html"),
         "<!-- ra11y-disable-next-line media/alt-text-missing: logo brand mark -->\n" +
           '<img src="/logo.png">\n' +
           "<!-- ra11y-disable-next-line contrast/minimum -->\n" +
@@ -215,11 +215,11 @@ describe("list_suppressions: deterministic ordering", () => {
       );
       const body = await callTool(dir);
       expect(body.suppressions.length).toBe(3);
-      expect(body.suppressions[0]?.file).toBe(join(dir, "a-first.html"));
+      expect(body.suppressions[0]?.file).toBe(posixJoin(dir, "a-first.html"));
       expect(body.suppressions[0]?.line).toBe(1);
-      expect(body.suppressions[1]?.file).toBe(join(dir, "a-first.html"));
+      expect(body.suppressions[1]?.file).toBe(posixJoin(dir, "a-first.html"));
       expect(body.suppressions[1]?.line).toBe(3);
-      expect(body.suppressions[2]?.file).toBe(join(dir, "z-second.html"));
+      expect(body.suppressions[2]?.file).toBe(posixJoin(dir, "z-second.html"));
     });
   });
 });

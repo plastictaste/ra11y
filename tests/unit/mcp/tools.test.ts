@@ -7,15 +7,15 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
 import { defineRule } from "../../../src/api/plugin.ts";
 import { createRegistry } from "../../../src/engine/registry/registry.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { MCP_TOOLS } from "../../../src/mcp/tools.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
-const FIXTURE_DIR = join(import.meta.dir, "..", "..", "fixtures");
-const BAD_ALT = join(FIXTURE_DIR, "bad", "alt-text-missing", "img-no-alt.html");
-const GOOD_ALT = join(FIXTURE_DIR, "good", "alt-text-missing", "img-with-alt.html");
+const FIXTURE_DIR = posixJoin(import.meta.dir, "..", "..", "fixtures");
+const BAD_ALT = posixJoin(FIXTURE_DIR, "bad", "alt-text-missing", "img-no-alt.html");
+const GOOD_ALT = posixJoin(FIXTURE_DIR, "good", "alt-text-missing", "img-with-alt.html");
 
 function findTool(name: string) {
   const tool = MCP_TOOLS.find((t) => t.def.name === name);
@@ -256,6 +256,156 @@ describe("MCP tool: list_rules", () => {
   });
 });
 
+describe("MCP tool: list_finders", () => {
+  it("returns every built-in candidate finder", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      finders: Array<Record<string, unknown>>;
+      matchedOf: { total: number; matched: number };
+    };
+    expect(data.finders.length).toBeGreaterThan(0);
+    // Built-in finder count is the registry length — same SSOT
+    // `BUILTIN_CANDIDATE_FINDERS` exposes; matchedOf.total mirrors it.
+    expect(data.matchedOf.total).toBe(data.finders.length);
+    expect(data.matchedOf.matched).toBe(data.finders.length);
+
+    const first = data.finders[0] as Record<string, unknown>;
+    expect(typeof first.finderId).toBe("string");
+    expect(Array.isArray(first.criterionIds)).toBe(true);
+    expect(typeof first.scope).toBe("string");
+    expect(typeof first.description).toBe("string");
+    expect(typeof first.reviewPrompt).toBe("string");
+    expect(Array.isArray(first.references)).toBe(true);
+    // finderId is a namespaced identifier (`review/<slug>` for
+    // candidate-surfacing finders, `suppression/<slug>` for the
+    // pragma-quality finder) — same shape surfaced by
+    // review_candidates.prompts[*].finderId so an agent that records
+    // a finderId from one surface can look it up here verbatim.
+    expect(first.finderId as string).toContain("/");
+  });
+
+  it("filters by standard via the equivalentTo-resolved set", async () => {
+    // Same equivalence-closure resolver list_rules uses: a finder
+    // declared against `wcag22:2.4.5` must surface under the
+    // `section508` filter because `section508:2.4.5` is reachable
+    // via the reciprocal index.
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const all = await tool.handler({}, session);
+    const section508 = await tool.handler({ standard: "section508" }, session);
+
+    const allFinders = JSON.parse(all.content[0].text) as { finders: unknown[] };
+    const filtered = JSON.parse(section508.content[0].text) as {
+      finders: Array<{ finderId: string; criterionIds: string[] }>;
+    };
+
+    expect(filtered.finders.length).toBeLessThanOrEqual(allFinders.finders.length);
+    expect(filtered.finders.length).toBeGreaterThan(0);
+    // Every entry under the section508 filter must surface at least
+    // one section508 criterion — direct or via equivalence.
+    for (const f of filtered.finders) {
+      expect(f.criterionIds.some((c) => c.startsWith("section508:"))).toBe(true);
+    }
+  });
+
+  it("returns structured error on unknown standard with the loaded list", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "fictional-standard" }, session);
+
+    expect(result.isError).toBe(true);
+    const err = (result.structuredContent as Record<string, unknown>) ?? {};
+    expect(err.code).toBe("standard-not-found");
+    expect((err.details as { loaded: string[] }).loaded.length).toBeGreaterThan(0);
+  });
+
+  it("omits filter field when no filter applied; populates matchedOf as a no-op", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter?: unknown;
+      matchedOf: { total: number; matched: number };
+      finders: unknown[];
+    };
+    expect("filter" in data).toBe(false);
+    expect(data.matchedOf.matched).toBe(data.matchedOf.total);
+    expect(data.matchedOf.matched).toBe(data.finders.length);
+  });
+
+  it("echoes filter and emits matched < total when filter narrows", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      filter: { standard: string };
+      matchedOf: { total: number; matched: number };
+      finders: unknown[];
+    };
+    expect(data.filter).toEqual({ standard: "wcag21" });
+    expect(data.matchedOf.matched).toBeLessThanOrEqual(data.matchedOf.total);
+    expect(data.finders.length).toBe(data.matchedOf.matched);
+  });
+
+  it("carries meta with scan-confidence telemetry (finders + standards)", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      finders: unknown[];
+      matchedOf: { total: number; matched: number };
+      meta: {
+        findersTotal: number;
+        findersMatched: number;
+        standardsLoaded: number;
+        standards: string[];
+      };
+    };
+    expect(data.meta).toBeDefined();
+    expect(data.meta.findersTotal).toBe(data.matchedOf.total);
+    expect(data.meta.findersMatched).toBe(data.matchedOf.matched);
+    expect(data.meta.findersMatched).toBe(data.finders.length);
+    expect(data.meta.standards).toContain("wcag22");
+    expect(data.meta.standards).toContain("wcag21");
+  });
+
+  it("emits nextStep + nextStepStructured routing to review_candidates (no filter)", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+    expect(typeof data.nextStep).toBe("string");
+    expect(data.nextStep).toContain("review_candidates");
+    expect(data.nextStepStructured.tool).toBe("review_candidates");
+    expect(data.nextStepStructured.args).toEqual({});
+  });
+
+  it("nextStep reflects the filter when one is applied", async () => {
+    const tool = findTool("list_finders");
+    const session = new McpSession();
+    const result = await tool.handler({ standard: "wcag21" }, session);
+
+    const data = JSON.parse(result.content[0].text) as {
+      nextStep: string;
+      nextStepStructured: { tool: string; args: Record<string, unknown> };
+    };
+    expect(data.nextStep).toContain("wcag21");
+    expect(data.nextStepStructured.tool).toBe("review_candidates");
+    expect(data.nextStepStructured.args).toEqual({ standard: "wcag21" });
+  });
+});
+
 describe("MCP tool: explain_rule", () => {
   it("returns full rule metadata", async () => {
     const tool = findTool("explain_rule");
@@ -440,7 +590,7 @@ describe("MCP tool: scan", () => {
     type FbcLane = { source: number; buildArtifact: number };
     const data = JSON.parse(result.content[0].text) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: {
           mechanical: FbcLane;
           guidance: FbcLane;
@@ -453,8 +603,8 @@ describe("MCP tool: scan", () => {
     };
     // The flat `plan.violations`
     // headline is gone; sum the four `fixesByClass` lanes for the
-    // error+warning total alongside `plan.notes`. Each lane carries
-    // a per-scan-kind sub-tally (`source + buildArtifact`).
+    // error+warning total alongside `plan.infoSeverityFindings`. Each
+    // lane carries a per-scan-kind sub-tally (`source + buildArtifact`).
     const lanes = data.plan.fixesByClass;
     const laneSum = (l: FbcLane): number => l.source + l.buildArtifact;
     const errorWarning = lanes
@@ -463,7 +613,7 @@ describe("MCP tool: scan", () => {
         laneSum(lanes.runtimeOnly) +
         laneSum(lanes.verifyInSource)
       : 0;
-    expect(errorWarning + data.plan.notes).toBeGreaterThan(0);
+    expect(errorWarning + data.plan.infoSeverityFindings).toBeGreaterThan(0);
     expect(data.files.length).toBeGreaterThan(0);
     expect(data.meta.filesScanned).toBe(1);
   });
@@ -697,11 +847,14 @@ describe("MCP tool: scan_project", () => {
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
         meta: {
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           autoDetectedWrappersNote?: string;
         };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual(["ActionButton", "Card"]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["ActionButton", "Card"],
+      });
       // Note spells out the concrete defineConfig shape so the agent
       // can compose the ra11y.config.ts edit in one Read+Edit pass.
       expect(data.meta.autoDetectedWrappersNote).toContain("defineConfig");
@@ -751,7 +904,7 @@ describe("MCP tool: scan_project", () => {
       const data = JSON.parse(result.content[0].text) as {
         meta: {
           configSource: string | null;
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           suggestedNativeWrappers?: string[];
           suggestedNativeWrappersNote?: string;
         };
@@ -808,12 +961,15 @@ describe("MCP tool: scan_project", () => {
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
         meta: {
-          autoDetectedWrappers?: string[];
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
           activeNativeWrappers?: Array<{ name: string; source: string; confirmed?: boolean }>;
           sessionOverridesNote?: string;
         };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual(["DesignSystemButton", "DesignSystemCard"]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["DesignSystemButton", "DesignSystemCard"],
+      });
       const sessionTagged = (data.meta.activeNativeWrappers ?? []).filter(
         (e) => e.source === "session",
       );
@@ -976,22 +1132,61 @@ describe("MCP tool: scan_project", () => {
       ]);
     });
 
-    it("reports zero-detection plainly when no candidates are found", async () => {
+    it("distinguishes ran-empty from did-not-run via the object-form shape", async () => {
+      // Per AI-first doctrine "Ambiguous field shapes are dishonest":
+      // an empty `autoDetectedWrappers: []` array used to read identically
+      // whether the detector ran and found nothing or whether the
+      // detector did not run at all (since the not-run case omits the
+      // field entirely, an agent reading `data.meta.autoDetectedWrappers
+      // ?? []` would coerce both to the same value). The object form
+      // `{ ran: true, candidates: [...] }` makes the two states
+      // structurally distinct: presence-with-`ran:true` means "ran";
+      // absence means "did not run."
       const { mkdtemp, writeFile } = await import("node:fs/promises");
       const { tmpdir } = await import("node:os");
       const { join: joinPath } = await import("node:path");
 
       const dir = await mkdtemp(joinPath(tmpdir(), "ra11y-auto-detect-empty-"));
       await writeFile(joinPath(dir, "app.ts"), "export const x = 1;");
+      // The handler's "configMissing" branch suggests wrappers via a
+      // separate `suggestedNativeWrappers` field, so to isolate the
+      // ran-empty case we add a stub config so configMissing is false.
+      await writeFile(
+        joinPath(dir, "ra11y.config.ts"),
+        'import { defineConfig } from "@ra11y/core";\nexport default defineConfig({});\n',
+      );
 
       const tool = findTool("scan_project");
       const session = new McpSession();
-      const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
-      const data = JSON.parse(result.content[0].text) as {
-        meta: { autoDetectedWrappers?: string[]; autoDetectedWrappersNote?: string };
+
+      // Case 1: detector RAN (autoDetectWrappers: true) and found nothing.
+      const ran = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
+      const ranData = JSON.parse(ran.content[0].text) as {
+        meta: {
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
+          autoDetectedWrappersNote?: string;
+        };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual([]);
-      expect(data.meta.autoDetectedWrappersNote).toContain("found no");
+      expect(ranData.meta.autoDetectedWrappers).toEqual({ ran: true, candidates: [] });
+      expect(ranData.meta.autoDetectedWrappersNote).toContain("found no");
+
+      // Case 2: detector did NOT run (flag omitted, config present so
+      // the configMissing onboarding hint also stays silent).
+      const notRan = await tool.handler({ cwd: dir }, session);
+      const notRanData = JSON.parse(notRan.content[0].text) as {
+        meta: {
+          autoDetectedWrappers?: { ran: boolean; candidates: string[] };
+          autoDetectedWrappersNote?: string;
+          suggestedNativeWrappers?: string[];
+        };
+      };
+      expect(notRanData.meta.autoDetectedWrappers).toBeUndefined();
+      expect(notRanData.meta.autoDetectedWrappersNote).toBeUndefined();
+      expect(notRanData.meta.suggestedNativeWrappers).toBeUndefined();
+
+      // The two states must be structurally distinguishable from the
+      // response alone (the whole point of the object-form shape).
+      expect(ranData.meta.autoDetectedWrappers).not.toEqual(notRanData.meta.autoDetectedWrappers);
     });
 
     it("detects input-shaped wrappers (value + onChange) alongside button-shaped ones", async () => {
@@ -1023,14 +1218,12 @@ describe("MCP tool: scan_project", () => {
       const session = new McpSession();
       const result = await tool.handler({ cwd: dir, autoDetectWrappers: true }, session);
       const data = JSON.parse(result.content[0].text) as {
-        meta: { autoDetectedWrappers?: string[] };
+        meta: { autoDetectedWrappers?: { ran: boolean; candidates: string[] } };
       };
-      expect(data.meta.autoDetectedWrappers).toEqual([
-        "Checkbox",
-        "Input",
-        "SubmitButton",
-        "Textarea",
-      ]);
+      expect(data.meta.autoDetectedWrappers).toEqual({
+        ran: true,
+        candidates: ["Checkbox", "Input", "SubmitButton", "Textarea"],
+      });
     });
   });
 
@@ -1408,21 +1601,24 @@ describe("MCP tool: scan_project", () => {
       const withoutDir = await scratch(false);
       const withResult = await tool.handler({ cwd: withDir }, new McpSession());
       const withoutResult = await tool.handler({ cwd: withoutDir }, new McpSession());
+      type ActionableSourcePair = { source: number; buildArtifact: number };
       const withData = JSON.parse(withResult.content[0].text) as {
-        plan: { actionableManualItems: number };
+        plan: { actionableManualItemsBySource: ActionableSourcePair };
       };
       const withoutData = JSON.parse(withoutResult.content[0].text) as {
-        plan: { actionableManualItems: number };
+        plan: { actionableManualItemsBySource: ActionableSourcePair };
       };
+      const flatActionable = (p: { actionableManualItemsBySource: ActionableSourcePair }): number =>
+        p.actionableManualItemsBySource.source + p.actionableManualItemsBySource.buildArtifact;
       // Threading the processes config causes the
       // consistent-identification finder to ground 3.2.4, pushing it
       // from the untargeted bucket into actionable. The exact baseline
       // value isn't pinned — sibling finders that don't consume
       // processes fire identically in both runs, so the delta isolates
-      // the threading fix.
-      expect(withData.plan.actionableManualItems).toBeGreaterThan(
-        withoutData.plan.actionableManualItems,
-      );
+      // the threading fix. Per Q15-MIN-CSS, the bare
+      // `actionableManualItems` headline was dropped; consumers sum
+      // the per-scan-kind lanes to recover the flat budget.
+      expect(flatActionable(withData.plan)).toBeGreaterThan(flatActionable(withoutData.plan));
     });
   });
 });
@@ -2094,8 +2290,11 @@ describe("MCP tool: detect_native_wrappers", () => {
     expect(data.candidates.length).toBeGreaterThan(0);
     expect(typeof data.suggestedConfigSnippet).toBe("string");
     // defineConfig-compatible; names sorted lexicographically.
+    // Final entry omits its trailing element-comma per the
+    // "Bootstrap output must be paste-safe" doctrine; "Button"
+    // (sorted before "Link") still carries its separator comma.
     expect(data.suggestedConfigSnippet).toBe(
-      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link",', "  ],", "});"].join(
+      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link"', "  ],", "});"].join(
         "\n",
       ),
     );
@@ -2843,6 +3042,123 @@ describe("MCP tool: sessionConfigure", () => {
   });
 });
 
+describe("MCP tool: session_inspect", () => {
+  it("returns deterministic defaults with configured: false on a fresh session", async () => {
+    // The discriminator the tool exists for: a default-shaped echo
+    // with `configured: false` answers "the agent has not run
+    // sessionConfigure on this connection," distinct from an echo
+    // that happens to look like the defaults after explicit overrides.
+    const tool = findTool("session_inspect");
+    const session = new McpSession();
+    const result = await tool.handler({}, session);
+    expect(result.isError).toBeUndefined();
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: Record<string, unknown>;
+    };
+    expect(data.configured).toBe(false);
+    expect(data.active["standard"]).toBe("wcag22");
+    expect(data.active["level"]).toBe("AA");
+    expect(data.active["allowWrite"]).toBe(false);
+    expect(typeof data.active["ruleCount"]).toBe("number");
+    expect(data.active["ruleCount"] as number).toBeGreaterThan(0);
+    // Optional fields are present-when-meaningful — never sentinel-empty.
+    expect("rules" in data.active).toBe(false);
+    expect("nativeWrappers" in data.active).toBe(false);
+    expect("nativeWrapperElements" in data.active).toBe(false);
+    expect("exclude" in data.active).toBe(false);
+    expect("cwd" in data.active).toBe(false);
+  });
+
+  it("round-trips configured state — sessionConfigure → session_inspect echoes the merged shape", async () => {
+    // The pairing the backlog item names: an agent that has just set
+    // rule overrides, native wrappers, and excludes can verify the
+    // merged state without making a no-op `scan` call.
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler(
+      {
+        standard: "wcag21",
+        level: "A",
+        rules: { "media/alt-text-missing": "off" },
+        nativeWrappers: ["Button", "ActionButton"],
+        exclude: ["packages/legacy/**"],
+        cwd: "/tmp/some-project",
+      },
+      session,
+    );
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: {
+        standard: string;
+        level: string;
+        ruleCount: number;
+        allowWrite: boolean;
+        rules?: Record<string, string>;
+        nativeWrappers?: readonly string[];
+        exclude?: readonly string[];
+        cwd?: string;
+      };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.standard).toBe("wcag21");
+    expect(data.active.level).toBe("A");
+    expect(data.active.allowWrite).toBe(false);
+    expect(data.active.rules).toEqual({ "media/alt-text-missing": "off" });
+    expect(data.active.nativeWrappers).toEqual(["Button", "ActionButton"]);
+    expect(data.active.exclude).toEqual(["packages/legacy/**"]);
+    expect(data.active.cwd).toBe("/tmp/some-project");
+  });
+
+  it("nativeWrapperElements echoes the object form when sessionConfigure received it", async () => {
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler({ nativeWrappers: { Button: "button", RouterLink: "a" } }, session);
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: {
+        nativeWrappers?: readonly string[];
+        nativeWrapperElements?: Record<string, string>;
+      };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.nativeWrapperElements).toEqual({ Button: "button", RouterLink: "a" });
+    // The flat-name list mirrors what `sessionConfigure.active.nativeWrappers`
+    // also surfaces — the object form folds names into the array form.
+    expect(data.active.nativeWrappers).toEqual(["Button", "RouterLink"]);
+  });
+
+  it("configured: true even when sessionConfigure flips only allowWrite", async () => {
+    // The discriminator must not falsely report `configured: false`
+    // on a session whose only override is the security-load-bearing
+    // write gate. allowWrite: true diverges from the default so the
+    // boolean must flip.
+    const configureTool = findTool("sessionConfigure");
+    const inspectTool = findTool("session_inspect");
+    const session = new McpSession();
+    await configureTool.handler({ allowWrite: true }, session);
+    const result = await inspectTool.handler({}, session);
+    const data = JSON.parse(result.content[0].text) as {
+      configured: boolean;
+      active: { allowWrite: boolean };
+    };
+    expect(data.configured).toBe(true);
+    expect(data.active.allowWrite).toBe(true);
+  });
+
+  it("is idempotent — repeated calls return identical shapes without mutating state", async () => {
+    const tool = findTool("session_inspect");
+    const session = new McpSession();
+    const a = await tool.handler({}, session);
+    const b = await tool.handler({}, session);
+    expect(a.content[0].text).toBe(b.content[0].text);
+  });
+});
+
 describe("MCP tool: coverage", () => {
   it("returns coverage data", async () => {
     const tool = findTool("coverage");
@@ -2856,20 +3172,29 @@ describe("MCP tool: coverage", () => {
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       criteriaAutomatable: number;
-      actionableManualItems: number;
-      untargetedCriteria: number;
+      // The redundant top-level `actionableManualItems` /
+      // `criteriaUntestable` scalars were dropped from the coverage
+      // entry per AI-first doctrine "Sibling fields naming the same
+      // concept must use one shape" — agents read the criteria-axis
+      // count from `summary.actionable.criteria` (or
+      // `manualWithCandidates.length` when the array ships) and the
+      // untestable count from
+      // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+      // (or `untestableCriteria.length` when the array ships).
+      manualWithCandidates?: ReadonlyArray<{ criterionId: string }>;
+      untargetedCriteriaForProject: number;
       // Structured `summary` dict — mirrors `checklist.summary` so an
       // agent reading `summary.actionable.criteria` /
-      // `summary.untargetedCriteria` / `summary.likelyIrrelevant` on
-      // either tool gets the same path resolution. Pre-fix this field
-      // shipped as a prose string while `checklist.summary` shipped as
-      // a dict — the canonical "Sibling fields naming the same concept
-      // must use one shape" failure mode in
-      // `docs/kb/architecture/ai-first-consumer.md`. Prose lives at
-      // `summary.headline`.
+      // `summary.untargetedCriteriaForProject` /
+      // `summary.likelyIrrelevant` on either tool gets the same path
+      // resolution. Pre-fix this field shipped as a prose string while
+      // `checklist.summary` shipped as a dict — the canonical "Sibling
+      // fields naming the same concept must use one shape" failure
+      // mode in `docs/kb/architecture/ai-first-consumer.md`. Prose
+      // lives at `summary.headline`.
       summary: {
         actionable: { criteria: number };
-        untargetedCriteria: number;
+        untargetedCriteriaForProject: number;
         likelyIrrelevant: number;
         automatedCoverage: {
           standardId: string;
@@ -2889,22 +3214,30 @@ describe("MCP tool: coverage", () => {
     // A and AA criteria).
     const levelSum = Object.values(data.criteriaByLevel).reduce((a, b) => a + b, 0);
     expect(levelSum).toBe(data.criteriaTotalForProfile);
-    // Two top-level counters mirror `scan_project.plan` and
-    // `checklist.summary` — never summed into a composite headline per
-    // AI-first doctrine "Composite headline counts are dishonest." The
-    // legacy `criteriaManualReviewRequired` composite was deleted;
-    // agents that want the legacy total sum these two themselves.
-    expect(typeof data.actionableManualItems).toBe("number");
-    expect(typeof data.untargetedCriteria).toBe("number");
-    expect(data.actionableManualItems + data.untargetedCriteria).toBeGreaterThan(0);
+    // The criteria-axis count rides on `summary.actionable.criteria`
+    // (canonical structured access path mirroring
+    // `checklist.summary.actionable.criteria`) and on the
+    // `manualWithCandidates` array's length when the array ships.
+    // The untargeted count rides on `untargetedCriteriaForProject` (no
+    // array twin alongside it on the default envelope; the per-file
+    // twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`
+    // instead). Per AI-first doctrine "Composite headline counts are
+    // dishonest" the legacy composite `criteriaManualReviewRequired`
+    // was deleted; per "Sibling fields naming the same concept must
+    // use one shape" the redundant top-level scalars were dropped —
+    // agents read through the structured surfaces.
+    expect(typeof data.untargetedCriteriaForProject).toBe("number");
+    expect(data.summary.actionable.criteria + data.untargetedCriteriaForProject).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
+    expect((data as Record<string, unknown>).actionableManualItems).toBeUndefined();
+    expect((data as Record<string, unknown>).criteriaUntestable).toBeUndefined();
     // Structured summary dict — every leg the agent reads matches
     // checklist's keys exactly. `actionable.criteria` is the canonical
-    // cross-tool count (matches `actionableManualItems` sibling and
+    // cross-tool count (matches `manualWithCandidates.length` and
     // `checklist.summary.actionable.criteria` on identical cwd).
     expect(typeof data.summary).toBe("object");
-    expect(data.summary.actionable.criteria).toBe(data.actionableManualItems);
-    expect(data.summary.untargetedCriteria).toBe(data.untargetedCriteria);
+    expect(data.summary.actionable.criteria).toBe(data.manualWithCandidates?.length ?? 0);
+    expect(data.summary.untargetedCriteriaForProject).toBe(data.untargetedCriteriaForProject);
     expect(typeof data.summary.likelyIrrelevant).toBe("number");
     expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
     expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");
@@ -2926,7 +3259,7 @@ describe("MCP tool: audit", () => {
     const tool = findTool("audit");
     const session = new McpSession();
     const result = await tool.handler(
-      { cwd: join(FIXTURE_DIR, "good", "alt-text-missing") },
+      { cwd: posixJoin(FIXTURE_DIR, "good", "alt-text-missing") },
       session,
     );
 
@@ -2945,14 +3278,16 @@ describe("MCP tool: audit", () => {
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
       };
     };
     expect(typeof checklist.summary.actionable.criteria).toBe("number");
-    expect(typeof checklist.summary.actionable.candidatesUncapped).toBe("number");
-    expect(typeof checklist.summary.actionable.candidatesReturned).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsTotal).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsAfterCollapse).toBe("number");
+    expect(typeof checklist.summary.actionable.emissionsReturnedAfterClip).toBe("number");
   });
 
   it("forwards scan-only parameters to the scan leg", async () => {
@@ -2962,15 +3297,21 @@ describe("MCP tool: audit", () => {
     const tool = findTool("audit");
     const session = new McpSession();
     const result = await tool.handler(
-      { cwd: join(FIXTURE_DIR, "good", "alt-text-missing"), autoDetectWrappers: true },
+      { cwd: posixJoin(FIXTURE_DIR, "good", "alt-text-missing"), autoDetectWrappers: true },
       session,
     );
 
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
-      scan: { meta: { autoDetectedWrappers?: unknown } };
+      scan: { meta: { autoDetectedWrappers?: { ran: boolean; candidates: string[] } } };
     };
-    expect(Array.isArray(data.scan.meta.autoDetectedWrappers)).toBe(true);
+    // Shape contract: object-form `{ ran, candidates }` regardless of
+    // whether the detector found anything (per AI-first doctrine
+    // "Ambiguous field shapes are dishonest" — empty-array sentinel
+    // can't double as "did not run").
+    expect(data.scan.meta.autoDetectedWrappers).toBeDefined();
+    expect(data.scan.meta.autoDetectedWrappers?.ran).toBe(true);
+    expect(Array.isArray(data.scan.meta.autoDetectedWrappers?.candidates)).toBe(true);
   });
 });
 
@@ -2998,16 +3339,18 @@ describe("MCP tool: suggest_fix", () => {
     );
 
     expect(result.isError).toBeUndefined();
-    // `kind: "edit"` retains a top-level `explanation`; `kind: "guidance"`
-    // nests it under `primary.explanation` per Q-SHARED-SUGGEST-FIX-
-    // GUIDANCE-PRIMARY. Read from whichever branch fires so the assertion
-    // survives either rule outcome.
+    // `kind: "edit"` retains a top-level `explanation`; the
+    // judgment-or-lane-mirror kinds (`guidance` / `verify-in-source` /
+    // `runtime-only` / `suppress-recommended`) nest the explanation
+    // under `primary.explanation` per Q-SHARED-SUGGEST-FIX-GUIDANCE-
+    // PRIMARY. Read from whichever branch fires so the assertion
+    // survives any rule outcome.
     const data = JSON.parse(result.content[0].text) as {
       kind: string;
       explanation?: string;
       primary?: { explanation?: string };
     };
-    const explanation = data.kind === "guidance" ? data.primary?.explanation : data.explanation;
+    const explanation = data.kind === "edit" ? data.explanation : data.primary?.explanation;
     expect(typeof explanation).toBe("string");
     expect((explanation ?? "").length).toBeGreaterThan(0);
   });

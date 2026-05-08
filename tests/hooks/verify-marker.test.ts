@@ -25,7 +25,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   decideSkip,
   getCurrentTreeSha,
@@ -36,6 +35,7 @@ import {
   readMarker,
   writeMarker,
 } from "../../.claude/hooks/lib/verify-marker.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 let repo: string;
 const cleanups: string[] = [];
@@ -45,12 +45,12 @@ function git(cwd: string, args: string): string {
 }
 
 function makeRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "ra11y-stop-hook-"));
+  const dir = mkdtempSync(posixJoin(tmpdir(), "ra11y-stop-hook-"));
   cleanups.push(dir);
   git(dir, "init -q -b main");
   git(dir, 'config user.email "test@example.com"');
   git(dir, 'config user.name "Test"');
-  writeFileSync(join(dir, "README.md"), "init\n");
+  writeFileSync(posixJoin(dir, "README.md"), "init\n");
   git(dir, "add README.md");
   git(dir, 'commit -q -m "init"');
   return dir;
@@ -69,16 +69,27 @@ afterEach(() => {
   }
 });
 
+/**
+ * `getMarkerPath` returns native-separator paths (it composes via
+ * `path.join`); the substring assertions below want a single canonical
+ * shape regardless of platform. Normalize to forward slashes so the
+ * Windows shards see the same `.git/` infix as POSIX runners.
+ */
+function posix(p: string | null | undefined): string {
+  if (!p) return "";
+  return p.split(/[\\/]/).join("/");
+}
+
 describe("getMarkerPath", () => {
   test("returns absolute path under .git for main checkout", () => {
     const path = getMarkerPath(repo);
     expect(path).toBeTruthy();
-    expect(path?.endsWith(`/${MARKER_FILENAME}`)).toBe(true);
-    expect(path?.includes("/.git/")).toBe(true);
+    expect(posix(path).endsWith(`/${MARKER_FILENAME}`)).toBe(true);
+    expect(posix(path).includes("/.git/")).toBe(true);
   });
 
   test("returns null when cwd is not a git repo", () => {
-    const notRepo = mkdtempSync(join(tmpdir(), "ra11y-not-repo-"));
+    const notRepo = mkdtempSync(posixJoin(tmpdir(), "ra11y-not-repo-"));
     cleanups.push(notRepo);
     expect(getMarkerPath(notRepo)).toBeNull();
   });
@@ -97,7 +108,7 @@ describe("getCurrentTreeSha", () => {
   });
 
   test("returns null when cwd is not a git repo", () => {
-    const notRepo = mkdtempSync(join(tmpdir(), "ra11y-not-repo-"));
+    const notRepo = mkdtempSync(posixJoin(tmpdir(), "ra11y-not-repo-"));
     cleanups.push(notRepo);
     expect(getCurrentTreeSha(notRepo)).toBeNull();
   });
@@ -114,7 +125,7 @@ describe("getStagedTreeSha", () => {
   });
 
   test("equals post-commit HEAD^{tree} (pre-commit handoff invariant)", () => {
-    writeFileSync(join(repo, "file.txt"), "hello\n");
+    writeFileSync(posixJoin(repo, "file.txt"), "hello\n");
     git(repo, "add file.txt");
     const stagedBefore = getStagedTreeSha(repo);
     git(repo, 'commit -q -m "add file"');
@@ -123,7 +134,7 @@ describe("getStagedTreeSha", () => {
   });
 
   test("returns null when cwd is not a git repo", () => {
-    const notRepo = mkdtempSync(join(tmpdir(), "ra11y-not-repo-"));
+    const notRepo = mkdtempSync(posixJoin(tmpdir(), "ra11y-not-repo-"));
     cleanups.push(notRepo);
     expect(getStagedTreeSha(notRepo)).toBeNull();
   });
@@ -135,18 +146,18 @@ describe("isTreeClean", () => {
   });
 
   test("false when a tracked file is modified", () => {
-    writeFileSync(join(repo, "README.md"), "modified\n");
+    writeFileSync(posixJoin(repo, "README.md"), "modified\n");
     expect(isTreeClean(repo)).toBe(false);
   });
 
   test("false when a file is staged but not committed", () => {
-    writeFileSync(join(repo, "staged.txt"), "x\n");
+    writeFileSync(posixJoin(repo, "staged.txt"), "x\n");
     git(repo, "add staged.txt");
     expect(isTreeClean(repo)).toBe(false);
   });
 
   test("false when an untracked file exists (regression: diff --quiet would miss this)", () => {
-    writeFileSync(join(repo, "untracked.txt"), "x\n");
+    writeFileSync(posixJoin(repo, "untracked.txt"), "x\n");
     expect(isTreeClean(repo)).toBe(false);
   });
 });
@@ -203,7 +214,7 @@ describe("decideSkip", () => {
     expect(oldTree && path).toBeTruthy();
     if (!(oldTree && path)) return;
     writeMarker(path, oldTree);
-    writeFileSync(join(repo, "second.txt"), "x\n");
+    writeFileSync(posixJoin(repo, "second.txt"), "x\n");
     git(repo, "add second.txt");
     git(repo, 'commit -q -m "second"');
     const decision = decideSkip(repo);
@@ -231,7 +242,7 @@ describe("decideSkip", () => {
     const path = getMarkerPath(repo);
     expect(path).toBeTruthy();
     if (!path) return;
-    writeFileSync(join(repo, "feature.txt"), "x\n");
+    writeFileSync(posixJoin(repo, "feature.txt"), "x\n");
     git(repo, "add feature.txt");
     const stagedTree = getStagedTreeSha(repo);
     expect(stagedTree).toBeTruthy();
@@ -249,7 +260,7 @@ describe("decideSkip", () => {
     expect(tree && path).toBeTruthy();
     if (!(tree && path)) return;
     writeMarker(path, tree);
-    writeFileSync(join(repo, "README.md"), "modified\n");
+    writeFileSync(posixJoin(repo, "README.md"), "modified\n");
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
     expect(decision.reason).toBe("dirty-tree");
@@ -261,7 +272,7 @@ describe("decideSkip", () => {
     expect(tree && path).toBeTruthy();
     if (!(tree && path)) return;
     writeMarker(path, tree);
-    writeFileSync(join(repo, "new-fixture.ts"), "export const x = 1;\n");
+    writeFileSync(posixJoin(repo, "new-fixture.ts"), "export const x = 1;\n");
     const decision = decideSkip(repo);
     expect(decision.skip).toBe(false);
     expect(decision.reason).toBe("dirty-tree");
@@ -270,7 +281,7 @@ describe("decideSkip", () => {
 
 describe("worktree isolation", () => {
   test("linked worktree's marker is independent of main checkout's marker", () => {
-    const worktreePath = join(repo, "..", `wt-${Date.now()}`);
+    const worktreePath = posixJoin(repo, "..", `wt-${Date.now()}`);
     cleanups.push(worktreePath);
     git(repo, `worktree add -q -b feature-branch "${worktreePath}"`);
 
@@ -282,9 +293,9 @@ describe("worktree isolation", () => {
 
     expect(mainPath).not.toBe(wtPath);
     // Linked worktree marker lives under .git/worktrees/<name>/
-    expect(wtPath.includes("/.git/worktrees/")).toBe(true);
+    expect(posix(wtPath).includes("/.git/worktrees/")).toBe(true);
     // Main checkout marker is the bare .git/ dir.
-    expect(mainPath.includes("/.git/worktrees/")).toBe(false);
+    expect(posix(mainPath).includes("/.git/worktrees/")).toBe(false);
 
     // Write to the worktree marker; main marker stays absent.
     writeMarker(wtPath, "b".repeat(40));
@@ -298,7 +309,7 @@ describe("worktree isolation", () => {
   });
 
   test("linked worktree decideSkip uses its own marker, not main's", () => {
-    const worktreePath = join(repo, "..", `wt-${Date.now()}-decide`);
+    const worktreePath = posixJoin(repo, "..", `wt-${Date.now()}-decide`);
     cleanups.push(worktreePath);
     git(repo, `worktree add -q -b feature-decide "${worktreePath}"`);
 

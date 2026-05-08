@@ -22,10 +22,10 @@
  */
 
 import { readdir, readFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { posixJoin, posixRelative, posixResolve } from "../../utils/path.ts";
 
 const URI_SCHEME = "ra11y-kb://";
-const KB_SUBDIR = join("docs", "kb");
+const KB_SUBDIR = posixJoin("docs", "kb");
 const MD_EXT = ".md";
 const MIME_MARKDOWN = "text/markdown";
 
@@ -64,11 +64,12 @@ export class ResourceError extends Error {
  * not an error.
  */
 export async function loadKbResources(cwd: string): Promise<McpResource[]> {
-  const kbRoot = join(cwd, KB_SUBDIR);
+  const kbRoot = posixJoin(cwd, KB_SUBDIR);
   const files = await walkMarkdown(kbRoot).catch(() => [] as string[]);
   const resources: McpResource[] = [];
   for (const abs of files) {
-    const rel = relative(kbRoot, abs).split(sep).join("/");
+    // posixRelative already returns POSIX; the prior split/join was a no-op cosmetic.
+    const rel = posixRelative(kbRoot, abs);
     const uri = `${URI_SCHEME}${rel}`;
     const source = await readFile(abs, "utf8").catch(() => "");
     const { name, description } = extractMeta(source, rel);
@@ -106,9 +107,10 @@ export async function readKbResource(cwd: string, uri: string): Promise<McpResou
   if (segments.some((s) => s === "..")) {
     throw new ResourceError(INVALID_RESOURCE_URI, `Path traversal rejected: ${uri}`);
   }
-  const kbRoot = resolve(cwd, KB_SUBDIR);
-  const target = resolve(kbRoot, rel);
-  const rooted = target === kbRoot || target.startsWith(kbRoot + sep);
+  const kbRoot = posixResolve(cwd, KB_SUBDIR);
+  const target = posixResolve(kbRoot, rel);
+  // kbRoot and target both come from posixResolve, so the separator is "/".
+  const rooted = target === kbRoot || target.startsWith(`${kbRoot}/`);
   if (!rooted) {
     throw new ResourceError(INVALID_RESOURCE_URI, `Path escapes KB root: ${uri}`);
   }
@@ -127,7 +129,7 @@ async function walkMarkdown(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const out: string[] = [];
   for (const entry of entries) {
-    const full = join(dir, entry.name);
+    const full = posixJoin(dir, entry.name);
     if (entry.isDirectory()) {
       const nested = await walkMarkdown(full);
       out.push(...nested);

@@ -30,8 +30,10 @@
  * remediation lane; a sibling constant is noise.
  */
 
+import type { FixClass } from "../../types/rule.ts";
 import type { Violation } from "../../types/violation.ts";
 import { buildSnippetForReason, type SnippetLanguage } from "../../utils/source-snippet.ts";
+import { isSuppressionFlavoredSuggestion } from "../../utils/suppression-flavored-suggestion.ts";
 import { widenToUniqueAnchor } from "../../utils/unique-anchor.ts";
 import type { AgentFinding, AgentFix, Category, Confidence } from "./types.ts";
 
@@ -47,8 +49,21 @@ export function severityToConfidence(severity: string): Confidence {
  * explicit `v.confidence` when present (canonically `"inherited"` on
  * synthesized wrapper-call-site findings), otherwise
  * falls back to the severity-derived mapping.
+ *
+ * Exported so the `suggest_fix` per-call surface can carry forward the
+ * source finding's confidence rather than recomputing from severity.
+ * Per docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+ * agree with per-class plan tally": when `scan_project` ships a finding
+ * with `confidence: low` (info-severity, or rule-emitted `"low"`), the
+ * `suggest_fix({findingId})` response on the same finding must ship
+ * `primary.confidence: low` — recomputing via the local
+ * `match.severity === "error" ? "high" : "medium"` ladder skipped the
+ * `low` rung entirely (info-severity findings shipped `medium` from
+ * suggest_fix while scan_project shipped `low`). Honoring
+ * `v.confidence` also keeps the `"inherited"` discriminator visible on
+ * wrapper-call-site findings the agent might pass to `suggest_fix`.
  */
-function resolveConfidence(v: Violation): Confidence {
+export function resolveConfidence(v: Violation): Confidence {
   if (v.confidence !== undefined) return v.confidence;
   return severityToConfidence(v.severity);
 }
@@ -293,6 +308,36 @@ function categorize(v: Violation): Category {
 }
 
 /**
+ * Resolves the per-finding remediation lane. The rule's declared
+ * {@link FixClass} is the common case; suppression-flavored emissions
+ * (suggestion prose that names the source-level disable pragma —
+ * `ra11y-disable` / `suppress with` — see
+ * {@link isSuppressionFlavoredSuggestion}) reroute to the per-emission
+ * `"suppress-recommended"` lane.
+ *
+ * Doctrine: docs/kb/architecture/ai-first-consumer.md "Per-call shape
+ * must agree with per-class plan tally" — `suggest_fix.kind:
+ * "suppress-recommended"` is the per-call discriminator on these
+ * findings; the per-finding `fixClass` mirrors the same partition so
+ * an agent budgeting from `plan.fixesByClass` lands in the same lane
+ * `suggest_fix` would route to. The plan-tally side already partitions
+ * via {@link import("./build-plan.ts")#countFixesByClass}; this
+ * helper keeps the per-finding stamp aligned with that partition.
+ *
+ * Mechanical edits never reroute: a violation with a populated
+ * `fixPaths.primary.edit` ships an actual edit, and an actual edit is
+ * never a "verify and add a pragma" outcome. The suppression-flavored
+ * predicate fires on suggestion prose, not on edit shape, but the
+ * doctrine carve-out is explicit — keep mechanical-fix findings in
+ * their declared lane.
+ */
+function resolveFixClass(v: Violation): FixClass | "suppress-recommended" {
+  if (v.fixPaths?.primary.edit !== undefined) return v.fixClass;
+  if (isSuppressionFlavoredSuggestion(v.suggestion)) return "suppress-recommended";
+  return v.fixClass;
+}
+
+/**
  * Convert a single {@link Violation} into an {@link AgentFinding}.
  *
  * The `category` field uses `"auto-fix"` only when the violation ships a
@@ -325,7 +370,7 @@ export function buildAgentFinding(v: Violation, opts?: BuildAgentFindingOptions)
     // "Ambiguous field shapes are dishonest."
     ...(v.cssPatternId !== undefined && { cssPatternId: v.cssPatternId }),
     ruleId: v.ruleId,
-    fixClass: v.fixClass,
+    fixClass: resolveFixClass(v),
     criteria: [...v.criteria],
     ...(v.criteriaTitles !== undefined && { criteriaTitles: [...v.criteriaTitles] }),
     ...(v.couldBeWrongBecause && v.couldBeWrongBecause.length > 0

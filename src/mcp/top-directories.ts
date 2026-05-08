@@ -52,8 +52,7 @@
  * invariant").
  */
 
-import { relative, sep } from "node:path";
-
+import { posixRelative } from "../utils/path.ts";
 /**
  * Default head-slice cap for `plan.topDirectories`. Ten entries is the
  * published surface — wide enough that an agent triaging a 50-project
@@ -138,10 +137,11 @@ interface DirectoryBucket {
  *     than collapsed under a `..`-prefixed key the agent can't act on.
  */
 function firstChildDirFor(path: string, root: string): string {
-  const rel = relative(root, path);
+  const rel = posixRelative(root, path);
   if (rel.startsWith("..")) return "<external>";
   if (rel === "" || rel === ".") return ".";
-  const segments = rel.split(sep).filter((s) => s.length > 0);
+  // rel is POSIX from posixRelative; split on "/" not native sep.
+  const segments = rel.split("/").filter((s) => s.length > 0);
   if (segments.length === 0) return ".";
   return segments.length === 1 ? "." : segments[0]!;
 }

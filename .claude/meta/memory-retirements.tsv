@@ -1,0 +1,11 @@
+# meta-reviewer memory-retirement proposals — append-only, in-repo, durable
+#
+# One tab-separated line per proposal. Format:
+#   <iso_ts>\t<patch_sha>\t<signal_code>\tproposed\t<file>\tcase=<A|B>
+#
+# These are proposals only — the agent never deletes memory files.
+# The user reviews and runs: rm ~/.claude/projects/-Users-van-dev-ra11y/memory/<file>
+# and edits MEMORY.md manually if they agree the patch is durable enough.
+#
+# DO NOT EDIT existing lines. The meta-reviewer appends only (>>).
+2026-05-07T05:30:00Z	be1b31da	edit_hook_denied_workaround	proposed	feedback_edit_hook_denied_workaround.md	case=A

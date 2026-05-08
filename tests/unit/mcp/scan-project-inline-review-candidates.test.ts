@@ -46,17 +46,22 @@ interface ScanProjectResponse {
   readonly plan: {
     // The flat top-level
     // `violations` integer was deleted; the honest shape carries
-    // `notes` (severity-info) plus an optional `fixesByClass`
-    // per-lane tally (present-when-meaningful, omitted on
-    // clean scans).
-    readonly notes: number;
+    // `infoSeverityFindings` (severity-info) plus an optional
+    // `fixesByClass` per-lane tally (present-when-meaningful, omitted
+    // on clean scans).
+    readonly infoSeverityFindings: number;
     readonly fixesByClass?: {
       readonly mechanical: { readonly source: number; readonly buildArtifact: number };
       readonly guidance: { readonly source: number; readonly buildArtifact: number };
       readonly runtimeOnly: { readonly source: number; readonly buildArtifact: number };
       readonly verifyInSource: { readonly source: number; readonly buildArtifact: number };
     };
-    readonly actionableManualItems: number;
+    // Per-scan-kind manual-review tally — replaces the dropped
+    // `actionableManualItems` scalar (Q15-MIN-CSS).
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
   };
   readonly files: ReadonlyArray<{ readonly path: string }>;
   readonly reviewCandidates?: ReadonlyArray<{
@@ -81,7 +86,7 @@ async function callScanProject(
 }
 
 describe("scan_project inlines reviewCandidates when no automated findings emit", () => {
-  it("emits reviewCandidates with file:line when files[] is empty AND actionableManualItems > 0", async () => {
+  it("emits reviewCandidates with file:line when files[] is empty AND actionableManualItemsBySource (source+buildArtifact) > 0", async () => {
     await withScratch(async (dir) => {
       // <audio controls> produces a media-alternatives review candidate
       // (wcag22:1.2.1) but no automated violation. Doctype + <html lang>
@@ -109,9 +114,12 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
       expect((res.plan as unknown as Record<string, unknown>)["violations"]).toBeUndefined();
       expect((res.plan as unknown as Record<string, unknown>)["fixesByClass"]).toBeUndefined();
       expect(res.files.length).toBe(0);
-      expect(res.plan.actionableManualItems).toBeGreaterThan(0);
+      const flat =
+        res.plan.actionableManualItemsBySource.source +
+        res.plan.actionableManualItemsBySource.buildArtifact;
+      expect(flat).toBeGreaterThan(0);
 
-      // Invariant from the backlog: "When actionableManualItems > 0
+      // Invariant from the backlog: "When actionableManualItemsBySource (source+buildArtifact) > 0
       // AND files.length === 0, the field MUST be present."
       expect(res.reviewCandidates).toBeDefined();
       const candidates = res.reviewCandidates ?? [];
@@ -210,7 +218,10 @@ describe("scan_project inlines reviewCandidates when no automated findings emit"
       const session = new McpSession();
       const res = await callScanProject({ cwd: dir }, session);
       expect(res.files.length).toBeGreaterThan(0);
-      expect(res.plan.actionableManualItems).toBeGreaterThan(0);
+      const flat =
+        res.plan.actionableManualItemsBySource.source +
+        res.plan.actionableManualItemsBySource.buildArtifact;
+      expect(flat).toBeGreaterThan(0);
       expect(res.reviewCandidates).toBeUndefined();
     });
   });

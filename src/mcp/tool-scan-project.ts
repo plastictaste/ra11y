@@ -5,11 +5,12 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { filesChangedSince, gitRoot, stagedFiles } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { posixDirname, posixResolve } from "../utils/path.ts";
 import {
   additionalPathsScannedField,
   classifyAdditionalPathSkips,
@@ -33,6 +34,7 @@ import {
 import { buildConfigHint } from "./config-hint.ts";
 import { nearestConfigAncestorPath, sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
+import { detectDynamicContentContainers } from "./dynamic-content-container.ts";
 import { buildFileLimitation } from "./file-limitations.ts";
 import type { Hint } from "./hint-codes.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
@@ -40,18 +42,26 @@ import { metaModeSchema } from "./meta-cache.ts";
 import {
   buildNextStep,
   bulkVendorScopeDownNextStep,
+  type NextStepResult,
   type NextStepStructured,
   shouldRerouteToBulkVendorScopeDown,
+  smallDemoCatalogGroupByNextStep,
 } from "./next-step.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
+import {
+  buildCorpusWarningFilesFromCodeDemoMatches,
+  enrichFindingsWithCorpusWarningFiles,
+} from "./per-finding-corpus-warning-files.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { buildReviewCandidatePrompts } from "./review-candidate-prompts.ts";
 import { includeRuleDetailsSchema } from "./rule-catalog.ts";
 import {
   detectLinkedStylesheetsNotResolvedForContrast,
   isPerRuleCoverageUniformlyHigh,
+  withActionableManualItemsBySource,
   withFindingsByFile,
+  withFindingsByRule,
   withTopDirectories,
   withTopRules,
   withViolationsByScanKind,
@@ -67,6 +77,7 @@ import {
   buildScanProjectReviewCandidates,
   type ScanProjectReviewCandidate,
 } from "./scan-project-review-candidates.ts";
+import { buildSummaryOnlyResponse } from "./scan-project-summary-only.ts";
 import {
   combineTemplateLiteralFiles,
   computeAnimationLibraryGuardCandidates,
@@ -75,6 +86,10 @@ import {
 import { scannedProject } from "./scanned-envelope.ts";
 import { skipCriterionSchema, skippedByCallerField } from "./skip-criterion.ts";
 import { detectSsgFramework, ssgEmptyResultMetaFields, withSsgHint } from "./ssg-detect.ts";
+import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
 import {
   collectManualCriteria,
   errorResult,
@@ -148,7 +163,7 @@ export const scanProjectTool: McpTool = {
         autoDetectWrappers: {
           type: "boolean",
           description:
-            "When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detected list is surfaced in `meta.autoDetectedWrappers` — copy the names you confirm to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.",
+            'When true, run the `detect_native_wrappers` heuristic inline and register PascalCase-with-onClick components as nativeWrappers for this scan. Use on the first run of a codebase so the opaqueCustomComponents count is accurate without an onboarding round-trip. The detector outcome is surfaced as `meta.autoDetectedWrappers: { ran: true, candidates: [...] }` — the object form distinguishes "ran and found nothing" (empty `candidates`) from "detector did not run" (field omitted). Copy the confirmed names to your ra11y.config.ts for durable registration. Scope is scan-only; session and project config are unaffected.',
         },
         additionalPaths: {
           type: "array",
@@ -184,6 +199,16 @@ export const scanProjectTool: McpTool = {
           type: "boolean",
           description:
             'When true, replace the per-file `files[]` view with a per-group `collapsedGroups[]` view: one entry per unique `(ruleId, groupKey)` carrying the canonical finding\'s `findingId`/`severity`/`fix`/etc. plus an `occurrences[]: [{path, line, column}]` enumeration of every emission that shared the predicate. Use on bulk-template catalogs (e.g. 174 sub-sites repeating the same Bootstrap navbar) where 40k per-file findings collapse to <500 unique groups — one `scan_project` call answers "what kinds of problems exist?" without paging through every file. Pagination/truncation semantics mirror the per-file path (`limit`, `offset`, `truncated`, `nextOffset`); the only shape change is the primary findings array. Headline counts on `plan` (`fixesByClass.*`, `topRules`, etc.) stay un-collapsed so the agent budgets against the real finding count; `plan.collapsedGroupCount` exposes the post-collapse count alongside so the two views reconcile. Default false preserves the existing per-file shape exactly.',
+        },
+        summaryOnly: {
+          type: "boolean",
+          description:
+            "When true, omit the per-file `files[]` array entirely and ship only the headline rollups: `plan` (with `topRules`, `findingsByFile`, `findingsByRule`, `fixesByClass`, `summary`, manual-review counters), `meta` slimmed to scan-confidence telemetry (including `filesByExtension` and `analysisCoverage`), `nextStep`/`nextStepStructured`, and `warnings`/`warningsDetails`. Designed as the bulk-corpus first-call ergonomic — on catalogs with 4000+ files producing 40k+ findings, the standard envelope cannot fit per-file findings under the host token cap and falls back to the slim envelope after a full assembly pass; `summaryOnly: true` is the explicit opt-in shortcut. The response carries `summaryOnly: true` and `filesArrayDropped: true` discriminators so the caller distinguishes summary mode from a clean scan of zero files. Recommended workflow: first call `scan_project({ cwd, summaryOnly: true })` to learn which rules and files dominate (`findingsByRule` gives the full per-rule distribution; `findingsByFile` ranks the densest files), then re-call with `restrictToPaths: [<dominant path>]` (without `summaryOnly`) to get per-file findings on a narrower scope. Default false preserves the existing per-file shape exactly.",
+        },
+        includeReferenceGuide: {
+          type: "boolean",
+          description:
+            "When true, include the top-level `referenceGuide` object containing `suppressPlacement` (per-file-extension prose explaining where to drop `<!-- ra11y-disable -->` / `{/* ra11y-disable */}` pragmas) and `fixDescriptions` (per-rule deduplicated fix prose, referenced from individual findings via `fix.descriptionRef.hash`). Default false omits the block entirely and keeps full `fix.description` prose inline on every finding — typical responses save ~30-40 KB and stay under tighter MCP host token ceilings. Recommended workflow: enable on the FIRST `scan_project` / `scan_file` call of a session to learn the suppression-placement convention and fix-description prose layout for the rules you'll be triaging; subsequent calls within the same session can leave it off (the conventions don't change between calls). Inline `fix.description` is always honest — the opt-in only controls whether the duplicates get hoisted to a top-level lookup table.",
         },
       },
     },
@@ -270,18 +295,21 @@ export const scanProjectTool: McpTool = {
         nearestConfigAncestor: nearestConfigAncestorPath(root),
       });
     }
-    const autoDetect = params["autoDetectWrappers"] === true;
     // When config is missing, also run the detector so the agent can
     // see what `nativeWrappers` would cover for this codebase — silent
     // misses on onboarding were the most common field report. The
     // detector is O(parsed files) and runs on files we've already
     // parsed, so the extra cost is negligible. Registration is still
     // gated on autoDetect === true; suggestion-only when it's off.
-    const configMissing = projectConfig.sourcePath === null;
-    const shouldDetect = autoDetect || configMissing;
-    const detected = shouldDetect ? collectWrapperCandidates(files) : [];
-    const detectedNames = detected.map((c) => c.component);
-    const classified = classifyIfAutoDetect(autoDetect, files, detectedNames);
+    // Helper merges the autoDetect / configMissing predicate pair
+    // and the resulting candidate / classified outputs so the handler
+    // doesn't carry their decision branches against the lint cap.
+    const wrapperDetection = resolveWrapperDetection({
+      params,
+      projectConfig,
+      files,
+    });
+    const { autoDetect, configMissing, detectedNames, classified } = wrapperDetection;
     const t1 = performance.now();
     const skipCriterion = strArrayParam(params, "skipCriterion");
     const scanRunResult = await runScanAndFormat(
@@ -320,9 +348,27 @@ export const scanProjectTool: McpTool = {
     // suppress — severity stays the rule's choice. No-op fast path
     // when the matches map is empty (object identity stable on the
     // common case — non-MDX repos pay no walk).
-    const enrichedFiles = enrichFindingsWithCodeDemoPropMatch(
+    const codeDemoEnrichedFiles = enrichFindingsWithCodeDemoPropMatch(
       scanRunResult.formatted.files,
       codeDemoPropMatches,
+    );
+    // Per-finding propagation for the per-FILE axis on corpus-level
+    // warnings whose evidence carries a file list. Companion to the
+    // per-LINE pass above: where the line-range gate tags only
+    // findings INSIDE a recorded code-demo prop body, this pass tags
+    // every finding on a file the warning's payload names — including
+    // findings outside any recorded body range. Doctrine source:
+    // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+    // must reflect per-rule coverage limitations" extended to
+    // corpus-level warnings: when the warning channel ships
+    // `jsx_code_demo_prop_parsed_as_live_dom.files: ["docs/forms.mdx"]`
+    // and a per-finding entry on `docs/forms.mdx` ships at
+    // `confidence: "medium", couldBeWrongBecause: undefined`, the
+    // warning channel and the per-finding channel disagree silently.
+    // No-op fast path when no warning's file set is non-empty.
+    const enrichedFiles = enrichFindingsWithCorpusWarningFiles(
+      codeDemoEnrichedFiles,
+      buildCorpusWarningFilesFromCodeDemoMatches(codeDemoPropMatches),
     );
     const formatted: ScanFormatted = { ...scanRunResult.formatted, files: enrichedFiles };
     const rawReviewCandidates = scanRunResult.reviewCandidates;
@@ -358,14 +404,18 @@ export const scanProjectTool: McpTool = {
     // tell at a glance how many error+warning findings sit in vendor /
     // build-artifact files (often un-editable; the productive triage
     // is `propose_config` exclude or source-level disable, not a fix
-    // attempt) vs. authored source. Conditional-spread on `vendorPaths`
-    // emptiness — the no-artifacts common case omits the field per
-    // CLAUDE.md §1 "Ambiguous field shapes are dishonest." Each
-    // per-kind lane (`source`, `buildArtifact`) names exactly one
-    // kind of thing, so the split itself is honest. Per
-    // the flat `plan.violations`
-    // headline was deleted — the per-kind sibling sums to the
-    // structured `plan.fixesByClass` total instead.
+    // attempt) vs. authored source. The headline ships
+    // deterministically (no conditional spread) so the agent reads
+    // one stable shape across vendor and no-vendor scans alike — on
+    // a no-artifacts scan, `buildArtifact` reads 0 as honest "axis
+    // tallied, found zero" signal rather than being silently absent.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Composite
+    // headline counts are dishonest" inverse: a missing headline
+    // forces silent recomputation from `plan.fixesByClass`
+    // arithmetic. Each per-kind lane (`source`, `buildArtifact`)
+    // names exactly one kind of thing, so the split itself is honest.
+    // The flat `plan.violations` counter was deleted — the per-kind
+    // sibling sums to the structured `plan.fixesByClass` total instead.
     // The shared `formatted.plan` reference is reused below in
     // `assembleScanProjectResponse`; rebinding here propagates the
     // enriched plan through the rest of the assembly chain without
@@ -396,10 +446,30 @@ export const scanProjectTool: McpTool = {
         // stable when no error/warning findings emerged or when every
         // finding falls in one bucket — the no-rank-to-expose case the
         // helper short-circuits to keep the wire shape honest.
+        // `withFindingsByRule` adds the FULL per-rule count map next
+        // to the rank-ordered `withTopRules` head — same severity
+        // filter so the per-rule numbers agree on every overlapping
+        // ruleId. Lets an agent paginating by rule (per-rule
+        // `scan_file({ruleId})` round-trips, per-rule fix batches)
+        // budget the round-trip cost without paging through `files[]`
+        // — `topRules` only carries the dominant ten, while bulk
+        // catalogs routinely have a long tail of rules with single-
+        // digit counts that still matter for budgeting.
         withTopDirectories(
-          withFindingsByFile(
-            withTopRules(
-              withViolationsByScanKind(formatted.plan, formatted.files, vendorPaths),
+          withFindingsByRule(
+            withFindingsByFile(
+              withTopRules(
+                withViolationsByScanKind(
+                  withActionableManualItemsBySource(
+                    formatted.plan,
+                    scanRunResult.actionableCriteriaPaths,
+                    vendorPaths,
+                  ),
+                  formatted.files,
+                  vendorPaths,
+                ),
+                formatted.files,
+              ),
               formatted.files,
             ),
             formatted.files,
@@ -431,6 +501,19 @@ export const scanProjectTool: McpTool = {
     const pageParams = readPageParams(params);
     const page = paginateFiles(formatted.files, pageParams);
     const willBeTruncated = page.paginationFields.truncated === true;
+    // hoist bulk-catalog detection above `nextStep` so the
+    // `small_demo_catalog` trigger can drive the `groupBy:
+    // "firstChildDir"` proposal alongside the existing
+    // `warningsDetails.bulk_catalog_detected` payload. Single
+    // `detectBulkCatalog` call serves both surfaces — the warning
+    // pipeline below reuses this same value rather than re-detecting.
+    const bulkCatalogDetection = detectBulkCatalog({
+      durationMs: readMetaNumber(formatted.meta, "durationMs"),
+      filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
+      buildArtifacts: buildArtifacts.entries,
+      parsedFilePaths: files.map((f) => f.filePath),
+      root,
+    });
     const baseNextStep = buildNextStep(formatted, {
       iterativeTip:
         actualMode === "full"
@@ -470,11 +553,34 @@ export const scanProjectTool: McpTool = {
     // per-file action. Standard nextStep stays when either threshold
     // fails — the override is additive routing for the bulk-vendor
     // pathology, not a suppression of the standard hint.
-    const nextStep = applyBulkVendorScopeDownOverride({
+    const afterBulkVendorOverride = applyBulkVendorScopeDownOverride({
       baseNextStep,
       buildArtifacts,
       totalFilesWithFindings: formatted.files.length,
       files: formatted.files,
+    });
+    // when the bulk-catalog detector classified the corpus as
+    // `small_demo_catalog` (≥30 sibling subdirs sharing the same per-
+    // dir basename signature, no vendor-classified files), the catalog
+    // shape IS the canonical case for `groupBy: "firstChildDir"`. The
+    // override proposes that re-call so the agent gets one whole-tree
+    // scan with per-sub-project aggregation rather than paging
+    // file-by-file or running N round-trips with `additionalPaths`.
+    // Per the AI-first doctrine "One tool call should answer 'what
+    // next?'", `nextStepStructured` names the alternative narrowing
+    // path explicitly so the agent never has to discover the existing
+    // `groupBy` capability out-of-band.
+    //
+    // Skipped when the caller already passed `groupBy` (the proposal
+    // would echo their own parameter), when the bulk-vendor override
+    // already replaced the structured target (vendor exclude is the
+    // first lever per `bulk-catalog.ts` precedence), or when the
+    // detector didn't fire `small_demo_catalog`.
+    const nextStep = applySmallDemoCatalogGroupByOverride({
+      baseNextStep: afterBulkVendorOverride,
+      bulkCatalogDetection,
+      callerGroupBy: groupByStrategy,
+      cwd: root,
     });
     // option (b): hoist duplicated
     // `fix.description` prose into `referenceGuide.fixDescriptions`
@@ -483,7 +589,21 @@ export const scanProjectTool: McpTool = {
     // before pagination would let a description hoist on strength of
     // findings that never reach the caller, leaving a pointer with
     // no lookup target.
-    const hoisted = hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide);
+    //
+    // when the caller did not opt in via `includeReferenceGuide:
+    // true`, skip the hoist entirely. `fix.description` stays inline
+    // on every finding (no dangling `descriptionRef` pointers) and
+    // the top-level `referenceGuide` block is omitted from the
+    // response, saving ~30-40 KB on dense scans where
+    // `suppressPlacement` + `fixDescriptions` dominate the response
+    // payload. Per the AI-first doctrine "Verbose meta is signal,
+    // not clutter" the guide is valuable scan-context — the opt-in
+    // framing keeps it discoverable via tool description rather than
+    // permanently stripping it.
+    const includeReferenceGuide = params["includeReferenceGuide"] === true;
+    const hoisted = includeReferenceGuide
+      ? hoistAndBuildReferenceGuide(page.files, formatted.referenceGuide)
+      : { files: page.files, referenceGuide: undefined };
     // annotate each per-file
     // entry with `limitations` when the underlying ParsedFile carried
     // parse errors. Scoped to files currently on this page so the
@@ -505,7 +625,23 @@ export const scanProjectTool: McpTool = {
     // advice. Additive surface only — no findings are filtered or
     // downgraded by the detection (CLAUDE.md §1 "Surface, don't
     // suppress").
-    const detectedFramework = detectSsgFramework(root);
+    //
+    // Corpus evidence (frontmatter fences, Liquid/ERB tokens) lifted
+    // off `analysisCoverage` feeds the sentinelless Jekyll fallback:
+    // when `_config.yml` is absent at root but `_layouts/` +
+    // `_includes/` are present, the corpus signals raise the
+    // calibrated confidence one step each. Closes the silent-miss
+    // case where a corpus with unambiguous Jekyll evidence (336
+    // frontmatter files, `_layouts/`, `_includes/`, Liquid+ERB
+    // tokens) but no `_config.yml` shipped `detectedFramework: null`.
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Verbose meta
+    // is signal, not clutter" — the corroborating evidence the
+    // scanner has access to must reach the framework label, not be
+    // ignored.
+    const detectedFramework = detectSsgFramework(
+      root,
+      ssgCorpusEvidenceFromMeta(formattedMetaWithVendor),
+    );
     // probe the scan root for the
     // "catalog of stand-alone sibling site dirs" shape (e.g. a 174-
     // template website-templates dump). When detected, the per-subdir
@@ -577,7 +713,66 @@ export const scanProjectTool: McpTool = {
       session,
       files,
       limit: pageParams.limit,
+      // Plumb scan root for path normalization in the per-emission
+      // `findingId` hash so this surface produces the SAME id the
+      // shared `computeCandidateFindingId` helper produces on
+      // `scan_file.reviewCandidates[]` and `checklist.items[]
+      // .candidates[]` for the same conceptual candidate. Per
+      // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+      // identifiers must be addressable, not collision-prone" +
+      // "Per-tool review-candidate shape must agree across surfaces."
+      scanRoot: root,
     });
+    // Compute base warnings once — the same payload threads into
+    // either the standard `assembleScanProjectResponse` path or the
+    // `summaryOnly: true` slim envelope. Hoisted from the
+    // assembler-args spread so the summary path can read identical
+    // warning state without re-running the corpus-shape detectors.
+    const baseWarningsField = buildBaseWarningsForScanProject({
+      formatted,
+      parsedFiles: files,
+      rootSource,
+      configSource: projectConfig.sourcePath,
+      root,
+      buildArtifacts,
+      storybookPresetActive,
+      sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
+      additionalPathsRedundant: isAdditionalPathsRedundant({
+        additionalPaths,
+        additionalFilesCount: additionalFiles.length,
+        filesAdded: mergedFiles.length - baseFiles.length,
+      }),
+      redundantAdditionalPathsList: redundantAdditionalPathsListFor({
+        additionalPaths,
+        root,
+        excludes: session.config.exclude,
+      }),
+      restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
+      configSearchSawProjectMarker,
+      scssUnresolvedVariableFiles,
+      bulkCatalogDetection,
+      jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
+      perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
+    });
+    // Summary-only mode: skip the per-file `files[]` array entirely
+    // so the bulk-corpus first-call ships under the host token cap.
+    // The agent reads `plan.topRules` / `plan.findingsByFile` /
+    // `plan.fixesByClass` to route the second call (typically
+    // `restrictToPaths` to a sub-tree, or `explain_rule` on the
+    // dominant rule) without paging through 4000+ file entries the
+    // standard envelope would have to clip anyway. Returns the
+    // summary envelope or `undefined` to continue with the standard
+    // assembly path; the divert lives in its own helper so the
+    // handler's cognitive-complexity score stays inside the lint cap.
+    const summaryDivert = maybeBuildSummaryOnlyResult({
+      params,
+      formatted: formattedWithScanKind,
+      fullMeta,
+      baseWarningsField,
+    });
+    if (summaryDivert) return summaryDivert;
     const assembledResponse = assembleScanProjectResponse({
       params,
       session,
@@ -594,82 +789,7 @@ export const scanProjectTool: McpTool = {
       nextStep: nextStep.prose,
       ...(nextStep.structured === undefined ? {} : { nextStepStructured: nextStep.structured }),
       ...inlineReviewCandidatesField,
-      ...buildBaseWarningsForScanProject({
-        formatted,
-        parsedFiles: files,
-        rootSource,
-        configSource: projectConfig.sourcePath,
-        root,
-        buildArtifacts,
-        storybookPresetActive,
-        sessionWrappersMismatchCwd: session.sessionWrappersMismatchCwd(root),
-        additionalPathsRedundant: isAdditionalPathsRedundant({
-          additionalPaths,
-          additionalFilesCount: additionalFiles.length,
-          filesAdded: mergedFiles.length - baseFiles.length,
-        }),
-        // Q13-REDUNDANT-ADDITIONAL-PATHS-EMPTY-DETAILS: thread the
-        // input-path subset that contributed parseable files
-        // already covered by the discovered base set so the
-        // `warningsDetails.redundant_additional_paths` payload names
-        // which entries were redundant (vs. which were rejected for
-        // a per-path skip reason — those surface separately under
-        // `meta.additionalPathsScanned.skipped[]`). Empty list when
-        // the warning won't fire; the summarizer drops the payload
-        // conservatively in that case.
-        redundantAdditionalPathsList: redundantAdditionalPathsListFor({
-          additionalPaths,
-          root,
-          excludes: session.config.exclude,
-        }),
-        // empty intersection AND a
-        // non-empty pre-restrict set → the restriction is what cleared
-        // the file list (not "no parseable files anywhere"). Helper
-        // returns false when no restriction was supplied OR the
-        // restriction kept ≥1 file.
-        restrictToPathsEmpty: didRestrictToPathsEmptyTheSet(restrictApplied),
-        configSearchSawProjectMarker,
-        scssUnresolvedVariableFiles,
-        // run the detector at the
-        // assembly seam so the threshold logic stays close to its
-        // inputs (`meta.durationMs`, `meta.filesScanned`, the
-        // build-artifact entries, parsed-file paths, scan root).
-        // Returns `undefined` on the common case (most scans clear
-        // none of the trigger paths) so the detection threads
-        // through the warning channel via conditional-spread.
-        bulkCatalogDetection: detectBulkCatalog({
-          durationMs: readMetaNumber(formatted.meta, "durationMs"),
-          filesScanned: readMetaNumber(formatted.meta, "filesScanned"),
-          buildArtifacts: buildArtifacts.entries,
-          // Thread parsed-file paths + scan root so the
-          // `small_demo_catalog` path can identify the same-shape
-          // sibling-subdir signature without a filesystem probe.
-          parsedFilePaths: files.map((f) => f.filePath),
-          root,
-        }),
-        // thread the innerHTML declined count from the parse pass so
-        // the warnings module can fire
-        // `js_innerhtml_template_literal_unparsed` when dynamic
-        // template literals were found but not parsed.
-        jsInnerHtmlDeclinedCount,
-        // thread the per-file pattern detector samples so the warning
-        // payload's `fileSamples[]` carries `{ path, line, pattern }`
-        // for files where the routed parser produced zero findings —
-        // the routing-skip failure mode the AI-first doctrine names.
-        jsInnerHtmlPatternSamples,
-        // Thread the per-file MDX code-demo prop matches so the warnings
-        // module can fire `jsx_code_demo_prop_parsed_as_live_dom` and
-        // populate its paired payload. Inverse-shape sibling of
-        // `jsInnerHtmlPatternSamples`: same parse-aggregation seam, two
-        // distinct telemetry codes (drop vs descent).
-        codeDemoPropMatches,
-        // pre-computed cross-check
-        // for `coverage_confidence_uniformly_high_with_parse_errors`.
-        // The warnings module pairs this boolean with the parse-error
-        // count from `meta.analysisCoverage.parseErrorFileCount` for
-        // the emission gate.
-        perRuleCoverageUniformlyHigh: isPerRuleCoverageUniformlyHigh(adjustedPerRuleCoverage),
-      }),
+      ...baseWarningsField,
     });
     return textResult(
       maybeApplyCollapsedView({
@@ -706,6 +826,48 @@ function maybeApplyCollapsedView(args: {
     fullFiles: args.fullFiles,
     pageParams: args.pageParams,
   });
+}
+
+/**
+ * `summaryOnly: true` divert. Returns the slim summary envelope when
+ * the caller passed the flag; returns `undefined` otherwise so the
+ * handler proceeds to the standard `assembleScanProjectResponse`
+ * path. Extracted from the handler so its cognitive-complexity score
+ * stays inside the lint budget.
+ *
+ * The summary envelope is built from {@link buildSummaryOnlyResponse}
+ * — the heavy lifting of slimming `meta`, building `nextStep`, and
+ * shaping the discriminator pair (`summaryOnly: true` +
+ * `filesArrayDropped: true`) lives there. This wrapper threads the
+ * pre-computed `baseWarningsField` through so the warning channel on
+ * the summary envelope agrees with what the standard path would have
+ * emitted on the same scan (cross-surface consistency per the
+ * doctrine bullet "Per-tool lane and warning-set classification must
+ * agree").
+ */
+function maybeBuildSummaryOnlyResult(args: {
+  readonly params: Record<string, unknown>;
+  readonly formatted: ScanFormatted;
+  readonly fullMeta: Record<string, unknown>;
+  readonly baseWarningsField: {
+    readonly baseWarnings?: readonly import("./warnings.ts").ScanWarningCode[];
+    readonly baseWarningsDetails?: import("./warnings.ts").ScanWarningDetails;
+  };
+}): McpToolResult | undefined {
+  if (args.params["summaryOnly"] !== true) return undefined;
+  const { formatted, fullMeta, baseWarningsField } = args;
+  return textResult(
+    buildSummaryOnlyResponse({
+      formatted,
+      fullMeta,
+      ...(baseWarningsField.baseWarnings === undefined
+        ? {}
+        : { warnings: baseWarningsField.baseWarnings }),
+      ...(baseWarningsField.baseWarningsDetails === undefined
+        ? {}
+        : { warningsDetails: baseWarningsField.baseWarningsDetails }),
+    }),
+  );
 }
 
 /**
@@ -813,13 +975,15 @@ function inlineReviewCandidatesFieldFor(args: {
   readonly session: import("./session.ts").McpSession;
   readonly files: readonly ParsedFile[];
   readonly limit: number;
+  readonly scanRoot?: string;
 }): {
   readonly reviewCandidates?: readonly ScanProjectReviewCandidate[];
   readonly reviewCandidatePrompts?: Readonly<
     Record<string, import("./review-candidate-prompts.ts").ReviewCandidatePromptEntry>
   >;
 } {
-  const { formattedFilesCount, candidates, enabledStandards, session, files, limit } = args;
+  const { formattedFilesCount, candidates, enabledStandards, session, files, limit, scanRoot } =
+    args;
   // Gate 1: when automated findings exist, the agent already has
   // `file:line` pointers — it can choose to call `checklist` itself
   // for the manual half. Don't duplicate that surface (doctrine:
@@ -827,7 +991,12 @@ function inlineReviewCandidatesFieldFor(args: {
   if (formattedFilesCount > 0) return {};
   if (candidates.length === 0) return {};
   const manualIds = collectManualCriteria(enabledStandards, session, session.config.level, files);
-  const surfaced = buildScanProjectReviewCandidates({ candidates, manualIds, limit });
+  const surfaced = buildScanProjectReviewCandidates({
+    candidates,
+    manualIds,
+    limit,
+    ...(scanRoot === undefined ? {} : { scanRoot }),
+  });
   if (surfaced.length === 0) return {};
   // Cross-surface candidate-shape contract: emit
   // `reviewCandidatePrompts` alongside the surfaced rows so an agent
@@ -1046,6 +1215,15 @@ function buildBaseWarningsForScanProject(args: {
     formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
     templateOverlapResult.overlapFiles,
   );
+  // Per-style splits of the overlap-confirmed file list — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` per-style codes. Shared helper
+  // applies the same fragment-classifier deduplication the parent
+  // file list uses.
+  const perStyleLiteralFiles = computePerStyleTemplateLiteralFiles(
+    formatted.meta["analysisCoverage"] as Record<string, unknown> | undefined,
+    templateOverlapResult.overlapByStyle,
+  );
   const scannedBuildArtifactsSummary = buildScannedBuildArtifactsSummary(buildArtifacts.entries);
   // narrow the build-artifact
   // entries to the minified subset specifically. The classifier emits
@@ -1077,7 +1255,7 @@ function buildBaseWarningsForScanProject(args: {
   // cross-reference the build-
   // artifact entry count against `meta.filesScanned`. When 100% of the
   // parsed files are classified as build artifacts AND the scan
-  // touched at least one file, the `dist_only_scan_detected` code
+  // touched at least one file, the `build_artifact_only_scan_detected` code
   // names the regime where the entire scan surface is generated bytes
   // — the doctrine analogue of `scanned_zero_files` for "tool ran on
   // nothing authored." The warnings helper stays pure over its
@@ -1107,6 +1285,16 @@ function buildBaseWarningsForScanProject(args: {
     parsedFiles,
     formatted.files,
   );
+  // Detect canonical vanilla-JS demo shell shapes — body has ≤3
+  // non-script visible children, contains an empty `<div id>` (or
+  // landmark-tagged equivalent), and has a sibling `<script src>`
+  // referencing an external JS file. Drives
+  // `dynamic_content_container_detected` per AI-first doctrine
+  // "Zero-output success is ambiguous failure": without this code, a
+  // runtime-render shell page returns zero findings and reads as
+  // "clean page" when the truthful answer is "static scan cannot
+  // evaluate runtime-generated DOM."
+  const dynamicContentContainerEntries = detectDynamicContentContainers(parsedFiles);
   const warningsFromMeta = warningsFieldFromScanMeta({
     meta: formatted.meta,
     rootSource,
@@ -1117,6 +1305,14 @@ function buildBaseWarningsForScanProject(args: {
     // Threaded through here regardless of the gate predicate; the
     // summarizer drops the payload when the code itself didn't fire.
     configSearchedFromForWarning: root,
+    // Present-when-meaningful gate on
+    // `warningsDetails.no_config_found.searchedFrom`: `root` IS the
+    // resolved `scanned.root` shipped on the response. When the gate
+    // fires (the search base would just echo `meta.scanned.root`), the
+    // rich `{ searchedFrom }` payload drops to `{}` so the bare warning
+    // code is the canonical signal — see `scanner-meta.ts`'s
+    // {@link noConfigFoundWarningDetail} for the predicate.
+    noConfigFoundScannedRoot: root,
     scannedBuildArtifactsPresent: buildArtifacts.present,
     ...(scannedBuildArtifactsSummary === undefined ? {} : { scannedBuildArtifactsSummary }),
     ...(scannedBuildArtifactsAllFiles ? { scannedBuildArtifactsAllFiles: true } : {}),
@@ -1124,6 +1320,7 @@ function buildBaseWarningsForScanProject(args: {
     sessionWrappersMismatchCwd,
     templateDirectivesOverlap,
     ...templateLiteralFilesField(templateLiteralFiles),
+    ...perStyleLiteralFilesField(perStyleLiteralFiles),
     additionalPathsRedundant,
     ...(redundantAdditionalPathsList.length > 0 ? { redundantAdditionalPathsList } : {}),
     restrictToPathsEmpty,
@@ -1190,6 +1387,13 @@ function buildBaseWarningsForScanProject(args: {
     // warning predicate drops conservatively per the doctrine bullet
     // "Empty `warningsDetails.<code>: {}` is dishonest."
     ...(parserBailedJsTsxRouteFiles.length === 0 ? {} : { parserBailedJsTsxRouteFiles }),
+    // Surface the runtime-render-shell shape when the detector
+    // matched at least one HTML page. Drives
+    // `dynamic_content_container_detected` and its
+    // `warningsDetails.<code>.files` payload. Conditional-spread per
+    // present-when-meaningful: empty list omits the field so the
+    // warning predicate drops conservatively (no payload, no code).
+    ...dynamicContentContainerEntriesField(dynamicContentContainerEntries),
     // pre-computed cross-check for
     // `coverage_confidence_uniformly_high_with_parse_errors`. The
     // warning fires only when this boolean is `true` AND
@@ -1238,6 +1442,24 @@ function codeDemoPropMatchesField(
 } {
   if (matches === undefined || matches.size === 0) return {};
   return { codeDemoPropMatches: matches };
+}
+
+/**
+ * Builds the spreadable `dynamicContentContainerEntries` subset for the
+ * `warningsFieldFromScanMeta` call. Conditional-spread per the
+ * present-when-meaningful contract: empty list omits the field so the
+ * warning code drops conservatively. Extracted from
+ * {@link buildBaseWarningsForScanProject} so the orchestrator's
+ * cognitive complexity stays under the lint cap (mirrors the existing
+ * `codeDemoPropMatchesField` / `templateLiteralFilesField` helpers).
+ */
+function dynamicContentContainerEntriesField(
+  entries: import("./warnings.ts").WarningInputs["dynamicContentContainerEntries"],
+): {
+  dynamicContentContainerEntries?: import("./warnings.ts").WarningInputs["dynamicContentContainerEntries"];
+} {
+  if (entries === undefined || entries.length === 0) return {};
+  return { dynamicContentContainerEntries: entries };
 }
 
 function warningsFieldsForAssembler(warningsFromMeta: {
@@ -1290,10 +1512,17 @@ function resolveProcessesForScan(
   root: string,
 ): readonly import("../types/config.ts").Process[] {
   if (processes.length === 0) return processes;
-  const base = configSourcePath === null ? root : dirname(configSourcePath);
+  const base = configSourcePath === null ? root : posixDirname(configSourcePath);
+  // POSIX-normalize the resolved page paths so they compare on the same
+  // separator as `ProjectFile.filePath` (the discovery walker emits
+  // POSIX absolute paths even on Windows). Without normalization,
+  // `path.resolve` returns native (backslash) on Windows, which the
+  // process-aware finders' `fileByAbsPath.get(pagePath)` lookup misses.
   return processes.map((p) => ({
     ...p,
-    pages: p.pages.map((pagePath) => (isAbsolute(pagePath) ? pagePath : resolve(base, pagePath))),
+    pages: p.pages.map((pagePath) =>
+      (isAbsolute(pagePath) ? pagePath : posixResolve(base, pagePath)).split(/[\\/]/).join("/"),
+    ),
   }));
 }
 
@@ -1313,6 +1542,46 @@ function classifyIfAutoDetect(
 ): { readonly confirmed: readonly string[]; readonly assumed: readonly string[] } {
   if (!autoDetect) return { confirmed: [], assumed: [] };
   return classifyWrapperCandidates(files, detectedNames);
+}
+
+/**
+ * Bundles the autoDetect-flag + config-missing predicate pair and
+ * the resulting wrapper-candidate / classified outputs into one
+ * helper. Extracted from the handler so its cognitive-complexity
+ * score stays inside the lint budget — the original inline form
+ * carried two branches (`autoDetect || configMissing`, the ternary
+ * gating `collectWrapperCandidates`) that pushed the handler over the
+ * cap once `summaryOnly` added one more divert.
+ *
+ * The detector runs whenever `autoDetect: true` OR config is missing
+ * — the latter so `meta.autoDetectedWrappers` populates on
+ * first-run codebases where the agent hasn't pasted a `ra11y.config.ts`
+ * yet (the most common field-report scope). Registration into the
+ * scan-time native-wrapper set still gates on `autoDetect === true`
+ * (see {@link classifyIfAutoDetect}'s early-return); the missing-config
+ * branch produces suggestion-only output that surfaces under
+ * `meta.autoDetectedWrappers` for the agent to copy.
+ */
+function resolveWrapperDetection(args: {
+  readonly params: Record<string, unknown>;
+  readonly projectConfig: import("../types/config.ts").LoadedConfig;
+  readonly files: readonly ParsedFile[];
+}): {
+  readonly autoDetect: boolean;
+  readonly configMissing: boolean;
+  readonly detectedNames: readonly string[];
+  readonly classified: {
+    readonly confirmed: readonly string[];
+    readonly assumed: readonly string[];
+  };
+} {
+  const autoDetect = args.params["autoDetectWrappers"] === true;
+  const configMissing = args.projectConfig.sourcePath === null;
+  const shouldDetect = autoDetect || configMissing;
+  const detected = shouldDetect ? collectWrapperCandidates(args.files) : [];
+  const detectedNames = detected.map((c) => c.component);
+  const classified = classifyIfAutoDetect(autoDetect, args.files, detectedNames);
+  return { autoDetect, configMissing, detectedNames, classified };
 }
 
 /**
@@ -1397,7 +1666,13 @@ function buildRootsOverlapMeta(args: RootsOverlapArgs): Record<string, unknown> 
 
 /**
  * Builds the wrapper-related meta fields. Two distinct shapes:
- *   - `autoDetectedWrappers` + note: registered for this scan (flag on).
+ *   - `autoDetectedWrappers: { ran: true, candidates: [...] }` + note:
+ *     registered for this scan (flag on). The object form is honest
+ *     under "Ambiguous field shapes are dishonest" — `ran: true` carries
+ *     the "detector executed" signal independent of how many candidates
+ *     it found, so an empty `candidates: []` is unambiguous ("ran and
+ *     found nothing"), distinguishable from the field's complete absence
+ *     ("detector did not run").
  *   - `suggestedNativeWrappers` + note: onboarding hint only (config
  *     missing, flag off) — NOT registered. The agent retries with
  *     `autoDetectWrappers: true` or writes a config.
@@ -1411,7 +1686,7 @@ function buildWrapperMeta(args: {
   const { autoDetect, configMissing, detectedNames } = args;
   if (autoDetect) {
     return {
-      autoDetectedWrappers: detectedNames,
+      autoDetectedWrappers: { ran: true, candidates: detectedNames },
       autoDetectedWrappersNote:
         detectedNames.length === 0
           ? "autoDetectWrappers ran but found no PascalCase components with onClick to register."
@@ -1532,6 +1807,63 @@ export function applyBulkVendorScopeDownOverride(args: {
 }
 
 /**
+ * Layered nextStep override for the `small_demo_catalog` regime: when
+ * the bulk-catalog detector classified the corpus as a parallel-
+ * sibling-subprojects layout (≥30 sibling subdirs sharing the same
+ * per-dir basename signature, no vendor-classified files), proposes
+ * `groupBy: "firstChildDir"` as the canonical narrowing path. The
+ * catalog shape IS the canonical case for that aggregator: one whole-
+ * tree scan with per-sub-project rollup beats N round-trips with
+ * `additionalPaths` per sub-project AND beats paging through `files[]`
+ * file-by-file.
+ *
+ * Per the AI-first doctrine "One tool call should answer 'what
+ * next?'", the override ensures `nextStepStructured` names the
+ * alternative narrowing path explicitly so the agent never has to
+ * discover the existing `groupBy` capability out-of-band.
+ *
+ * Skipped when:
+ *   - The detector didn't fire `small_demo_catalog` (no bulk-catalog
+ *     detection at all, or the vendor-heavy paths fired instead — the
+ *     `applyBulkVendorScopeDownOverride` already handles those).
+ *   - The caller already passed a `groupBy` parameter (proposing the
+ *     same value would echo their own input; proposing a different
+ *     one would be presumptuous).
+ *   - The bulk-vendor override already replaced the structured target
+ *     (vendor exclude is the first lever per `bulk-catalog.ts`
+ *     precedence). Detected by checking whether `baseNextStep`'s
+ *     structured `tool` field is `propose_config` (the bulk-vendor
+ *     fallback) — if it is, the agent's first lever is the config
+ *     emit, not the groupBy proposal.
+ *
+ * Returns `baseNextStep` unchanged on every skip path so the
+ * downstream assembly carries the standard hint untouched.
+ */
+export function applySmallDemoCatalogGroupByOverride(args: {
+  readonly baseNextStep: NextStepResult;
+  readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
+  readonly callerGroupBy: string | undefined;
+  readonly cwd: string;
+}): NextStepResult {
+  const { baseNextStep, bulkCatalogDetection, callerGroupBy, cwd } = args;
+  if (bulkCatalogDetection?.trigger !== "small_demo_catalog") return baseNextStep;
+  if (callerGroupBy !== undefined) return baseNextStep;
+  // The bulk-vendor override routes the agent at `propose_config` for
+  // the structural exclude — when that fires, the catalog shape may
+  // still look small-demo on the file-shape axis, but the vendor
+  // footprint dominates the routing. Defer to the bulk-vendor lane.
+  if (baseNextStep.structured?.tool === "propose_config") return baseNextStep;
+  const siblingShape = bulkCatalogDetection.siblingShape;
+  if (siblingShape === undefined) return baseNextStep;
+  return smallDemoCatalogGroupByNextStep({
+    siblingCount: siblingShape.siblingCount,
+    signature: siblingShape.signature,
+    exampleSiblings: siblingShape.exampleSiblings,
+    cwd,
+  });
+}
+
+/**
  * The scan scope for a given `scan_project` invocation. Either the
  * (roots, mode) pair the scanner consumes — with an optional
  * `fallbackReason` when the requested mode couldn't execute and we
@@ -1599,8 +1931,12 @@ function validateScanProjectParamTypes(
   if (!verboseMeta.ok) return verboseMeta.error;
   const collapseByGroup = requireBooleanParam(params, "collapseByGroupKey");
   if (!collapseByGroup.ok) return collapseByGroup.error;
+  const summaryOnly = requireBooleanParam(params, "summaryOnly");
+  if (!summaryOnly.ok) return summaryOnly.error;
   const changedOnly = requireBooleanParam(params, "changedOnly");
   if (!changedOnly.ok) return changedOnly.error;
+  const includeReferenceGuide = requireBooleanParam(params, "includeReferenceGuide");
+  if (!includeReferenceGuide.ok) return includeReferenceGuide.error;
   const additionalPaths = requireStringArrayParam(params, "additionalPaths");
   if (!additionalPaths.ok) return additionalPaths.error;
   const restrictToPaths = requireStringArrayParam(params, "restrictToPaths");
@@ -1729,9 +2065,10 @@ function buildEmptyFilesResult(args: {
   return textResult({
     // drop the flat `violations: 0` headline
     // — see `buildScanPlan` in `scan-assembly.ts` for the full rationale.
-    // Zero-files scan has no lanes to populate, so only `notes` and
-    // `summary` ride; callers sum `plan.fixesByClass` for the flat count.
-    plan: { notes: 0, summary: "No parseable files found." },
+    // Zero-files scan has no lanes to populate, so only
+    // `infoSeverityFindings` and `summary` ride; callers sum
+    // `plan.fixesByClass` for the flat count.
+    plan: { infoSeverityFindings: 0, summary: "No parseable files found." },
     files: [],
     meta: {
       filesScanned: 0,
@@ -1754,6 +2091,14 @@ function buildEmptyFilesResult(args: {
       rootSource,
       configSource,
       configSearchedFromForWarning: root,
+      // Present-when-meaningful gate on
+      // `warningsDetails.no_config_found.searchedFrom`: `root` IS the
+      // resolved `scanned.root` shipped on this response, so when the
+      // gate fires the rich payload drops to `{}` (the bare code
+      // remains the signal; `meta.scanned.root` carries the search
+      // base). Threaded for shape consistency even though the predicate
+      // gate drops `no_config_found` here by construction.
+      noConfigFoundScannedRoot: root,
       analysisCoverage: undefined,
       filesByExtension: undefined,
       configSearchSawProjectMarker: args.configSearchSawProjectMarker,
@@ -1819,6 +2164,70 @@ function readHintsArray(fragment: Record<string, unknown>): readonly Hint[] {
     const record = h as Record<string, unknown>;
     return typeof record["code"] === "string" && typeof record["text"] === "string";
   });
+}
+
+/**
+ * Lifts the two corpus-evidence flags the SSG detector consumes off
+ * the formatted meta block. The meta payload already carries
+ * `analysisCoverage.hasFrontmatterFence` (set by the per-file
+ * accumulator on every parsed HTML-family file whose source opens
+ * with `^---\n…\n---\n`) and
+ * `analysisCoverage.templateInterpolationFound[]` (per-token
+ * occurrence counts including Liquid `{%x%}` / ERB `<%x%>` literals).
+ * A separate `analysisCoverage.erbIslandsUnrendered` boolean fires
+ * when a parsed `.erb` file carried an island opener — that flag is
+ * a second route to the Liquid/ERB signal and OR's into the same
+ * gate.
+ *
+ * Returns `undefined` when the meta block has no `analysisCoverage`
+ * sub-object (file-mode scans, mocked envelopes) so the SSG detector
+ * call site can pass through unconditionally — `detectSsgFramework`
+ * treats `undefined` evidence as "no corpus signals available" and
+ * the sentinelless Jekyll path falls back to dir-corroborators only.
+ *
+ * Pure over its input; no I/O. Lives next to {@link readHintsArray}
+ * because both helpers extract a focused sub-shape off the same
+ * `analysisCoverage` payload, and co-locating keeps the lifting
+ * patterns visible at one site.
+ */
+function ssgCorpusEvidenceFromMeta(
+  meta: Record<string, unknown>,
+): import("./ssg-detect.ts").SsgCorpusEvidence | undefined {
+  const coverage = meta["analysisCoverage"];
+  if (typeof coverage !== "object" || coverage === null) return undefined;
+  const record = coverage as Record<string, unknown>;
+  const hasFrontmatterFence = record["hasFrontmatterFence"] === true;
+  const hasLiquidOrErbTokens =
+    record["erbIslandsUnrendered"] === true ||
+    templateInterpolationContainsLiquidOrErb(record["templateInterpolationFound"]);
+  if (!(hasFrontmatterFence || hasLiquidOrErbTokens)) return undefined;
+  return {
+    ...(hasFrontmatterFence ? { hasFrontmatterFence: true } : {}),
+    ...(hasLiquidOrErbTokens ? { hasLiquidOrErbTokens: true } : {}),
+  };
+}
+
+/**
+ * True when `analysisCoverage.templateInterpolationFound[]` carries
+ * an entry whose `token` literal is `{%x%}` (Liquid / Jinja
+ * control-block) or `<%x%>` (ERB / EJS scriptlet). These literals are
+ * higher-confidence Jekyll/Ruby substrate signals than `{{x}}` (bare
+ * interpolation), which is shared with Handlebars / Mustache / Vue /
+ * Angular and would mis-label non-Jekyll corpora.
+ *
+ * Pure helper extracted from {@link ssgCorpusEvidenceFromMeta} so the
+ * parent stays inside the noComplexity lint cap. Tolerant of hostile
+ * shapes — hands back `false` rather than throwing on anything that
+ * isn't an array of `{ token: string }`-shaped records.
+ */
+function templateInterpolationContainsLiquidOrErb(input: unknown): boolean {
+  if (!Array.isArray(input)) return false;
+  for (const entry of input) {
+    if (entry === null || typeof entry !== "object") continue;
+    const tokenRaw = (entry as Record<string, unknown>)["token"];
+    if (tokenRaw === "{%x%}" || tokenRaw === "<%x%>") return true;
+  }
+  return false;
 }
 
 /**
@@ -1918,7 +2327,13 @@ function intersectFilesWithRestrictPaths<T extends { readonly filePath: string }
   restrictToPaths: readonly string[],
   root: string,
 ): readonly T[] {
-  const absRestricts = restrictToPaths.map((p) => (isAbsolute(p) ? p : resolve(root, p)));
+  // POSIX-normalize the resolved restrict paths so they compare on the
+  // same separator as `f.filePath` — the discovery walker now emits
+  // forward-slash absolute paths even on Windows, but `path.resolve`
+  // returns native (backslash) form there.
+  const absRestricts = restrictToPaths.map((p) =>
+    (isAbsolute(p) ? p : posixResolve(root, p)).split(/[\\/]/).join("/"),
+  );
   return files.filter((f) => {
     for (const r of absRestricts) {
       if (f.filePath === r) return true;

@@ -53,7 +53,9 @@
  *     canonical package-manifest markers (`Gemfile`, `pyproject.toml`,
  *     `go.mod`, `Cargo.toml`). When one resolves and `package.json`
  *     does NOT, the response carries a top-level
- *     `warnings: ["foreign_ecosystem_detected: <language>"]` code and
+ *     `warnings: ["foreign_ecosystem_detected"]` code paired with a
+ *     `warningsDetails.foreign_ecosystem_detected: { ecosystem,
+ *     evidence, hasPackageJson }` payload, and
  *     the `nextStep` hint names an alternative `npx @ra11y/core scan`
  *     invocation the agent can offer in place of committing a Node
  *     config. Never suppresses the config — same "surface, don't
@@ -61,26 +63,37 @@
  */
 
 import { existsSync } from "node:fs";
-import { relative } from "node:path";
 import type { ParsedFile } from "../engine/scanner.ts";
-import { runScan } from "../engine/scanner.ts";
+import type { DefaultExcludedArtifactPath } from "../input/discover.ts";
 import { gitRoot } from "../utils/git.ts";
+import { posixRelative } from "../utils/path.ts";
+import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts, isDefiniteBuildArtifactClassification } from "./build-artifacts.ts";
+import { detectBulkCatalog } from "./bulk-catalog.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { buildNativeWrappersBody } from "./config-snippet.ts";
 import { classifyWrapperCandidates, collectWrapperCandidates } from "./detect-wrappers-core.ts";
-import { detectForeignEcosystem, foreignEcosystemWarning } from "./ecosystem-detect.ts";
+import {
+  detectForeignEcosystem,
+  FOREIGN_ECOSYSTEM_DETECTED_CODE,
+  foreignEcosystemDetected,
+} from "./ecosystem-detect.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
+import { computeTopRules } from "./scan-assembly.ts";
+import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   applyRuleSettings,
   errorResult,
   type McpTool,
-  parseFiles,
+  parseFilesWithDiagnostics,
   resolveStandards,
+  runScanAndFormat,
   strParam,
   textResult,
 } from "./tools-helpers.ts";
+import type { NativeWrapperSources } from "./wrappers-meta.ts";
 
 /** Indent width for the emitted config body. Matches project Biome style. */
 const INDENT = "  ";
@@ -100,6 +113,53 @@ const TOP_RULES_COUNT = 3;
  * without overreaching on repos where artifacts are truly scattered.
  */
 const EXCLUDE_GLOB_COLLAPSE_THRESHOLD = 3;
+
+/**
+ * Closed set of reason tokens that may appear in the per-entry
+ * `meta.excludesRationale[].reason` slot. Bootstrap-output-paste-safe
+ * doctrine (`docs/kb/architecture/ai-first-consumer.md`): the live
+ * `exclude: [...]` array is paste-bearing — the agent can't re-derive
+ * each glob's provenance from the snippet alone — so every emitted
+ * glob carries a token from this enum that names the predicate the
+ * generator applied.
+ *
+ *   - `labelled_build_artifact_by_scanner` — the path was labelled
+ *     by `collectBuildArtifacts` with a `definite-*` classification
+ *     (definite-min-infix, definite-sourcemap-paired,
+ *     definite-vendor-distribution). Path-anchored evidence; the only
+ *     value currently emitted by `propose_config`.
+ *   - `definitional` — reserved for future emissions of universal
+ *     ignore patterns (e.g. `node_modules/`, `.git/`). Currently
+ *     unused — those patterns ride at the discovery layer
+ *     (`src/input/discover.ts`'s `EXPLICIT_PATH_IGNORED_DIRS`) and
+ *     never reach the live `exclude` array. The token is reserved so
+ *     a future definitional emission has a stable home before its
+ *     first use, not after.
+ *   - `heuristic` — reserved for any `likely-*` opt-in path. Currently
+ *     unused — `likely-*` classifications ride in the commented
+ *     `// likelyBuildPaths` hint block, not the live exclude.
+ *
+ * Reserved-but-unused tokens are intentional: an enum that grows
+ * incrementally as new emissions land is more debuggable than one
+ * that ships only the active value and forces the agent to guess
+ * whether an unfamiliar token means "new lane" or "typo." See
+ * CLAUDE.md §1 "Surface, don't suppress" — naming the closed set up
+ * front so the agent can reason about future expansion.
+ */
+type ExcludeRationaleReason = "labelled_build_artifact_by_scanner" | "definitional" | "heuristic";
+
+/**
+ * Single entry in the parallel `meta.excludesRationale` array. Pairs
+ * each glob string in the live `exclude: [...]` array (as emitted in
+ * `suggestedConfig`) with the reason token that named its predicate.
+ * Cardinality invariant: `excludesRationale.length` equals
+ * `meta.buildArtifactsIncluded`, and each `glob` string appears in
+ * the live exclude array exactly once.
+ */
+interface ExcludeRationaleEntry {
+  readonly glob: string;
+  readonly reason: ExcludeRationaleReason;
+}
 
 export const proposeConfigTool: McpTool = {
   def: {
@@ -133,7 +193,13 @@ export const proposeConfigTool: McpTool = {
     const root = explicitCwd ?? gitRoot(spawnCwd) ?? spawnCwd;
 
     const projectConfig = await session.loadProjectConfig(root);
-    const files = await parseFiles([root], session, root);
+    const {
+      files,
+      diagnostics,
+      jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
+    } = await parseFilesWithDiagnostics([root], session, root);
     const effective = session.effectiveRules(projectConfig);
     const activeRules = applyRuleSettings(session.registry.rules, effective);
 
@@ -169,10 +235,14 @@ export const proposeConfigTool: McpTool = {
     }
     // Single scan: derive top-fired rules AND the set of finding-
     // bearing paths in one pass so the exclude-emission gate below
-    // can consult both. The shared scan replaces an earlier
-    // `deriveTopRules` call that scanned the same parsed-file set
-    // twice.
-    const scanReport = scanForProposalSignals(files, session);
+    // can consult both. Routes through `runScanAndFormat` so the per-
+    // rule counts that land on the emitted `suggestedConfig` comment
+    // block agree with `scan_project.plan.topRules` on identical
+    // input — same severity filter (info-severity excluded), same
+    // wrapper-noise drop, same vendor-CSS dedup. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface
+    // count invariant."
+    const scanReport = await scanForProposalSignals(files, session, projectConfig, root);
     const topRules = scanReport.topRules;
     // Bootstrap-output-paste-safe doctrine, second-axis gate
     // (`docs/kb/architecture/ai-first-consumer.md`): even a
@@ -187,13 +257,129 @@ export const proposeConfigTool: McpTool = {
     // Surface what was filtered via `excludesGatedByFindings` so
     // the agent has the additive context the doctrine bullet
     // calls for.
-    const excludeGate = buildExcludeGate(scanReport.findingPaths, root);
-    const { paths: buildArtifacts, gated: gatedExcludePaths } = normalizeExcludes(
+    // The exclude gate consults THREE predicates before promoting a
+    // candidate path into the live `exclude: [...]` array:
+    //   1. `topdirHasFinding(topdir)` — dropped from earlier patches:
+    //      a finding-bearing topdir refuses the `<topdir>/**` collapse.
+    //   2. `fileHasFinding(rel)` — itemized entries that name a
+    //      finding-bearing file are dropped.
+    //   3. `topdirHasAuthoredFile(topdir)` — added per the
+    //      "Bootstrap output must be paste-safe" doctrine: a
+    //      `<topdir>/**` glob only fires when *every* parsed file
+    //      under the topdir is build-artifact-classified (definite OR
+    //      likely). The canonical regression: 100+ subtree globs
+    //      sweeping authored source on a bulk-template corpus where
+    //      most files produce zero findings (templates parsed as
+    //      literal). The findings-bearing axis missed those because
+    //      authored-but-quiet still trips the silent-miss failure
+    //      mode. Vendor-classification (the union of definite + likely
+    //      build-artifact paths) is the deterministic "this subtree
+    //      is generated" signal the agent can rely on; anything else
+    //      stays itemized (definite paths) or in the commented hint
+    //      block (likely paths).
+    const allArtifactPaths = new Set<string>([...definiteArtifactPaths, ...likelyArtifactPaths]);
+    const parsedFilePaths = new Set<string>(files.map((f) => f.filePath));
+    const excludeGate = buildExcludeGate(
+      scanReport.findingPaths,
+      parsedFilePaths,
+      allArtifactPaths,
+      root,
+    );
+    const { paths: definiteArtifactGlobs, gated: gatedExcludePaths } = normalizeExcludes(
       definiteArtifactPaths,
       root,
       excludeGate,
     );
     const likelyBuildPaths = normalizeLikelyHints(likelyArtifactPaths, root);
+    // Shared-classifier consumption: the discovery walker silently
+    // skips a closed set of build-artifact directories (`dist/`,
+    // `.next/`, `build/`, etc. — see
+    // `src/input/discover.ts.DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES`).
+    // When any of them contained at least one parseable file, the
+    // walker surfaces them via `default_excluded_artifact_paths`. The
+    // checklist + coverage `nextStep` prose tells agents to call
+    // `propose_config` precisely so the paste-in config preserves
+    // those skips — but `propose_config` previously consumed only the
+    // path-anchored `collectBuildArtifacts` output (which never sees
+    // these dirs because the walker stopped before parsing them). The
+    // closure: read `diagnostics.defaultExcludedArtifactPaths` and emit
+    // a `<dir>/**` glob per entry. Same paste-safe predicate as the
+    // discovery layer's name-based skip — directory name alone (`dist`,
+    // `.next`, etc.) is the deterministic vendor signal. Matches the
+    // doctrine bullet "Bootstrap output must be paste-safe + Cross-
+    // surface count invariant + Sibling fields naming the same concept
+    // must use one shape" (`docs/kb/architecture/ai-first-consumer.md`).
+    const defaultExcludedDirGlobs = relativizeArtifactDirsToGlobs(
+      diagnostics.defaultExcludedArtifactPaths,
+      root,
+    );
+    // Shared-classifier consumption: when the corpus trips
+    // `bulk_catalog_detected`, the detector produces basename globs
+    // (`**\/bootstrap.min.css`) that collapse hundreds of vendor
+    // copies across sibling subdirs into one paste-safe entry. Without
+    // this consumption path, a 600+-vendor-file corpus would emit 600+
+    // individual paths in `exclude` instead of the 5 collapsed globs
+    // the classifier already produced. Reuses the same detector +
+    // inputs as the scan-time warning emitter so cross-surface
+    // counts agree by construction.
+    const bulkCatalogDetection = detectBulkCatalog({
+      durationMs: Number.NEGATIVE_INFINITY, // we don't measure duration on this surface
+      filesScanned: files.length,
+      buildArtifacts: collectBuildArtifacts(files),
+      parsedFilePaths: files.map((f) => f.filePath),
+      root,
+    });
+    const bulkCatalogBasenameGlobs = bulkCatalogDetection?.suggestedExcludes ?? [];
+    // Merge + dedupe: per-path definite globs that are already covered
+    // by a basename glob (`**\/bootstrap.min.css` covers
+    // `site-a/css/bootstrap.min.css`) collapse into the basename glob.
+    // Per-`<dir>/**` globs from `defaultExcludedArtifactPaths` ride
+    // alongside basename globs — one is directory-anchored, the other
+    // basename-anchored, so they don't overlap by construction.
+    const buildArtifacts = mergeAndDedupeExcludeGlobs({
+      definiteGlobs: definiteArtifactGlobs,
+      defaultExcludedDirGlobs,
+      bulkCatalogBasenameGlobs,
+    });
+    // Per-entry rationale for the live `exclude: [...]` array — paste-
+    // bearing output must let the agent audit each glob before
+    // committing it. The `excludes` array carries the strings, but
+    // strings alone don't tell the agent whether a given entry came
+    // from the scanner's build-artifact labeller or from a definitional
+    // exclude (`node_modules/`-style — the project doesn't currently
+    // emit these into `exclude` because they're handled at the
+    // discovery layer, but the closed set is reserved for future use).
+    // Heuristic (`likely-*`) classifications never reach the live
+    // exclude — they're routed to the commented `// likelyBuildPaths`
+    // hint block — so the `heuristic` slot in the closed set is also
+    // reserved.
+    //
+    // Closed reason set (`docs/kb/architecture/ai-first-consumer.md`
+    // "Bootstrap output must be paste-safe"):
+    //
+    //   - `labelled_build_artifact_by_scanner` — the entry derives
+    //     from a `definite-*` classification (definite-min-infix,
+    //     definite-sourcemap-paired, definite-vendor-distribution).
+    //     Path-anchored evidence; paste-safe.
+    //   - `definitional` — reserved for future emissions of universal
+    //     ignore patterns (e.g. `node_modules/`). Currently unused;
+    //     definitional excludes ride at the discovery layer.
+    //   - `heuristic` — reserved for any `likely-*` opt-in path. The
+    //     live exclude array does NOT currently emit these; they ride
+    //     in the commented hint block.
+    //
+    // Every entry in `buildArtifacts` originates from the
+    // `definiteArtifactPaths` set (the live exclude lane), so every
+    // emitted rationale tags as `labelled_build_artifact_by_scanner`.
+    // The shape is a parallel array — keyed by `glob` — rather than
+    // an object-form `exclude: [{ glob, reason }]` array so the
+    // emitted TypeScript snippet stays valid (a paste-safe `string[]`,
+    // not a non-trivial object literal that would shift the runtime
+    // contract of `defineConfig.exclude`).
+    const excludesRationale: readonly ExcludeRationaleEntry[] = buildArtifacts.map((glob) => ({
+      glob,
+      reason: "labelled_build_artifact_by_scanner" as const,
+    }));
     // Surface, don't suppress: foreign-ecosystem detection NEVER
     // withholds the config string — the agent may still want to add a
     // Node toolchain alongside their Ruby / Python / Go / Rust
@@ -201,7 +387,7 @@ export const proposeConfigTool: McpTool = {
     // paste decision is informed. See
     // `docs/kb/architecture/ai-first-consumer.md` "Surface, don't
     // suppress."
-    const foreignWarning = foreignEcosystemWarning(root);
+    const foreignDetail = foreignEcosystemDetected(root);
     const foreignEcosystem = detectForeignEcosystem(root);
 
     // Cross-surface count invariant
@@ -228,16 +414,21 @@ export const proposeConfigTool: McpTool = {
       topRules,
     });
 
-    const warningCodes: string[] = [];
-    const warningsDetails: Record<string, unknown> = {};
-    if (foreignWarning !== null) {
-      warningCodes.push(foreignWarning);
-      warningsDetails[foreignWarning] = {};
-    }
-    if (noConfigFires) {
-      warningCodes.push("no_config_found");
-      warningsDetails["no_config_found"] = { searchedFrom: root };
-    }
+    const { warningCodes, warningsDetails } = buildProposeConfigWarnings({
+      files,
+      diagnostics,
+      jsInnerHtmlDeclinedCount,
+      jsInnerHtmlPatternSamples,
+      codeDemoPropMatches,
+      scanReport,
+      activeRules,
+      session,
+      projectConfig,
+      root,
+      configSearchSawProjectMarker,
+      noConfigFires,
+      foreignDetail,
+    });
 
     return textResult({
       suggestedConfig,
@@ -269,6 +460,16 @@ export const proposeConfigTool: McpTool = {
         buildArtifactsIncluded: buildArtifacts.length,
         likelyBuildPathsIncluded: likelyBuildPaths.length,
         topRulesIncluded: topRules.length,
+        // Parallel rationale array: every entry in the live
+        // `exclude: [...]` array (the `buildArtifacts` strings) gets
+        // a corresponding `{ glob, reason }` record so the agent can
+        // audit each glob's provenance before pasting. See the
+        // `excludesRationale` rationale at the handler call site for
+        // the closed reason set.
+        // Conditional-spread: omitted when the live exclude is empty,
+        // per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
+        // (never emit `excludesRationale: []`).
+        ...(excludesRationale.length > 0 ? { excludesRationale } : {}),
         // `excludesGatedByFindings` surfaces the candidate exclude
         // entries the gate dropped because their directory tree
         // contained files with grounded findings — see the
@@ -289,22 +490,185 @@ export const proposeConfigTool: McpTool = {
       // Top-level warnings channel — conditional-spread so clean scans
       // in Node-toolchain repos omit the field entirely (CLAUDE.md §1
       // "Ambiguous field shapes are dishonest" — never emit
-      // `warnings: []`). The code format
-      // `foreign_ecosystem_detected: <language>` carries the ecosystem
-      // tag inline so agents branching on bare `warnings[]` can
-      // discriminate without descending into structured data — the
-      // empty-object marker on `warningsDetails` keeps the
-      // warnings-details schema-discipline membership invariant honest
-      // (every fired code has a corresponding key on `warningsDetails`)
-      // while signaling "no further detail by design." The
-      // `no_config_found` code rides here too with its `searchedFrom`
-      // payload so cross-surface emission stays consistent with the
-      // scan-family tools.
+      // `warnings: []`). The static `foreign_ecosystem_detected` code
+      // pairs with a structured
+      // `warningsDetails.foreign_ecosystem_detected: { ecosystem,
+      // evidence, hasPackageJson }` payload so agents branch on
+      // payload fields rather than parsing the code identifier — the
+      // colon-suffixed dynamic-value shape was rejected per the
+      // AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+      // dishonest" because a runtime-injected suffix can't key the
+      // typed `warningsDetails` slot, leaving the payload `{}` by
+      // construction. The `no_config_found` code rides here too with
+      // its `searchedFrom` payload so cross-surface emission stays
+      // consistent with the scan-family tools.
       ...(warningCodes.length > 0 ? { warnings: warningCodes } : {}),
       ...(Object.keys(warningsDetails).length > 0 ? { warningsDetails } : {}),
     });
   },
 };
+
+/**
+ * Inputs the {@link buildProposeConfigWarnings} helper threads through
+ * to the shared scan-time aggregator + tool-local code emitters. Pure
+ * passthrough from the handler scope; extracted so the handler stays
+ * under the cognitive-complexity lint cap as the warnings axis grew
+ * from two tool-local codes (foreign-ecosystem + no-config-found) to
+ * the full shared scan-time set per Q16 closure.
+ */
+interface ProposeConfigWarningInputs {
+  readonly files: readonly ParsedFile[];
+  readonly diagnostics: import("../input/discover.ts").DiscoveryDiagnostics;
+  readonly jsInnerHtmlDeclinedCount: number;
+  readonly jsInnerHtmlPatternSamples: ReadonlyMap<
+    string,
+    readonly { readonly path: string; readonly line: number; readonly pattern: string }[]
+  >;
+  readonly codeDemoPropMatches: ReadonlyMap<
+    string,
+    readonly import("../input/parsers/mdx-example-extractor.ts").CodeDemoPropMatch[]
+  >;
+  readonly scanReport: ProposalScanReport;
+  readonly activeRules: readonly import("../types/rule.ts").Rule[];
+  readonly session: import("./session.ts").McpSession;
+  readonly projectConfig: import("../types/config.ts").LoadedConfig;
+  readonly root: string;
+  readonly configSearchSawProjectMarker: boolean;
+  readonly noConfigFires: boolean;
+  readonly foreignDetail: ReturnType<typeof foreignEcosystemDetected>;
+}
+
+/**
+ * Builds the `propose_config` response's `warnings` + `warningsDetails`
+ * channel — the shared scan-time aggregator's output (cross-surface
+ * count invariant per `docs/kb/architecture/ai-first-consumer.md`)
+ * merged with the tool-local `foreign_ecosystem_detected` code +
+ * dedupe-guarded legacy `no_config_found` emission.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" (warning-channel extension) + "Per-tool lane and
+ * warning-set classification must agree": every project-rooted tool
+ * emitting a `warnings`/`warningsDetails` channel must surface the
+ * same scan-time code set on identical cwd. Pre-Q16 this tool emitted
+ * only `foreign_ecosystem_detected` + `no_config_found`, silently
+ * dropping the corpus-level codes (`scanned_build_artifacts_present`,
+ * `bulk_catalog_detected`, `text_source_skipped`,
+ * `template_files_parsed_as_literal`,
+ * `js_innerhtml_template_literal_unparsed`, `linked_stylesheet_*`,
+ * `parse_errors_present`, etc.) the shared
+ * {@link buildScanTimeWarnings} helper produces for `scan_project` /
+ * `coverage` / `checklist`. The gap meant an agent calling
+ * `propose_config` first on a bulk-vendor or template-island corpus
+ * had zero scope-confidence telemetry — the silent-miss failure mode
+ * the doctrine bullet warns against.
+ *
+ * Closure: route the same `parseFilesWithDiagnostics` outputs + raw
+ * `runScanAndFormat` violation stream through the shared aggregator
+ * and merge its codes / details into the existing `warningCodes` +
+ * `warningsDetails` slots. The two tool-local codes
+ * (`foreign_ecosystem_detected` here, plus the shared
+ * `no_config_found` which the helper also produces) ride alongside;
+ * the helper's `no_config_found` path is identical to the one this
+ * tool computed inline, so the merge dedupes by code and prefers the
+ * shared payload.
+ */
+function buildProposeConfigWarnings(inputs: ProposeConfigWarningInputs): {
+  readonly warningCodes: readonly string[];
+  readonly warningsDetails: Record<string, unknown>;
+} {
+  const filesByExtension = countFilesByExtension(inputs.files);
+  // Threading `discoveryDiagnostics` here makes
+  // `analysisCoverage.skippedByExtension` populate identically to
+  // `coverage` / `scan_project` on the same cwd, which in turn drives
+  // the shared aggregator's `text_source_skipped` /
+  // `binary_assets_skipped` predicates. The `findingFilePaths` set
+  // drives the parse-error vs partial-parse bucket assignment per
+  // AI-first "Cross-surface count invariant" (per-bucket axis).
+  const analysisCoverageField = buildAnalysisCoverage(
+    inputs.files,
+    inputs.session.config.nativeWrappers,
+    inputs.activeRules,
+    false,
+    0,
+    inputs.projectConfig.preset,
+    inputs.diagnostics,
+    inputs.scanReport.findingPaths,
+  );
+  const scanTime = buildScanTimeWarnings({
+    parsedFiles: inputs.files,
+    violations: inputs.scanReport.violations,
+    root: inputs.root,
+    configSource: inputs.projectConfig.sourcePath,
+    configSearchSawProjectMarker: inputs.configSearchSawProjectMarker,
+    // `null` mirrors `coverage` / `checklist` — propose_config has no
+    // explicit/host-root/git/spawn-cwd resolution distinct from the
+    // caller's `cwd`, so the rootSource axis stays inactive (defaulted
+    // path codes do not fire from this surface).
+    rootSource: null,
+    analysisCoverage: analysisCoverageField.analysisCoverage,
+    filesByExtension,
+    jsInnerHtmlDeclinedCount: inputs.jsInnerHtmlDeclinedCount,
+    ...(inputs.jsInnerHtmlPatternSamples.size === 0
+      ? {}
+      : { jsInnerHtmlPatternSamples: inputs.jsInnerHtmlPatternSamples }),
+    ...(inputs.codeDemoPropMatches.size === 0
+      ? {}
+      : { codeDemoPropMatches: inputs.codeDemoPropMatches }),
+  });
+
+  const warningCodes: string[] = [];
+  const warningsDetails: Record<string, unknown> = {};
+  // Seed with the shared aggregator's output FIRST so tool-local
+  // codes (foreign-ecosystem) ride alongside the scan-time set in
+  // emission order without duplicating `no_config_found` (the shared
+  // aggregator already emits it via the same predicate).
+  for (const code of scanTime.warnings ?? []) {
+    warningCodes.push(code);
+  }
+  if (scanTime.warningsDetails !== undefined) {
+    for (const [code, payload] of Object.entries(scanTime.warningsDetails)) {
+      warningsDetails[code] = payload;
+    }
+  }
+  if (inputs.foreignDetail !== null) {
+    // Static warning code with structured payload — replaces the
+    // previous colon-suffixed dynamic identifier
+    // (`foreign_ecosystem_detected: ruby`) which violated the
+    // doctrine bullet "Empty `warningsDetails.<code>: {}` is dishonest"
+    // two ways: (a) the dynamic suffix made the code un-keyable on
+    // the typed `warningsDetails` interface so the emitted payload
+    // was `{}` by construction; (b) agents reading the code
+    // identifier got the language inline but had no structured slot
+    // to branch on the corroborating evidence (which marker fired,
+    // whether `package.json` was also present). The payload now ships
+    // both axes — the agent reads
+    // `warningsDetails.foreign_ecosystem_detected.{ecosystem,
+    // evidence, hasPackageJson}` and branches without re-probing the
+    // filesystem.
+    warningCodes.push(FOREIGN_ECOSYSTEM_DETECTED_CODE);
+    warningsDetails[FOREIGN_ECOSYSTEM_DETECTED_CODE] = inputs.foreignDetail;
+  }
+  // `no_config_found` may have been emitted both by the shared
+  // aggregator (canonical predicate) AND by the legacy inline
+  // emission below. Dedupe-and-prefer-shared via this guard so the
+  // bare code only appears once and the shared payload wins. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Truncation reporters
+  // must reconcile across warnings" — multiple emitters for the same
+  // predicate must reconcile by reference rather than by independent
+  // enumeration.
+  if (inputs.noConfigFires && !warningCodes.includes("no_config_found")) {
+    warningCodes.push("no_config_found");
+    // Present-when-meaningful gate via shared helper: when
+    // `searchedFrom === scanned.root`, the rich payload drops to the
+    // empty record because `meta.scanned.root` already carries the
+    // search base.
+    warningsDetails["no_config_found"] = noConfigFoundWarningDetail({
+      searchedFrom: inputs.root,
+      scannedRoot: inputs.root,
+    });
+  }
+  return { warningCodes, warningsDetails };
+}
 
 /**
  * Runs the wrapper detector + one-hop probe over the parsed file set
@@ -390,13 +754,16 @@ function normalizeExcludes(
  * build-artifact classification is path-anchored evidence the file
  * itself is generated, but a `<topdir>/**` glob built from a few
  * such files would silence every authored sibling under the same
- * topdir. The gate refuses to collapse to a glob whose tree contains
- * any finding-bearing path, and refuses to itemize a single file
- * that is itself a finding-bearing path. Both cases are silent
- * misses if surfaced as live excludes — pasting the suggested
- * config would cancel the very signal the agent just observed.
+ * topdir. The gate refuses to collapse to a glob whose tree
+ * (a) contains any finding-bearing path, OR (b) contains any parsed
+ * file that is NOT build-artifact-classified. It also refuses to
+ * itemize a single file that is itself a finding-bearing path. All
+ * three cases are silent misses if surfaced as live excludes —
+ * pasting the suggested config would cancel signal the agent just
+ * observed (cases a, c) or pre-emptively silence authored siblings
+ * the agent never read (case b).
  *
- * Two-axis predicate:
+ * Three-axis predicate:
  *
  *   - `topdirHasFinding(topdir)`: true if any finding fires on a
  *     file whose POSIX-relative path starts with `<topdir>/`. Used
@@ -404,45 +771,88 @@ function normalizeExcludes(
  *     regression: `exclude: ["docs/**"]` swept the only directory
  *     with content because three `.min.` files lived under
  *     `docs/vendor/`.
+ *   - `topdirHasAuthoredFile(topdir)`: true if any parsed file
+ *     under `<topdir>/` is NOT classified as a build artifact
+ *     (definite or likely). Used to refuse the `<topdir>/**`
+ *     collapse on bulk-template corpora — without this axis, a
+ *     topdir with 3 definite-min-infix files and 100 authored
+ *     templates that produce zero findings would silently collapse
+ *     to a glob that sweeps the templates. Vendor-classification
+ *     (every parsed file in the topdir landing in the artifact set)
+ *     is the deterministic signal that earns the glob.
  *   - `fileHasFinding(rel)`: true if a finding fires on this exact
  *     POSIX-relative path. Used to drop itemized exclude entries
  *     that name a finding-bearing file.
  *
- * Both predicates are pure boolean queries over the finding-paths
- * set built once at handler-call time (see
- * {@link buildExcludeGate}).
+ * All three predicates are pure boolean queries over sets built
+ * once at handler-call time (see {@link buildExcludeGate}).
  */
 interface ExcludeGate {
   topdirHasFinding(topdir: string): boolean;
+  topdirHasAuthoredFile(topdir: string): boolean;
   fileHasFinding(rel: string): boolean;
 }
 
 /**
- * Builds the {@link ExcludeGate} predicate from the set of finding-
- * bearing absolute paths the scanner observed on this run.
- * Relativizes against `root` and indexes both the per-file paths
- * and the per-topdir prefixes so the gate's predicates are O(1).
+ * Builds the {@link ExcludeGate} predicate from three input sets:
  *
- * The empty-scan case (no findings observed) returns a gate whose
- * predicates always return false — i.e. the gate is a no-op and the
- * `definite-*` paths flow through to the live `exclude` array
- * unchanged. This preserves backward-compatible behaviour for the
- * canonical onboarding case (a vendor-bundle-only repo with no
- * authored findings yet).
+ *   - `findingPaths`: absolute paths that fire any finding. Drives
+ *     `topdirHasFinding` / `fileHasFinding`.
+ *   - `parsedFilePaths`: absolute paths of every parsed file the
+ *     scanner walked (the `ParsedFile.filePath` set). Combined with
+ *     `artifactPaths` to derive `topdirHasAuthoredFile`.
+ *   - `artifactPaths`: union of definite + likely build-artifact
+ *     absolute paths — every path the build-artifact classifier
+ *     accepted, regardless of confidence grade. A topdir is "fully
+ *     vendor-classified" when every parsed file under it is in
+ *     this set; that's the only state in which a `<topdir>/**`
+ *     collapse fires.
+ *
+ * Relativizes against `root` and indexes per-file + per-topdir so
+ * each predicate is O(1).
+ *
+ * The empty-input case (no findings, no authored files, etc.)
+ * returns a gate whose predicates degrade to "false" — the
+ * `definite-*` paths flow through unchanged. Preserves the
+ * canonical onboarding shape: a vendor-bundle-only repo with no
+ * authored findings yet still emits the expected `<topdir>/**`
+ * collapse.
  */
-function buildExcludeGate(findingPaths: ReadonlySet<string>, root: string): ExcludeGate {
+function buildExcludeGate(
+  findingPaths: ReadonlySet<string>,
+  parsedFilePaths: ReadonlySet<string>,
+  artifactPaths: ReadonlySet<string>,
+  root: string,
+): ExcludeGate {
   const fileSet = new Set<string>();
   const topdirSet = new Set<string>();
   for (const p of findingPaths) {
-    const rel = relative(root, p).replace(/\\/g, "/");
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
     if (rel === "" || rel.startsWith("..")) continue;
     fileSet.add(rel);
     const slash = rel.indexOf("/");
     if (slash !== -1) topdirSet.add(rel.slice(0, slash));
   }
+  // Derive topdirs that contain at least one parsed file the
+  // artifact classifier did NOT accept (i.e. authored source). A
+  // topdir is safe to collapse to `<topdir>/**` only when this set
+  // does NOT contain it — every parsed file under the topdir is
+  // build-artifact-classified.
+  const authoredTopdirSet = new Set<string>();
+  for (const p of parsedFilePaths) {
+    if (artifactPaths.has(p)) continue;
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
+    if (rel === "" || rel.startsWith("..")) continue;
+    const slash = rel.indexOf("/");
+    if (slash === -1) continue;
+    authoredTopdirSet.add(rel.slice(0, slash));
+  }
   return {
     topdirHasFinding(topdir: string): boolean {
       return topdirSet.has(topdir);
+    },
+    topdirHasAuthoredFile(topdir: string): boolean {
+      return authoredTopdirSet.has(topdir);
     },
     fileHasFinding(rel: string): boolean {
       return fileSet.has(rel);
@@ -468,10 +878,99 @@ function normalizeLikelyHints(paths: readonly string[], root: string): readonly 
   return relativizeToRoot(paths, root);
 }
 
+/**
+ * Converts each {@link DefaultExcludedArtifactPath} entry into a
+ * `<dir>/**` glob anchored at the scan root. Entries name directories
+ * the discovery walker silently skipped because the directory's
+ * basename appears in
+ * {@link import("../input/discover.ts").DEFAULT_EXCLUDED_ARTIFACT_DIR_NAMES}
+ * (`dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`,
+ * `.cache`, `coverage`, `htmlcov`, `.nyc_output`, `target`) — same
+ * deterministic vendor predicate the discovery layer uses to skip
+ * them, so the emitted globs are paste-safe by construction.
+ *
+ * Entries with paths that escape `root` (rare — symlinked sources)
+ * are dropped: an exclude pattern outside the project is meaningless.
+ * Output is sorted-ascending lexically for deterministic wire shape.
+ */
+function relativizeArtifactDirsToGlobs(
+  entries: readonly DefaultExcludedArtifactPath[],
+  root: string,
+): readonly string[] {
+  const out: string[] = [];
+  for (const entry of entries) {
+    const rel = posixRelative(root, entry.path).replace(/\\/g, "/");
+    if (rel === "" || rel.startsWith("..")) continue;
+    out.push(`${rel}/**`);
+  }
+  out.sort();
+  return out;
+}
+
+/**
+ * Merges three sources of paste-safe exclude globs and dedupes the
+ * union. Per the AI-first doctrine bullet "Sibling fields naming the
+ * same concept must use one shape" — when the bulk-catalog detector
+ * already emits a basename glob (`**\/bootstrap.min.css`) that covers
+ * a per-path entry from the discovery walker, the basename glob wins
+ * and the per-path entry collapses into it. Per-`<dir>/**` globs from
+ * `defaultExcludedArtifactPaths` ride alongside basename globs because
+ * one is directory-anchored and the other basename-anchored — the two
+ * shapes don't overlap by construction (a `<dir>/**` glob covers
+ * everything under a topdir; a `**\/<basename>` glob covers a
+ * basename across every directory).
+ *
+ * Per-path entries (already-relativized strings from
+ * `definiteArtifactGlobs` like `assets/vendor.min.js` or
+ * `lib/foo.bundle.js`) collapse into a basename glob when the basename
+ * matches. Topdir collapses (`assets/**`) ride through unchanged —
+ * they are basename-disjoint from the `**\/<basename>` shape.
+ *
+ * Output is deterministic: directory globs first (sorted), then
+ * basename globs (sorted), then itemized per-path entries (sorted).
+ * The grouping makes the emitted snippet easy to scan when an agent
+ * audits the proposal.
+ */
+function mergeAndDedupeExcludeGlobs(args: {
+  readonly definiteGlobs: readonly string[];
+  readonly defaultExcludedDirGlobs: readonly string[];
+  readonly bulkCatalogBasenameGlobs: readonly string[];
+}): readonly string[] {
+  const { definiteGlobs, defaultExcludedDirGlobs, bulkCatalogBasenameGlobs } = args;
+  // Build the set of basenames already covered by a `**/<basename>`
+  // glob. Per-path entries with a matching basename collapse into the
+  // glob; topdir collapses (entries ending in `/**`) ride through.
+  const coveredBasenames = new Set<string>();
+  for (const g of bulkCatalogBasenameGlobs) {
+    if (g.startsWith("**/")) coveredBasenames.add(g.slice(3));
+  }
+  // Bucket the inputs. Use Sets so cross-source duplicates collapse
+  // (e.g. a `dist/**` discovered twice if a future source emits
+  // overlapping entries — defensive, no current overlap).
+  const dirGlobs = new Set<string>(defaultExcludedDirGlobs);
+  const basenameGlobs = new Set<string>(bulkCatalogBasenameGlobs);
+  const itemized = new Set<string>();
+  for (const g of definiteGlobs) {
+    // Topdir collapses (e.g. `assets/**`) ride into the dir-globs
+    // bucket alongside discovery-walker dirs. They are
+    // structurally identical — `<topdir>/**` regardless of the
+    // emission lane.
+    if (g.endsWith("/**")) {
+      dirGlobs.add(g);
+      continue;
+    }
+    const slash = g.lastIndexOf("/");
+    const basename = slash === -1 ? g : g.slice(slash + 1);
+    if (coveredBasenames.has(basename)) continue; // covered by a `**/<basename>` glob
+    itemized.add(g);
+  }
+  return [...[...dirGlobs].sort(), ...[...basenameGlobs].sort(), ...[...itemized].sort()];
+}
+
 function relativizeToRoot(paths: readonly string[], root: string): readonly string[] {
   const out: string[] = [];
   for (const p of paths) {
-    const rel = relative(root, p).replace(/\\/g, "/");
+    const rel = posixRelative(root, p).replace(/\\/g, "/");
     // Skip paths outside the root (starts with `..`) and the root
     // itself (empty string from `relative`). Both would be nonsense as
     // exclude entries.
@@ -503,10 +1002,10 @@ function partitionByTopDir(paths: readonly string[]): {
 }
 
 /**
- * Per-topdir collapse + finding-bearing-directory gate. Two cases
- * per group:
+ * Per-topdir collapse + vendor-classification gate. Three cases
+ * per group, in declaration order:
  *
- *   1. Topdir has finding-bearing files → never collapse to
+ *   1. Topdir contains finding-bearing files → never collapse to
  *      `<topdir>/**`. The collapse would silence every authored
  *      sibling under the topdir (the `exclude: ["docs/**"]`
  *      regression). Members are also filtered: an itemized entry
@@ -514,9 +1013,19 @@ function partitionByTopDir(paths: readonly string[]): {
  *      file the scanner found a real violation on is, by
  *      definition, not a "you can ignore this whole file" case).
  *      Surviving members ride into the live exclude list itemized.
- *   2. Topdir has no finding-bearing files → standard
- *      threshold-driven collapse to `<topdir>/**` when the count
- *      crosses {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD}.
+ *   2. Topdir has no findings BUT carries any authored-source
+ *      parsed file → never collapse to `<topdir>/**`. Closes the
+ *      bulk-template-corpus regression where a topdir with three
+ *      `.min.` files and 100 authored quiet templates collapsed
+ *      to a glob that swept all templates. Vendor classification
+ *      is the deterministic signal that earns the glob; mixed
+ *      topdirs stay itemized. Definite-classified members
+ *      passthrough as itemized exclude entries; the would-be glob
+ *      lands in `gated` so the agent has additive context.
+ *   3. Topdir is fully vendor-classified (no findings, no authored
+ *      siblings) → standard threshold-driven collapse to
+ *      `<topdir>/**` when the count crosses
+ *      {@link EXCLUDE_GLOB_COLLAPSE_THRESHOLD}.
  *
  * Root-level files (no topdir) are filtered the same way: a single
  * file at the repo root that fires a finding is dropped from the
@@ -559,7 +1068,12 @@ function appendGroupExcludes(
   out: string[],
   gated: string[],
 ): void {
-  if (!gate.topdirHasFinding(topDir)) {
+  const hasFinding = gate.topdirHasFinding(topDir);
+  const hasAuthored = gate.topdirHasAuthoredFile(topDir);
+  if (!(hasFinding || hasAuthored)) {
+    // Topdir is fully vendor-classified. Standard threshold-driven
+    // collapse fires when the count is high enough; otherwise
+    // members ride itemized.
     if (members.length >= EXCLUDE_GLOB_COLLAPSE_THRESHOLD) {
       out.push(`${topDir}/**`);
     } else {
@@ -567,14 +1081,14 @@ function appendGroupExcludes(
     }
     return;
   }
-  // Topdir contains finding-bearing files. Refuse the
-  // `<topdir>/**` collapse outright; itemize survivors and drop
-  // members that themselves carry a finding. If the collapse
-  // threshold WOULD have fired and the gate dropped it, record
-  // the would-be glob in `gated` too — the agent reading
-  // `meta.excludesGatedByFindings` should see both shapes the
-  // gate refused (the `<topdir>/**` collapse and the per-file
-  // entries that landed on findings).
+  // Topdir contains finding-bearing files OR at least one authored
+  // parsed file. Refuse the `<topdir>/**` collapse outright;
+  // itemize survivors and drop members that themselves carry a
+  // finding. If the collapse threshold WOULD have fired and the
+  // gate dropped it, record the would-be glob in `gated` too —
+  // the agent reading `meta.excludesGatedByFindings` should see
+  // both shapes the gate refused (the `<topdir>/**` collapse and
+  // the per-file entries that landed on findings).
   for (const m of members) {
     if (gate.fileHasFinding(m)) gated.push(m);
     else out.push(m);
@@ -617,47 +1131,93 @@ interface TopRuleEntry {
  * only directory with content because three minified files lived
  * under it.
  *
- * Runs the scanner directly rather than relying on an outer scan
- * result so this tool is self-contained — callers don't need to pipe
- * in findings they'd otherwise throw away. The scanner is pure over
- * the parsed files; folding both derivations into a single pass
- * replaces an earlier shape that scanned twice (once for top-rule
- * frequencies, once implicitly for the unused finding paths).
+ * Routes through {@link runScanAndFormat} (the same pipeline
+ * `scan_project` uses) and then `computeTopRules` from
+ * `scan-assembly.ts` so the per-rule counts on this tool's
+ * `suggestedConfig` comment block agree with `scan_project.plan.topRules`
+ * on identical input. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
+ * invariant" — both surfaces share the same severity filter
+ * (info-severity findings excluded), the same wrapper-noise drop,
+ * the same vendor-CSS dedup, and the same project-config-driven
+ * `nativeWrapperElements` / `processes` plumbing. Without this
+ * routing, `propose_config` previously called `runScan` directly and
+ * counted info-severity findings + wrapper-noise emissions that
+ * `scan_project`'s post-pipeline `formatted.files` had already
+ * filtered out — agents reading the bootstrap response saw a
+ * 30-finding drift on a real-world ~1000-file corpus and a 5×
+ * disagreement on bulk-template catalogs.
+ *
+ * `findingPaths` is the same set, derived from `formatted.files[].path`
+ * (which carries the absolute path the build-artifact gate's
+ * predicate matches against).
  */
 interface ProposalScanReport {
   readonly topRules: readonly TopRuleEntry[];
   readonly findingPaths: ReadonlySet<string>;
+  /**
+   * Raw post-couple-severity violation stream from the same
+   * {@link runScanAndFormat} pass that produced `topRules` /
+   * `findingPaths`. Threaded through to the {@link buildScanTimeWarnings}
+   * call at the handler so propose_config emits the same scan-time
+   * warning code set as `scan_project` / `coverage` / `checklist` on
+   * identical cwd. Per `docs/kb/architecture/ai-first-consumer.md`
+   * "Cross-surface count invariant" (warning-channel extension).
+   */
+  readonly violations: readonly import("../types/violation.ts").Violation[];
 }
 
-function scanForProposalSignals(
+async function scanForProposalSignals(
   files: readonly ParsedFile[],
   session: import("./session.ts").McpSession,
-): ProposalScanReport {
-  if (files.length === 0) return { topRules: [], findingPaths: new Set() };
-  const { result } = runScan({
-    standards: session.registry.standards,
-    rules: session.registry.rules,
-    enabled: resolveStandards(undefined, session),
+  projectConfig: import("../types/config.ts").LoadedConfig,
+  root: string,
+): Promise<ProposalScanReport> {
+  if (files.length === 0) return { topRules: [], findingPaths: new Set(), violations: [] };
+  // Mirror `scan_project`'s `buildWrapperSources` for the no-autoDetect
+  // case: thread the file-config and session wrappers through so
+  // `dropWrapperNoise` (inside `runScanAndFormat`) treats the same
+  // names as transparent on both surfaces. `propose_config` runs its
+  // own confirmation probe via `deriveConfirmedWrappers` for the
+  // `nativeWrappers: [...]` field of the emitted config; that probe is
+  // independent of the scan filter the rule pipeline applies, which
+  // operates on the configured wrapper set the user has already
+  // committed to.
+  const fileElements = projectConfig.nativeWrapperElements;
+  const sessionElements = session.config.nativeWrapperElements;
+  const wrapperSources: NativeWrapperSources = {
+    fromFile: projectConfig.nativeWrappers,
+    ...(Object.keys(fileElements).length > 0 ? { fromFileElements: fileElements } : {}),
+    fromSession: session.config.nativeWrappers,
+    ...(Object.keys(sessionElements).length > 0 ? { fromSessionElements: sessionElements } : {}),
+  };
+  const { formatted, violations } = await runScanAndFormat(
     files,
-    level: session.config.level,
-  });
-  const counts = new Map<string, number>();
-  const findingPaths = new Set<string>();
-  for (const v of result.violations) {
-    counts.set(v.ruleId, (counts.get(v.ruleId) ?? 0) + 1);
-    findingPaths.add(v.location.filePath);
-  }
-  const ranked = [...counts.entries()].sort(([aId, aCount], [bId, bCount]) => {
-    if (bCount !== aCount) return bCount - aCount;
-    return aId.localeCompare(bId);
-  });
+    session,
+    resolveStandards(undefined, session),
+    undefined,
+    session.effectiveRules(projectConfig),
+    wrapperSources,
+    root,
+    false,
+    undefined,
+    projectConfig.preset,
+    projectConfig.processes,
+  );
+  // `computeTopRules` carries the same severity filter (info-severity
+  // excluded) `scan_project.plan.topRules` ships, so the per-rule
+  // count comments emitted into `suggestedConfig` agree on every
+  // overlapping ruleId.
+  const ranked = computeTopRules(formatted.files, TOP_RULES_COUNT);
   const topRules: TopRuleEntry[] = [];
-  for (const [ruleId, count] of ranked.slice(0, TOP_RULES_COUNT)) {
-    const rule = session.registry.findRule(ruleId);
+  for (const entry of ranked) {
+    const rule = session.registry.findRule(entry.ruleId);
     if (!rule) continue;
-    topRules.push({ ruleId, severity: rule.severity, count });
+    topRules.push({ ruleId: entry.ruleId, severity: rule.severity, count: entry.count });
   }
-  return { topRules, findingPaths };
+  const findingPaths = new Set<string>();
+  for (const file of formatted.files) findingPaths.add(file.path);
+  return { topRules, findingPaths, violations };
 }
 
 /**
@@ -718,15 +1278,21 @@ function buildConfigString(args: {
 
   // exclude: straight array of paths in scan-discovered order (same
   // order the `scannedBuildArtifacts` meta field surfaces). ONLY
-  // `definite-*` build-artifact classifications populate this list —
-  // see the splitter at the handler call site for the doctrine
-  // rationale (`docs/kb/architecture/ai-first-consumer.md` "Bootstrap
-  // output must be paste-safe").
+  // `definite-*` build-artifact classifications survive the
+  // vendor-classification gate at the handler call site; a
+  // `<topdir>/**` glob only fires when every parsed file under that
+  // topdir is build-artifact-classified. See
+  // `collapseGroupsWithGate` and the doctrine bullet
+  // (`docs/kb/architecture/ai-first-consumer.md` "Bootstrap output
+  // must be paste-safe"). The final entry omits its trailing
+  // element-comma so the emitted file passes lint configurations
+  // that flag dangling commas.
   if (excludes.length > 0) {
     bodyLines.push(`${INDENT}exclude: [`);
-    for (const path of excludes) {
-      bodyLines.push(`${INDENT}${INDENT}${JSON.stringify(path)},`);
-    }
+    excludes.forEach((path, idx) => {
+      const tail = idx === excludes.length - 1 ? "" : ",";
+      bodyLines.push(`${INDENT}${INDENT}${JSON.stringify(path)}${tail}`);
+    });
     bodyLines.push(`${INDENT}],`);
   }
 
@@ -754,9 +1320,10 @@ function buildConfigString(args: {
     bodyLines.push(`${INDENT}// signals fire on authored content too (template literals, SVG path`);
     bodyLines.push(`${INDENT}// data, SCSS function bodies). NOT auto-applied; opt in per path.`);
     bodyLines.push(`${INDENT}// likelyBuildPaths: [`);
-    for (const path of likelyBuildPaths) {
-      bodyLines.push(`${INDENT}//   ${JSON.stringify(path)},`);
-    }
+    likelyBuildPaths.forEach((path, idx) => {
+      const tail = idx === likelyBuildPaths.length - 1 ? "" : ",";
+      bodyLines.push(`${INDENT}//   ${JSON.stringify(path)}${tail}`);
+    });
     bodyLines.push(`${INDENT}// ],`);
   }
 
@@ -769,11 +1336,12 @@ function buildConfigString(args: {
     bodyLines.push(`${INDENT}// Top-fired rules on this scan. Uncomment + adjust the severity`);
     bodyLines.push(`${INDENT}// ("error" | "warning" | "info" | "off") to tune or suppress.`);
     bodyLines.push(`${INDENT}// rules: {`);
-    for (const entry of topRules) {
+    topRules.forEach((entry, idx) => {
+      const tail = idx === topRules.length - 1 ? "" : ",";
       bodyLines.push(
-        `${INDENT}//   ${JSON.stringify(entry.ruleId)}: ${JSON.stringify(entry.severity)}, // ${entry.count} finding${entry.count === 1 ? "" : "s"}`,
+        `${INDENT}//   ${JSON.stringify(entry.ruleId)}: ${JSON.stringify(entry.severity)}${tail} // ${entry.count} finding${entry.count === 1 ? "" : "s"}`,
       );
-    }
+    });
     bodyLines.push(`${INDENT}// },`);
   }
 
@@ -847,4 +1415,23 @@ function buildNextStep(args: {
     return `Scan was clean — proposal is a minimal defineConfig({}) placeholder.${existingNote}${foreignNote}`;
   }
   return `Proposal includes ${summary.join(", ")}. Paste \`suggestedConfig\` into ra11y.config.ts at the project root.${existingNote}${foreignNote}`;
+}
+
+/**
+ * Tally parseable files by extension. Mirrors the same-named helper in
+ * `tool-coverage.ts` / `tool-checklist.ts` (and `countByExtension` in
+ * `scan-assembly.ts`) — duplicated rather than re-exported to keep
+ * `tool-propose-config.ts` independent of those callers' coupling.
+ * Drives `filesByExtension` on the {@link buildScanTimeWarnings} input
+ * so the Tailwind-undercount and other extension-axis predicates fire
+ * identically on this surface.
+ */
+function countFilesByExtension(files: readonly ParsedFile[]): Record<string, number> {
+  const counts = new Map<string, number>();
+  for (const f of files) {
+    const dot = f.filePath.lastIndexOf(".");
+    const ext = dot === -1 ? "(no-ext)" : f.filePath.slice(dot);
+    counts.set(ext, (counts.get(ext) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
 }

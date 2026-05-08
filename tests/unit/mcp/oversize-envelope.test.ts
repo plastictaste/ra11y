@@ -43,7 +43,10 @@ describe("guardOversizeEnvelope", () => {
   });
 
   it("passes the response through unchanged when under the ceiling", () => {
-    const original = { plan: { notes: 0 }, files: [{ path: "a.tsx", findings: [] }] };
+    const original = {
+      plan: { infoSeverityFindings: 0 },
+      files: [{ path: "a.tsx", findings: [] }],
+    };
     let slimBuilderCalled = false;
     const result = guardOversizeEnvelope({
       original,
@@ -68,7 +71,7 @@ describe("guardOversizeEnvelope", () => {
       path: `file-${i}.tsx`,
       findings: [{ message: "x".repeat(500) }],
     }));
-    const original = { plan: { notes: 0 }, files };
+    const original = { plan: { infoSeverityFindings: 0 }, files };
     let receivedReason: OversizeEnvelopeReason | undefined;
     const result = guardOversizeEnvelope({
       original,
@@ -107,7 +110,7 @@ describe("guardOversizeEnvelope", () => {
     // Defensive: helper doesn't know the response shape — when
     // `files` is absent or non-array, the count defaults to 0 and the
     // slim builder still runs.
-    const original = { plan: { notes: 0 }, totalFindings: 3 };
+    const original = { plan: { infoSeverityFindings: 0 }, totalFindings: 3 };
     const result = guardOversizeEnvelope({
       original,
       hardCeilingChars: 5,
@@ -124,7 +127,10 @@ describe("guardOversizeEnvelope", () => {
   });
 
   it("does not mutate the input response object", () => {
-    const original: Record<string, unknown> = { plan: { notes: 1 }, files: ["a", "b", "c"] };
+    const original: Record<string, unknown> = {
+      plan: { infoSeverityFindings: 1 },
+      files: ["a", "b", "c"],
+    };
     const snapshot = JSON.stringify(original);
     guardOversizeEnvelope({
       original,

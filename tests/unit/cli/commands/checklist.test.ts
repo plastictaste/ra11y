@@ -7,11 +7,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runChecklist } from "../../../../src/cli/commands/checklist.ts";
 import { setColorEnabled } from "../../../../src/utils/ansi.ts";
+import { posixJoin } from "../../../helpers/path.ts";
 
 setColorEnabled(false);
 
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-checklist-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-checklist-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -36,7 +36,7 @@ describe("runChecklist", () => {
   it("emits a combined violations report and manual review checklist", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -51,7 +51,7 @@ describe("runChecklist", () => {
   it("includes at least one manual-review criterion from WCAG 2.2", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -67,7 +67,7 @@ describe("runChecklist", () => {
   it("surfaces violation output before the manual checklist", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "bad.html"),
+      posixJoin(dir, "bad.html"),
       '<!doctype html><html><body><img src="x"></body></html>',
     );
     chdir(dir);
@@ -83,7 +83,7 @@ describe("runChecklist", () => {
   it("renders violations using the requested --format", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "bad.html"),
+      posixJoin(dir, "bad.html"),
       '<!doctype html><html><body><img src="x"></body></html>',
     );
     chdir(dir);
@@ -101,7 +101,7 @@ describe("runChecklist", () => {
   it("respects --standard wcag21 by titling the checklist section", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -114,9 +114,9 @@ describe("runChecklist", () => {
 
   it("skips files the parsers don't recognize (e.g. .md)", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "README.md"), "# readme");
+    await writeFile(posixJoin(dir, "README.md"), "# readme");
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);

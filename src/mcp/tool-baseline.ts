@@ -22,7 +22,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   BASELINE_FILENAME,
   type BaselineDiff,
@@ -34,6 +34,7 @@ import {
 } from "../engine/baseline.ts";
 import { runScan } from "../engine/scanner.ts";
 import type { ScanResult } from "../types/violation.ts";
+import { posixJoin, posixResolve } from "../utils/path.ts";
 import { type AssembledFile, groupByFile } from "./response-assembler.ts";
 import type { McpSession } from "./session.ts";
 import {
@@ -119,6 +120,11 @@ export const baselineTool: McpTool = {
       files,
       finders: session.registry.finders,
       level,
+      // Per-emission `findingId` / cross-run-stable `findingGroupId`
+      // path normalization — must match the scan root scan_diff and
+      // the scan-family tools pass so the IDs round-trip across
+      // baseline / scan_diff / scan_project on identical cwd.
+      scanRoot: cwd,
     });
 
     if (mode === "create") return handleCreate(result, baselinePath, cwd);
@@ -128,8 +134,8 @@ export const baselineTool: McpTool = {
 };
 
 function resolveBaselinePath(rel: string | undefined, cwd: string): string {
-  if (rel === undefined) return join(cwd, BASELINE_FILENAME);
-  return isAbsolute(rel) ? rel : resolve(cwd, rel);
+  if (rel === undefined) return posixJoin(cwd, BASELINE_FILENAME);
+  return isAbsolute(rel) ? rel : posixResolve(cwd, rel);
 }
 
 function resolveLevelParam(level: string | undefined, session: McpSession): "A" | "AA" | "AAA" {

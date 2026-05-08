@@ -30,9 +30,26 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 # Workflow
 
-1. **Preflight.** Confirm `git status --porcelain` is empty on `main`. If dirty, abort and return an error-shape with `verifyOk: false` and a single `errors[]` entry: `"dirty_main: <first 10 lines of git status, joined by ' | '>"`. Do not `stash`, do not `clean`, do not `checkout --`.
+1. **Preflight.** Confirm `git status --porcelain` is empty on `main`. If dirty, abort immediately and return the error-shape below. **Under no circumstances use `git stash`, `git clean`, `git checkout --`, or any other command that moves or discards the dirty content.** The `.git` stash store is shared across all worktrees in the repo — a stash-push here can silently absorb a parallel specialist's uncommitted WIP, and a stash-pop can replay foreign edits into a clean pick. The prohibition is absolute even on `main`, even when the dirty files appear to be unrelated to the current turn's picks.
 
-   Dirty main at preflight is the signature of a worktree agent that escaped its isolation via absolute paths or `cd`. Surface the file list and stop — the orchestrator will recover (decide per-file whether to preserve or discard). Never attempt to clean up silently.
+   **When dirty at preflight — two cases, same response shape:**
+
+   - *Worktree-escape signature:* dirty files are in the inferred scope of one of the picks (e.g. `src/rules/`, `src/mcp/`, `tests/`). Likely a specialist leaked edits via absolute paths. The orchestrator will decide whether to restore or preserve.
+   - *Unrelated WIP signature:* dirty files are outside any pick's inferred scope (e.g. `src/cli/`, `docs/`, `.claude/backlog.md`). Likely a concurrent autonomous writer dirtied main during specialist dispatch. The orchestrator handles this differently (no restore — the WIP may be valid and must not be lost).
+
+   In both cases, return `verifyOk: false` with errors prefix token `dirty_main_unrelated_wip:` when the dirty paths don't overlap the picks' inferred scope, or `dirty_main:` when they do overlap:
+
+   ```json
+   {
+     "integrated": [],
+     "skipped": [],
+     "blocked": [],
+     "verifyOk": false,
+     "errors": ["dirty_main_unrelated_wip: src/cli/commands/scan.ts | tests/cli/cli.test.ts (59 lines — not in any pick's inferred scope; concurrent writer suspected)"]
+   }
+   ```
+
+   Surface the dirty path list (first 10 lines of `git status --porcelain`, joined by ` | `) and stop. The orchestrator will recover. Never attempt to clean up silently.
 
 2. **Cherry-pick loop** — in the order given, one pick at a time:
    - Skip picks where `changed: false`. Record them under `skipped` as `{ item, sha: null }`. (No per-entry reason field in the tight schema; if the skip is noteworthy — branch was already on main despite a `changed: true` claim, for example — surface it once at the top-level `note`.)
@@ -73,6 +90,8 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
    If every `integrated` item's line is already absent from backlog (the happy path), `backlogCommitSha` is omitted from the return. The commit checker rejects untrailered backlog deletions, so the `Closes:` trailers above are mandatory.
 
+   **Bonus closure — specialist voluntarily closes an adjacent item.** A specialist assigned to one item may discover an adjacent item solvable in the same commit and close both via a `Closes: <ID-1>` + `Closes: <ID-2>` trailer chain. This is a legitimate and desirable pattern — do not treat it as an error. When you see more `Closes:` trailers in a commit than the item count on your dispatch list, for each extra `Closes: <ID>` trailer: (a) confirm the `- [ ]` line for that ID is absent from `.claude/backlog.md` in the cherry-picked result; (b) if it is absent, record the bonus closure in the top-level `note` (e.g. `"Q16 specialist also closed adjacent item X via bonus Closes: trailer — both backlog lines confirmed deleted"`); (c) if the line is still present, add the deletion in the backlog closure tidy commit (step 5 main path) and note the gap. Never suppress or ignore the bonus trailer — the orchestrator needs to know the additional item closed so it can skip dispatching it in a later turn.
+
 6. **Return the summary** as a single JSON block, no prose before or after.
 
    **Default (tight) shape — the common happy path, ~6–10 lines:**
@@ -112,7 +131,9 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
          ]
        }
 
-   `errors[]` replaces the old per-entry `reason` field. One string per blocked item or stop condition. Keep each entry ≤2 lines, grep-able prefix token first (`cherry_pick_conflict:`, `verify_red:`, `dirty_main:`, `cross_pick_interaction:`, `unknown_state:`). `backlogCommitSha` is omitted when no closure tidy commit was made (the happy path — every specialist deleted its own backlog line; see step 5).
+   `errors[]` replaces the old per-entry `reason` field. One string per blocked item or stop condition. Keep each entry ≤2 lines, grep-able prefix token first (`cherry_pick_conflict:`, `verify_red:`, `dirty_main:`, `dirty_main_unrelated_wip:`, `cross_pick_interaction:`, `unknown_state:`). `backlogCommitSha` is omitted when no closure tidy commit was made (the happy path — every specialist deleted its own backlog line; see step 5).
+
+   `dirty_main_unrelated_wip:` signals that dirty paths do NOT overlap the current turn's picks — concurrent autonomous writer suspected. `dirty_main:` signals overlap — worktree-escape suspected. The distinction lets the orchestrator choose the right recovery (WIP preservation vs. restore).
 
 # Return shape contract
 
@@ -126,7 +147,7 @@ Treat the list as authoritative. Do not hunt for additional worktrees or branche
 
 # Hard constraints
 
-- **Never `git stash`.** Never `git clean`. Never `--no-verify`. If the tree is unexpectedly dirty at any point, abort with an `error` field; do not hide state.
+- **Never `git stash`.** Never `git clean`. Never `--no-verify`. The stash store is shared across ALL worktrees in the repo — stashing here can silently absorb a parallel specialist's uncommitted WIP (stash-push) or replay foreign edits into a clean working tree (stash-pop). If the tree is unexpectedly dirty at any point, abort with an `error` field; do not hide state. The correct response to dirty-main is `dirty_main_unrelated_wip:` or `dirty_main:` in `errors[]`, never a stash.
 - **Never rewrite history.** No `commit --amend`, no `rebase -i`, no `push --force`.
 - **Integrate in the order given.** Do not reorder picks to try to make verify pass — ordering is the orchestrator's choice and reordering hides real cross-pick interactions.
 - **Main-session-classified items are not your concern.** The orchestrator tells you only about worktree picks. Anything it handled inline is already on main.

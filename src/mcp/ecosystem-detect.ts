@@ -1,11 +1,11 @@
 /**
  * Detects the dominant language ecosystem at a project root by probing
  * for canonical package-manifest markers. Used by `propose_config` to
- * surface `foreign_ecosystem_detected: <language>` on the top-level
- * `warnings[]` channel when a repo has (say) `Gemfile` or `go.mod` but
- * no `package.json` — so an agent about to paste a `@ra11y/core`
- * TypeScript config knows the consumer may not want a Node toolchain
- * added.
+ * surface the static `foreign_ecosystem_detected` warning code on the
+ * top-level `warnings[]` channel when a repo has (say) `Gemfile` or
+ * `go.mod` but no `package.json` — so an agent about to paste a
+ * `@ra11y/core` TypeScript config knows the consumer may not want a
+ * Node toolchain added.
  *
  * Shape invariants (AI-first doctrine):
  *
@@ -24,11 +24,20 @@
  *     predicate) and `detectForeignEcosystem` returns `null`. This
  *     keeps the signal pointed at the canonical "consumer may not have
  *     npm at all" case — not "consumer has multiple toolchains."
- *   - Language tag is a stable kebab-case identifier the agent branches
- *     on (`ruby`, `python`, `go`, `rust`), not English prose. The
- *     warning-code format `foreign_ecosystem_detected: <language>`
- *     carries the language inline so agents reading the bare `warnings[]`
- *     array can discriminate without a paired `warningsDetails` lookup.
+ *   - Static warning code, structured payload. The wire-level warning
+ *     string is the static identifier `foreign_ecosystem_detected` —
+ *     not a colon-suffixed `foreign_ecosystem_detected: <language>`.
+ *     Dynamic-value-in-warning-code is the doctrine violation
+ *     described in `docs/kb/architecture/ai-first-consumer.md`
+ *     "Empty `warningsDetails.<code>: {}` is dishonest" — every code
+ *     in `warnings[]` must resolve to a typed slot on
+ *     {@link import("./warnings.ts").ScanWarningDetails}, and a
+ *     code with a runtime-injected suffix can't have a typed slot.
+ *     The language tag rides under
+ *     `warningsDetails.foreign_ecosystem_detected.ecosystem` so the
+ *     agent reads one canonical key and branches on a payload field.
+ *     The kebab-case tag (`ruby`, `python`, `go`, `rust`) stays a
+ *     stable identifier for that payload field.
  *
  * Scope. This module lives alongside the MCP tools rather than in
  * `src/utils/` because the only consumer is `propose_config` (and,
@@ -37,8 +46,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
-
+import { posixJoin } from "../utils/path.ts";
 /**
  * Stable kebab-case identifiers for the ecosystems the detector
  * recognizes. Agents branch on these tags; English prose names ("Ruby",
@@ -72,6 +80,56 @@ const FOREIGN_MARKERS: Readonly<Record<ForeignEcosystem, readonly string[]>> = {
 const NODE_MARKER = "package.json";
 
 /**
+ * Static warning code emitted on the top-level `warnings[]` channel
+ * when {@link detectForeignEcosystem} resolves a non-Node ecosystem.
+ * The language identifier rides on the paired
+ * `warningsDetails.foreign_ecosystem_detected.ecosystem` payload field
+ * — never as a colon-suffixed dynamic value on the code itself. Per
+ * the AI-first doctrine "Empty `warningsDetails.<code>: {}` is
+ * dishonest," every code in `warnings[]` must resolve to a stable
+ * key on `warningsDetails`; a code with a runtime-injected suffix
+ * silently fails the membership invariant because the dispatch table
+ * keys on the code identifier and the suffix turns the lookup into a
+ * miss.
+ */
+export const FOREIGN_ECOSYSTEM_DETECTED_CODE = "foreign_ecosystem_detected" as const;
+
+/**
+ * Structured payload shipped under
+ * `warningsDetails.foreign_ecosystem_detected` when the static
+ * {@link FOREIGN_ECOSYSTEM_DETECTED_CODE} fires. Carries the load-
+ * bearing identity an agent reads to triage the foreign-ecosystem
+ * regime in one read:
+ *
+ *   - `ecosystem` — the kebab-case ecosystem tag (`ruby`, `python`,
+ *     `go`, `rust`). Replaces the colon-suffixed dynamic value the
+ *     code identifier used to carry. Stable across runs given fixed
+ *     declaration order on {@link FOREIGN_MARKERS}.
+ *   - `evidence` — the per-marker filenames the detector observed at
+ *     the project root, sorted-alphabetically for deterministic wire
+ *     output. Always carries at least one entry when the warning
+ *     fires (the predicate's "fired" branch requires at least one
+ *     marker hit). Per the AI-first doctrine "Empty
+ *     `warningsDetails.<code>: {}` is dishonest" — without
+ *     `evidence`, an agent reading the warning channel would have to
+ *     re-derive which marker fired by re-probing the filesystem.
+ *   - `hasPackageJson` — boolean naming whether `package.json` was
+ *     present at the project root. The predicate gates the warning
+ *     on its absence (Node toolchain short-circuits — see
+ *     {@link detectForeignEcosystem}); the field rides at `false`
+ *     whenever the warning fires so the agent has the full
+ *     two-axis predicate state without re-probing. Future
+ *     mixed-stack policy changes (e.g. firing the warning on a
+ *     Rails-plus-Webpacker monorepo) would set this to `true` —
+ *     the field rides on the wire so the policy change is visible.
+ */
+export interface ForeignEcosystemDetected {
+  readonly ecosystem: ForeignEcosystem;
+  readonly evidence: readonly string[];
+  readonly hasPackageJson: boolean;
+}
+
+/**
  * Returns the detected foreign ecosystem, or `null` when either
  * `package.json` is present (Node toolchain assumed) or no recognized
  * foreign marker resolves. Probes in declaration order of
@@ -87,26 +145,61 @@ export function detectForeignEcosystem(root: string): ForeignEcosystem | null {
   // Node toolchain short-circuits — a mixed repo with both `package.json`
   // and `Gemfile` is unambiguously Node-aware and doesn't earn the
   // foreign-ecosystem label.
-  if (existsSync(join(root, NODE_MARKER))) return null;
+  if (existsSync(posixJoin(root, NODE_MARKER))) return null;
   for (const [language, markers] of Object.entries(FOREIGN_MARKERS) as Array<
     [ForeignEcosystem, readonly string[]]
   >) {
     for (const marker of markers) {
-      if (existsSync(join(root, marker))) return language;
+      if (existsSync(posixJoin(root, marker))) return language;
     }
   }
   return null;
 }
 
 /**
- * Builds the `foreign_ecosystem_detected: <language>` warning string
- * for the top-level `warnings[]` array on `propose_config`. Returns
- * `null` when no foreign ecosystem is detected so the caller can
- * conditional-spread without emitting `warnings: []` (per CLAUDE.md §1
- * "Ambiguous field shapes are dishonest").
+ * Builds the structured {@link ForeignEcosystemDetected} payload that
+ * rides under `warningsDetails.foreign_ecosystem_detected` when the
+ * static {@link FOREIGN_ECOSYSTEM_DETECTED_CODE} fires. Returns `null`
+ * when no foreign ecosystem is detected so the caller can conditional-
+ * spread without emitting `warnings: []` (per CLAUDE.md §1 "Ambiguous
+ * field shapes are dishonest").
+ *
+ * `evidence` enumerates the per-marker filenames actually present at
+ * `root` for the resolved ecosystem (sorted alphabetically for
+ * deterministic wire output) — the canonical case is `["Gemfile"]`
+ * for a Bundler project, `["pyproject.toml"]` for a PEP 518 project.
+ * Future expansions of {@link FOREIGN_MARKERS} that list multiple
+ * markers per ecosystem (e.g. adding `Pipfile` to the python row)
+ * surface every marker the detector observed at the root.
+ *
+ * `hasPackageJson` rides at `false` whenever the warning fires (per
+ * the predicate's Node short-circuit); the field is included
+ * defensively so a future policy change that fires the warning on a
+ * mixed Node+foreign stack shows up on the wire without re-shaping
+ * the payload.
+ *
+ * @param root Absolute path to the project root. Caller is
+ *             responsible for path resolution; this module never re-
+ *             resolves.
  */
-export function foreignEcosystemWarning(root: string): string | null {
+export function foreignEcosystemDetected(root: string): ForeignEcosystemDetected | null {
   const ecosystem = detectForeignEcosystem(root);
   if (ecosystem === null) return null;
-  return `foreign_ecosystem_detected: ${ecosystem}`;
+  const markers = FOREIGN_MARKERS[ecosystem];
+  const observed: string[] = [];
+  for (const marker of markers) {
+    if (existsSync(posixJoin(root, marker))) observed.push(marker);
+  }
+  // The predicate's "fired" branch in `detectForeignEcosystem` guarantees
+  // at least one marker resolved — the loop above re-discovers the same
+  // hits to enumerate them all (a future ecosystem entry with multiple
+  // markers, e.g. python adding `Pipfile`, surfaces every observed
+  // marker in `evidence`). Sorted alphabetically for deterministic
+  // wire output independent of the declaration order on FOREIGN_MARKERS.
+  observed.sort();
+  return {
+    ecosystem,
+    evidence: observed,
+    hasPackageJson: existsSync(posixJoin(root, NODE_MARKER)),
+  };
 }

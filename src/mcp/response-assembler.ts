@@ -65,7 +65,13 @@ import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
+import { defaultActionableManualLane } from "./manual-criteria-tally.ts";
 import { getTruncatedMetaArrayFields } from "./meta-array-cap.ts";
+import { collectParserBailedRouteFiles } from "./parser-bail-route-adjustment.ts";
+import {
+  buildParsedThroughLineMap,
+  enrichFindingsBeyondPartialParseBoundary,
+} from "./per-finding-beyond-parse-boundary.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
 import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
@@ -73,6 +79,8 @@ import {
   buildSubstrateFiles,
   enrichFindingsWithPerRuleLimitations,
 } from "./per-finding-confidence-parity.ts";
+// biome-ignore format: keep import on one line — file effective-line budget
+import { buildCorpusWarningFilesFromCodeDemoMatches, enrichFindingsWithCorpusWarningFiles } from "./per-finding-corpus-warning-files.ts";
 import { buildSharedPerRuleCoverageMeta } from "./per-rule-coverage-shared.ts";
 import {
   buildReferenceGuide,
@@ -105,6 +113,10 @@ import {
 } from "./scan-assembly.ts";
 import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
+import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
 import { applyTokenBudget, DEFAULT_TOKEN_BUDGET_CHARS } from "./token-budget.ts";
 import type { ScanWarningCode, ScanWarningDetails, WarningInputs } from "./warnings.ts";
 import { computeTemplateDirectiveOverlap, warningsField } from "./warnings.ts";
@@ -155,7 +167,34 @@ export interface ScanFamilyResponseInput {
   readonly discoveryDiagnostics?: DiscoveryDiagnostics;
   /** Plan-side manual-review counters — the caller computed them against `reviewCandidates`. */
   readonly actionableManual: number;
+  /**
+   * Per-criterion file-path index for the actionable manual-review
+   * set — drives `plan.actionableManualItemsBySource: { source,
+   * buildArtifact }`. Threaded from
+   * {@link import("./manual-criteria-tally.ts").ManualCriteriaTally#actionableCriteriaPaths}.
+   * The assembler stamps the empty-vendor-paths default; the
+   * post-classification rewrite via `withActionableManualItemsBySource`
+   * runs at each tool's call site once `vendorPaths` resolves.
+   * Optional so legacy / fixture callers without the index stay
+   * landable; the assembler falls back to an empty map.
+   */
+  readonly actionableCriteriaPaths?: ReadonlyMap<string, ReadonlySet<string>>;
   readonly untargetedCriteria: number;
+  /**
+   * `"project"` for project-walk callers (none currently route through
+   * this assembler; the project-walk lane uses `runScanAndFormat`);
+   * `"file"` for explicit-paths callers (`scan`, `scan_file`,
+   * `audit_rule_coverage`). Threaded through to `buildScanPlan` so the
+   * untargeted-criteria scalar emits as `untargetedCriteriaForFile`
+   * (the project-walk lane, in `runScanAndFormat`, threads `"project"`
+   * and emits `untargetedCriteriaForProject`). Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+   * naming the same concept must use one shape." Optional with a
+   * `"file"` default to keep legacy fixture / test call sites that
+   * route through this assembler stable; production `scan_file` /
+   * `scan` callers thread the discriminator explicitly.
+   */
+  readonly scope?: "project" | "file";
   /** Config-resolution signal for the warnings channel. */
   readonly configSource: string | null | undefined;
   readonly rootSource: "explicit" | "host-root" | "git" | "spawn-cwd" | null;
@@ -181,6 +220,23 @@ export interface ScanFamilyResponseInput {
    * was handed; omit when the tool did not resolve a search root.
    */
   readonly configSearchedFromForWarning?: string;
+  /**
+   * Caller-supplied scan root for path normalization in the per-emission
+   * `findingId` hash. When provided, absolute violation / candidate
+   * paths under this root relativize before hashing so a `scan_file`
+   * call addressing files by absolute path and a `checklist` /
+   * `scan_project` call addressing the same files via cwd-walk produce
+   * identical ids on the same conceptual emission. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-finding identifiers
+   * must be addressable, not collision-prone" + "Per-tool review-
+   * candidate shape must agree across surfaces."
+   *
+   * Threaded through to {@link computeCandidateFindingId} via
+   * {@link import("./review-candidate-dedup.ts").materializeDedupedCandidate};
+   * omit when the caller has no canonical scan root (synthetic test
+   * fixtures, single-file scratch scans without `cwd`).
+   */
+  readonly scanRoot?: string;
   /**
    * Pre-computed result of a cwd-rooted directory walk that probes
    * whether a rule's gated extensions exist anywhere under the project
@@ -419,12 +475,33 @@ export function groupByFile(
  * — the assembler's outer conditional-spread suppresses an empty
  * payload).
  */
+/**
+ * Extracts the `scanRoot` ternary from {@link assembleScanFamilyResponse}
+ * so the orchestrator's cognitive-complexity score stays inside Biome's
+ * cap. Returns a spreadable fragment — empty when no root is supplied,
+ * `{ scanRoot }` otherwise — under the "Ambiguous field shapes are
+ * dishonest" present-when-meaningful contract.
+ */
+function maybeScanRootArg(scanRoot: string | undefined): { scanRoot?: string } {
+  return scanRoot === undefined ? {} : { scanRoot };
+}
+
 function maybeDedupeReviewCandidates(args: {
   readonly options: ScanFamilyResponseOptions;
   readonly reviewCandidates: readonly ReviewCandidate[];
   readonly criterionLevels: ReadonlyMap<string, string> | undefined;
   readonly buildArtifactPaths: ReadonlySet<string>;
   readonly fileEntries: readonly AssembledFile[];
+  /**
+   * Caller-supplied scan root for path normalization. Plumbed through to
+   * {@link computeCandidateFindingId} (via {@link materializeDedupedCandidate})
+   * so the per-emission `findingId` hashes a relative path regardless of
+   * whether the caller addressed files by an absolute or a `cwd`-relative
+   * shape. Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+   * identifiers must be addressable, not collision-prone" + "Per-tool
+   * review-candidate shape must agree across surfaces."
+   */
+  readonly scanRoot?: string;
 }): {
   readonly deduped: readonly DedupedReviewCandidate[] | undefined;
   /**
@@ -437,7 +514,8 @@ function maybeDedupeReviewCandidates(args: {
    */
   readonly filteredRaw: readonly ReviewCandidate[];
 } {
-  const { options, reviewCandidates, criterionLevels, buildArtifactPaths, fileEntries } = args;
+  const { options, reviewCandidates, criterionLevels, buildArtifactPaths, fileEntries, scanRoot } =
+    args;
   if (options.includeReviewCandidates !== true) {
     return { deduped: undefined, filteredRaw: reviewCandidates };
   }
@@ -462,6 +540,7 @@ function maybeDedupeReviewCandidates(args: {
     filtered,
     criterionLevels ?? new Map(),
     buildArtifactPaths,
+    scanRoot,
   );
   return { deduped, filteredRaw: filtered };
 }
@@ -564,6 +643,14 @@ function buildAssemblerWarningsField(args: {
     analysisCoverage,
     overlapResult.overlapFiles,
   );
+  // Per-style splits of the overlap-confirmed file list — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` per-style codes via the shared
+  // helper. Same fragment-classifier deduplication as the parent.
+  const perStyleLiteralFiles = computePerStyleTemplateLiteralFiles(
+    analysisCoverage,
+    overlapResult.overlapByStyle,
+  );
   // Q-SHARED-META-ARRAY-BUDGET-CAP: the assembler-seam meta block
   // already carries the capped `analysisCoverage.*` arrays with
   // their per-array `*Truncated: { shown, total }` siblings; derive
@@ -591,6 +678,7 @@ function buildAssemblerWarningsField(args: {
       : { sessionWrappersMismatchCwd: args.sessionWrappersMismatchCwd }),
     templateDirectivesOverlap,
     ...(templateLiteralFiles.length === 0 ? {} : { templateLiteralFiles }),
+    ...perStyleLiteralFilesField(perStyleLiteralFiles),
     ...(args.configSearchSawProjectMarker === undefined
       ? {}
       : { configSearchSawProjectMarker: args.configSearchSawProjectMarker }),
@@ -643,7 +731,13 @@ export function assembleScanFamilyResponse(
     verboseMeta,
     preset,
     discoveryDiagnostics,
-    actionableManual,
+    // `actionableManual` (the flat scalar) is intentionally NOT
+    // destructured: the per-scan-kind tally is derived directly from
+    // `actionableCriteriaPaths` so the upstream-vs-assembler split
+    // can never disagree. See `Composite headline counts are
+    // dishonest" + the Q15-MIN-CSS closure for why the bare scalar
+    // can't ride next to the per-lane sibling.
+    actionableCriteriaPaths,
     untargetedCriteria,
     configSource,
     rootSource,
@@ -653,6 +747,8 @@ export function assembleScanFamilyResponse(
     configSearchSawProjectMarker,
     configSearchedFromForWarning,
     criterionLevels,
+    scanRoot,
+    scope = "file",
   } = input;
   // Cross-surface count invariant: when the caller supplied raw
   // (pre-filter) violations, derive the parser/finder-honesty
@@ -694,13 +790,16 @@ export function assembleScanFamilyResponse(
   // `fixesByClass` carries the honest per-lane signal. `summary` was
   // dropped per "Composite headline counts are dishonest" — the
   // structured siblings on the plan carry the same data without a
-  // duplicated prose composite.
+  // duplicated prose composite. The per-scan-kind manual-review
+  // tally derives via the empty-vendor-paths default — see
+  // `defaultActionableManualLane` for the rationale.
   const plan = buildScanPlan({
     violations: nonNote.length,
     notes: notes.length,
     violationsWithoutAnyFix,
-    actionableManual,
+    actionableManualBySource: defaultActionableManualLane(actionableCriteriaPaths),
     untargetedCriteria,
+    scope,
     fixesByClass,
     // Threaded so the plan can append the structured
     // `external_handler_resolution_unavailable` code when any row
@@ -798,6 +897,7 @@ export function assembleScanFamilyResponse(
     buildSubstrateFiles(
       partitionParseStateFiles(parsedFiles, violationFilePaths),
       detectFragmentFiles(parsedFiles),
+      collectParserBailedRouteFiles(parsedFiles, violationFilePaths),
     ),
   );
   // Per-finding confidence parity, per-FILE axis (sibling of the per-
@@ -818,6 +918,28 @@ export function assembleScanFamilyResponse(
   const buildArtifactEntries = collectBuildArtifacts(parsedFiles);
   const buildArtifactPaths = new Set<string>(buildArtifactEntries.map((e) => e.path));
   fileEntries = enrichFindingsWithBuildArtifactPath(fileEntries, buildArtifactPaths);
+  // Per-finding propagation for the per-LINE axis on partial-parse
+  // files: when the parser stamped a 1-based head-error line
+  // (`parsedThroughLine`) on a `partialParseFiles[]` entry, findings
+  // emitted at lines past the boundary live in source the structured
+  // parser could not reach. The companion partial-parse helper above
+  // already attached `partial_parse` to every finding on the file
+  // (file-scoped, file-wide); this pass adds one level of granularity
+  // by tagging the slice past the boundary with
+  // `beyond_partial_parse_boundary` AND downgrading those findings'
+  // `confidence` to `"low"`. Doctrine source: docs/kb/architecture/
+  // ai-first-consumer.md "Parser-failure invalidates per-file
+  // confidence" — extended one level deeper. Closure picks downgrade-
+  // not-drop per "Surface, don't suppress": the finding stays in the
+  // response (regex finders that emit despite the AST bail are still
+  // potentially correct); the agent reads the additive caveat and
+  // decides. No-op fast path when no parsed file recorded a
+  // meaningful head-error line (object identity stable on the
+  // common case — clean-scan corpora pay no walk).
+  fileEntries = enrichFindingsBeyondPartialParseBoundary(
+    fileEntries,
+    buildParsedThroughLineMap(parsedFiles),
+  );
   // Per-finding propagation for the per-LOCATION axis: a finding's
   // `(filePath, line)` falls inside a recorded MDX code-demo prop's
   // template-literal body the parser descended into. Companion to the
@@ -831,6 +953,29 @@ export function assembleScanFamilyResponse(
   // (object identity stable on the common case — non-MDX repos pay
   // no walk).
   fileEntries = enrichFindingsWithCodeDemoPropMatch(fileEntries, input.codeDemoPropMatches);
+  // Per-finding propagation for the per-FILE axis on corpus-level
+  // warnings whose evidence carries a file list. Generalized companion
+  // to the per-LINE pass above: where the line-range gate tags only
+  // findings INSIDE a recorded code-demo prop body, this pass tags
+  // every finding on a file the warning's payload names — including
+  // findings outside any recorded body range. Doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations" extended to corpus-
+  // level warnings: when the warning channel ships
+  // `jsx_code_demo_prop_parsed_as_live_dom.files: ["docs/forms.mdx"]`
+  // and a per-finding entry on `docs/forms.mdx` ships at
+  // `confidence: "medium", couldBeWrongBecause: undefined`, the two
+  // surfaces disagree silently. This pass appends the warning code
+  // and downgrades confidence one step so the per-finding channel
+  // mirrors the corpus channel's attention-budget signal.
+  // The list is intentionally narrow — only `jsx_code_demo_prop_parsed_as_live_dom`
+  // for now. Other corpus-level warnings carrying file lists
+  // (`dynamic_content_container_detected`, `parser_bailed_on_non_jsx_in_tsx_route`,
+  // `linked_stylesheet_local_unresolved`) can opt in by extending the
+  // array; each entry is independent and propagates corpus-wide
+  // through this same helper.
+  // biome-ignore format: keep call on one line — file effective-line budget
+  fileEntries = enrichFindingsWithCorpusWarningFiles(fileEntries, buildCorpusWarningFilesFromCodeDemoMatches(input.codeDemoPropMatches));
   const meta = buildScanMeta({
     filesScanned: parsedFiles.length,
     ...(typeof filesWithAnyRuleEvaluated === "number" ? { filesWithAnyRuleEvaluated } : {}),
@@ -894,6 +1039,8 @@ export function assembleScanFamilyResponse(
       // re-pointed — so the post-hoist view carries the load-bearing
       // axis the filter reads.
       fileEntries,
+      // findingId path normalization — see `maybeDedupeReviewCandidates`.
+      ...maybeScanRootArg(scanRoot),
     });
 
   // (8) Warnings channel — extracted to keep this orchestrator's

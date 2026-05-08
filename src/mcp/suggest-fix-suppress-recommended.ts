@@ -40,6 +40,7 @@
  * internals module.
  */
 
+import type { Confidence } from "../output/agent-response/types.ts";
 import type { Violation } from "../types/violation.ts";
 import { isSuppressionFlavoredSuggestion } from "../utils/suppression-flavored-suggestion.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
@@ -89,7 +90,15 @@ export function buildSuppressRecommendedOutcome(args: {
   readonly explanation: string;
   readonly approach: string;
   readonly sourceContext: string;
-  readonly confidence: "high" | "medium" | "low";
+  /**
+   * Per-call confidence carried forward from the source finding via
+   * {@link import("../output/agent-response/build-finding.ts").resolveConfidence}.
+   * Widened from the prior `"high" | "medium" | "low"` ladder to the
+   * full {@link Confidence} union so the per-call surface can echo
+   * `"inherited"` on wrapper-call-site findings instead of rounding
+   * back into severity-derived buckets.
+   */
+  readonly confidence: Confidence;
   readonly criteria: readonly string[];
   readonly filePath: string;
   readonly snippetField: { readonly snippet?: string };

@@ -79,10 +79,16 @@ export interface Violation {
    * {@link import("./rule.ts").FixClass} and docs/adr/0007-violation-fix-class-metadata.md.
    *
    * Inlined on every violation so agents can batch-route findings at
-   * scan time without a per-finding `suggest_fix` round-trip. Distinct
-   * from `suggest_fix`'s response-level `kind: "edit" | "guidance"` —
-   * that describes what the suggest_fix payload *contains*; `fixClass`
-   * describes the *nature* of the fix the rule demands.
+   * scan time without a per-finding `suggest_fix` round-trip. Sibling
+   * of `suggest_fix`'s response-level `kind` discriminator: the
+   * per-call shape uses the same lane vocabulary (`mechanical →
+   * "edit"`, `verify-in-source → "verify-in-source"`, `runtime-only →
+   * "runtime-only"`, `guidance → "guidance"`, plus the suppression-
+   * flavored carve-out `"suppress-recommended"` and the no-match
+   * `"none"`) so per-finding `fixClass` and per-call `kind` partition
+   * the same finding into the same lane. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+   * agree with per-class plan tally."
    */
   readonly fixClass: import("./rule.ts").FixClass;
   /** Criterion IDs this violation counts against, filtered to enabled standards. */
@@ -863,6 +869,19 @@ export interface PerRuleCoverage {
    *     per-file `byFile[]` still carries the per-file degradation
    *     for triage. Cross-references the same `parseErrorFiles[]` /
    *     `partialParseFiles[]` evidence the per-file adjuster consumed.
+   *   - `"parse-bailed-non-jsx-in-tsx-route"` — at least one file
+   *     matching this rule's extension gate was routed through the TSX
+   *     parser despite a non-TSX natural parser (`.js` / `.ts` / `.mdx`)
+   *     AND produced zero findings on that file. The TSX parser silently
+   *     bails on relational expressions read as JSX (`r.length<b.length`)
+   *     so the recovered AST may have no findings even when the source
+   *     contains rule-relevant content. The same evidence drives the
+   *     `parser_bailed_on_non_jsx_in_tsx_route` (project-shape) and
+   *     `scan_file_parser_bail_no_findings` (single-file shape) warning
+   *     codes — the per-rule downgrade keeps the per-rule layer honest
+   *     when the warning channel reports the route ambiguity. Files that
+   *     parsed cleanly through their natural parser are NOT in scope for
+   *     this reason; only the silent-bail-suspect routing-mismatch case.
    *
    * Stamped by the MCP assembly layer (`src/mcp/scan-assembly.ts`), not
    * by the engine — rules and the per-rule-coverage builder stay pure
@@ -883,7 +902,8 @@ export interface PerRuleCoverage {
     | "scss-unresolved-variables"
     | "fragment-input-no-document-envelope"
     | "scss-partial-input"
-    | "corpus-parse-error-rate-above-threshold";
+    | "corpus-parse-error-rate-above-threshold"
+    | "parse-bailed-non-jsx-in-tsx-route";
   /**
    * Discriminator for an `eligible === 0` extension-gated row,
    * differentiating two structurally distinct gaps the original
@@ -1092,7 +1112,7 @@ export interface PerRuleCoverage {
   readonly byFile?: readonly {
     readonly path: string;
     readonly confidence: "high" | "medium" | "low";
-    readonly reason: "file-parse-error" | "partial-parse";
+    readonly reason: "file-parse-error" | "partial-parse" | "parse-bailed-non-jsx-in-tsx-route";
   }[];
 }
 

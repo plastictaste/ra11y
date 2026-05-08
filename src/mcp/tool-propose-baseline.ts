@@ -103,6 +103,7 @@ import {
 } from "./propose-baseline-classify.ts";
 import { buildRulesEvaluated } from "./rules-evaluated.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   applyRuleSettings,
   errorResult,
@@ -197,6 +198,11 @@ export const proposeBaselineTool: McpTool = {
       enabled: standards,
       files,
       level: session.config.level,
+      // Scan-root agreement with the rest of the project-rooted
+      // tools — see `src/mcp/tool-baseline.ts` for the parallel
+      // plumb. Keeps `findingGroupId` round-tripping across baseline
+      // / propose-baseline / scan_diff on identical cwd.
+      scanRoot: root,
     });
 
     const rawProposed = buildProposedEntries({
@@ -249,7 +255,8 @@ export const proposeBaselineTool: McpTool = {
       configSearchSawProjectMarker,
     });
     const warnings = noConfigFires ? (["no_config_found"] as const) : [];
-    const warningsDetails = noConfigFires ? { no_config_found: { searchedFrom: root } } : undefined;
+    const noConfigDetail = noConfigFoundWarningDetail({ searchedFrom: root, scannedRoot: root });
+    const warningsDetails = noConfigFires ? { no_config_found: noConfigDetail } : undefined;
 
     return textResult({
       proposed,

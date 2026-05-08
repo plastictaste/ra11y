@@ -20,7 +20,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   BASELINE_FILENAME,
   type BaselineEntry,
@@ -37,12 +37,14 @@ import {
   stagedFiles,
 } from "../utils/git.ts";
 import { logger } from "../utils/logger.ts";
+import { posixJoin, posixResolve } from "../utils/path.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { hoistAndBuildReferenceGuide } from "./reference-guide.ts";
 import { applyScanDiffTokenBudget } from "./scan-diff-budget.ts";
 import { scannedProject } from "./scanned-envelope.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   buildReferenceGuide,
   errorResult,
@@ -322,7 +324,9 @@ function computeNoConfigWarningField(args: {
   readonly cwd: string;
 }): {
   readonly warnings?: readonly ["no_config_found"];
-  readonly warningsDetails?: { readonly no_config_found: { readonly searchedFrom: string } };
+  readonly warningsDetails?: {
+    readonly no_config_found: { readonly searchedFrom: string } | Record<string, never>;
+  };
 } {
   const configSearchSawProjectMarker =
     args.configSource === null ? sawProjectMarkerInWalk(args.cwd) : false;
@@ -332,9 +336,20 @@ function computeNoConfigWarningField(args: {
     configSearchSawProjectMarker,
   });
   if (!fires) return {};
+  // Present-when-meaningful gate via shared helper: scan_diff's
+  // `cwd` is both the caller-supplied value and the resolved
+  // `scanned.root`. When the gate fires, the rich payload drops to
+  // the empty record because the agent already has the search base
+  // from its own input and `meta.scanned.root`.
   return {
     warnings: ["no_config_found"] as const,
-    warningsDetails: { no_config_found: { searchedFrom: args.cwd } },
+    warningsDetails: {
+      no_config_found: noConfigFoundWarningDetail({
+        searchedFrom: args.cwd,
+        callerCwd: args.cwd,
+        scannedRoot: args.cwd,
+      }),
+    },
   };
 }
 
@@ -552,8 +567,8 @@ function buildHunkNextStep(
 }
 
 function resolveBaselinePath(rel: string | undefined, cwd: string): string {
-  if (rel === undefined) return join(cwd, BASELINE_FILENAME);
-  return isAbsolute(rel) ? rel : resolve(cwd, rel);
+  if (rel === undefined) return posixJoin(cwd, BASELINE_FILENAME);
+  return isAbsolute(rel) ? rel : posixResolve(cwd, rel);
 }
 
 function resolveScanRoots(params: Record<string, unknown>, root: string): readonly string[] {

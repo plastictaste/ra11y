@@ -37,16 +37,16 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   type DetectedFramework,
   detectSsgFramework,
   type SsgFramework,
   ssgHint,
 } from "../../../src/mcp/ssg-detect.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-ssg-detect-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-ssg-detect-"));
   try {
     return await fn(dir);
   } finally {
@@ -108,7 +108,7 @@ describe("detectSsgFramework: canonical single-marker repos", () => {
   for (const { marker, name, buildOutput, buildCommand, body } of cases) {
     it(`resolves ${marker} → ${name} with build output "${buildOutput}" and command "${buildCommand}" at confidence "high"`, async () => {
       await withScratch(async (dir) => {
-        await writeFile(join(dir, marker), body);
+        await writeFile(posixJoin(dir, marker), body);
         // Unambiguous-filename markers ship `confidence: "high"`
         // — the filenames (`hugo.toml`, `astro.config.mjs`, etc.)
         // are not shared with non-SSG tooling, so a bare match is
@@ -131,7 +131,7 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
   // the filename, so each must resolve identically.
   it("resolves hugo.yaml to the hugo descriptor", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "hugo.yaml"), "baseURL: https://example.org/\n");
+      await writeFile(posixJoin(dir, "hugo.yaml"), "baseURL: https://example.org/\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("hugo");
     });
@@ -139,7 +139,7 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
 
   it("resolves astro.config.ts to the astro descriptor", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "astro.config.ts"), "export default {};\n");
+      await writeFile(posixJoin(dir, "astro.config.ts"), "export default {};\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("astro");
     });
@@ -147,7 +147,7 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
 
   it("resolves eleventy.config.js to the eleventy descriptor", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "eleventy.config.js"), "module.exports = () => {};\n");
+      await writeFile(posixJoin(dir, "eleventy.config.js"), "module.exports = () => {};\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("eleventy");
     });
@@ -155,7 +155,7 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
 
   it("resolves gatsby-config.ts to the gatsby descriptor", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "gatsby-config.ts"), "export default {};\n");
+      await writeFile(posixJoin(dir, "gatsby-config.ts"), "export default {};\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("gatsby");
     });
@@ -163,7 +163,7 @@ describe("detectSsgFramework: alternate markers within a framework", () => {
 
   it("resolves mkdocs.yaml (alternate extension) to the mkdocs descriptor", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "mkdocs.yaml"), "site_name: docs\n");
+      await writeFile(posixJoin(dir, "mkdocs.yaml"), "site_name: docs\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("mkdocs");
     });
@@ -191,7 +191,7 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('surfaces confidence: "low" for bare _config.yml with no jekyll-shaped neighbours', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
       expect(detectSsgFramework(dir)).toEqual({
         name: "jekyll",
         buildOutput: "_site/",
@@ -203,8 +203,8 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + _layouts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_layouts"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_layouts"));
       expect(detectSsgFramework(dir)).toEqual({
         name: "jekyll",
         buildOutput: "_site/",
@@ -216,8 +216,8 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + _includes/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_includes"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_includes"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
       expect(result?.confidence).toBe("medium");
@@ -226,8 +226,8 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + _posts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_posts"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_posts"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
       expect(result?.confidence).toBe("medium");
@@ -236,8 +236,8 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + _drafts/ to jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_drafts"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_drafts"));
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
       expect(result?.confidence).toBe("medium");
@@ -246,9 +246,9 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + Gemfile mentioning jekyll at confidence: "medium"', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
       await writeFile(
-        join(dir, "Gemfile"),
+        posixJoin(dir, "Gemfile"),
         'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
       );
       const result = detectSsgFramework(dir);
@@ -264,9 +264,9 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
     // declaration is. With sentinel-only evidence the framework still
     // ships, but at honest `low` confidence.
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
       await writeFile(
-        join(dir, "Gemfile"),
+        posixJoin(dir, "Gemfile"),
         'source "https://rubygems.org"\ngem "rails", "~> 7.1"\n',
       );
       const result = detectSsgFramework(dir);
@@ -281,8 +281,8 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
     // matters, since Jekyll resolves layouts by reading children. The
     // sentinel is still present, so the framework ships at `low`.
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await writeFile(join(dir, "_layouts"), "not a directory\n");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await writeFile(posixJoin(dir, "_layouts"), "not a directory\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
       expect(result?.confidence).toBe("low");
@@ -291,9 +291,9 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
 
   it('resolves _config.yml + _layouts/ + _includes/ to jekyll at confidence: "high" (≥2 corroborators)', async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_layouts"));
-      await mkdir(join(dir, "_includes"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
       expect(detectSsgFramework(dir)).toEqual({
         name: "jekyll",
         buildOutput: "_site/",
@@ -308,10 +308,10 @@ describe("detectSsgFramework: jekyll confidence is graded by corroborator count"
     // declaration) cross the high-confidence threshold even when no
     // second Jekyll-shaped directory is present.
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_layouts"));
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_layouts"));
       await writeFile(
-        join(dir, "Gemfile"),
+        posixJoin(dir, "Gemfile"),
         'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
       );
       const result = detectSsgFramework(dir);
@@ -340,10 +340,10 @@ describe("detectSsgFramework: sub-scope inheritance", () => {
       // Simulate a parent corpus with full Jekyll evidence at `dir`,
       // and a sub-template directory `dir/templates/site-42/` that
       // has none of its own.
-      await writeFile(join(dir, "_config.yml"), "title: Parent corpus\n");
-      await mkdir(join(dir, "_layouts"));
-      await mkdir(join(dir, "_includes"));
-      const subDir = join(dir, "templates", "site-42");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: Parent corpus\n");
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const subDir = posixJoin(dir, "templates", "site-42");
       await mkdir(subDir, { recursive: true });
       // The parent resolves cleanly; the sub-tree does not.
       expect(detectSsgFramework(dir)?.name).toBe("jekyll");
@@ -357,7 +357,7 @@ describe("detectSsgFramework: sub-scope inheritance", () => {
     // above, this pins the "probe at root only, never walk up"
     // invariant from both directions.
     await withScratch(async (dir) => {
-      const deep = join(dir, "src", "components", "card");
+      const deep = posixJoin(dir, "src", "components", "card");
       await mkdir(deep, { recursive: true });
       expect(detectSsgFramework(deep)).toBeNull();
     });
@@ -370,7 +370,7 @@ describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
   // fabricate a Hugo classification on the filename alone.
   it("returns null for a bare config.toml with no [markup] section", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "config.toml"), '[package]\nname = "x"\nversion = "0.1.0"\n');
+      await writeFile(posixJoin(dir, "config.toml"), '[package]\nname = "x"\nversion = "0.1.0"\n');
       expect(detectSsgFramework(dir)).toBeNull();
     });
   });
@@ -383,7 +383,7 @@ describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
   it('resolves config.toml with a [markup] section header to hugo at confidence: "high"', async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "config.toml"),
+        posixJoin(dir, "config.toml"),
         'baseURL = "https://example.org/"\n\n[markup]\n  [markup.goldmark]\n    [markup.goldmark.renderer]\n      unsafe = true\n',
       );
       const result = detectSsgFramework(dir);
@@ -399,7 +399,7 @@ describe("detectSsgFramework: legacy Hugo config.toml disambiguation", () => {
   it("ignores the string [markup] inside a TOML value on a non-Hugo config", async () => {
     await withScratch(async (dir) => {
       await writeFile(
-        join(dir, "config.toml"),
+        posixJoin(dir, "config.toml"),
         'description = "note: uses [markup] extensions"\nname = "x"\n',
       );
       expect(detectSsgFramework(dir)).toBeNull();
@@ -415,9 +415,9 @@ describe("detectSsgFramework: declaration order breaks ties", () => {
   // its detection precondition (see jekyll corroboration block above).
   it("prefers jekyll over astro when both markers are present (with jekyll corroboration)", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "_config.yml"), "title: My site\n");
-      await mkdir(join(dir, "_layouts"));
-      await writeFile(join(dir, "astro.config.mjs"), "export default {};\n");
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_layouts"));
+      await writeFile(posixJoin(dir, "astro.config.mjs"), "export default {};\n");
       const result = detectSsgFramework(dir);
       expect(result?.name).toBe("jekyll");
     });
@@ -438,8 +438,136 @@ describe("detectSsgFramework: empty repo", () => {
 
   it("returns null in a plain Node project (package.json only)", async () => {
     await withScratch(async (dir) => {
-      await writeFile(join(dir, "package.json"), '{"name":"x"}\n');
+      await writeFile(posixJoin(dir, "package.json"), '{"name":"x"}\n');
       expect(detectSsgFramework(dir)).toBeNull();
+    });
+  });
+});
+
+describe("detectSsgFramework: sentinelless Jekyll path (no _config.yml)", () => {
+  // The closure for the silent-miss case where a corpus has unambiguous
+  // Jekyll evidence (`_layouts/`, `_includes/`, frontmatter fences,
+  // Liquid/ERB tokens) but `_config.yml` is absent. The prior closure
+  // returned `null` and silently dropped the framework signal; per
+  // `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is signal,
+  // not clutter," the corroborating evidence the scanner has access to
+  // must reach the framework label rather than be ignored. The
+  // sentinelless path requires BOTH `_layouts/` AND `_includes/` at
+  // root (the conservative discriminator — Hugo uses `layouts/` without
+  // an underscore; single-directory matches are too weak to fingerprint
+  // Jekyll on). Confidence stays bounded at `medium` because no
+  // sentinel filename was observed.
+
+  it('surfaces confidence: "low" for _layouts/ + _includes/ alone with no corpus evidence', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      expect(detectSsgFramework(dir)).toEqual({
+        name: "jekyll",
+        buildOutput: "_site/",
+        buildCommand: "bundle exec jekyll build",
+        confidence: "low",
+      });
+    });
+  });
+
+  it('lifts to confidence: "medium" with _layouts/ + _includes/ + frontmatter fence corpus signal', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const result = detectSsgFramework(dir, { hasFrontmatterFence: true });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it('lifts to confidence: "medium" with _layouts/ + _includes/ + Liquid/ERB token corpus signal', async () => {
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const result = detectSsgFramework(dir, { hasLiquidOrErbTokens: true });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it("stays bounded at medium even with both corpus signals present (no sentinel was observed)", async () => {
+    // The sentinelless path caps at `medium` per the doctrine that
+    // sentinel-bearing matches reach `high` because the filename
+    // presence is independent evidence; a sentinelless match stays
+    // one step shy so the agent reading `confidence: "medium"` knows
+    // to verify the absence of `_config.yml` rather than treating
+    // the classification as fully grounded.
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const result = detectSsgFramework(dir, {
+        hasFrontmatterFence: true,
+        hasLiquidOrErbTokens: true,
+      });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("medium");
+    });
+  });
+
+  it("returns null when only _layouts/ is present (single-corroborator predicate is too weak)", async () => {
+    // Hugo uses `layouts/` (no underscore) and various templating
+    // tools ship a `_layouts/` directory in isolation; demanding the
+    // pair is the conservative discriminator that keeps single-
+    // directory matches from misclassifying.
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      expect(detectSsgFramework(dir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("returns null when only _includes/ is present (single-corroborator predicate is too weak)", async () => {
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_includes"));
+      expect(detectSsgFramework(dir, { hasLiquidOrErbTokens: true })).toBeNull();
+    });
+  });
+
+  it("returns null when _layouts is a regular file (Jekyll requires the directory shape)", async () => {
+    await withScratch(async (dir) => {
+      await writeFile(posixJoin(dir, "_layouts"), "not a directory\n");
+      await mkdir(posixJoin(dir, "_includes"));
+      expect(detectSsgFramework(dir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("does NOT walk up to ancestor directories looking for the dir pair", async () => {
+    // Sub-scope inheritance invariant: the sentinelless path probes
+    // EXACTLY at `root`. A sub-tree without its own `_layouts/` +
+    // `_includes/` returns `null` even when an ancestor has both —
+    // pairs with the no-walk-up rule on the sentinel-bearing path.
+    await withScratch(async (dir) => {
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const subDir = posixJoin(dir, "templates", "site-42");
+      await mkdir(subDir, { recursive: true });
+      // Parent resolves on the sentinelless path; sub-tree does not.
+      expect(detectSsgFramework(dir)?.name).toBe("jekyll");
+      expect(detectSsgFramework(subDir, { hasFrontmatterFence: true })).toBeNull();
+    });
+  });
+
+  it("the real config-marker path takes precedence over the sentinelless path", async () => {
+    // When both `_config.yml` AND the dir pair exist, the
+    // sentinel-bearing Jekyll path runs first and the corroboration
+    // count includes the dir pair — so the result reaches `high`
+    // rather than the sentinelless cap of `medium`. Documents the
+    // ordering invariant.
+    await withScratch(async (dir) => {
+      await writeFile(posixJoin(dir, "_config.yml"), "title: My site\n");
+      await mkdir(posixJoin(dir, "_layouts"));
+      await mkdir(posixJoin(dir, "_includes"));
+      const result = detectSsgFramework(dir, {
+        hasFrontmatterFence: true,
+        hasLiquidOrErbTokens: true,
+      });
+      expect(result?.name).toBe("jekyll");
+      expect(result?.confidence).toBe("high");
     });
   });
 });

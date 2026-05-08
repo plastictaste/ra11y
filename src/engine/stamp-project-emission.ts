@@ -32,6 +32,7 @@ export function stampProjectEmission(
   criteriaTitles: readonly string[],
   sourcesByPath: ReadonlyMap<string, string>,
   astsByPath: ReadonlyMap<string, Ast>,
+  scanRoot?: string,
 ): Violation {
   const findingId = computeFindingId({
     ruleId: rule.id,
@@ -40,6 +41,14 @@ export function stampProjectEmission(
     column: em.location.column,
     // Conditional spread per exactOptionalPropertyTypes; see rule-runner.ts.
     ...(em.variantKey ? { variantKey: em.variantKey } : {}),
+    // Per-emission `findingId` cross-surface invariant — when the
+    // caller supplied a scan root, plumb through to the finding-id
+    // hash so a `scan_file` (relative path input) and `scan_project`
+    // / `checklist` (absolute discovery walk) call produce the same
+    // id on the same conceptual emission. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+    // identifiers must be addressable, not collision-prone."
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   const findingGroupId = computeFindingGroupId({
     ruleId: rule.id,

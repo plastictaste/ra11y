@@ -10,12 +10,17 @@
  *     null` shipping without a paired `warnings: ["no_config_found"]`
  *     code is the canonical ambiguous shape; the agent can't tell
  *     "tool ran but no config" from "tool never ran" without the code.
- *   - The paired `warningsDetails.no_config_found.searchedFrom: <cwd>`
- *     payload gives the agent one canonical answer to "where was the
- *     loader's search root?" regardless of which tool emitted it,
- *     closing the cross-surface inconsistency where some emitters
- *     surfaced the search root via `scanned.root` and others via
- *     `meta.cwd`.
+ *   - "Verbose meta is signal, not clutter — `configSearchedFrom` is
+ *     present-when-meaningful, omitted when it would just echo the
+ *     caller's `cwd` or a `scanned.root` already in the response."
+ *     The `warningsDetails.no_config_found.searchedFrom` payload is
+ *     the warning-channel sibling of `meta.configSearchedFrom`: when
+ *     the loader's walk-up base equals the caller-supplied `cwd` or
+ *     the resolved `scanned.root` (the common case, since these
+ *     project-rooted tools all walk from the cwd / root), the rich
+ *     payload drops to `{}` (binary-presence shape) so the bare code
+ *     carries the signal. The agent reads `meta.scanned.root` for
+ *     the canonical search-base answer.
  *
  * Predicate (re-stated from `src/mcp/config-search-marker.ts`):
  *   1. `configSource === null` (loader walk-up returned nothing).
@@ -34,9 +39,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -89,7 +94,7 @@ function body<T>(resp: JsonRpcResponse): T {
 interface NoConfigEnvelope {
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
-    readonly no_config_found?: { readonly searchedFrom: string };
+    readonly no_config_found?: { readonly searchedFrom?: string };
   };
   readonly meta?: { readonly configSource?: string | null };
 }
@@ -111,13 +116,16 @@ function noConfigEnvelope(raw: Record<string, unknown>): NoConfigEnvelope {
  * through the assembler differently.
  */
 async function makeNoConfigFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-no-config-"));
-  await writeFile(join(dir, "package.json"), JSON.stringify({ name: "fixture", version: "0.0.0" }));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-no-config-"));
+  await writeFile(
+    posixJoin(dir, "package.json"),
+    JSON.stringify({ name: "fixture", version: "0.0.0" }),
+  );
   // Create 12 HTML files so files.length >= 10. Each file is shaped to
   // produce one `media/alt-text-missing` violation.
   for (let i = 0; i < 12; i++) {
     await writeFile(
-      join(dir, `page-${i}.html`),
+      posixJoin(dir, `page-${i}.html`),
       `<html><body><img src="a.png"><p>page ${i}</p></body></html>`,
     );
   }
@@ -125,7 +133,7 @@ async function makeNoConfigFixture(): Promise<string> {
 }
 
 describe("no_config_found warning is consistent across every project-rooted tool", () => {
-  it("scan_project, coverage, checklist all emit `no_config_found` with the same `searchedFrom` payload on the same cwd", async () => {
+  it("scan_project, coverage, checklist all emit `no_config_found` with the same payload (empty record when search base echoes cwd) on the same cwd", async () => {
     const dir = await makeNoConfigFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -151,13 +159,18 @@ describe("no_config_found warning is consistent across every project-rooted tool
     expect(coverage.warnings ?? []).toContain("no_config_found");
     expect(checklist.warnings ?? []).toContain("no_config_found");
 
-    // Every surface ships the same `searchedFrom: <cwd>` payload.
-    expect(scanProj.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
-    expect(coverage.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
-    expect(checklist.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
+    // Present-when-meaningful gate: caller passed `cwd: dir`, the
+    // resolved `scanned.root` is `dir`, the loader walked up from
+    // `dir`. `searchedFrom: dir` would be a pure echo of `cwd` AND
+    // `scanned.root`. The shared helper drops the rich payload to
+    // the empty record on every surface; the bare warning code is
+    // the canonical signal.
+    expect(scanProj.warningsDetails?.no_config_found).toEqual({});
+    expect(coverage.warningsDetails?.no_config_found).toEqual({});
+    expect(checklist.warningsDetails?.no_config_found).toEqual({});
   });
 
-  it("list_suppressions and propose_baseline and propose_config emit `no_config_found` with `searchedFrom: cwd`", async () => {
+  it("list_suppressions and propose_baseline and propose_config emit `no_config_found` with the empty-record payload when search base echoes cwd", async () => {
     const dir = await makeNoConfigFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -173,16 +186,19 @@ describe("no_config_found warning is consistent across every project-rooted tool
     expect(proposeB.warnings ?? []).toContain("no_config_found");
     expect(proposeC.warnings ?? []).toContain("no_config_found");
 
-    expect(listSupp.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
-    expect(proposeB.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
-    expect(proposeC.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
+    // Same present-when-meaningful gate as the scan-family surfaces:
+    // searchedFrom would echo `cwd` / `scanned.root`, so the rich
+    // payload drops to `{}` on every surface.
+    expect(listSupp.warningsDetails?.no_config_found).toEqual({});
+    expect(proposeB.warningsDetails?.no_config_found).toEqual({});
+    expect(proposeC.warningsDetails?.no_config_found).toEqual({});
   });
 
-  it("scan_diff (baseline mode) emits `no_config_found` with `searchedFrom: cwd` when run against a config-less Node project", async () => {
+  it("scan_diff (baseline mode) emits `no_config_found` with the empty-record payload when search base echoes cwd", async () => {
     const dir = await makeNoConfigFixture();
     // Seed an empty baseline so scan_diff doesn't bail before reaching
     // the warning-emission site.
-    const baselinePath = join(dir, ".ra11y-baseline.json");
+    const baselinePath = posixJoin(dir, ".ra11y-baseline.json");
     await writeFile(
       baselinePath,
       JSON.stringify({ version: 1, generatedAt: new Date().toISOString(), violations: [] }),
@@ -193,6 +209,8 @@ describe("no_config_found warning is consistent across every project-rooted tool
     ]);
     const scanDiff = noConfigEnvelope(body<Record<string, unknown>>(responses[1]));
     expect(scanDiff.warnings ?? []).toContain("no_config_found");
-    expect(scanDiff.warningsDetails?.no_config_found).toEqual({ searchedFrom: dir });
+    // Same gate: `cwd` and `scanned.root` already carry the search
+    // base, so the warning detail drops to `{}`.
+    expect(scanDiff.warningsDetails?.no_config_found).toEqual({});
   });
 });
