@@ -1,0 +1,18 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns="http://www.w3.org/2000/svg">
+<defs>
+<font id="ui-icons" horiz-adv-x="1200">
+<font-face font-family="ui-icons" units-per-em="1200" ascent="960" descent="-240" />
+<missing-glyph horiz-adv-x="500" />
+<glyph unicode="&#xe000;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe001;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe002;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe003;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe004;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe005;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe006;" d="M0 0h1000v1000H0z" />
+<glyph unicode="&#xe007;" d="M0 0h1000v1000H0z" />
+</font>
+</defs>
+</svg>
