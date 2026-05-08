@@ -1,7 +1,7 @@
 ---
 title: "Coverage Matrix"
 description: "Per-criterion rule and finder coverage across all built-in standards."
-generated: "2026-05-07"
+generated: "2026-05-08"
 ---
 
 # Coverage Matrix
