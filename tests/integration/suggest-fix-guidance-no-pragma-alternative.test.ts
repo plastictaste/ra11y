@@ -61,9 +61,7 @@ function alternativesOf(payload: Record<string, unknown>): readonly Alternative[
 }
 
 function mentionsPragmaBoilerplate(alt: Alternative): boolean {
-  return (
-    alt.explanation.includes("ra11y-disable") || alt.approach.includes("suppression pragma")
-  );
+  return alt.explanation.includes("ra11y-disable") || alt.approach.includes("suppression pragma");
 }
 
 describe("suggest_fix kind: 'guidance' does not ship boilerplate pragma alternative", () => {

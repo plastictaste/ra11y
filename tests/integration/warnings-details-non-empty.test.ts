@@ -251,7 +251,7 @@ describe("warningsDetails non-empty payload invariant — every payload-bearing 
     ];
 
     for (const { name, env } of surfaces) {
-      const payload = (env.warningsDetails ?? {})["parser_bailed_zero_findings"] as
+      const payload = env.warningsDetails?.["parser_bailed_zero_findings"] as
         | Record<string, unknown>
         | undefined;
       expect(payload, `${name}: parser_bailed_zero_findings payload missing`).toBeDefined();
@@ -291,7 +291,7 @@ describe("warningsDetails non-empty payload invariant — every payload-bearing 
     ];
 
     for (const { name, env } of surfaces) {
-      const payload = (env.warningsDetails ?? {})["parser_bailed_on_non_jsx_in_tsx_route"] as
+      const payload = env.warningsDetails?.["parser_bailed_on_non_jsx_in_tsx_route"] as
         | Record<string, unknown>
         | undefined;
       expect(
