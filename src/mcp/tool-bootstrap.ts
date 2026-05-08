@@ -284,6 +284,7 @@ export const bootstrapTool: McpTool = {
         writeBaseline,
         wrappers: wrappersPayload,
         root,
+        embeddedScan: scan,
       }),
       meta: {
         scanned: scannedProject(root),
@@ -1153,7 +1154,30 @@ function buildNextStepStructured(args: {
   readonly writeBaseline: boolean;
   readonly wrappers: WrappersSubset;
   readonly root: string;
+  readonly embeddedScan: unknown;
 }): NextStepStructured {
+  // Truncation / bulk-catalog override: when the embedded `scan_project`
+  // leg shipped a truncation- or bulk-shape warning code AND the
+  // upstream response carries a narrowing `nextStepStructured`,
+  // propagate it verbatim to the bootstrap surface. The upstream
+  // already routes to a scope-narrowing call (`scan_file` on the
+  // top-impact non-vendor file, `coverage` on the manual-review
+  // angle, or `propose_config` for a bulk-vendor exclude block) per
+  // `scan-project-slim-next-step.ts` and the bulk-vendor / small-
+  // demo-catalog overrides; bootstrap re-emitting `{ tool:
+  // "scan_project", args: {} }` would point the agent back at the
+  // same scope that just produced the truncation. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+  // must terminate at a narrowing tool, never form a cycle between
+  // transport-failing siblings": when truncation/bulk fires, the
+  // forward step must reduce scope. Checked first so the override
+  // wins over the baseline-written and dry-run-with-violations
+  // branches below — narrowing is the load-bearing recommendation
+  // when the embedded scan signals it couldn't fit the full result.
+  const embeddedNarrowing = readEmbeddedNarrowingNextStep(args.embeddedScan);
+  if (embeddedNarrowing !== null) {
+    return embeddedNarrowing;
+  }
   // Post-write: the grandfathered baseline is on disk, and the
   // canonical verify-in-CI move is `baseline check`. Checked first so
   // the write path wins over the violations branch below (writing a
@@ -1197,4 +1221,65 @@ function buildNextStepStructured(args: {
     return { tool: "scan_project", args: {} };
   }
   return { tool: "scan_project", args: {} };
+}
+
+/**
+ * Warning codes whose presence on the embedded scan-leg response
+ * means the underlying scan was scope-bounded — either truncated by
+ * the host token cap, dropped per-file findings to fit the envelope,
+ * or detected a bulk-catalog corpus shape that argues for scope
+ * narrowing. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "NextStep handoffs must terminate at a narrowing tool, never form
+ * a cycle between transport-failing siblings": when any of these
+ * fires, the forward step must reduce scope rather than re-issue
+ * `scan_project` against the same args that produced the truncation.
+ */
+const TRUNCATION_OR_BULK_WARNING_CODES = new Set<string>([
+  "response_token_budget_truncated",
+  "truncated_files_dropped",
+  "response_dropped_files_oversize",
+  "bulk_catalog_detected",
+]);
+
+/**
+ * Reads a narrowing `nextStepStructured` off the embedded scan-leg
+ * response when the scan's own warnings include a truncation- or
+ * bulk-shape code. Returns the upstream structured hint verbatim so
+ * the bootstrap surface forwards the same scope-narrowing
+ * recommendation the upstream already produced (e.g. `scan_file`
+ * on the top non-vendor file, `coverage` on the manual-review
+ * angle, or `propose_config` on a bulk-vendor exclude block). The
+ * upstream's narrowing logic lives in `scan-project-slim-next-step.ts`
+ * and the bulk-vendor / small-demo-catalog overrides in
+ * `tool-scan-project.ts`; bootstrap re-deriving narrowing here would
+ * duplicate that logic.
+ *
+ * Returns `null` when:
+ *   - the embedded scan is not an object (defensive over forwarded
+ *     JSON the bootstrap doesn't own),
+ *   - no truncation/bulk warning fired (the override doesn't apply
+ *     and the existing baseline / wrappers / scan_project branches
+ *     pick the next step), or
+ *   - the upstream `nextStepStructured` is missing or malformed (no
+ *     narrowing recommendation to propagate; fall through to the
+ *     existing logic rather than synthesize one).
+ *
+ * The override stays additive: when it returns null, the existing
+ * branch logic runs unchanged.
+ */
+function readEmbeddedNarrowingNextStep(scan: unknown): NextStepStructured | null {
+  if (!scan || typeof scan !== "object") return null;
+  const record = scan as Record<string, unknown>;
+  const warnings = readStringArray(record, "warnings");
+  if (!warnings.some((code) => TRUNCATION_OR_BULK_WARNING_CODES.has(code))) {
+    return null;
+  }
+  const upstreamNext = record["nextStepStructured"];
+  if (!upstreamNext || typeof upstreamNext !== "object") return null;
+  const upstreamRecord = upstreamNext as Record<string, unknown>;
+  const tool = upstreamRecord["tool"];
+  const upstreamArgs = upstreamRecord["args"];
+  if (typeof tool !== "string" || tool.length === 0) return null;
+  if (!upstreamArgs || typeof upstreamArgs !== "object") return null;
+  return { tool, args: upstreamArgs as Record<string, unknown> };
 }
