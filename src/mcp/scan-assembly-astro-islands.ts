@@ -114,9 +114,7 @@ const ASTRO_ISLAND_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
  * runs. Empty array when no astro-island files are present — callers
  * conditional-spread on `length > 0`.
  */
-export function detectAstroIslandsUnrenderedFiles(
-  files: readonly ParsedFile[],
-): readonly string[] {
+export function detectAstroIslandsUnrenderedFiles(files: readonly ParsedFile[]): readonly string[] {
   const out: string[] = [];
   for (const file of files) {
     if (!file.filePath.toLowerCase().endsWith(".astro")) continue;

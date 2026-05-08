@@ -33,7 +33,6 @@ import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { posixResolve } from "../utils/path.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
-import { runSubstrateAdjusterCascade } from "./substrate-adjuster-cascade.ts";
 // biome-ignore format: keep import on one line — file effective-line budget
 import { fingerprintParsedFiles, stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
@@ -42,7 +41,6 @@ import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-par
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
-import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import {
   buildScanMeta,
   buildScanPlan,
@@ -50,7 +48,9 @@ import {
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
 } from "./scan-assembly.ts";
+import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import type { McpSession } from "./session.ts";
+import { runSubstrateAdjusterCascade } from "./substrate-adjuster-cascade.ts";
 import { suppressionAudit } from "./suppression-audit.ts";
 import { collapseVendorCssFindings } from "./vendor-dedupe.ts";
 import { coupleSeverityToVerifyTokens } from "./violation-severity-coupling.ts";

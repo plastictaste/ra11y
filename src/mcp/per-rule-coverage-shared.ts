@@ -38,10 +38,6 @@ import {
   collectParserBailedRouteFiles,
 } from "./parser-bail-route-adjustment.ts";
 import {
-  applyAstroIslandUnrenderedAdjustment,
-  detectAstroIslandsUnrenderedFiles,
-} from "./scan-assembly-astro-islands.ts";
-import {
   applyFragmentInputAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   detectFragmentFiles,
@@ -49,6 +45,10 @@ import {
   type PerRuleCoverageMetaFragment,
   perRuleCoverageMetaFragment,
 } from "./scan-assembly.ts";
+import {
+  applyAstroIslandUnrenderedAdjustment,
+  detectAstroIslandsUnrenderedFiles,
+} from "./scan-assembly-astro-islands.ts";
 import {
   applyScssPartialInputAdjustment,
   detectScssPartialFiles,

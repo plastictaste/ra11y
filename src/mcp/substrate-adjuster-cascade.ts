@@ -24,11 +24,11 @@ import type { ParsedFile } from "../engine/scanner.ts";
 import type { Rule } from "../types/rule.ts";
 import type { PerRuleCoverage } from "../types/violation.ts";
 import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
-import { applyAstroIslandUnrenderedAdjustment } from "./scan-assembly-astro-islands.ts";
 import {
   applyFragmentInputAdjustment,
   applyScssUnresolvedVariablesAdjustment,
 } from "./scan-assembly.ts";
+import { applyAstroIslandUnrenderedAdjustment } from "./scan-assembly-astro-islands.ts";
 import { applyScssPartialInputAdjustment } from "./scss-partial-adjustment.ts";
 
 export interface SubstrateAdjusterCascadeArgs {

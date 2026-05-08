@@ -101,7 +101,6 @@ import {
   buildRuleCoverageDerivative,
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
-import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import {
   buildScanMeta,
   buildScanPlan,
@@ -112,6 +111,7 @@ import {
   outputFilePathSet,
   partitionParseStateFiles,
 } from "./scan-assembly.ts";
+import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import { combineTemplateLiteralFiles } from "./scan-time-warnings.ts";
 import type { SuppressionAuditEntry } from "./suppression-audit.ts";
 import {
