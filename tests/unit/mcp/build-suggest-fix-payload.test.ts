@@ -588,15 +588,14 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
     expect(payload).not.toHaveProperty("sourceContext");
   });
 
-  it("no-fixPaths guidance: populates alternatives with per-call enrichments (verify-by-reading + suppression pragma)", () => {
+  it("no-fixPaths guidance: populates alternatives with the per-call verify-by-reading enrichment", () => {
     // Doctrine (CLAUDE.md §1 "Ambiguous field shapes are dishonest" +
     // tool description promise): the tool advertises `kind: "guidance"`
     // returns "a ranked `primary` fix and `alternatives`." Shipping
     // `kind: "guidance"` with NO `alternatives` array makes the slot a
     // phantom — the promise dishonest. The prose-only fallback has no
     // rule-supplied paths to demote, so we populate alternatives with
-    // per-call enrichments derived from the file + criteria the agent
-    // already passed (deterministic, not heuristic).
+    // a deterministic per-call enrichment derived from filePath + line.
     const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
     expect(payload["kind"]).toBe("guidance");
     const alternatives = payload["alternatives"] as ReadonlyArray<{
@@ -614,24 +613,26 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
     }
   });
 
-  it("no-fixPaths guidance: alternatives include a suppression-pragma path naming the criterion", () => {
-    // The deterministic source-level disable is doctrine's escape hatch
-    // for "agent investigated, dismissed" cases (see ai-first-consumer.md
-    // "No heuristic suppression"). The pragma form is per-extension and
-    // already canonical via `pragmaFormForExtension`; surfacing it as an
-    // alternative gives the agent a ready-to-paste second path when the
-    // primary advice doesn't apply.
+  it("no-fixPaths guidance: alternatives do NOT include a boilerplate suppression-pragma entry", () => {
+    // Doctrine (`docs/kb/architecture/ai-first-consumer.md` "Suppress-
+    // recommended is a distinct discriminator from guidance"): bolting
+    // a pragma alternative onto every `kind: "guidance"` response —
+    // regardless of whether the rule's evidence model honestly concedes
+    // the criterion may not apply on this substrate — dilutes the
+    // discriminator that exists to resolve exactly that ambiguity. The
+    // pragma path belongs to `kind: "suppress-recommended"` only (which
+    // already ships a top-level `pragma` field with `criterionId`
+    // sibling).
     const payload = buildSuggestFixPayload(baseArgs(violationGuidanceOnly()));
+    expect(payload["kind"]).toBe("guidance");
     const alternatives = payload["alternatives"] as ReadonlyArray<{
       approach: string;
       explanation: string;
     }>;
-    const pragmaAlt = alternatives.find((a) => a.explanation.includes("ra11y-disable"));
-    expect(pragmaAlt).toBeDefined();
-    // The fixture criterion is `wcag22:2.1.1`; the pragma must scope to it.
-    expect(pragmaAlt?.explanation).toContain("wcag22:2.1.1");
-    // The fixture filePath ends in .tsx → JSX expression form.
-    expect(pragmaAlt?.explanation).toContain("{/* ra11y-disable wcag22:2.1.1 */}");
+    const pragmaAlt = alternatives.find(
+      (a) => a.explanation.includes("ra11y-disable") || a.approach.includes("suppression pragma"),
+    );
+    expect(pragmaAlt).toBeUndefined();
   });
 
   it("no-fixPaths guidance: alternatives include a verify-by-reading prompt naming the file and line", () => {
@@ -647,10 +648,9 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
   });
 
   it("no-fixPaths guidance: never emits `alternatives: []` (always at least one per-call enrichment)", () => {
-    // Even when the rule has no fixPaths and the criteria array is empty
-    // — the verify-by-reading prompt is always available because the file
-    // and line are part of the request. The enrichments are scoped per-
-    // call, so the alternatives array is never empty.
+    // The verify-by-reading prompt is always available because the
+    // file and line are part of the request, so the alternatives array
+    // is never empty even when the rule has no fixPaths.
     const match = violationGuidanceOnly({ criteria: [] });
     const payload = buildSuggestFixPayload(baseArgs(match));
     expect(payload["kind"]).toBe("guidance");
@@ -712,9 +712,10 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
     // Same doctrine as the no-fixPaths branch — when the rule's
     // structured `fixPaths.alternatives` is empty, the response must not
     // ship `kind: "guidance"` with NO `alternatives` (the slot would be
-    // a phantom against the tool's advertised contract). Per-call
-    // enrichments derived from filePath + criteria fill the slot with
-    // honest, non-heuristic options the agent can act on.
+    // a phantom against the tool's advertised contract). The per-call
+    // verify-by-reading enrichment derived from filePath + line fills
+    // the slot with an honest, non-heuristic option the agent can act
+    // on.
     const match = violationWithFixPaths({
       fixPaths: {
         primary: { label: "Review cross-file handler binding" },
@@ -729,9 +730,12 @@ describe("buildSuggestFixPayload — kind: 'guidance' primary/alternatives shape
     }>;
     expect(Array.isArray(alternatives)).toBe(true);
     expect(alternatives.length).toBeGreaterThan(0);
-    // Per-call enrichments include the suppression-pragma escape hatch.
+    // Per "Suppress-recommended is a distinct discriminator from
+    // guidance," the pragma alternative no longer rides on
+    // `kind: "guidance"` responses — it belongs to the suppress-
+    // recommended lane only.
     const pragmaAlt = alternatives.find((a) => a.explanation.includes("ra11y-disable"));
-    expect(pragmaAlt).toBeDefined();
+    expect(pragmaAlt).toBeUndefined();
   });
 
   it("guidance: verifyCommandStructured stays at top level (not under primary)", () => {

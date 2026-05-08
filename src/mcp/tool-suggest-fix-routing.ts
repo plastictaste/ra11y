@@ -176,10 +176,10 @@ function routeMatchedFallback(args: {
   const primaryConfidence: Confidence = match.suggestion ? confidence : "low";
   // No rule-supplied paths to demote on this branch — populate
   // `alternatives` with per-call enrichments derived deterministically
-  // from filePath + criteria so the slot the tool description promised
-  // is real, not a phantom. See `suggest-fix-guidance-shape.ts`
+  // from filePath + line so the slot the tool description promised is
+  // real, not a phantom. See `suggest-fix-guidance-shape.ts`
   // `buildPerCallEnrichmentAlternatives` for the doctrine rationale.
-  const enrichments = buildPerCallEnrichmentAlternatives(a.filePath, a.line, match.criteria);
+  const enrichments = buildPerCallEnrichmentAlternatives(a.filePath, a.line);
   // When the rule's suggestion text concedes the criterion may not
   // apply on this substrate and points the agent at the source-level
   // disable pragma ("suppress with <!-- ra11y-disable wcag22:1.3.1 -->"),

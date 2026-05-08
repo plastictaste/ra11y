@@ -245,11 +245,7 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   // the prose-only fallback lane in `tool-suggest-fix-routing.ts`.
   const guidanceAlternatives =
     buildGuidanceAlternatives(alternatives) ??
-    buildPerCallEnrichmentAlternatives(
-      match.location.filePath,
-      match.location.line,
-      match.criteria,
-    );
+    buildPerCallEnrichmentAlternatives(match.location.filePath, match.location.line);
   // When the rule's suggestion text concedes via "suppress with …
   // ra11y-disable …" prose, the honest discriminator is
   // `kind: "suppress-recommended"` — same parity as the prose-only
