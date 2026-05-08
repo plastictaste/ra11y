@@ -300,7 +300,8 @@ function detectVendorLibrariesForFiles(
 }
 
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
-  const buildArtifactEntries = collectBuildArtifacts(inputs.parsedFiles, inputs.auxiliarySiblingPaths);
+  const aux = inputs.auxiliarySiblingPaths;
+  const buildArtifactEntries = collectBuildArtifacts(inputs.parsedFiles, aux);
   // Q12: vendor-library banner detection runs alongside the per-file
   // build-artifact classifier and the two surfaces merge into the
   // unified `meta.scannedBuildArtifacts.classified[]` shape via

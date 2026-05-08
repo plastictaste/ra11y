@@ -39,8 +39,8 @@ import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-
 import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
 import { withActionableManualItemsBySource, withViolationsByScanKind } from "./scan-assembly.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
-import { probeDirectoryForArtifactSiblings } from "./scan-file-build-artifact-siblings.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
+import { probeDirectoryForArtifactSiblings } from "./scan-file-build-artifact-siblings.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedFile } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
