@@ -41,11 +41,13 @@ function write(path: string, content: string): void {
 
 interface CoverageEnvelope {
   readonly standardId: string;
-  readonly scanned?: {
-    readonly mode: string;
-    readonly root?: string;
-    readonly paths?: readonly string[];
-    readonly file?: string;
+  readonly meta?: {
+    readonly scanned?: {
+      readonly mode: string;
+      readonly root?: string;
+      readonly paths?: readonly string[];
+      readonly file?: string;
+    };
   };
   readonly analysisCoverage?: Record<string, unknown>;
   readonly warnings?: readonly string[];
@@ -68,7 +70,6 @@ interface CoverageEnvelope {
     };
     readonly scanned_zero_files?: Record<string, never>;
   };
-  readonly automatedCriteriaPassRate?: number;
   readonly criteriaTotalForProfile?: number;
   readonly criteriaByLevel?: Record<string, number>;
   // Structured `summary` dict — mirrors `checklist.summary`'s shape
@@ -248,6 +249,11 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
     expect(data.warnings).toContain("scanned_zero_files");
+    // The top-level twin `automatedCriteriaPassRate` was deleted per
+    // "Sibling fields naming the same concept must use one shape" —
+    // the canonical access path is `summary.automatedCoverage.
+    // automatedCriteriaPassRate`, omitted under present-when-meaningful
+    // on a zero-file scan.
     expect(data).not.toHaveProperty("automatedCriteriaPassRate");
     // structured `summary` dict — `headline` (the prose) drops the
     // `(N%)` tail on a zero-file scan since the percentage is
@@ -266,10 +272,13 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(typeof data.criteriaTotalForProfile).toBe("number");
   });
 
-  it("preserves `automatedCriteriaPassRate` on a populated scan", async () => {
+  it("preserves `summary.automatedCoverage.automatedCriteriaPassRate` on a populated scan", async () => {
     // Counterpart guard: the zero-file omission must not regress the
     // normal happy path. A file-bearing scan still ships the rate so
-    // an agent dashboard can trend it.
+    // an agent dashboard can trend it. The canonical access path is
+    // the nested `summary.automatedCoverage.*` slot — the legacy
+    // top-level `automatedCriteriaPassRate` twin was deleted per
+    // "Sibling fields naming the same concept must use one shape."
     write(posixJoin(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
     const tool = findTool("coverage");
     const session = new McpSession();
@@ -277,17 +286,23 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0].text);
-    expect(typeof data.automatedCriteriaPassRate).toBe("number");
+    expect(typeof data.summary?.automatedCoverage?.automatedCriteriaPassRate).toBe("number");
+    // Top-level twin must NOT appear — the cross-field-redundancy axis
+    // ("Sibling fields naming the same concept must use one shape").
+    expect(data).not.toHaveProperty("automatedCriteriaPassRate");
   });
 
-  it("emits a `scanned` envelope matching scan_project's shape on the same cwd", async () => {
+  it("emits a `meta.scanned` envelope matching scan_project's shape on the same cwd", async () => {
     // Cross-surface drift between two tools that both run a real scan
     // over the same cwd is dishonest (`ai-first-consumer.md` "One tool
     // call should answer 'what next?'"). An agent calling
     // `coverage({ cwd })` to verify "are we done?" must see the same
     // `scanned` pointer `scan_project({ cwd })` returns — otherwise
     // the agent has to fire a second `scan_project` call just to
-    // confirm what `coverage` actually looked at.
+    // confirm what `coverage` actually looked at. The canonical
+    // location is `meta.scanned` on both tools — the legacy top-level
+    // `coverage.scanned` twin was deleted per "Sibling fields naming
+    // the same concept must use one shape."
     write(posixJoin(dir, "page.tsx"), "export default function Page() { return <main />; }\n");
 
     const session = new McpSession();
@@ -302,13 +317,13 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
       readonly meta?: { readonly scanned?: { readonly mode: string; readonly root?: string } };
     };
 
-    expect(coverage.scanned).toBeDefined();
-    expect(coverage.scanned?.mode).toBe("project");
-    // Top-level placement on `coverage` mirrors how `analysisCoverage`
-    // already escapes the meta block on this tool — load-bearing
-    // scan-confidence telemetry isn't gated by `metaMode`.
+    expect(coverage.meta?.scanned).toBeDefined();
+    expect(coverage.meta?.scanned?.mode).toBe("project");
     expect(scan.meta?.scanned).toBeDefined();
-    expect(coverage.scanned).toEqual(scan.meta?.scanned);
+    expect(coverage.meta?.scanned).toEqual(scan.meta?.scanned);
+    // Top-level twin must NOT appear — only the nested location is
+    // canonical.
+    expect(coverage as Record<string, unknown>).not.toHaveProperty("scanned");
   });
 
   it("mirrors scan_project's analysisCoverage + warnings on the same cwd (cross-tool parity)", async () => {

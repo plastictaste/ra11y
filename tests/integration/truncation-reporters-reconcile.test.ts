@@ -93,14 +93,16 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    // `actionableManualItems` and `criteriaUntestable` scalars were
+    // `actionableManualItems` / `criteriaUntestable` scalars were
     // dropped from the coverage entry (each duplicated its array-
-    // form sibling) — the criteria-axis count rides via
-    // `summary.actionable.criteria` and the array form
-    // `manualWithCandidates`. Keep the synthetic fixture aligned
-    // with the live shape so the reconciler test exercises the wire
-    // shape that actually ships.
-    untargetedCriteriaForProject: 0,
+    // form sibling); the top-level twins for `automatedCriteriaPassRate`,
+    // `manualCandidateEmissionsTotal`, `untargetedCriteriaForProject`,
+    // and `scanned` were dropped under the same closure (each
+    // duplicated a `summary.*` value or `meta.scanned`). The
+    // criteria-axis count rides via `summary.actionable.criteria` and
+    // the array form `manualWithCandidates`. Keep the synthetic
+    // fixture aligned with the live shape so the reconciler test
+    // exercises the wire shape that actually ships.
     summary: {
       actionable: { criteria: 1 },
       untargetedCriteriaForProject: 0,
@@ -115,13 +117,13 @@ function buildOversizeCoverageResponse(): Record<string, unknown> {
     },
     nextStep: "Call checklist.",
     nextStepStructured: { tool: "checklist", args: { cwd: "/tmp/x" } },
-    scanned: { kind: "project", root: "/tmp/x" },
     meta: {
       tool: "coverage",
       version: "0.1.0",
       filesScanned: 1,
       configSource: null,
       cwd: "/tmp/x",
+      scanned: { kind: "project", root: "/tmp/x" },
       perRuleCoverage: Array.from({ length: 5 }, (_, i) => ({ ruleId: `rule/${i}` })),
       bloatedField: "y".repeat(2000),
     },

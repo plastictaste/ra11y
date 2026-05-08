@@ -97,21 +97,21 @@ interface CoverageBody {
   // criteria-axis manual-review count now rides on the structured
   // `summary.actionable.criteria` path that mirrors
   // `checklist.summary.actionable.criteria`. The redundant top-level
-  // `actionableManualItems` scalar that previously duplicated
-  // `manualWithCandidates.length` was deleted alongside the parallel
-  // `criteriaUntestable` / `untestableCriteria` pair per AI-first
-  // doctrine "Sibling fields naming the same concept must use one
-  // shape." `untargetedCriteriaForProject` stays as the bare-prompt
-  // count (the array form rides under `untargetedCriteriaList` only
-  // when `showUntargeted: true`). Renamed from the bare
-  // `untargetedCriteria` so the project-walk slice is explicit on the
-  // wire — the per-file slice ships under `untargetedCriteriaForFile`
-  // from `scan` / `scan_file`.
+  // twins (`actionableManualItems`, `criteriaUntestable`,
+  // `automatedCriteriaPassRate`, `manualCandidateEmissionsTotal`,
+  // `untargetedCriteriaForProject`, `scanned`) were dropped per
+  // AI-first doctrine "Sibling fields naming the same concept must
+  // use one shape" — agents read each value through exactly one
+  // canonical access path (the nested `summary.*` slot or
+  // `meta.scanned`). The bare-prompt array form rides under
+  // `untargetedCriteriaList` only when `showUntargeted: true`.
+  // The project-walk slice is explicit on the wire under
+  // `summary.untargetedCriteriaForProject` — the per-file slice ships
+  // under `untargetedCriteriaForFile` from `scan` / `scan_file`.
   readonly summary: {
     readonly actionable: { readonly criteria: number };
     readonly untargetedCriteriaForProject: number;
   };
-  readonly untargetedCriteriaForProject: number;
   // Optional — present-when-meaningful: omitted when no manual
   // criteria carried grounded candidates on this corpus.
   readonly manualWithCandidates?: ReadonlyArray<unknown>;
@@ -170,7 +170,9 @@ async function gatherCounts(cwd: string): Promise<{
     // every surface. The invariant is still "all surfaces agree on the
     // total", just computed from the honest parts everywhere.
     scan: scanActionableFlat + scanBody.plan.untargetedCriteriaForProject,
-    coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteriaForProject,
+    coverage:
+      coverageBody.summary.actionable.criteria +
+      coverageBody.summary.untargetedCriteriaForProject,
     checklist:
       checklistBody.summary.actionable.criteria +
       checklistBody.summary.untargetedCriteriaForProject,
@@ -182,10 +184,13 @@ async function gatherCounts(cwd: string): Promise<{
     // "Sibling fields naming the same concept must use one shape"
     // failure mode). The `manualWithCandidates.length` array form
     // would also work — both equal the same count on identical input.
+    // The untargeted scalar likewise reads only through
+    // `summary.untargetedCriteriaForProject` after the same closure
+    // dropped the top-level twin.
     coverageActionable: coverageBody.summary.actionable.criteria,
     checklistActionable: checklistBody.summary.actionable.criteria,
     scanUntargeted: scanBody.plan.untargetedCriteriaForProject,
-    coverageUntargeted: coverageBody.untargetedCriteriaForProject,
+    coverageUntargeted: coverageBody.summary.untargetedCriteriaForProject,
     checklistUntargeted: checklistBody.summary.untargetedCriteriaForProject,
   };
 }
@@ -348,7 +353,6 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  * to the top level alongside `analysisCoverage`.
  */
 interface FullCoverageEnvelope extends CoverageBody {
-  readonly manualCandidateEmissionsTotal?: number;
   readonly summary: {
     readonly actionable: { readonly criteria: number; readonly emissionsTotal?: number };
     readonly untargetedCriteriaForProject: number;
@@ -421,13 +425,19 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
 // AND each post-transform slice carries the transform stage in its
 // name.
 describe("MCP invariant: emissionsTotal agrees across coverage and checklist (raw pre-collapse count)", () => {
-  it("coverage.manualCandidateEmissionsTotal === coverage.summary.actionable.emissionsTotal === checklist.summary.actionable.emissionsTotal", async () => {
+  it("coverage.summary.actionable.emissionsTotal === checklist.summary.actionable.emissionsTotal", async () => {
     // Media-present fixture seeds grounded candidates via the
     // `review/media-variants` finder fanning out wcag22:1.2.* criteria
     // — the fired-manual fixture used by the criteria-axis invariants
     // above only emits a violation, so its candidate-axis count is 0
     // and an equality assertion on the candidate-axis would pass
     // vacuously without exercising the new field.
+    //
+    // The previous top-level twin `coverage.manualCandidateEmissionsTotal`
+    // was deleted per `docs/kb/architecture/ai-first-consumer.md`
+    // "Sibling fields naming the same concept must use one shape" —
+    // the canonical location is the nested `summary.actionable.emissionsTotal`,
+    // which is the slot the cross-surface invariant pins.
     const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -436,35 +446,29 @@ describe("MCP invariant: emissionsTotal agrees across coverage and checklist (ra
     ]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    const coverageEmissionsTopLevel = coverageEnvelope.manualCandidateEmissionsTotal ?? 0;
     const coverageEmissionsSummary = coverageEnvelope.summary?.actionable?.emissionsTotal ?? 0;
     const checklistEmissionsTotal = checklistBody.summary.actionable.emissionsTotal;
     // Sanity floor — the media-present fixture must emit at least one
     // grounded candidate; a 0/0/0 result here would mean the finders
     // stopped firing and the assertion would pass vacuously.
-    expect(coverageEmissionsTopLevel).toBeGreaterThan(0);
-    expect(coverageEmissionsTopLevel).toBe(coverageEmissionsSummary);
-    expect(coverageEmissionsTopLevel).toBe(checklistEmissionsTotal);
+    expect(coverageEmissionsSummary).toBeGreaterThan(0);
+    expect(coverageEmissionsSummary).toBe(checklistEmissionsTotal);
+    // Top-level twin must NOT appear — the cross-field-redundancy axis
+    // closure landed.
+    expect(coverageEnvelope as Record<string, unknown>).not.toHaveProperty(
+      "manualCandidateEmissionsTotal",
+    );
   });
 
-  it("coverage.summary.actionable.emissionsTotal mirrors the top-level coverage scalar", async () => {
-    // The candidate-vs-criteria split is exposed twice on the coverage
-    // envelope: once as the top-level `manualCandidateEmissionsTotal`
-    // scalar (paired with the `manualWithCandidates` array's length
-    // on the criteria axis), and once nested under
-    // `summary.actionable.emissionsTotal` (sibling to
-    // `summary.actionable.criteria`, mirroring
-    // `checklist.summary.actionable`). Both must agree — they read
-    // the same underlying tally via the shared
-    // `tallyManualCandidateEmissions` helper; a disagreement would
-    // be the dishonest two-sibling-fields-naming-the-same-concept
-    // shape the doctrine warns against.
+  it("coverage.summary.actionable mirrors `manualWithCandidates.length` on the criteria axis", async () => {
+    // The criteria-axis count rides through `summary.actionable.criteria`
+    // and the `manualWithCandidates` array's length — both must agree.
+    // The previous top-level twin `manualCandidateEmissionsTotal` was
+    // deleted; the candidate-axis count rides only through
+    // `summary.actionable.emissionsTotal`.
     const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
-    expect(coverageEnvelope.summary?.actionable?.emissionsTotal).toBe(
-      coverageEnvelope.manualCandidateEmissionsTotal,
-    );
     expect(coverageEnvelope.summary?.actionable?.criteria).toBe(
       coverageEnvelope.manualWithCandidates?.length ?? 0,
     );

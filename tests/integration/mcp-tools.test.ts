@@ -739,19 +739,25 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       standardId: string;
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
-      automatedCriteriaPassRate: number;
-      untargetedCriteriaForProject: number;
+      summary: {
+        untargetedCriteriaForProject: number;
+        automatedCoverage: { automatedCriteriaPassRate?: number };
+      };
       untargetedCriteriaList?: unknown;
     };
     expect(body.standardId).toBe("wcag22");
     expect(body.criteriaTotalForProfile).toBeGreaterThan(0);
-    expect(typeof body.automatedCriteriaPassRate).toBe("number");
+    // The `automatedCriteriaPassRate` rides only on
+    // `summary.automatedCoverage.automatedCriteriaPassRate` — the
+    // legacy top-level twin was deleted per "Sibling fields naming the
+    // same concept must use one shape."
+    expect(typeof body.summary.automatedCoverage.automatedCriteriaPassRate).toBe("number");
     // Count always present; list gated behind showUntargeted (mirrors
     // checklist tool so default responses stay compact). The project-
-    // walk slice ships under `untargetedCriteriaForProject` (the
-    // per-file twin `untargetedCriteriaForFile` ships from `scan` /
-    // `scan_file` instead).
-    expect(typeof body.untargetedCriteriaForProject).toBe("number");
+    // walk slice ships under `summary.untargetedCriteriaForProject`
+    // (the per-file twin `untargetedCriteriaForFile` ships from
+    // `scan` / `scan_file` instead).
+    expect(typeof body.summary.untargetedCriteriaForProject).toBe("number");
     expect(body.untargetedCriteriaList).toBeUndefined();
   });
 
@@ -762,10 +768,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList?: readonly unknown[];
-      untargetedCriteriaForProject: number;
+      summary: { untargetedCriteriaForProject: number };
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
-    expect(body.untargetedCriteriaList?.length).toBe(body.untargetedCriteriaForProject);
+    expect(body.untargetedCriteriaList?.length).toBe(body.summary.untargetedCriteriaForProject);
   });
 
   it("clean scan surfaces limitations as a structured field (not buried in prose)", async () => {

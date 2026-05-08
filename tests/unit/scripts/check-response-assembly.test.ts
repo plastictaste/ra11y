@@ -201,17 +201,18 @@ describe("findResponseAssemblyViolations: automated-coverage-pass-rate-composite
     expect(violations[0]?.pattern).toBe("automated-coverage-pass-rate-composite");
   });
 
-  test("does NOT flag the sibling `coverage` tool's per-standard `automatedCriteriaPassRate`", () => {
-    // The `coverage` tool surfaces `automatedCriteriaPassRate` at the
-    // top level of each per-standard entry alongside the structured
-    // three-counter split (criteriaEvaluated / criteriaClean /
-    // criteriaWithFindings). That shape is out of scope because the
-    // value never sits under an `automatedCoverage:` key. Note: the
-    // historical `criteriaUntestable` scalar twin was dropped from
-    // the live envelope (it duplicated `untestableCriteria.length` —
-    // the "Sibling fields naming the same concept must use one
-    // shape" failure mode) — but its presence here is incidental to
-    // what the lint rule actually checks.
+  test("does NOT flag a top-level `automatedCriteriaPassRate` (lint-rule scope is the nested `automatedCoverage` slot only)", () => {
+    // The lint rule narrowly targets the historical composite that
+    // bundled `clean` / `untestable` / `withFindings` into one ratio
+    // *under the `automatedCoverage:` key*. A bare top-level
+    // `automatedCriteriaPassRate` is out of scope by construction.
+    // Note: the live coverage tool no longer ships
+    // `automatedCriteriaPassRate` (or the historical
+    // `criteriaUntestable`) at the top level — the former twin was
+    // dropped per "Sibling fields naming the same concept must use
+    // one shape," moving the canonical access path to
+    // `summary.automatedCoverage.automatedCriteriaPassRate`. This
+    // synthetic source still pins the lint scope-boundary.
     const src = `
       import { textResult } from "./helpers";
       export function handler() {

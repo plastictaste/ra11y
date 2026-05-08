@@ -164,7 +164,12 @@ function buildOversizeChecklistResponse(cwd = "/tmp/x"): Record<string, unknown>
 function buildOversizeCoverageResponse(cwd = "/tmp/x"): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    untargetedCriteriaForProject: 0,
+    // Top-level twins for `automatedCriteriaPassRate`,
+    // `manualCandidateEmissionsTotal`, `untargetedCriteriaForProject`,
+    // and `scanned` were dropped per "Sibling fields naming the same
+    // concept must use one shape" — the canonical access path is the
+    // nested `summary.*` slot (or `meta.scanned`). Keep the synthetic
+    // fixture aligned with the live shape.
     summary: {
       actionable: { criteria: 1 },
       untargetedCriteriaForProject: 0,
@@ -179,13 +184,13 @@ function buildOversizeCoverageResponse(cwd = "/tmp/x"): Record<string, unknown> 
     },
     nextStep: "Call checklist.",
     nextStepStructured: { tool: "checklist", args: { cwd } },
-    scanned: { kind: "project", root: cwd },
     meta: {
       tool: "coverage",
       version: "0.1.0",
       filesScanned: 1,
       configSource: null,
       cwd,
+      scanned: { kind: "project", root: cwd },
       perRuleCoverage: Array.from({ length: 5 }, (_, i) => ({ ruleId: `rule/${i}` })),
       bloatedField: "y".repeat(2000),
     },

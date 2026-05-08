@@ -3168,21 +3168,23 @@ describe("MCP tool: coverage", () => {
     expect(result.isError).toBeUndefined();
     const data = JSON.parse(result.content[0].text) as {
       standardId: string;
-      automatedCriteriaPassRate: number;
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       criteriaAutomatable: number;
-      // The redundant top-level `actionableManualItems` /
-      // `criteriaUntestable` scalars were dropped from the coverage
-      // entry per AI-first doctrine "Sibling fields naming the same
-      // concept must use one shape" — agents read the criteria-axis
-      // count from `summary.actionable.criteria` (or
+      // Top-level twins for `automatedCriteriaPassRate`,
+      // `manualCandidateEmissionsTotal`, `untargetedCriteriaForProject`,
+      // and `scanned` were dropped from the coverage entry per AI-first
+      // doctrine "Sibling fields naming the same concept must use one
+      // shape" — every value rides through the structured `summary.*`
+      // (or `meta.scanned`) access path. The redundant top-level
+      // `actionableManualItems` / `criteriaUntestable` scalars were
+      // dropped under the same closure earlier; agents read the
+      // criteria-axis count from `summary.actionable.criteria` (or
       // `manualWithCandidates.length` when the array ships) and the
       // untestable count from
       // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
       // (or `untestableCriteria.length` when the array ships).
       manualWithCandidates?: ReadonlyArray<{ criterionId: string }>;
-      untargetedCriteriaForProject: number;
       // Structured `summary` dict — mirrors `checklist.summary` so an
       // agent reading `summary.actionable.criteria` /
       // `summary.untargetedCriteriaForProject` /
@@ -3193,7 +3195,7 @@ describe("MCP tool: coverage", () => {
       // mode in `docs/kb/architecture/ai-first-consumer.md`. Prose
       // lives at `summary.headline`.
       summary: {
-        actionable: { criteria: number };
+        actionable: { criteria: number; emissionsTotal: number };
         untargetedCriteriaForProject: number;
         likelyIrrelevant: number;
         automatedCoverage: {
@@ -3206,7 +3208,7 @@ describe("MCP tool: coverage", () => {
       };
     };
     expect(data.standardId).toBe("wcag22");
-    expect(typeof data.automatedCriteriaPassRate).toBe("number");
+    expect(typeof data.summary.automatedCoverage.automatedCriteriaPassRate).toBe("number");
     expect(data.criteriaTotalForProfile).toBeGreaterThan(0);
     expect(data.criteriaAutomatable).toBeLessThanOrEqual(data.criteriaTotalForProfile);
     // Level breakdown sums to the headline — anchors the otherwise-bare
@@ -3218,26 +3220,36 @@ describe("MCP tool: coverage", () => {
     // (canonical structured access path mirroring
     // `checklist.summary.actionable.criteria`) and on the
     // `manualWithCandidates` array's length when the array ships.
-    // The untargeted count rides on `untargetedCriteriaForProject` (no
-    // array twin alongside it on the default envelope; the per-file
-    // twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`
-    // instead). Per AI-first doctrine "Composite headline counts are
-    // dishonest" the legacy composite `criteriaManualReviewRequired`
-    // was deleted; per "Sibling fields naming the same concept must
-    // use one shape" the redundant top-level scalars were dropped —
-    // agents read through the structured surfaces.
-    expect(typeof data.untargetedCriteriaForProject).toBe("number");
-    expect(data.summary.actionable.criteria + data.untargetedCriteriaForProject).toBeGreaterThan(0);
+    // The untargeted count rides on `summary.untargetedCriteriaForProject`
+    // (the per-file twin `untargetedCriteriaForFile` ships from
+    // `scan` / `scan_file` instead). Per AI-first doctrine "Composite
+    // headline counts are dishonest" the legacy composite
+    // `criteriaManualReviewRequired` was deleted; per "Sibling fields
+    // naming the same concept must use one shape" the redundant
+    // top-level scalars (`automatedCriteriaPassRate`,
+    // `manualCandidateEmissionsTotal`, `untargetedCriteriaForProject`,
+    // `scanned`) were dropped — agents read through the structured
+    // surfaces.
+    expect(typeof data.summary.untargetedCriteriaForProject).toBe("number");
+    expect(
+      data.summary.actionable.criteria + data.summary.untargetedCriteriaForProject,
+    ).toBeGreaterThan(0);
     expect((data as Record<string, unknown>).criteriaManualReviewRequired).toBeUndefined();
     expect((data as Record<string, unknown>).actionableManualItems).toBeUndefined();
     expect((data as Record<string, unknown>).criteriaUntestable).toBeUndefined();
+    // Top-level twins for the four nested concepts must NOT ship —
+    // each rides through exactly one location (the nested `summary.*`
+    // path or `meta.scanned`).
+    expect((data as Record<string, unknown>).automatedCriteriaPassRate).toBeUndefined();
+    expect((data as Record<string, unknown>).manualCandidateEmissionsTotal).toBeUndefined();
+    expect((data as Record<string, unknown>).untargetedCriteriaForProject).toBeUndefined();
+    expect((data as Record<string, unknown>).scanned).toBeUndefined();
     // Structured summary dict — every leg the agent reads matches
     // checklist's keys exactly. `actionable.criteria` is the canonical
     // cross-tool count (matches `manualWithCandidates.length` and
     // `checklist.summary.actionable.criteria` on identical cwd).
     expect(typeof data.summary).toBe("object");
     expect(data.summary.actionable.criteria).toBe(data.manualWithCandidates?.length ?? 0);
-    expect(data.summary.untargetedCriteriaForProject).toBe(data.untargetedCriteriaForProject);
     expect(typeof data.summary.likelyIrrelevant).toBe("number");
     expect(data.summary.automatedCoverage.standardId).toBe("wcag22");
     expect(typeof data.summary.automatedCoverage.criteriaWithRulesAllClean).toBe("number");

@@ -740,7 +740,7 @@ export async function runScanAndFormat(
 
   // Plan-side split: grounded candidates (file:line) vs.
   // bare-criterion prompts. Routes through `tallyManualCriteria` so the
-  // count agrees with `coverage[].untargetedCriteriaForProject` and
+  // count agrees with `coverage[].summary.untargetedCriteriaForProject` and
   // `checklist.summary.untargetedCriteriaForProject` on the same input
   // — see `docs/kb/architecture/ai-first-consumer.md` §"Cross-surface
   // count invariant" and `tests/integration/mcp-counts-agree.test.ts`.

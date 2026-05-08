@@ -45,20 +45,24 @@
  *     `likelyIrrelevantCriteria`, `failingAutomatedCriteria`,
  *     `warningAutomatedCriteria` dropped (the canonical-criterion lists
  *     the agent gets back via `checklist` on a narrower scope).
- *   - Counter scalars retained (`untargetedCriteriaForProject`,
- *     `criteriaAutomatable`, `criteriaEvaluated`, `criteriaClean`,
- *     `criteriaWithFindings`, `criteriaTotalForProfile`, `criteriaByLevel`,
- *     `automatedCriteriaPassRate`, `summary`) — the load-bearing routing
- *     channel the agent budgets against. The criteria-axis count for
- *     manual-review items rides under `summary.actionable.criteria`;
- *     the untestable count rides under
- *     `summary.automatedCoverage.criteriaWithoutEligibleInputs`. The
- *     legacy top-level `actionableManualItems` and `criteriaUntestable`
- *     scalars were deleted in the full envelope per
- *     "Sibling fields naming the same concept must use one shape" —
- *     agents derive them from the structured `summary` block here,
- *     identical to how `checklist.summary.actionable.criteria` already
- *     exposes the same count.
+ *   - Counter scalars retained (`criteriaAutomatable`,
+ *     `criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`,
+ *     `criteriaTotalForProfile`, `criteriaByLevel`, `summary`) — the
+ *     load-bearing routing channel the agent budgets against. Manual-
+ *     review counts now ride exclusively through the structured
+ *     `summary` block: `summary.actionable.criteria` (criteria-axis),
+ *     `summary.actionable.emissionsTotal` (candidate-axis),
+ *     `summary.untargetedCriteriaForProject` (untargeted-axis),
+ *     `summary.automatedCoverage.{criteriaWithRulesAllClean,
+ *     criteriaWithoutEligibleInputs, automatedCriteriaPassRate}`. The
+ *     legacy top-level `actionableManualItems`, `criteriaUntestable`,
+ *     `automatedCriteriaPassRate`, `manualCandidateEmissionsTotal`,
+ *     `untargetedCriteriaForProject`, and `scanned` scalar twins were
+ *     deleted in the full envelope per "Sibling fields naming the same
+ *     concept must use one shape" — agents derive every value from the
+ *     structured `summary` block (or `meta.scanned` for the scan
+ *     envelope), identical to how `checklist.summary.actionable.*`
+ *     already exposes the same counts.
  *   - `nextStep` rewritten to recommend narrower scope.
  *   - `warnings[]` extends with `response_dropped_files_oversize`;
  *     `warningsDetails.response_dropped_files_oversize` carries the
@@ -103,17 +107,19 @@ export const SLIM_COVERAGE_META_KEYS: readonly string[] = [
  * the corpus. Listed explicitly so the slim builder's discard set is
  * inspectable and the contract stays stable across refactors.
  *
- * The corresponding scalar counters (`untargetedCriteriaForProject`,
- * `criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`, etc.)
- * ride alongside in the un-dropped fields — the agent still sees how
- * many criteria are in each bucket, just not the per-criterion
- * identifier list. The criteria-axis manual-review count and the
- * untestable count come back through the structured `summary` block
- * (`summary.actionable.criteria` /
- * `summary.automatedCoverage.criteriaWithoutEligibleInputs`); the
- * standalone top-level `actionableManualItems` and `criteriaUntestable`
- * scalars no longer ship on the full envelope and therefore can't be
- * "retained" here.
+ * The corresponding scalar counters (`criteriaEvaluated`,
+ * `criteriaClean`, `criteriaWithFindings`, etc.) ride alongside in the
+ * un-dropped fields — the agent still sees how many criteria are in
+ * each bucket, just not the per-criterion identifier list. Every
+ * manual-review count rides through the structured `summary` block
+ * (`summary.actionable.criteria` / `.emissionsTotal`,
+ * `summary.untargetedCriteriaForProject`,
+ * `summary.automatedCoverage.{criteriaWithoutEligibleInputs,
+ * automatedCriteriaPassRate}`); the standalone top-level
+ * `actionableManualItems`, `criteriaUntestable`,
+ * `automatedCriteriaPassRate`, `manualCandidateEmissionsTotal`,
+ * `untargetedCriteriaForProject`, and `scanned` scalars no longer ship
+ * on the full envelope and therefore can't be "retained" here.
  */
 export const SLIM_COVERAGE_DROPPED_TOP_KEYS: readonly string[] = [
   "untargetedCriteriaList",
@@ -238,9 +244,13 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
  * to re-call with narrower scope — the per-criterion / per-rule detail
  * comes back on that call.
  *
- * Retains every scalar counter (`actionableManualItems`,
- * `untargetedCriteriaForProject`, `criteriaEvaluated` …), the `summary` prose,
- * `nextStep`, the slimmed `meta` block, and the warnings channel.
+ * Retains every scalar counter (`criteriaEvaluated`, `criteriaClean`,
+ * `criteriaWithFindings`, `criteriaAutomatable`, `criteriaTotalForProfile`,
+ * `criteriaByLevel`), the structured `summary` block (which carries
+ * the manual-review counts via `summary.actionable.*` /
+ * `summary.untargetedCriteriaForProject` / `summary.automatedCoverage.*`),
+ * `nextStep`, the slimmed `meta` block (which carries `meta.scanned`),
+ * and the warnings channel.
  */
 function buildSlimCoverageEnvelope(args: {
   readonly original: Record<string, unknown>;

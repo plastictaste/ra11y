@@ -897,9 +897,12 @@ function detectPerCriterionClamp(
  *     of review candidates against the in-scope manual criteria set.
  *     Computed via the shared `tallyManualCandidateEmissions` helper
  *     in `manual-criteria-tally.ts` so the value agrees with
- *     `coverage.summary.actionable.emissionsTotal` /
- *     `coverage.manualCandidateEmissionsTotal` on identical cwd. THIS
- *     is the cross-surface invariant slice the integration test pins.
+ *     `coverage.summary.actionable.emissionsTotal` on identical cwd.
+ *     THIS is the cross-surface invariant slice the integration test
+ *     pins. (The previous top-level twin
+ *     `coverage.manualCandidateEmissionsTotal` was deleted per
+ *     "Sibling fields naming the same concept must use one shape" —
+ *     the canonical location is the nested `summary.*` path.)
  *   - `emissionsAfterCollapse` — checklist-specific tally that reflects
  *     the post-`collapseRepeatedAcrossFiles` /
  *     `collapseAcrossFilesByReason` inventory (the count `checklist`
@@ -1491,8 +1494,7 @@ export const checklistTool: McpTool = {
     // sum and `coverage.summary.actionable.criteria`;
     // `summary.actionable.emissionsTotal` (RAW, pre-collapse, computed via
     // shared `tallyManualCandidateEmissions` helper) agrees with
-    // `coverage.summary.actionable.emissionsTotal` /
-    // `coverage.manualCandidateEmissionsTotal` on identical cwd —
+    // `coverage.summary.actionable.emissionsTotal` on identical cwd —
     // closes the manual-candidate cross-surface drift shape where
     // `candidatesUncapped` (post-collapse) and `manualCandidatesTotal`
     // (raw) shipped under one named concept with up to 187× drift.

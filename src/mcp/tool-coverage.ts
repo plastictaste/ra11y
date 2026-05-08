@@ -336,19 +336,16 @@ export const coverageTool: McpTool = {
       );
       return {
         standardId: c.standardId,
-        // Named so the denominator is unmistakable: it's the share of
-        // the `criteriaEvaluated` subset that passed (`clean /
-        // evaluated`), not the share of the full standard. Previous
-        // formula was `passing / automatable` — on a scan where a
-        // minified vendor bundle supplies the only applicable input for
-        // a given criterion, the old denominator inflated the
-        // "automatable" count with untestable criteria (rules declared
-        // eligible but had zero applicable input) and the pass rate
-        // silently sank below reality (the canonical reveal-slide /
-        // Tailwind-pre-build shape). Q-SHARED-PASS-RATE-COMPOSITE split
-        // the denominator so the headline names one concept: "of the
-        // criteria we actually evaluated, how many were clean?"
-        ...(passRateMeaningful ? { automatedCriteriaPassRate: c.automatedPassRate } : {}),
+        // `automatedCriteriaPassRate` rides only on
+        // `summary.automatedCoverage.automatedCriteriaPassRate` (the
+        // canonical structured access path) — the previous top-level
+        // twin was deleted per `docs/kb/architecture/ai-first-consumer.md`
+        // "Sibling fields naming the same concept must use one shape":
+        // shipping the same scalar at two locations forces an agent
+        // reading the response to silently reconcile which is canonical.
+        // Denominator semantics (clean / evaluated, not clean /
+        // automatable) — see the `summary.automatedCoverage` block below
+        // for the rationale Q-SHARED-PASS-RATE-COMPOSITE landed.
         // Renamed from `criteriaTotal` — the bare counter was unanchored
         // from the active conformance-level qualifier, so an agent
         // running `coverage({ level: "AA" })` couldn't tell from the
@@ -420,26 +417,22 @@ export const coverageTool: McpTool = {
         // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
         // count still rides on this same entry for the per-axis tally.
         ...untestableField,
-        // Candidate-axis sibling to `manualWithCandidates.length` (the
-        // criteria-axis count). `manualWithCandidates.length: N` reads
-        // as "N criteria have grounded candidates";
-        // `manualCandidateEmissionsTotal: K` reads as "K raw
-        // per-emission candidates ride under those criteria." The two
-        // sit alongside so an agent asking "how many manual-review
-        // items are there" sees both axes in one read instead of
-        // having to pivot to `checklist` to learn the candidate-level
-        // tally. Cross-surface count invariant
-        // (`docs/kb/architecture/ai-first-consumer.md`): equals
-        // `checklist.summary.actionable.emissionsTotal` (the raw
-        // pre-collapse count) on identical cwd; pinned by the
-        // integration test in `tests/integration/mcp-counts-agree.test.ts`.
-        // The bare `manualCandidatesTotal` name shipped under one
-        // concept while the post-collapse `candidatesUncapped` count
-        // (checklist) shipped under another — the rename to
-        // `*EmissionsTotal` makes the slice explicit so the cross-
-        // surface invariant pins the raw count both surfaces compute,
-        // not whichever one the agent happens to read first.
-        manualCandidateEmissionsTotal: manualCandidatesTotal,
+        // Candidate-axis count rides only on
+        // `summary.actionable.emissionsTotal` (sibling to
+        // `summary.actionable.criteria` — mirrors
+        // `checklist.summary.actionable`). The previous top-level twin
+        // (`manualCandidateEmissionsTotal: manualCandidatesTotal`) was
+        // deleted per `docs/kb/architecture/ai-first-consumer.md`
+        // "Sibling fields naming the same concept must use one shape":
+        // shipping the same scalar at two locations forces an agent
+        // reading the response to silently reconcile which is canonical.
+        // Cross-surface count invariant: `summary.actionable.emissionsTotal`
+        // equals `checklist.summary.actionable.emissionsTotal` (the raw
+        // pre-collapse count) on identical cwd via the shared
+        // `tallyManualCandidateEmissions` helper. Naming makes the
+        // candidate-vs-criteria split AND the transformation stage
+        // explicit (`emissionsTotal` = raw pre-collapse) so an agent
+        // does not silently treat one count as the other.
         // Manual-review pile in array form. Agents derive the
         // criteria-axis count via `manualWithCandidates.length`; the
         // structured `summary.actionable.criteria` ships the same
@@ -459,24 +452,25 @@ export const coverageTool: McpTool = {
         // same value, accessed through the array length on this
         // surface and a sibling scalar on the others.
         ...manualWithCandidatesField,
-        // Count is always informative ("how big is the untargeted tail");
-        // the list is gated behind showUntargeted so the default response
-        // doesn't ship 16 entries of bare WCAG titles that mirror the
-        // checklist tool's showUntargeted default.
-        //
-        // Project-walk scope: `coverage` is project-rooted (config-walks
-        // up from cwd), so the count is a project-total, not a per-file
-        // slice. The field name is `untargetedCriteriaForProject` so
-        // consumers reading the scalar can't conflate it with a
-        // `scan_file` per-file count (which would over-count on the
-        // same corpus). Cross-surface count invariant: equals
+        // The untargeted-criteria count rides only on
+        // `summary.untargetedCriteriaForProject` (sibling to
+        // `summary.actionable.*` — mirrors `checklist.summary` so an
+        // agent reading either surface resolves the same path). The
+        // previous top-level twin (`untargetedCriteriaForProject:
+        // untargeted.length`) was deleted per
+        // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+        // naming the same concept must use one shape": shipping the
+        // same scalar at two locations forces an agent reading the
+        // response to silently reconcile which is canonical. The list
+        // (`untargetedCriteriaList`) is gated behind `showUntargeted`
+        // and ships at the top level (its presence is meaningful;
+        // there is no nested twin). Cross-surface count invariant:
+        // `summary.untargetedCriteriaForProject` equals
         // `scan_project.plan.untargetedCriteriaForProject` and
         // `checklist.summary.untargetedCriteriaForProject` on identical
-        // cwd. The list uses the distinct name `untargetedCriteriaList`
-        // so the number and array fields don't collide when both are
-        // present. See `buildScanPlan` docblock in `scan-assembly.ts`
-        // for the cross-surface rationale.
-        untargetedCriteriaForProject: untargeted.length,
+        // cwd. The per-file twin `untargetedCriteriaForFile` ships
+        // from `scan` / `scan_file` so the project/file scope split
+        // is explicit on the wire.
         ...untargetedListField,
         likelyIrrelevantCriteria: withTitles(likelyIrrelevant, session),
         // Renamed from "automatedGaps" — agents consistently misread
@@ -496,40 +490,38 @@ export const coverageTool: McpTool = {
         warningAutomatedCriteria: withTitles(warningOnlyIds, session),
         // Structured summary dict — mirrors `checklist.summary`'s key
         // shape so an agent that reads `summary.actionable.criteria`
-        // / `summary.untargetedCriteriaForProject` /
-        // `summary.likelyIrrelevant` on either surface gets the same
-        // path resolution. Pre-fix
-        // this field shipped as a prose string while
-        // `checklist.summary` shipped as a dict — same field name on
-        // sibling tools, two shapes — the canonical "Sibling fields
-        // naming the same concept must use one shape" failure mode in
-        // `docs/kb/architecture/ai-first-consumer.md`. An agent
-        // reading `coverage.summary.actionableManualItems` got
-        // `undefined` while the same path on checklist returned the
-        // populated count.
+        // / `summary.actionable.emissionsTotal` /
+        // `summary.untargetedCriteriaForProject` /
+        // `summary.likelyIrrelevant` /
+        // `summary.automatedCoverage.automatedCriteriaPassRate` on
+        // either surface gets the same path resolution. Pre-fix this
+        // field shipped as a prose string while `checklist.summary`
+        // shipped as a dict — same field name on sibling tools, two
+        // shapes — the canonical "Sibling fields naming the same
+        // concept must use one shape" failure mode in
+        // `docs/kb/architecture/ai-first-consumer.md`.
         //
         // The prose previously carried under `summary` is demoted to
         // `summary.headline` so human-readable output isn't lost; the
         // agent's structured access path is the dict body. The
         // `(N%)` tail is dropped from `headline` on a zero-file scan
-        // (cosmetically precise but materially meaningless) — pair
-        // with the `automatedCriteriaPassRate` omission above so the
-        // headline and the structured field agree; the
-        // `scanned_zero_files` warning code still carries the reason.
+        // (cosmetically precise but materially meaningless) — pairs
+        // with the `automatedCriteriaPassRate` omission inside
+        // `summary.automatedCoverage` (present-when-meaningful) so
+        // headline and structured field agree; the `scanned_zero_files`
+        // warning code still carries the reason.
         //
         // `actionable.criteria` is the cross-tool canonical count
-        // (matches `scan_project.plan.actionableManualItems`,
-        // `checklist.summary.actionable.criteria`, and the sibling
-        // `actionableManualItems` scalar on this same coverage entry).
+        // (matches `scan_project.plan.actionableManualItems` and
+        // `checklist.summary.actionable.criteria` on identical cwd).
         // `automatedCoverage` mirrors checklist's split — two
         // non-overlapping counters (`criteriaWithRulesAllClean` /
         // `criteriaWithoutEligibleInputs`), never summed into a
         // single composite rate per CLAUDE.md §1 "Composite headline
         // counts are dishonest." `automatedCriteriaPassRate` rides
-        // alongside under present-when-meaningful semantics so the
-        // legacy headline ratio stays accessible for callers that
-        // want it (omitted on zero-file scans alongside the
-        // top-level field).
+        // here under present-when-meaningful semantics — this is the
+        // single canonical location (no top-level twin) per "Sibling
+        // fields naming the same concept must use one shape."
         summary: {
           // Two-axis split mirrors `checklist.summary.actionable` —
           // `criteria` (criteria-axis, matches
@@ -816,18 +808,17 @@ export const coverageTool: McpTool = {
       const fullResponse: Record<string, unknown> = {
         ...entry,
         ...nextStep,
-        // `coverage` runs a real
-        // scan over the resolved cwd (see `runScan` above) — surface
-        // the same `scanned` envelope `scan_project` emits so an agent
-        // calling `coverage({ cwd })` to confirm "are we done?" can
-        // verify *what* was scanned without a separate `scan_project`
-        // round trip. Cross-surface drift between the two pointers is
-        // dishonest per ai-first-consumer.md ("One tool call should
-        // answer 'what next?'"). Top-level (not gated by `metaMode`)
-        // because it's load-bearing scan-confidence telemetry, mirror
-        // of how `analysisCoverage` already escapes the meta block on
-        // this tool.
-        scanned: scannedProject(cwd),
+        // The `scanned` envelope rides only under `meta.scanned` (set
+        // by `buildCoverageMetaField` below) — the previous top-level
+        // twin was deleted per `docs/kb/architecture/ai-first-consumer.md`
+        // "Sibling fields naming the same concept must use one shape":
+        // shipping `{ mode, root }` at two locations forces an agent
+        // to silently reconcile which is canonical. Cross-surface
+        // invariant: `meta.scanned` equals `scan_project.meta.scanned`
+        // on identical cwd — same shape, same path on both tools, so
+        // the agent's "are we done?" follow-up call after
+        // `scan_project({ cwd })` resolves through the same access
+        // path on both surfaces.
         ...analysisCoverageSpread,
         ...metaField,
         ...selectScanTimeWireFields(scanTime),
@@ -1253,7 +1244,7 @@ const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
  * grounded location. Pre-Q15 this was a defensive-only fallback the
  * upstream filter prevented; post-Q15 it can fire on a verify-token-
  * only criterion. The candidate-axis sibling
- * (`manualCandidateEmissionsTotal`) stays anchored to the review-
+ * (`summary.actionable.emissionsTotal`) stays anchored to the review-
  * candidate stream and reads zero for these entries — the criteria-axis
  * vs. candidate-axis split is preserved.
  *
@@ -1329,7 +1320,7 @@ function indexDedupedCandidatesByCriterion(
  *   - `candidateCriteria`: the union of every criterion ID a candidate
  *     touched (drives the `withCandidates` filter on each entry).
  *   - `candidateCountByCriterion`: per-criterion candidate counts the
- *     `manualCandidateEmissionsTotal` aggregate sums over.
+ *     `summary.actionable.emissionsTotal` aggregate sums over.
  *   - `candidatesByCriterion`: deduped position-keyed candidate list
  *     attached to each entry's `candidates[]` array (per-tool
  *     review-candidate shape parity with `scan_project.reviewCandidates[]`
@@ -1477,14 +1468,17 @@ function buildCandidateCountByCriterion(
  * complexity ceiling. Returns 0 when the list is empty or no criterion
  * has a counted candidate.
  *
- * Doctrine: `manualCandidateEmissionsTotal` (renamed from the bare
- * `manualCandidatesTotal`) is the candidate-axis sibling to
+ * Doctrine: `summary.actionable.emissionsTotal` is the candidate-axis
+ * sibling to `summary.actionable.criteria` /
  * `manualWithCandidates.length` (criteria-axis); the value must agree
  * with `checklist.summary.actionable.emissionsTotal` (the shared raw
  * pre-collapse count) on identical cwd via the cross-surface count
  * invariant in `docs/kb/architecture/ai-first-consumer.md`. Both
  * surfaces consume the shared `tallyManualCandidateEmissions` helper
  * in `manual-criteria-tally.ts` so the count agrees by construction.
+ * The previous top-level `manualCandidateEmissionsTotal` twin was
+ * dropped per "Sibling fields naming the same concept must use one
+ * shape" — the canonical location is the nested `summary.*` path.
  */
 function sumCandidatesAcrossCriteria(
   criteriaWithCandidates: readonly string[],
@@ -1623,9 +1617,10 @@ function buildOptionalArrayField<K extends string, V>(
 
 /**
  * Builds the `untargetedCriteriaList` spread payload conditional on
- * the caller's `showUntargeted` flag. The list rides as a sibling to
- * the always-present `untargetedCriteriaForProject` count; pulled
- * into a helper so the entry literal stays free of inline ternaries.
+ * the caller's `showUntargeted` flag. The list rides at the top level
+ * as a sibling to the always-present
+ * `summary.untargetedCriteriaForProject` count; pulled into a helper
+ * so the entry literal stays free of inline ternaries.
  */
 function buildUntargetedListField(
   showUntargeted: boolean,

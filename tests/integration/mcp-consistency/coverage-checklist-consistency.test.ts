@@ -137,15 +137,18 @@ interface CoverageBody {
   readonly standardId: string;
   // The legacy composite `criteriaManualReviewRequired` was deleted
   // in favor of the same two-counter split scan_project and checklist
-  // already ship. The redundant top-level `actionableManualItems`
-  // scalar (and its sibling `criteriaUntestable`) were then deleted
-  // per AI-first doctrine "Sibling fields naming the same concept
-  // must use one shape" — the criteria-axis count rides through the
-  // structured `summary.actionable.criteria` path that mirrors
+  // already ship. The redundant top-level twins
+  // (`actionableManualItems`, `criteriaUntestable`,
+  // `automatedCriteriaPassRate`, `manualCandidateEmissionsTotal`,
+  // `untargetedCriteriaForProject`, `scanned`) were dropped per
+  // AI-first doctrine "Sibling fields naming the same concept must use
+  // one shape" — the criteria-axis count rides through the structured
+  // `summary.actionable.criteria` path that mirrors
   // `checklist.summary.actionable.criteria`, and
-  // `manualWithCandidates.length` exposes the same count via the
-  // array form.
-  readonly untargetedCriteriaForProject: number;
+  // `manualWithCandidates.length` exposes the same count via the array
+  // form. The untargeted count, candidate-emission total, and pass
+  // rate ride exclusively on `summary.*`; the scan envelope rides on
+  // `meta.scanned`.
   // Structured `summary` dict — mirrors `checklist.summary`'s key
   // shape so an agent reading `summary.actionable.criteria` /
   // `summary.untargetedCriteriaForProject` / `summary.likelyIrrelevant`
@@ -256,10 +259,11 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     expect(coverage.summary.untargetedCriteriaForProject).toBe(
       checklist.summary.untargetedCriteriaForProject,
     );
-    // And mirrors the sibling top-level scalar on coverage.
-    expect(coverage.summary.untargetedCriteriaForProject).toBe(
-      coverage.untargetedCriteriaForProject,
-    );
+    // The legacy top-level `untargetedCriteriaForProject` twin on
+    // coverage was deleted per "Sibling fields naming the same concept
+    // must use one shape" — the canonical access path is the nested
+    // `summary.*` slot.
+    expect((coverage as Record<string, unknown>).untargetedCriteriaForProject).toBeUndefined();
 
     // `summary.likelyIrrelevant` (count) mirrors across tools.
     expect(coverage.summary.likelyIrrelevant).toBe(checklist.summary.likelyIrrelevant);
@@ -292,7 +296,11 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
 
     // Untargeted count must be the same number on both tools — it
     // comes from the same `manualApplicability` pass per ADR 0010.
-    expect(coverage.untargetedCriteriaForProject).toBe(
+    // Reads through the canonical nested `summary.*` access path on
+    // both surfaces (the legacy top-level twin on coverage was
+    // deleted per "Sibling fields naming the same concept must use one
+    // shape").
+    expect(coverage.summary.untargetedCriteriaForProject).toBe(
       checklist.summary.untargetedCriteriaForProject,
     );
 

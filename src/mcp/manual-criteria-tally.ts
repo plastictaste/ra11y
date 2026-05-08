@@ -1,7 +1,7 @@
 /**
  * Single source of truth for the manual-review tally that
  * `scan_project.plan.{actionableManualItems,untargetedCriteriaForProject}`,
- * `coverage[].{summary.actionable.{criteria,emissionsTotal},manualWithCandidates,manualCandidateEmissionsTotal,untargetedCriteriaForProject}`,
+ * `coverage[].{summary.actionable.{criteria,emissionsTotal},manualWithCandidates,summary.untargetedCriteriaForProject}`,
  * and `checklist.summary.{actionable.{criteria,emissionsTotal,emissionsAfterCollapse,emissionsReturnedAfterClip},untargetedCriteriaForProject}` all report.
  * (The per-file lane (`scan` / `scan_file`) consumes the same tally
  * but ships under `plan.untargetedCriteriaForFile` so the project-walk
@@ -9,10 +9,11 @@
  * in `scan-assembly.ts` for the cross-surface rationale.)
  * (Coverage exposes the criteria-axis manual-review count via the
  * structured `summary` block and the `manualWithCandidates` array's
- * length — the redundant top-level scalar `actionableManualItems` was
- * dropped because it duplicated the array's length verbatim, the
- * "Sibling fields naming the same concept must use one shape" failure
- * mode in `docs/kb/architecture/ai-first-consumer.md`.)
+ * length — the redundant top-level scalars `actionableManualItems`,
+ * `manualCandidateEmissionsTotal`, and `untargetedCriteriaForProject`
+ * were dropped because each duplicated a `summary.*` value verbatim,
+ * the "Sibling fields naming the same concept must use one shape"
+ * failure mode in `docs/kb/architecture/ai-first-consumer.md`.)
  *
  * Cross-surface drift on these counts is the canonical failure mode the
  * AI-first consumer model warns against (`docs/kb/architecture/ai-first-
@@ -242,7 +243,7 @@ export interface ManualCriteriaTally {
    * the bare-criterion-prompt subset. Matches
    * `scan_project.plan.untargetedCriteriaForProject`,
    * `checklist.summary.untargetedCriteriaForProject`, and
-   * `coverage[].untargetedCriteriaForProject` on project-rooted
+   * `coverage[].summary.untargetedCriteriaForProject` on project-rooted
    * surfaces; the per-file lane (`scan` / `scan_file`) ships the same
    * tally under `plan.untargetedCriteriaForFile`. Scoped to
    * `applicableManualIds` (metadata-manual minus likely-irrelevant
@@ -594,8 +595,8 @@ export interface ManualCandidateEmissionsTally {
 
 /**
  * Computes the {@link ManualCandidateEmissionsTally} on a raw candidate
- * stream — the single source of truth for `coverage.summary.actionable
- * .emissionsTotal`, `coverage.manualCandidateEmissionsTotal`, and
+ * stream — the single source of truth for
+ * `coverage.summary.actionable.emissionsTotal` and
  * `checklist.summary.actionable.emissionsTotal`. Both `coverage` and
  * `checklist` consume this helper directly so the candidate-axis
  * cross-surface count invariant holds by construction.

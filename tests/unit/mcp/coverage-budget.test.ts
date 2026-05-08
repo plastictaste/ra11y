@@ -33,7 +33,6 @@ function buildSyntheticCoverageResponse(
   }));
   return {
     standardId: "wcag22",
-    automatedCriteriaPassRate: 100,
     criteriaTotalForProfile: 50,
     criteriaByLevel: { A: 30, AA: 20 },
     criteriaAutomatable: 40,
@@ -46,9 +45,12 @@ function buildSyntheticCoverageResponse(
     // criteria-axis count rides via `summary.actionable.criteria`
     // and `manualWithCandidates.length`; the untestable count rides
     // via `summary.automatedCoverage.criteriaWithoutEligibleInputs`
-    // and `untestableCriteria.length`. Synthetic fixture stays
-    // aligned with the live wire shape.
-    untargetedCriteriaForProject: 5,
+    // and `untestableCriteria.length`. The top-level twins for
+    // `automatedCriteriaPassRate`, `manualCandidateEmissionsTotal`,
+    // `untargetedCriteriaForProject`, and `scanned` were dropped under
+    // the same closure (each duplicated a `summary.*` value or
+    // `meta.scanned`). Synthetic fixture stays aligned with the live
+    // wire shape.
     untargetedCriteriaList: [{ criterionId: "wcag22:1.4.1", title: "Use of Color", level: "A" }],
     manualWithCandidates: [
       { criterionId: "wcag22:1.3.1", title: "Info and Relationships", level: "A" },
@@ -74,7 +76,6 @@ function buildSyntheticCoverageResponse(
     },
     nextStep: "Call checklist for actionable items.",
     nextStepStructured: { tool: "checklist", args: { cwd: options.cwd ?? "/tmp/test" } },
-    scanned: { kind: "project", root: options.cwd ?? "/tmp/test" },
     analysisCoverage: {
       filesByExtension: { ".tsx": perRuleRowCount },
       parseErrorFiles: [],
@@ -127,7 +128,17 @@ describe("applyCoverageBudget — slim fallback fires on oversize envelope", () 
     expect(slim.actionableManualItems).toBeUndefined();
     expect(slim.criteriaUntestable).toBeUndefined();
     expect((slim.summary as { actionable: { criteria: number } }).actionable.criteria).toBe(5);
-    expect(slim.untargetedCriteriaForProject).toBe(5);
+    // Top-level twins for the four nested concepts must NOT ship in
+    // the slim envelope either — the slim spreads `original` first,
+    // and `original` no longer carries them.
+    expect(slim.untargetedCriteriaForProject).toBeUndefined();
+    expect(slim.automatedCriteriaPassRate).toBeUndefined();
+    expect(slim.manualCandidateEmissionsTotal).toBeUndefined();
+    expect(slim.scanned).toBeUndefined();
+    // Counts ride through the structured `summary.*` block.
+    expect(
+      (slim.summary as { untargetedCriteriaForProject: number }).untargetedCriteriaForProject,
+    ).toBe(5);
     expect(slim.criteriaAutomatable).toBe(40);
     expect(slim.criteriaEvaluated).toBe(40);
     expect(slim.criteriaClean).toBe(40);
