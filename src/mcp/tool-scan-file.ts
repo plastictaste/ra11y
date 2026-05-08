@@ -29,7 +29,6 @@ import {
 } from "../utils/path.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
-import { probeDirectoryForArtifactSiblings } from "./scan-file-build-artifact-siblings.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -40,6 +39,7 @@ import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-
 import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
 import { withActionableManualItemsBySource, withViolationsByScanKind } from "./scan-assembly.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
+import { probeDirectoryForArtifactSiblings } from "./scan-file-build-artifact-siblings.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { scannedFile } from "./scanned-envelope.ts";
