@@ -32,8 +32,8 @@ import type { Standard } from "../types/standard.ts";
 import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { posixResolve } from "../utils/path.ts";
 import type { SourceEntry } from "../utils/source-snippet.ts";
-import { applyParseErrorAndCorpusRate } from "./corpus-parse-error-rate-adjustment.ts";
 import { applyExtensionSubkindFromRoot } from "./extension-subkind.ts";
+import { runSubstrateAdjusterCascade } from "./substrate-adjuster-cascade.ts";
 // biome-ignore format: keep import on one line — file effective-line budget
 import { fingerprintParsedFiles, stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
@@ -42,13 +42,10 @@ import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-par
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
+import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import {
-  applyAstroIslandUnrenderedAdjustment,
-  applyFragmentInputAdjustment,
-  applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
-  detectAstroIslandsUnrenderedFiles,
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
@@ -862,22 +859,15 @@ export async function runScanAndFormat(
   // unresolved → fragment-input → extension-subkind. This chain stays
   // here because the cwd-rooted walk is async.
   const adjustedPerRuleCoverage = await applyExtensionSubkindFromRoot(
-    applyAstroIslandUnrenderedAdjustment(
-      applyFragmentInputAdjustment(
-        applyScssUnresolvedVariablesAdjustment(
-          applyParseErrorAndCorpusRate(perRuleCoverage, files, activeRules, violationFilePaths),
-          files,
-          activeRules,
-          new Set(scssUnresolvedFiles),
-        ),
-        files,
-        activeRules,
-        new Set(fragmentFiles),
-      ),
+    runSubstrateAdjusterCascade({
+      perRuleCoverage,
       files,
       activeRules,
-      new Set(astroIslandUnrenderedFiles),
-    ),
+      violationFilePaths,
+      scssUnresolvedFiles,
+      fragmentFiles,
+      astroIslandUnrenderedFiles,
+    }),
     activeRules,
     cwd,
   );

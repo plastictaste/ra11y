@@ -101,10 +101,10 @@ import {
   buildRuleCoverageDerivative,
   type RuleCoverageDerivative,
 } from "./rule-coverage-derivative.ts";
+import { detectAstroIslandsUnrenderedFiles } from "./scan-assembly-astro-islands.ts";
 import {
   buildScanMeta,
   buildScanPlan,
-  detectAstroIslandsUnrenderedFiles,
   detectFragmentFiles,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,

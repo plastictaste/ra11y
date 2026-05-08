@@ -150,7 +150,7 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
     const dir = await mkdtemp(join(tmpdir(), "ra11y-astro-islands-perrule-"));
     await writeFile(
       join(dir, "page.html"),
-      "<!DOCTYPE html><html lang=\"en\"><head><title>Page</title></head><body><main><h1>Hi</h1><p>real scan framing</p></main></body></html>",
+      '<!DOCTYPE html><html lang="en"><head><title>Page</title></head><body><main><h1>Hi</h1><p>real scan framing</p></main></body></html>',
     );
     // index.astro: a layout-style `.astro` page that DOES carry an
     // `<html>` envelope (Astro pages may be entrypoint pages that
@@ -170,7 +170,7 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
       join(dir, "index.astro"),
       [
         "---",
-        "const title = \"Welcome\";",
+        'const title = "Welcome";',
         "---",
         "<html>",
         "  <head>",
@@ -201,8 +201,7 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
     // `.astro` files — same predicate the per-rule downgrade uses, so
     // any drift between meta-surface evidence and per-rule downgrade
     // would surface here.
-    const astroFiles =
-      scan.meta?.analysisCoverage?.astroIslandsUnrenderedFiles ?? [];
+    const astroFiles = scan.meta?.analysisCoverage?.astroIslandsUnrenderedFiles ?? [];
     expect(astroFiles.length).toBe(1);
     expect(astroFiles.every((f) => isAstroFile(f))).toBe(true);
 

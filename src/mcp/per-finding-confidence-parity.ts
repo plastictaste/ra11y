@@ -325,7 +325,7 @@ export interface ParseStateFiles {
    * Optional file-path set the propagation helper consults to gate the
    * `astro_islands_unrendered_static_only` substrate code on file
    * membership. Populated by
-   * {@link import("./scan-assembly.ts").detectAstroIslandsUnrenderedFiles}
+   * {@link import("./scan-assembly-astro-islands.ts").detectAstroIslandsUnrenderedFiles}
    * — the same predicate the per-rule adjuster used to populate
    * `astroIslandsUnrenderedFiles[]` evidence. When omitted, the gate
    * denies attaching the code (safer half of the asymmetric failure

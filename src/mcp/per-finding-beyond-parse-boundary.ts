@@ -246,7 +246,7 @@ export function enrichFindingsWithFullPerFileSubstrate<T extends FindingBucket>(
   readonly fragmentFiles: readonly string[];
   /**
    * Optional astro-island file list (typically from
-   * {@link import("./scan-assembly.ts").detectAstroIslandsUnrenderedFiles}).
+   * {@link import("./scan-assembly-astro-islands.ts").detectAstroIslandsUnrenderedFiles}).
    * Default empty so legacy callers stay backward-compatible — the
    * per-finding gate then denies attaching the
    * `astro_islands_unrendered_static_only` substrate code (per the
