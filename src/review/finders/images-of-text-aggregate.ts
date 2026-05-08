@@ -208,7 +208,7 @@ function isEnumeratedRun(run: readonly SiblingSummary[]): boolean {
   for (let position = 0; position < length; position += 1) {
     const first = firstList[position];
     for (let member = 1; member < tokenLists.length; member += 1) {
-      const token = tokenLists[member]![position];
+      const token = tokenLists[member]?.[position];
       if (token !== first) {
         varyingIndices += 1;
         break;
@@ -231,7 +231,7 @@ function buildGroup(
   members: readonly SiblingSummary[],
   kind: AggregationGroupKind,
 ): AggregationGroup {
-  const shapeLabel = members[0]!.shape === "linked-img" ? "<a><img/></a>" : "<img/>";
+  const shapeLabel = members[0]?.shape === "linked-img" ? "<a><img/></a>" : "<img/>";
   const reasonFragment =
     kind === "enumerated-token"
       ? `aggregated from ${members.length} adjacent sibling images sharing the same ` +
@@ -255,8 +255,8 @@ function buildContiguousRangeFragment(
   members: readonly SiblingSummary[],
   shapeLabel: string,
 ): string {
-  const firstLine = members[0]!.line;
-  const lastLine = members[members.length - 1]!.line;
+  const firstLine = members[0]?.line;
+  const lastLine = members[members.length - 1]?.line;
   const lineSpan = firstLine === lastLine ? `line ${firstLine}` : `lines ${firstLine}-${lastLine}`;
   return (
     `aggregated from ${members.length} adjacent sibling images at ${lineSpan} sharing the ` +

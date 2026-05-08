@@ -120,11 +120,62 @@ const ASTRO_REASON = "astro-islands-unrendered-static-only";
 const ASTRO_CODE = "astro_islands_unrendered_static_only";
 
 /**
- * Returns true when the path resolves under the test fixture's astro
- * file (`.astro` extension).
+ * Reasons a per-rule row may carry on the astro-islands fixture: the
+ * direct astro reason, or a stronger upstream substrate reason that
+ * wins precedence per the cascade order. Any value outside this set
+ * (including bare `undefined`) is a regression.
  */
+const ACCEPTABLE_REASONS: ReadonlySet<string> = new Set([
+  ASTRO_REASON,
+  "fragment-input-no-document-envelope",
+  "file-parse-error",
+  "partial-parse",
+  "corpus-parse-error-rate-above-threshold",
+]);
+
+/** Returns true when the path resolves to an `.astro` extension. */
 function isAstroFile(path: string): boolean {
   return path.toLowerCase().endsWith(".astro");
+}
+
+/**
+ * Per-row assertion split into a helper to keep the it() block under
+ * Biome's cognitive-complexity ceiling. Asserts the row is defined,
+ * downgraded (not `high`), and carries an acceptable substrate
+ * reason — the per-rule axis of the Q19 invariant.
+ */
+function expectRowDowngraded(rows: readonly PerRuleCoverageRow[], ruleId: string): void {
+  const row = rows.find((r) => r.ruleId === ruleId);
+  expect(row).toBeDefined();
+  if (row === undefined) return;
+  expect(row.coverageConfidence === "high" ? "downgraded" : "ok").toBe("ok");
+  const reason = row.coverageConfidenceReason ?? "(absent)";
+  expect(ACCEPTABLE_REASONS.has(reason)).toBe(true);
+}
+
+/**
+ * Tally helper for the per-finding axis: returns the count of findings
+ * on `.astro` files carrying the astro-islands code, and the count on
+ * non-astro files that incorrectly picked it up as collateral. Pulled
+ * out of the it() block so the inner two-axis loop doesn't push the
+ * complexity score over Biome's ceiling.
+ */
+function tallyAstroCodeFindings(files: readonly ScanFileBucket[] | undefined): {
+  onAstro: number;
+  offAstroLeak: number;
+} {
+  let onAstro = 0;
+  let offAstroLeak = 0;
+  for (const file of files ?? []) {
+    const astroPath = isAstroFile(file.path);
+    for (const finding of file.findings) {
+      const carries = finding.couldBeWrongBecause?.includes(ASTRO_CODE) ?? false;
+      if (!carries) continue;
+      if (astroPath) onAstro += 1;
+      else offAstroLeak += 1;
+    }
+  }
+  return { onAstro, offAstroLeak };
 }
 
 describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrendered substrate", () => {
@@ -168,7 +219,7 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
     //     fires.
     await writeFile(
       join(dir, "index.astro"),
-      [
+      `${[
         "---",
         'const title = "Welcome";',
         "---",
@@ -180,7 +231,7 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
         "    <button onClick={handle}>Click</button>",
         "  </body>",
         "</html>",
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const responses = await mcpSession([
@@ -219,36 +270,8 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
       "document/lang-attribute",
       "parsing/html-has-lang",
       "keyboard/handler-missing",
-    ];
-    for (const ruleId of targetRuleIds) {
-      const row = rows.find((r) => r.ruleId === ruleId);
-      // The row must exist and ship at `medium` (not `high`) with the
-      // structured astro reason. A row at `coverageConfidence: "high"`
-      // here would be the canonical Q19 regression: the warning
-      // channel reports the unrendered-island substrate but the
-      // per-rule layer claims the tally is honest.
-      expect(row).toBeDefined();
-      if (row !== undefined) {
-        // Allow `medium` or `low` — `low` would only fire if a
-        // stronger upstream adjuster (parse-error / partial-parse) had
-        // already dropped the row, which the fixture avoids on
-        // purpose. Reject `high`.
-        expect(row.coverageConfidence === "high" ? "downgraded" : "ok").toBe("ok");
-        // Reason must NAME the actual predicate — either the astro
-        // reason directly OR a stronger upstream substrate reason
-        // (parse-error / partial-parse / fragment-input-no-document-
-        // envelope) that wins precedence per the cascade order.
-        // Anything else (including bare `undefined`) is a regression.
-        const reason = row.coverageConfidenceReason;
-        expect(
-          reason === ASTRO_REASON ||
-            reason === "fragment-input-no-document-envelope" ||
-            reason === "file-parse-error" ||
-            reason === "partial-parse" ||
-            reason === "corpus-parse-error-rate-above-threshold",
-        ).toBe(true);
-      }
-    }
+    ] as const;
+    for (const ruleId of targetRuleIds) expectRowDowngraded(rows, ruleId);
 
     // Per-finding axis: every finding emitted on an `.astro` file by
     // a rule in the downgrade set must carry the astro-islands code
@@ -257,31 +280,17 @@ describe("MCP invariant Q19: per-rule + per-finding agree on astro-island unrend
     // the file-scoped gate in
     // `src/mcp/per-finding-confidence-parity.ts` denies attaching
     // the code to findings outside the substrate file set.
-    let astroFindingCount = 0;
-    let nonAstroFindingsWithAstroCode = 0;
-    for (const file of scan.files ?? []) {
-      const onAstro = isAstroFile(file.path);
-      for (const finding of file.findings) {
-        const carriesAstroCode = finding.couldBeWrongBecause?.includes(ASTRO_CODE) ?? false;
-        if (onAstro && carriesAstroCode) {
-          astroFindingCount += 1;
-        }
-        if (!onAstro && carriesAstroCode) {
-          nonAstroFindingsWithAstroCode += 1;
-        }
-      }
-    }
+    const tally = tallyAstroCodeFindings(scan.files);
     // The fixture is constructed so at least one downgrade-set rule
-    // fires on the `.astro` file (`document/page-titled` /
-    // `document/lang-attribute` / `semantics/landmark-main` etc.). A
-    // zero count would mean the per-finding propagation never ran on
-    // the fixture, masking a regression. The exact count is shape-
-    // dependent so we assert lower-bound only.
-    expect(astroFindingCount).toBeGreaterThan(0);
+    // fires on the `.astro` file. A zero count would mean the
+    // per-finding propagation never ran on the fixture, masking a
+    // regression. The exact count is shape-dependent so we assert
+    // lower-bound only.
+    expect(tally.onAstro).toBeGreaterThan(0);
     // No collateral on the `.html` file: per-rule downgrade is
     // corpus-level evidence, but the per-finding layer must gate on
     // file membership so a finding on `page.html` doesn't pick up
     // the astro substrate code.
-    expect(nonAstroFindingsWithAstroCode).toBe(0);
+    expect(tally.offAstroLeak).toBe(0);
   });
 });
