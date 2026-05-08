@@ -909,6 +909,23 @@ const FRAGMENT_DOWNGRADE_RULE_IDS: ReadonlySet<string> = new Set([
   // the absence of findings on fragment input is visible as
   // scan-confidence telemetry rather than a silent zero.
   "navigation/in-page-link-fragment-missing",
+  // Standalone `.svg` files route through the HTML parser but are
+  // not documents — the SVG idiom reuses path / gradient / symbol
+  // ids across separate `<symbol>` / `<defs>` / `<g>` trees, where
+  // each tree is a structurally independent reuse target for `<use
+  // href="#x">`. The static scanner can't tell which `<use>`
+  // resolves to which tree, so the duplicate-id predicate's evidence
+  // model is bounded on this substrate — same shape as the
+  // fragment-input case for document-shaped rules. Listing it here
+  // downgrades `perRuleCoverage[].coverageConfidence` to `medium`
+  // with reason `fragment-input-no-document-envelope` and feeds the
+  // existing per-finding propagation via
+  // `enrichFindingsWithPerRuleLimitations` so per-rule and per-finding
+  // signals agree. The rule's emit site additionally drops severity
+  // to `info` and confidence to `low` on `.svg` files (per the
+  // SVG-native-reuse-pattern argument) so the attention-budget
+  // signal matches the conceded uncertainty.
+  "parsing/duplicate-id",
 ]);
 
 /**

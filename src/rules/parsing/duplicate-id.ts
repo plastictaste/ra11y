@@ -80,6 +80,31 @@ export const rule = defineRule({
     if (ctx.language !== "html") return;
     const doc = ctx.ast as HtmlDocument;
 
+    // Standalone `.svg` files route through `parseHtml` (per the SVG
+    // adapter) but are NOT documents — they're standalone graphic
+    // assets. The SVG idiom is to reuse path / gradient / symbol
+    // definitions across separate `<symbol>` / `<defs>` / `<g>` trees,
+    // and a duplicate id across those trees is the SVG-native reuse
+    // target rather than a referential collision. The static scanner
+    // can't tell which `<use href="#x">` references resolve to which
+    // tree; the agent reading the file is the right arbiter. Per
+    // AI-first consumer doctrine "Parser-failure invalidates per-file
+    // confidence" (extended to fragment classifications) and
+    // "Heuristic emission is the symmetric twin of heuristic
+    // suppression": surface the duplicate so the agent can verify, but
+    // ship it at `severity: info` / `confidence: low` paired with the
+    // structured `fragment_input_no_document_envelope` token so the
+    // attention-budget signal matches the SVG-native pattern. The
+    // `.svg` extension is the deterministic discriminator — every file
+    // passing through this rule with `.svg` extension is a standalone
+    // SVG (inline `<svg>` inside `.html` would carry `.html` /
+    // `.astro` / `.md` extension instead). The per-rule coverage
+    // downgrade lives at `FRAGMENT_DOWNGRADE_RULE_IDS` in
+    // `src/mcp/scan-assembly.ts`; the per-finding propagation is
+    // additive via `enrichFindingsWithPerRuleLimitations` in
+    // `src/mcp/per-finding-confidence-parity.ts`.
+    const isStandaloneSvg = ctx.filePath.toLowerCase().endsWith(".svg");
+
     // First pass: collect every id in the document so we can propose a
     // suffix candidate the agent can paste without re-checking uniqueness.
     const allIds = new Set<string>();
@@ -106,6 +131,21 @@ export const rule = defineRule({
       // the user's source is still at the cited file:line.
       const echoId = truncateForEcho(id);
       const echoCandidate = truncateForEcho(candidate);
+      if (isStandaloneSvg) {
+        ctx.emit({
+          severity: "info",
+          confidence: "low",
+          couldBeWrongBecause: [FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE],
+          location: {
+            filePath: "",
+            line: element.loc.start.line,
+            column: element.loc.start.column,
+          },
+          message: `Duplicate id="${echoId}" in standalone SVG — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on <${element.tagName}> at line ${element.loc.start.line}. Standalone SVG files commonly reuse ids across <symbol>/<defs>/<g> trees as the SVG-native reuse pattern; verify whether these are independent reuse targets or a real referential collision.`,
+          suggestion: `Duplicate id="${echoId}" in standalone SVG — first defined on <${first.tagName}> at line ${first.loc.start.line}, duplicated on this <${element.tagName}>. Standalone SVG idioms reuse ids across separate <symbol>/<defs>/<g> trees (each tree is a structurally independent reuse target for <use href="#${echoId}">). Verify by reading: if the two ids belong to separate reuse targets the duplicate is intentional and safe to dismiss with <!-- ra11y-disable parsing/duplicate-id --> at the offending line. If both ids are referenced by the same <use> / aria-labelledby / label[for] hook, rename the second to id="${echoCandidate}" so the reference resolves unambiguously.`,
+        });
+        continue;
+      }
       ctx.emit({
         severity: "error",
         location: {
@@ -119,6 +159,22 @@ export const rule = defineRule({
     }
   },
 });
+
+/**
+ * Substrate code paired with the standalone-SVG severity downgrade.
+ * Mirrors the `coverageConfidenceReason` the per-rule coverage adjuster
+ * stamps when the same rule's eligible files include a fragment-
+ * classified entry (`applyFragmentInputAdjustment` in
+ * `src/mcp/scan-assembly.ts`); kept in snake_case so the per-finding
+ * `couldBeWrongBecause` axis stays uniform with
+ * `enrichFindingsWithPerRuleLimitations`. The shared classifier in
+ * `src/mcp/markdown-classifier.ts` discriminates `.svg` standalones
+ * via `kind: "svg_standalone"`, but at the rule emit-site the file
+ * extension is the deterministic discriminator (every `.svg` file
+ * routed through this rule is a standalone SVG asset) — no need to
+ * thread the analysisCoverage entries through.
+ */
+const FRAGMENT_INPUT_NO_DOCUMENT_ENVELOPE = "fragment_input_no_document_envelope";
 
 /**
  * Proposes a unique id derived from `base` that does not collide with any

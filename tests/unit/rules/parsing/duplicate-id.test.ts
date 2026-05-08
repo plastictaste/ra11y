@@ -178,9 +178,18 @@ describe("rule parsing/duplicate-id", () => {
     expect(v[0]?.message).toContain("anchor");
   });
 
-  it("fires on .svg source — duplicate id inside <defs>", () => {
-    // SVG `<defs>` can carry id-bearing references that a `<use>`
-    // resolves at render time. Duplicate ids break that linkage.
+  it("fires on .svg source — duplicate id inside <defs> downgraded to info/low for SVG-native reuse pattern", () => {
+    // Standalone `.svg` files route through `parseHtml` but are
+    // standalone graphic assets, not documents. SVG idioms reuse ids
+    // across separate `<symbol>` / `<defs>` / `<g>` trees, where each
+    // tree is an independent reuse target for `<use href="#x">`. The
+    // static scanner can't tell whether a duplicate is a real
+    // referential collision or the SVG-native pattern. Per AI-first
+    // consumer doctrine "Parser-failure invalidates per-file
+    // confidence" (extended to fragment classifications): surface so
+    // the agent can verify, but at attention-budget signals matching
+    // the conceded uncertainty (severity `info`, confidence `low`,
+    // `couldBeWrongBecause: ["fragment_input_no_document_envelope"]`).
     const v = runRule(
       rule,
       `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="grad"></linearGradient><linearGradient id="grad"></linearGradient></defs></svg>`,
@@ -188,6 +197,43 @@ describe("rule parsing/duplicate-id", () => {
     );
     expect(v).toHaveLength(1);
     expect(v[0]?.message).toContain("grad");
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.confidence).toBe("low");
+    expect(v[0]?.couldBeWrongBecause).toEqual(["fragment_input_no_document_envelope"]);
+    expect(v[0]?.suggestion).toContain("standalone SVG");
+    expect(v[0]?.suggestion).toContain("<symbol>");
+  });
+
+  it("standalone SVG suggestion mentions the source-level disable pragma for intentional reuse", () => {
+    // Per AI-first consumer doctrine "No heuristic suppression": when
+    // the predicate is structurally bounded, the deterministic escape
+    // hatch is the source-level disable pragma so the agent's
+    // dismissal becomes durable.
+    const v = runRule(
+      rule,
+      `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><symbol id="i"></symbol><symbol id="i"></symbol></svg>`,
+      { filePath: "icons/sprite.svg" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("ra11y-disable parsing/duplicate-id");
+  });
+
+  it("HTML fragment (non-svg) keeps severity error — duplicate ids in HTML are still real violations", () => {
+    // Silent-miss regression guard: an `_includes/header.html`
+    // fragment with two `<input id="email">` elements is honestly a
+    // duplicate-id violation regardless of the parent-layout
+    // composition, because the duplication is *within* the parsed
+    // file. Only `.svg` standalones invoke the SVG-native reuse-
+    // pattern downgrade. Per AI-first consumer doctrine "Failure
+    // modes are asymmetric; the rules above lean against the cheaper
+    // failure": broadening the downgrade to all fragment kinds would
+    // hide real HTML duplicate-id violations.
+    const v = runRule(rule, `<header><input id="email"><input id="email"></header>`, {
+      filePath: "_includes/header.html",
+    });
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
   });
 
   it("declares the HTML-parser-routed extensions explicitly", () => {

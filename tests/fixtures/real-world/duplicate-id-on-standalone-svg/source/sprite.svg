@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Reusable icon sprite</title>
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#888"/>
+      <stop offset="100%" stop-color="#444"/>
+    </linearGradient>
+  </defs>
+  <symbol id="shape" viewBox="0 0 16 16">
+    <path id="outline" d="M2 2 L14 2 L14 14 L2 14 Z" fill="url(#g1)"/>
+    <path id="outline" d="M5 5 L11 5 L11 11 L5 11 Z" fill="#fff"/>
+  </symbol>
+  <symbol id="shape" viewBox="0 0 16 16">
+    <path id="outline" d="M0 0 L16 0 L8 16 Z" fill="url(#g1)"/>
+  </symbol>
+  <use href="#shape" x="0" y="0" width="32" height="32"/>
+  <use href="#shape" x="32" y="0" width="32" height="32"/>
+</svg>
