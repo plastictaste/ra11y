@@ -827,10 +827,25 @@ export function isBuildArtifact(filePath: string, source: string): boolean {
  */
 export function collectBuildArtifacts(
   files: readonly { readonly filePath: string; readonly source: string }[],
+  auxiliaryPaths: readonly string[] = [],
 ): readonly ScannedBuildArtifact[] {
   const pathsInSet = new Set<string>();
   for (const file of files) {
     pathsInSet.add(file.filePath.replace(/\\/g, "/"));
+  }
+  // Auxiliary paths augment the sibling-set membership lookup
+  // (`findSiblingMinFile` / `findSiblingSourcemap`) without introducing
+  // synthetic classification rows — `scan_file` passes a directory
+  // sibling list here so its single-file substrate sees the same
+  // sibling-pair evidence `scan_project` would have on the same input,
+  // closing the cross-surface lane drift per
+  // `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+  // warning-set classification must agree." The auxiliary entries are
+  // never iterated for per-file classification — they only contribute
+  // to `pathsInSet` membership — so the helper's output stays scoped
+  // to the input `files[]`.
+  for (const auxPath of auxiliaryPaths) {
+    pathsInSet.add(auxPath.replace(/\\/g, "/"));
   }
   const out: ScannedBuildArtifact[] = [];
   for (const file of files) {

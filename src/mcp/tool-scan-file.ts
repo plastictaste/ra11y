@@ -29,6 +29,7 @@ import {
 } from "../utils/path.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
+import { probeDirectoryForArtifactSiblings } from "./scan-file-build-artifact-siblings.ts";
 import { buildFileLimitation, type FileLimitation } from "./file-limitations.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { buildNextStep } from "./next-step.ts";
@@ -417,6 +418,18 @@ function applyCrossSurfaceWarnings(args: {
     parsed,
     collected.violations.length === 0,
   );
+  // Cross-surface lane parity: thread the directory-sibling probe so
+  // `collectBuildArtifacts` (called inside the warnings helper) sees
+  // the same sibling-pair evidence `scan_project`'s corpus walk would
+  // give it — a non-min vendor source paired with `<stem>.min.<ext>`
+  // on disk classifies as `definite-vendor-distribution` regardless of
+  // whether the agent called `scan_file` or `scan_project`. Per
+  // `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+  // warning-set classification must agree." Probe is best-effort —
+  // unreadable directories return `[]` and the source-text predicates
+  // (sourcemap-pointer / banner-with-version) still classify on file
+  // bytes alone.
+  const auxiliarySiblingPaths = probeDirectoryForArtifactSiblings(parsed.filePath);
   const scanTime = buildScanTimeWarnings({
     parsedFiles: [parsed],
     violations: collected.violations,
@@ -428,6 +441,7 @@ function applyCrossSurfaceWarnings(args: {
     filesByExtension,
     durationMs: collected.durationMs,
     ...(scanFileParserBailNoFindings === undefined ? {} : { scanFileParserBailNoFindings }),
+    ...(auxiliarySiblingPaths.length === 0 ? {} : { auxiliarySiblingPaths }),
   });
   // Stamp `meta.scannedBuildArtifacts` from the helper's
   // single-pass classification so the field shows up on scan_file
@@ -453,8 +467,16 @@ function applyCrossSurfaceWarnings(args: {
   // already evaluate. Identity-stable when the file is not a build
   // artifact (vendor path set is empty; helper short-circuits and
   // returns the input plan unchanged).
+  // Reuse the auxiliary-sibling list resolved above so the per-finding
+  // lane classifier and the warnings helper agree on which paths are
+  // build artifacts. Without this, `meta.scannedBuildArtifacts`
+  // (warnings path) would populate the file as a vendor distribution
+  // while `plan.violationsByScanKind` (lane path) routed its findings
+  // into the source lane — the silent shape-drift the AI-first
+  // invariant exists to prevent. One probe per scan_file call: the
+  // directory state is stable across the two consumers.
   const buildArtifactPaths = new Set<string>(
-    collectBuildArtifacts([parsed]).map((entry) => entry.path),
+    collectBuildArtifacts([parsed], auxiliarySiblingPaths).map((entry) => entry.path),
   );
   // Cross-surface lane parity (manual-review axis): same shape as the
   // {@link withViolationsByScanKind} rewrite above, on the per-criterion

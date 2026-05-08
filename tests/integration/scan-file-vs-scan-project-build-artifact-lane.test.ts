@@ -152,6 +152,77 @@ describe("scan_file vs scan_project: build-artifact lane parity", () => {
     }
   });
 
+  it("classifies a non-min vendor stylesheet with a .min sibling on disk under the buildArtifact lane on scan_file (sibling-pair predicate)", async () => {
+    // The canonical AdminLTE / jQuery shape: a readable vendor source
+    // (`adminlte.css`) shipped alongside its minified twin
+    // (`adminlte.min.css`) in the same directory. `scan_project` walks
+    // both files and the classifier's sibling-min predicate fires
+    // (`definite-vendor-distribution`); `scan_file` historically saw
+    // only the single file passed and routed findings into the
+    // `source` lane — silent cross-surface drift per AI-first doctrine
+    // "Per-tool lane and warning-set classification must agree."
+    //
+    // Closure: scan_file probes the target file's parent directory on
+    // disk for `.min.<ext>` siblings before classifying, so the
+    // sibling-pair predicate fires deterministically on identical
+    // input regardless of which tool the agent called.
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-file-sibling-pair-"));
+    try {
+      const vendorPath = posixJoin(root, "adminlte.css");
+      const vendorMinPath = posixJoin(root, "adminlte.min.css");
+      // Plain CSS — no banner, no sourcemap pointer. The only
+      // build-artifact evidence is the sibling-min file on disk; the
+      // single-file scan must probe siblings to see it. Each file
+      // carries one contrast violation so both lanes have findings to
+      // route.
+      const css = ".faded { color: #444444; background-color: #5a5a5a; }\n";
+      writeFileSync(vendorPath, css);
+      writeFileSync(vendorMinPath, css);
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_file", { path: vendorPath }),
+        toolCall(3, "scan_project", { cwd: root }),
+      ]);
+      const scanFile = responses.find((r) => r.id === 2);
+      const scanProject = responses.find((r) => r.id === 3);
+      expect(scanFile).toBeDefined();
+      expect(scanProject).toBeDefined();
+      const scanFileBody = bodyOf(scanFile as JsonRpcResponse);
+      const scanProjectBody = bodyOf(scanProject as JsonRpcResponse);
+
+      // Both surfaces must carry `meta.scannedBuildArtifacts` for the
+      // non-min file because the sibling-pair predicate fires on both.
+      const scanFileMeta = scanFileBody["meta"] as Record<string, unknown> | undefined;
+      const scanProjectMeta = scanProjectBody["meta"] as Record<string, unknown> | undefined;
+      expect(scanFileMeta?.["scannedBuildArtifacts"]).toBeDefined();
+      expect(scanProjectMeta?.["scannedBuildArtifacts"]).toBeDefined();
+
+      // Both surfaces must route the contrast finding into the
+      // `buildArtifact` lane — the readable vendor source is just as
+      // much a build artifact as its minified twin per the doctrine.
+      const scanFilePlan = scanFileBody["plan"] as Record<string, unknown> | undefined;
+      const scanProjectPlan = scanProjectBody["plan"] as Record<string, unknown> | undefined;
+      const scanFileLanes = scanFilePlan?.["violationsByScanKind"] as
+        | { source: number; buildArtifact: number }
+        | undefined;
+      const scanProjectLanes = scanProjectPlan?.["violationsByScanKind"] as
+        | { source: number; buildArtifact: number }
+        | undefined;
+      expect(scanFileLanes).toBeDefined();
+      expect(scanProjectLanes).toBeDefined();
+      expect(scanFileLanes?.buildArtifact).toBeGreaterThan(0);
+      expect(scanFileLanes?.source).toBe(0);
+      // scan_project sees both files; both classify as build artifacts
+      // (the .min twin via `definite-min-infix`, the readable source
+      // via the sibling-pair predicate), so source-lane reads 0 on
+      // scan_project too.
+      expect(scanProjectLanes?.buildArtifact).toBeGreaterThan(0);
+      expect(scanProjectLanes?.source).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("ships plan.violationsByScanKind deterministically on scan_file when the file is not a build artifact (buildArtifact reads 0)", async () => {
     const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-scan-file-lane-clean-"));
     try {

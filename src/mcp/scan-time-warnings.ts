@@ -183,6 +183,19 @@ export interface ScanTimeWarningInputs {
    * for the full payload shape.
    */
   readonly scanFileParserBailNoFindings?: WarningInputs["scanFileParserBailNoFindings"];
+  /**
+   * Optional sibling-path augmentation for the build-artifact
+   * classifier. `scan_file` populates this with siblings discovered
+   * via {@link import("./scan-file-build-artifact-siblings.ts").probeDirectoryForArtifactSiblings}
+   * so its single-file substrate sees the same sibling-pair evidence
+   * `scan_project` would on the same input — closing the cross-surface
+   * lane drift per `docs/kb/architecture/ai-first-consumer.md`
+   * "Per-tool lane and warning-set classification must agree." Other
+   * project-rooted tools leave this undefined: their `parsedFiles`
+   * already carries the full corpus, so the classifier's intrinsic
+   * `pathsInSet` membership lookup already sees every sibling.
+   */
+  readonly auxiliarySiblingPaths?: readonly string[];
 }
 
 /**
@@ -287,7 +300,10 @@ function detectVendorLibrariesForFiles(
 }
 
 function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuildArtifactSignals {
-  const buildArtifactEntries = collectBuildArtifacts(inputs.parsedFiles);
+  const buildArtifactEntries = collectBuildArtifacts(
+    inputs.parsedFiles,
+    inputs.auxiliarySiblingPaths ?? [],
+  );
   // Q12: vendor-library banner detection runs alongside the per-file
   // build-artifact classifier and the two surfaces merge into the
   // unified `meta.scannedBuildArtifacts.classified[]` shape via
