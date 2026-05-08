@@ -14,8 +14,8 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { posixJoin } from "../../helpers/path.ts";
 import { probeDirectoryForArtifactSiblings } from "../../../src/mcp/scan-file-build-artifact-siblings.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 describe("probeDirectoryForArtifactSiblings", () => {
   it("returns the .min.<ext> twin when the target's minified sibling lives in the same directory", () => {
