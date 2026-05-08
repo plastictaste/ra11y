@@ -5118,6 +5118,66 @@ const TEMPLATE_DIRECTIVE_PER_STYLE_RE = {
 } as const;
 
 /**
+ * Per-style file-level paired-token presence predicates. Each style is
+ * counted on a file ONLY when the source contains BOTH a corresponding
+ * opener AND a corresponding closer somewhere in the file — i.e. the
+ * paired template-directive shape `{{ ... }}`, `{% ... %}`, or
+ * `<% ... %>`. The pairing need not be on the same line (multi-line
+ * directives like `{%-` … `-%}` block forms are common), but a file
+ * carrying only one half of the token pair never qualifies.
+ *
+ * This is the file-level honest-predicate gate that the per-line
+ * regexes in {@link TEMPLATE_DIRECTIVE_PER_STYLE_RE} cannot enforce on
+ * their own. Without the gate, minified CSS sources containing nested
+ * at-rule closures like `@media{.a{x:y}}` falsely match the curly-
+ * double closer pattern (`}}`) on a single-line minified payload, even
+ * though the source contains no `{{` opener and no template directive.
+ * Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+ * dishonest" — the per-style codes name a deterministic classification
+ * (`{{ ... }}` directives present), so the predicate must require the
+ * paired evidence the surface name promises.
+ *
+ * The opener/closer alternation tolerates the whitespace-control
+ * variants (`{{-` / `-}}` for Liquid, `{%-` / `-%}` for Liquid /
+ * Jinja / Nunjucks, `<%=` / `<%-` for ERB) so a file using only the
+ * trim variants still qualifies.
+ */
+const TEMPLATE_DIRECTIVE_PER_STYLE_OPENER_RE: Readonly<Record<TemplateDirectiveStyle, RegExp>> = {
+  liquid: /\{%-?/,
+  erb: /<%[=-]?/,
+  curlyDouble: /\{\{-?/,
+};
+const TEMPLATE_DIRECTIVE_PER_STYLE_CLOSER_RE: Readonly<Record<TemplateDirectiveStyle, RegExp>> = {
+  liquid: /-?%\}/,
+  erb: /%>/,
+  curlyDouble: /-?\}\}/,
+};
+
+/**
+ * Path-anchored carve-out: minified-stylesheet basenames
+ * (`.min.css`, `.min.scss`) are definitionally not template directive
+ * substrates. Without the carve-out, single-line minified CSS payloads
+ * containing nested at-rule closures (`@media{.a{x:y}}`) trip the
+ * `}}` half of the curly-double closer pattern and emit
+ * `curly_double_directives_unparsed` (and the parent
+ * `template_files_parsed_as_literal`) on files that contain zero
+ * template directives.
+ *
+ * Path-level rather than content-level because the predicate is
+ * structurally true: a file authored as `.min.css` / `.min.scss` is
+ * post-processor output, not a template source. Per AI-first doctrine
+ * "Heuristic-mislabeled meta sub-fields are dishonest" — the code's
+ * surface name promises a deterministic classification, so files where
+ * the predicate is structurally false (minified stylesheets) must be
+ * excluded by construction. Belt-and-suspenders companion to the
+ * paired-token file-level gate above; either one would catch the
+ * canonical regression alone but path-anchoring keeps the predicate
+ * cheap on bulk vendor catalogs (no per-line regex pass needed for
+ * the excluded files).
+ */
+const MINIFIED_STYLESHEET_PATH_RE = /\.min\.(?:css|scss)$/iu;
+
+/**
  * Token-style discriminator for {@link computeTemplateDirectiveOverlap}'s
  * per-style overlap file map. Each key names the directive shape the
  * line carries; payload codes route by this discriminator.
@@ -5125,20 +5185,67 @@ const TEMPLATE_DIRECTIVE_PER_STYLE_RE = {
 export type TemplateDirectiveStyle = keyof typeof TEMPLATE_DIRECTIVE_PER_STYLE_RE;
 
 /**
+ * Returns the styles for which `source` contains BOTH a corresponding
+ * opener AND a corresponding closer — the file-level paired-token
+ * predicate that gates the per-line scans below. A file that carries
+ * only one half of the pair (canonically: minified CSS like
+ * `@media{.a{x:y}}` matching `}}` but with no `{{` opener) does not
+ * qualify for any style and is treated as having no directive lines.
+ *
+ * Pure over its input. Cheap (one regex `.test()` per opener and
+ * closer per style; six tests total).
+ */
+function presentPairedStyles(source: string): ReadonlySet<TemplateDirectiveStyle> {
+  const out = new Set<TemplateDirectiveStyle>();
+  if (source.length === 0) return out;
+  const styles: readonly TemplateDirectiveStyle[] = ["liquid", "erb", "curlyDouble"];
+  for (const style of styles) {
+    if (
+      TEMPLATE_DIRECTIVE_PER_STYLE_OPENER_RE[style].test(source) &&
+      TEMPLATE_DIRECTIVE_PER_STYLE_CLOSER_RE[style].test(source)
+    ) {
+      out.add(style);
+    }
+  }
+  return out;
+}
+
+/**
  * Set of 1-based line numbers in `source` that contain at least one
  * template-directive opener or closer. Pure over its input; used by
  * {@link computeTemplateDirectiveOverlap} to decide whether an emitted
  * finding's line sits inside the literal-parsed region.
+ *
+ * Gated by the file-level paired-token predicate
+ * {@link presentPairedStyles}: a file that carries only one half of a
+ * directive token pair (e.g. a minified CSS source matching `}}` from
+ * a nested at-rule closure but no `{{` opener) never has any directive
+ * line counted. The optional `paired` parameter lets the caller thread
+ * the pre-computed style set so this function and
+ * {@link templateDirectiveLinesByStyle} share the same file-level
+ * decision; when omitted, the predicate is computed locally.
  */
-function templateDirectiveLines(source: string): ReadonlySet<number> {
+function templateDirectiveLines(
+  source: string,
+  paired?: ReadonlySet<TemplateDirectiveStyle>,
+): ReadonlySet<number> {
   const out = new Set<number>();
   if (source.length === 0) return out;
+  const styles = paired ?? presentPairedStyles(source);
+  if (styles.size === 0) return out;
   const lines = source.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i];
-    if (lineText !== undefined && TEMPLATE_DIRECTIVE_LINE_RE.test(lineText)) {
-      // Line numbers in `Violation.location.line` are 1-based.
-      out.add(i + 1);
+    if (lineText === undefined) continue;
+    // Only count a line as directive-bearing if at least one of the
+    // PRESENT-PAIRED styles matches it. A line carrying `}}` in a
+    // minified CSS file with no `{{` opener does NOT qualify — that
+    // style was filtered out at the file-level gate.
+    for (const style of styles) {
+      if (TEMPLATE_DIRECTIVE_PER_STYLE_RE[style].test(lineText)) {
+        out.add(i + 1);
+        break;
+      }
     }
   }
   return out;
@@ -5152,22 +5259,37 @@ function templateDirectiveLines(source: string): ReadonlySet<number> {
  * multiple styles (rare but legal — e.g. `{% if x %}{{ y }}{% endif %}`)
  * appears in every matching set so the per-style warning attribution
  * stays honest with the line evidence. Pure over its input.
+ *
+ * Gated by the file-level paired-token predicate
+ * {@link presentPairedStyles}: a style whose opener+closer pair is not
+ * present in the source contributes the empty set, so a minified CSS
+ * file matching `}}` without a `{{` opener never reports any
+ * curly-double lines. The optional `paired` parameter lets the caller
+ * thread the pre-computed style set; when omitted, the predicate is
+ * computed locally.
  */
 function templateDirectiveLinesByStyle(
   source: string,
+  paired?: ReadonlySet<TemplateDirectiveStyle>,
 ): Readonly<Record<TemplateDirectiveStyle, ReadonlySet<number>>> {
   const liquid = new Set<number>();
   const erb = new Set<number>();
   const curlyDouble = new Set<number>();
   if (source.length === 0) return { liquid, erb, curlyDouble };
+  const styles = paired ?? presentPairedStyles(source);
+  if (styles.size === 0) return { liquid, erb, curlyDouble };
   const lines = source.split("\n");
+  const checkLiquid = styles.has("liquid");
+  const checkErb = styles.has("erb");
+  const checkCurlyDouble = styles.has("curlyDouble");
   for (let i = 0; i < lines.length; i++) {
     const lineText = lines[i];
     if (lineText === undefined) continue;
     const lineNum = i + 1;
-    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.liquid.test(lineText)) liquid.add(lineNum);
-    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.erb.test(lineText)) erb.add(lineNum);
-    if (TEMPLATE_DIRECTIVE_PER_STYLE_RE.curlyDouble.test(lineText)) curlyDouble.add(lineNum);
+    if (checkLiquid && TEMPLATE_DIRECTIVE_PER_STYLE_RE.liquid.test(lineText)) liquid.add(lineNum);
+    if (checkErb && TEMPLATE_DIRECTIVE_PER_STYLE_RE.erb.test(lineText)) erb.add(lineNum);
+    if (checkCurlyDouble && TEMPLATE_DIRECTIVE_PER_STYLE_RE.curlyDouble.test(lineText))
+      curlyDouble.add(lineNum);
   }
   return { liquid, erb, curlyDouble };
 }
@@ -5215,11 +5337,13 @@ export function computeTemplateDirectiveOverlap(args: {
     let perStyleLines = linesByStyleByPath.get(finding.filePath);
     if (directiveLines === undefined || perStyleLines === undefined) {
       const source = args.sourcesByPath.get(finding.filePath);
-      if (source === undefined) {
+      if (source === undefined || MINIFIED_STYLESHEET_PATH_RE.test(finding.filePath)) {
         // The file doesn't live in our parsed-file index (e.g. a
-        // synthetic finding targeting a generated path). Record empty
-        // sets so we don't repeat the lookup, and move on — without
-        // source we cannot prove overlap.
+        // synthetic finding targeting a generated path), OR the file
+        // is a minified stylesheet (`.min.css` / `.min.scss`) — by
+        // construction not a template-directive substrate. Record
+        // empty sets so we don't repeat the lookup or emit a spurious
+        // overlap on `}}` from nested at-rule closures.
         directiveLines = new Set<number>();
         perStyleLines = {
           liquid: new Set<number>(),
@@ -5227,8 +5351,11 @@ export function computeTemplateDirectiveOverlap(args: {
           curlyDouble: new Set<number>(),
         };
       } else {
-        directiveLines = templateDirectiveLines(source);
-        perStyleLines = templateDirectiveLinesByStyle(source);
+        // Compute the file-level paired-token predicate ONCE per file
+        // and thread it into both helpers so they share the decision.
+        const paired = presentPairedStyles(source);
+        directiveLines = templateDirectiveLines(source, paired);
+        perStyleLines = templateDirectiveLinesByStyle(source, paired);
       }
       linesByPath.set(finding.filePath, directiveLines);
       linesByStyleByPath.set(finding.filePath, perStyleLines);

@@ -5207,4 +5207,84 @@ describe("computeTemplateDirectiveOverlap — per-style overlap classification",
     expect(result.overlapByStyle.erb.size).toBe(0);
     expect(result.overlapByStyle.curlyDouble.size).toBe(0);
   });
+
+  // Per AI-first doctrine "Heuristic-mislabeled meta sub-fields are
+  // dishonest" — the per-style codes promise a deterministic
+  // classification (`{{ ... }}` directives present), so the predicate
+  // must require the paired evidence the surface name promises. Bare
+  // rule-block braces in minified CSS like `@media{.a{x:y}}` carry
+  // `}}` from nested at-rule closures but no `{{` opener — they are
+  // structurally not a template-directive substrate, and the warning
+  // must not fire on them.
+  it("does NOT classify minified CSS with `}}` from nested at-rules as curly-double", () => {
+    // Canonical minified CSS payload: a single long line with nested
+    // at-rule closures producing `}}` but ZERO `{{` opener anywhere.
+    // The previous detector matched on the closer alone and emitted
+    // `curly_double_directives_unparsed` on every minified vendor
+    // stylesheet; the paired-token file-level gate filters it out.
+    const minifiedCss = "@media (min-width:768px){.a{color:red;padding:1px}.b{margin:0}}";
+    const result = computeTemplateDirectiveOverlap({
+      // The finding lands on the only line in the file (single-line
+      // minified payload), which contains the false `}}` match.
+      findings: [{ filePath: "/proj/dist/site.css", line: 1 }],
+      sourcesByPath: new Map([["/proj/dist/site.css", minifiedCss]]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapFiles.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
+    expect(result.overlapByStyle.liquid.size).toBe(0);
+    expect(result.overlapByStyle.erb.size).toBe(0);
+  });
+
+  // Path-anchored carve-out: `.min.css` / `.min.scss` are
+  // post-processor output, not template sources. The carve-out fires
+  // by basename — even if a minified bundle somehow contained a
+  // paired `{{ ... }}` token (e.g. an embedded JSON string literal
+  // that happens to read like Mustache), the file is structurally not
+  // a template-directive substrate.
+  it("excludes `.min.css` and `.min.scss` files by path even with paired `{{ ... }}`", () => {
+    // Payload that WOULD pass the paired-token gate (`{{` and `}}`
+    // both present), but the path-anchored carve-out rejects it
+    // because `.min.css` is by-construction not a template substrate.
+    const pathologicalMinified = ".a{content:'{{ x }}'}";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        { filePath: "/proj/vendor/bootstrap.min.css", line: 1 },
+        { filePath: "/proj/vendor/theme.min.scss", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/vendor/bootstrap.min.css", pathologicalMinified],
+        ["/proj/vendor/theme.min.scss", pathologicalMinified],
+      ]),
+    });
+    expect(result.overlap).toBe(false);
+    expect(result.overlapFiles.size).toBe(0);
+    expect(result.overlapByStyle.curlyDouble.size).toBe(0);
+  });
+
+  // Mixed-corpus invariant: a real `.liquid` template alongside a
+  // minified `.min.css` must surface the warning ONLY on the liquid
+  // file, never on the minified stylesheet.
+  it("fires only on the real template when scanned alongside a minified stylesheet", () => {
+    // Liquid `{% if %}` opener + `<img>` finding on the SAME line
+    // (single-line directive — the canonical overlap shape).
+    const liquidSrc = "<p>{% if x %}<img src='x.png'>{% endif %}</p>";
+    // Single-line minified CSS with nested at-rule `}}` — the
+    // pre-fix curly-double regex matched here.
+    const minifiedCss = "@media (min-width:768px){.a{color:red}.b{margin:0}}";
+    const result = computeTemplateDirectiveOverlap({
+      findings: [
+        { filePath: "/proj/page.liquid", line: 1 },
+        { filePath: "/proj/dist/site.min.css", line: 1 },
+      ],
+      sourcesByPath: new Map([
+        ["/proj/page.liquid", liquidSrc],
+        ["/proj/dist/site.min.css", minifiedCss],
+      ]),
+    });
+    expect([...result.overlapFiles]).toEqual(["/proj/page.liquid"]);
+    expect([...result.overlapByStyle.liquid]).toEqual(["/proj/page.liquid"]);
+    expect([...result.overlapByStyle.curlyDouble]).toEqual([]);
+    expect([...result.overlapByStyle.erb]).toEqual([]);
+  });
 });
