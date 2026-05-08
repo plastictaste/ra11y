@@ -5068,31 +5068,6 @@ function shouldEmitTemplateFilesLiteral(inputs: WarningInputs): boolean {
 }
 
 /**
- * Matches any template-directive token on a line. Intentionally looser
- * than the per-file family classifier in
- * `src/mcp/analysis-coverage.ts::detectTemplateInterpolation` — here we only
- * need to know "does this line contain a directive the parser treated as
- * literal text?", not which family it belongs to.
- *
- * Three shapes count:
- *   - `{% ... %}` Jinja / Liquid / Nunjucks control blocks (plus the
- *     whitespace-control `{%-`, `-%}` variants).
- *   - `{{ ... }}` Handlebars / Mustache / Liquid interpolation (plus
- *     the Liquid whitespace-control `{{-`, `-}}` variant). We accept
- *     the interpolation unconditionally (no JSX-attribute-spread
- *     filter) because the `hasTemplateDirectives` gate upstream
- *     already confirmed directives were detected — at the overlap
- *     step we're asking "does this specific line carry one?" and a
- *     false positive would at worst keep the warning firing on a
- *     benign JSX spread, not hide a real one.
- *   - `<% ... %>` ERB / EJS.
- *
- * Pattern alternation is anchored by the distinctive opener so a line
- * containing a bare `{` inside JSX or literal text doesn't match.
- */
-const TEMPLATE_DIRECTIVE_LINE_RE = /\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>/;
-
-/**
  * Per-style directive openers — used to classify which token style fired
  * the overlap on a given line. `liquid` covers `{% ... %}` family
  * (Jinja / Liquid / Nunjucks / Twig — the surface token is unambiguous
@@ -5105,11 +5080,14 @@ const TEMPLATE_DIRECTIVE_LINE_RE = /\{%-?|-?%\}|\{\{-?|-?\}\}|<%[=-]?|%>/;
  * names the ambiguity per AI-first doctrine "Heuristic-mislabeled meta
  * sub-fields are dishonest").
  *
- * Each pattern matches the SAME text the combined
- * {@link TEMPLATE_DIRECTIVE_LINE_RE} would; the per-style split here
- * exists so we can attribute each overlap to the dialect family the
- * line carries, not to invent a per-engine classification we cannot
- * honestly establish from the surface token alone.
+ * The per-style split exists so we can attribute each overlap to the
+ * dialect family the line carries, not to invent a per-engine
+ * classification we cannot honestly establish from the surface token
+ * alone. Each per-style entry matches an opener OR a closer for that
+ * style — file-level qualification (paired-token presence) is enforced
+ * separately by {@link presentPairedStyles} so a single-half match
+ * (e.g. `}}` from a nested at-rule closure in minified CSS) never
+ * counts as directive evidence.
  */
 const TEMPLATE_DIRECTIVE_PER_STYLE_RE = {
   liquid: /\{%-?|-?%\}/,
