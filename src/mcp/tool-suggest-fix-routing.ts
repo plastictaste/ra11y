@@ -27,7 +27,7 @@ import {
   isSuppressionFlavoredSuggestion,
 } from "./suggest-fix-suppress-recommended.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
-import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
+import { buildFixPathsOutcome, kindFromFixClass } from "./tool-suggest-fix-fixpaths.ts";
 import type { BuildSuggestFixPayloadArgs } from "./tool-suggest-fix-payload-args.ts";
 import {
   buildMarkdownHeadingCollisionOutcome,
@@ -202,8 +202,17 @@ function routeMatchedFallback(args: {
       ...(enrichments ? { alternatives: enrichments } : {}),
     });
   }
+  // Per-call `kind` mirrors `plan.fixesByClass` lane keys when the rule
+  // routes into `runtime-only` or `verify-in-source`. The vendor /
+  // template-directive / markdown-collision / suppression-flavored
+  // branches above this fallback override the rule's lane with their
+  // own substrate-specific concern (override the upstream selector,
+  // verify after binding, resolve a markdown collision, suppress with
+  // a pragma) so they keep their own discriminators. This honest
+  // prose-only fallback is the right place for the rule-lane mirror.
+  // See `kindFromFixClass` for the doctrine rationale.
   return {
-    kind: "guidance",
+    kind: kindFromFixClass(match.fixClass),
     primary: {
       approach: deriveApproachFromProse(explanation),
       explanation,

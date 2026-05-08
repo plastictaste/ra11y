@@ -26,6 +26,7 @@
  */
 
 import type { Confidence } from "../output/agent-response/types.ts";
+import type { FixClass } from "../types/rule.ts";
 import type { FixPath, Violation } from "../types/violation.ts";
 import { widenToUniqueAnchor } from "../utils/unique-anchor.ts";
 import {
@@ -101,6 +102,40 @@ function stripContextBlindTailwindHint(
   const index = text.indexOf(TAILWIND_HINT_PREFIX);
   if (index === -1) return text;
   return text.slice(0, index).trimEnd();
+}
+
+/**
+ * Per-call `kind` discriminator for the no-mechanical-edit guidance
+ * branches. Mirrors `plan.fixesByClass` lane keys so the per-call shape
+ * agrees with the per-class plan tally on the same finding (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally"):
+ *
+ *   - `runtime-only` → `kind: "runtime-only"` — the rule flagged a
+ *     pattern only runtime verification can decide; the agent should
+ *     route to a runtime harness rather than the edit queue.
+ *   - `verify-in-source` → `kind: "verify-in-source"` — the agent has
+ *     to read adjacent code to decide the right fix (cross-file handler
+ *     binding, parent-element placement, list re-nesting).
+ *   - everything else → `kind: "guidance"` — judgment-required prose
+ *     fix (contrast ratios, copy rewrites, restructure decisions).
+ *
+ * The `mechanical` lane stays out of this helper — the mechanical-edit
+ * branch above this routing emits `kind: "edit"` directly. When a
+ * mechanical-fixClass rule's `fixPaths.primary.edit` is dropped (e.g.
+ * by template-directive poison sanitization), the residual outcome is
+ * generic guidance — the lane lost its "edit" status, so falling back
+ * to `kind: "guidance"` is honest.
+ *
+ * Pure function over its input; the `match.fixClass` enum is the only
+ * input.
+ */
+export function kindFromFixClass(
+  fixClass: FixClass,
+): "runtime-only" | "verify-in-source" | "guidance" {
+  if (fixClass === "runtime-only") return "runtime-only";
+  if (fixClass === "verify-in-source") return "verify-in-source";
+  return "guidance";
 }
 
 export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record<string, unknown> {
@@ -236,8 +271,14 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
       caveatField,
     });
   }
+  // Per-call `kind` mirrors `plan.fixesByClass` lane keys when the rule
+  // routes into `runtime-only` or `verify-in-source`. The mechanical-
+  // edit lane already returned above; the suppress-recommended branch
+  // already returned above; this fallthrough is the
+  // guidance-or-lane-mirror partition. See `kindFromFixClass` for the
+  // doctrine rationale.
   return {
-    kind: "guidance",
+    kind: kindFromFixClass(match.fixClass),
     primary: {
       approach: primary.label,
       explanation,

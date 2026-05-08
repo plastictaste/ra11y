@@ -1,7 +1,11 @@
 /**
  * Shape the `suggest_fix` response from a resolved violation match.
  *
- * Three outcomes:
+ * Six outcomes — the per-call `kind` discriminator mirrors the
+ * `plan.fixesByClass` lane keys so the per-call shape and per-class
+ * plan tally use the same vocabulary (per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally"):
  *   - `kind: "none"` — no violation at that line (or unmatched rule).
  *     OMITS `verifyCommandStructured`: a "no finding here" response
  *     with a populated verify hint reads as "you already fixed it and
@@ -12,7 +16,8 @@
  *     recommendation is, which is structurally undefined on the
  *     negative answer. "Low confidence we have no fix" is a category
  *     error — confidence belongs with positive answers (`kind:
- *     "edit"` / `"guidance"` / `"suppress-recommended"`), not with
+ *     "edit"` / `"guidance"` / `"verify-in-source"` /
+ *     `"runtime-only"` / `"suppress-recommended"`), not with
  *     `kind: "none"`. See CLAUDE.md §1 "Ambiguous field shapes are
  *     dishonest" + "Sibling fields naming the same concept must use
  *     one shape." When the per-file finding list carries one or more
@@ -22,22 +27,42 @@
  *     breadcrumb so paginated scans / line-drift / rule renames don't
  *     produce a dead-end response.
  *   - `kind: "edit"` — the rule emitted fixPaths with a mechanical
- *     `primary.edit`; the agent can apply it via Edit directly. The
- *     edit is widened to a unique anchor window via `widenToUniqueAnchor`
- *     before serialization so apply_fix's literal find-and-replace
- *     matches exactly once. When no unique anchor fits in the cap, the
+ *     `primary.edit`; the agent can apply it via Edit directly.
+ *     Mirrors `plan.fixesByClass.mechanical`. The edit is widened to
+ *     a unique anchor window via `widenToUniqueAnchor` before
+ *     serialization so apply_fix's literal find-and-replace matches
+ *     exactly once. When no unique anchor fits in the cap, the
  *     payload carries a `caveat` string so the agent can disambiguate
  *     before applying.
- *   - `kind: "guidance"` — fixPaths without mechanical edits, or
- *     prose-only suggestion. The response shape mirrors the tool's
- *     advertised contract: a ranked `primary` approach carrying the
- *     `approach` label + `explanation` prose + `sourceContext` +
- *     `confidence`, plus an optional `alternatives` array (omitted when
- *     only one approach is reasonable — CLAUDE.md §1 "Ambiguous field
- *     shapes are dishonest"). `verifyCommandStructured` stays at top
- *     level.
+ *   - `kind: "verify-in-source"` — the rule's `fixClass` routes into
+ *     the verify-in-source lane (`plan.fixesByClass.verifyInSource`):
+ *     the agent must read adjacent code (cross-file handler binding,
+ *     parent-element placement, list re-nesting) to compose the right
+ *     edit. Same `primary` + `alternatives` payload shape as `kind:
+ *     "guidance"`; the discriminator differs so an agent budgeting
+ *     from the per-class plan tally lands in the right lane.
+ *   - `kind: "runtime-only"` — the rule's `fixClass` routes into the
+ *     runtime-only lane (`plan.fixesByClass.runtimeOnly`): only
+ *     runtime verification (rendered DOM, manual QA) can decide the
+ *     fix; the agent should route to a runtime harness rather than
+ *     the edit queue. Same payload shape as `kind: "guidance"`.
+ *   - `kind: "guidance"` — judgment-required prose fix (contrast
+ *     ratios, copy rewrites, restructure decisions). Mirrors
+ *     `plan.fixesByClass.guidance`. The response shape carries a
+ *     ranked `primary` approach with the `approach` label +
+ *     `explanation` prose + `sourceContext` + `confidence`, plus an
+ *     optional `alternatives` array (omitted when only one approach is
+ *     reasonable — CLAUDE.md §1 "Ambiguous field shapes are
+ *     dishonest"). `verifyCommandStructured` stays at top level.
+ *   - `kind: "suppress-recommended"` — the rule's evidence model has
+ *     conceded the criterion may not apply on this substrate and the
+ *     deterministic dismissal path is the source-level disable pragma.
+ *     Mirrors `plan.fixesByClass.suppressRecommended`. See
+ *     `suggest-fix-suppress-recommended.ts` for the predicate doctrine.
  *
- * The `kind: "edit"` and `kind: "guidance"` outcomes carry a
+ * The `kind: "edit"`, `kind: "verify-in-source"`,
+ * `kind: "runtime-only"`, `kind: "guidance"`, and
+ * `kind: "suppress-recommended"` outcomes carry a
  * `verifyCommandStructured` (`{ tool: "scan_file", args: { path },
  * verifyRuleId }`) field naming the canonical re-check the agent
  * should run after applying the fix. The `kind: "none"` outcome OMITS
@@ -84,10 +109,11 @@ export type { BuildSuggestFixPayloadArgs, VerifyCommandStructured };
 
 /**
  * Builds the `verifyCommandStructured` machine form naming `scan_file`
- * on the fix target. Always emitted on every `suggest_fix` `kind:
- * "edit"` / `kind: "guidance"` response — there is always a way to
- * re-check after applying the fix, so the field is never ambiguous on
- * those lanes. The `kind: "none"` lane omits it entirely (see file
+ * on the fix target. Always emitted on every positive `suggest_fix`
+ * outcome (`kind: "edit"` / `"guidance"` / `"verify-in-source"` /
+ * `"runtime-only"` / `"suppress-recommended"`) — there is always a way
+ * to re-check after applying the fix, so the field is never ambiguous
+ * on those lanes. The `kind: "none"` lane omits it entirely (see file
  * doc).
  *
  * The prose `verifyCommand` sibling that previously rode alongside
@@ -242,8 +268,9 @@ function buildNoMatchPayload(args: {
     explanation,
     // `confidence` is OMITTED on `kind: "none"`. The field is
     // semantically meaningful only on the positive answers
-    // (`kind: "edit"` / `"guidance"` / `"suppress-recommended"`)
-    // where it grades how confident the fix recommendation is.
+    // (`kind: "edit"` / `"guidance"` / `"verify-in-source"` /
+    // `"runtime-only"` / `"suppress-recommended"`) where it grades
+    // how confident the fix recommendation is.
     // "Low confidence we have no fix" is a category error — the
     // negative answer is "no violation matches at the queried
     // location," and confidence on that statement is structurally

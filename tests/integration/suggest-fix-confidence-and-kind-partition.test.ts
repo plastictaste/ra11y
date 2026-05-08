@@ -25,12 +25,15 @@
  *   (b) `kind` partitions into the rule's `fixClass` lane. The lane
  *       assignment for a finding F (after the per-finding rerouting in
  *       `resolveFixClass`) determines the set of valid `kind` values
- *       suggest_fix may emit on the same finding. The partition table:
+ *       suggest_fix may emit on the same finding. The partition table
+ *       (per-call kind discriminator now mirrors `plan.fixesByClass`
+ *       lane keys per `docs/kb/architecture/ai-first-consumer.md`
+ *       "Per-call shape must agree with per-class plan tally"):
  *
  *           fixClass "mechanical"          → kind "edit"
- *           fixClass "verify-in-source"    → kind "edit" | "guidance"
+ *           fixClass "verify-in-source"    → kind "edit" | "verify-in-source"
  *           fixClass "guidance"            → kind "guidance"
- *           fixClass "runtime-only"        → kind "guidance"
+ *           fixClass "runtime-only"        → kind "runtime-only"
  *           fixClass "suppress-recommended" → kind "suppress-recommended"
  *
  *       The test asserts every (rule, file, line) finding satisfies
@@ -67,18 +70,21 @@ function parseFile(spec: FileSpec): { source: string; ast: Ast } {
  * `resolveFixClass` reroute), what `kind` values may the per-call
  * surface emit on the same finding?
  *
- * This is the cross-surface contract the Q16 closure pins. The lanes
- * `mechanical` / `guidance` / `runtime-only` / `suppress-recommended`
- * partition one-to-one with a single kind; the `verify-in-source` lane
- * permits both `edit` (rule supplied a mechanical edit) and `guidance`
- * (rule supplied prose only) — both are honest under that lane's
- * "fix lands in source" semantics.
+ * This is the cross-surface contract the per-call shape pins per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+ * agree with per-class plan tally." The per-call `kind` discriminator
+ * mirrors `plan.fixesByClass` lane keys: each lane partitions
+ * one-to-one with the matching kind, except `verify-in-source` which
+ * permits both `edit` (rule supplied a mechanical edit — the
+ * mechanical-edit branch fires before the lane-mirror branch) and
+ * `verify-in-source` (rule supplied prose only — the lane-mirror
+ * branch fires).
  */
 function laneAllowsKind(fixClass: FixClass | "suppress-recommended", kind: string): boolean {
   if (fixClass === "mechanical") return kind === "edit";
-  if (fixClass === "verify-in-source") return kind === "edit" || kind === "guidance";
+  if (fixClass === "verify-in-source") return kind === "edit" || kind === "verify-in-source";
   if (fixClass === "guidance") return kind === "guidance";
-  if (fixClass === "runtime-only") return kind === "guidance";
+  if (fixClass === "runtime-only") return kind === "runtime-only";
   if (fixClass === "suppress-recommended") return kind === "suppress-recommended";
   return false;
 }
@@ -263,13 +269,15 @@ describe("suggest_fix.kind partitions into the rule's fixClass lane", () => {
     expect(observedLanes.size).toBeGreaterThanOrEqual(2);
   });
 
-  it("verify-in-source rule with prose-only suggestion ships kind: guidance, not 'edit' (lane permits both)", () => {
-    // Pin the canonical Q16 corpus (b) case: a `verify-in-source`
-    // rule (`navigation/href-empty-fragment`) that ships no mechanical
-    // edit returns `kind: "guidance"`. The verify-in-source lane
-    // permits both `edit` and `guidance` per the partition predicate;
-    // the test confirms that the prose-only branch lands on
-    // `guidance`, not on a phantom kind.
+  it("verify-in-source rule with prose-only suggestion ships kind: 'verify-in-source', not 'edit' (lane permits both)", () => {
+    // A `verify-in-source` rule (`navigation/href-empty-fragment`)
+    // that ships no mechanical edit returns
+    // `kind: "verify-in-source"` — the per-call discriminator now
+    // mirrors the plan-tally lane key. The verify-in-source lane
+    // permits both `edit` (when the rule supplies a mechanical edit)
+    // and `verify-in-source` (the prose-only branch); the test
+    // confirms the prose-only branch lands on the lane-mirror
+    // discriminator, not on the legacy generic `guidance` kind.
     const built = { filePath: file.filePath, ...parseFile(file) };
     const { result } = runScan({
       standards: BUILTIN_STANDARDS,
@@ -292,10 +300,10 @@ describe("suggest_fix.kind partitions into the rule's fixClass lane", () => {
       source: file.source,
       filePath: file.filePath,
     });
-    expect(payload.kind).toBe("guidance");
+    expect(payload.kind).toBe("verify-in-source");
 
-    // Partition predicate holds: kind: "guidance" is permitted under
-    // fixClass: "verify-in-source".
+    // Partition predicate holds: kind: "verify-in-source" is permitted
+    // under fixClass: "verify-in-source".
     expect(laneAllowsKind(finding.fixClass, payload.kind as string)).toBe(true);
   });
 });

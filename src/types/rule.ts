@@ -42,10 +42,14 @@ export type RuleScope =
  *   nested-interactive fixup requires DOM surgery? list-structure
  *   needs re-nesting?). Point the agent at the file.
  *
- * Distinct from `suggest_fix`'s response-level `kind: "edit" |
- * "guidance"` discriminator — that one describes what the suggest_fix
- * payload *contains*, while `FixClass` describes the *nature* of the
- * fix the rule demands.
+ * Sibling of `suggest_fix`'s response-level `kind` discriminator: the
+ * per-call shape uses the same lane vocabulary (`mechanical → "edit"`,
+ * `verify-in-source → "verify-in-source"`, `runtime-only →
+ * "runtime-only"`, `guidance → "guidance"`, plus the suppression-
+ * flavored carve-out `"suppress-recommended"` and the no-match `"none"`)
+ * so an agent budgeting from `plan.fixesByClass` lands in the matching
+ * per-call slot. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Per-call shape must agree with per-class plan tally."
  */
 export type FixClass = "mechanical" | "guidance" | "runtime-only" | "verify-in-source";
 

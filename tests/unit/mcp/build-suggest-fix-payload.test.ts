@@ -911,7 +911,7 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
   // as separate lanes); callers wanting the apply-now subset sum
   // `mechanical + verifyInSource` off the structured tally.
 
-  it("no-fixPaths guidance with verify-in-source fixClass: omits the meta field", () => {
+  it("no-fixPaths guidance with verify-in-source fixClass: surfaces kind: 'verify-in-source' and omits the meta field", () => {
     const match = violationGuidanceOnly({
       ruleId: "navigation/href-javascript-scheme",
       fixClass: "verify-in-source",
@@ -919,13 +919,20 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
         'change `<a href="javascript:void(0)">` to `<button type="button">` — this control does not navigate, so it should announce as a button.',
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     expect(payload).not.toHaveProperty("meta");
   });
 
   it("no-fixPaths guidance with mechanical fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "mechanical" });
     const payload = buildSuggestFixPayload(baseArgs(match));
+    // mechanical fixClass without `fixPaths.primary.edit` is the
+    // "lost mechanical-edit" residual — the per-call surface honestly
+    // demotes to `kind: "guidance"` rather than synthesize an
+    // unsupported `kind: "mechanical"` slot. Per-class plan tally on a
+    // real such case would re-tag the rule's `fixClass` to
+    // `verify-in-source`; the synthetic test exercises the demotion
+    // branch.
     expect(payload["kind"]).toBe("guidance");
     expect(payload).not.toHaveProperty("meta");
   });
@@ -937,14 +944,14 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("no-fixPaths guidance with runtime-only fixClass: omits the meta field", () => {
+  it("no-fixPaths guidance with runtime-only fixClass: surfaces kind: 'runtime-only' and omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "runtime-only" });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("runtime-only");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("fixPaths-guidance (no mechanical edit) with verify-in-source: omits the meta field", () => {
+  it("fixPaths-guidance (no mechanical edit) with verify-in-source: surfaces kind: 'verify-in-source' and omits the meta field", () => {
     const match = violationWithFixPaths({
       fixClass: "verify-in-source",
       fixPaths: {
@@ -953,7 +960,7 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
       },
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     expect(payload).not.toHaveProperty("meta");
   });
 
@@ -1048,7 +1055,12 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
     const payload = buildSuggestFixPayload(
       baseArgs(outlineViolation(), { tailwindDetected: false }),
     );
-    expect(payload["kind"]).toBe("guidance");
+    // `outlineViolation` carries `fixClass: "verify-in-source"`, so the
+    // per-call discriminator mirrors the plan-tally lane key
+    // (`plan.fixesByClass.verifyInSource`) per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-call shape
+    // must agree with per-class plan tally."
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toBe(STRIPPED_PREFIX);
     expect(primary.explanation).not.toContain("Tailwind");
@@ -1060,7 +1072,7 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
     // means "no signal" and the strip applies. Only an explicit `true`
     // keeps the hint — the field is honest about meaning.
     const payload = buildSuggestFixPayload(baseArgs(outlineViolation()));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).not.toContain("Tailwind");
   });
@@ -1091,7 +1103,9 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       suggestion: otherSuggestion,
     });
     const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
-    expect(payload["kind"]).toBe("guidance");
+    // Same `fixClass: "verify-in-source"` inherited from
+    // `outlineViolation`; per-call kind mirrors the plan-tally lane.
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toBe(otherSuggestion);
   });
@@ -1107,7 +1121,9 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       },
     });
     const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
-    expect(payload["kind"]).toBe("guidance");
+    // `fixClass: "verify-in-source"` again — per-call kind mirrors the
+    // plan-tally lane, even on the fixpaths-guidance branch.
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).not.toContain("Tailwind");
   });

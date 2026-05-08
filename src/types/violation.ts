@@ -79,10 +79,16 @@ export interface Violation {
    * {@link import("./rule.ts").FixClass} and docs/adr/0007-violation-fix-class-metadata.md.
    *
    * Inlined on every violation so agents can batch-route findings at
-   * scan time without a per-finding `suggest_fix` round-trip. Distinct
-   * from `suggest_fix`'s response-level `kind: "edit" | "guidance"` —
-   * that describes what the suggest_fix payload *contains*; `fixClass`
-   * describes the *nature* of the fix the rule demands.
+   * scan time without a per-finding `suggest_fix` round-trip. Sibling
+   * of `suggest_fix`'s response-level `kind` discriminator: the
+   * per-call shape uses the same lane vocabulary (`mechanical →
+   * "edit"`, `verify-in-source → "verify-in-source"`, `runtime-only →
+   * "runtime-only"`, `guidance → "guidance"`, plus the suppression-
+   * flavored carve-out `"suppress-recommended"` and the no-match
+   * `"none"`) so per-finding `fixClass` and per-call `kind` partition
+   * the same finding into the same lane. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-call shape must
+   * agree with per-class plan tally."
    */
   readonly fixClass: import("./rule.ts").FixClass;
   /** Criterion IDs this violation counts against, filtered to enabled standards. */

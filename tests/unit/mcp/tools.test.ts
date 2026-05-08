@@ -3339,16 +3339,18 @@ describe("MCP tool: suggest_fix", () => {
     );
 
     expect(result.isError).toBeUndefined();
-    // `kind: "edit"` retains a top-level `explanation`; `kind: "guidance"`
-    // nests it under `primary.explanation` per Q-SHARED-SUGGEST-FIX-
-    // GUIDANCE-PRIMARY. Read from whichever branch fires so the assertion
-    // survives either rule outcome.
+    // `kind: "edit"` retains a top-level `explanation`; the
+    // judgment-or-lane-mirror kinds (`guidance` / `verify-in-source` /
+    // `runtime-only` / `suppress-recommended`) nest the explanation
+    // under `primary.explanation` per Q-SHARED-SUGGEST-FIX-GUIDANCE-
+    // PRIMARY. Read from whichever branch fires so the assertion
+    // survives any rule outcome.
     const data = JSON.parse(result.content[0].text) as {
       kind: string;
       explanation?: string;
       primary?: { explanation?: string };
     };
-    const explanation = data.kind === "guidance" ? data.primary?.explanation : data.explanation;
+    const explanation = data.kind === "edit" ? data.explanation : data.primary?.explanation;
     expect(typeof explanation).toBe("string");
     expect((explanation ?? "").length).toBeGreaterThan(0);
   });
