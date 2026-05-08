@@ -1,0 +1,88 @@
+// Synthetic SCSS that mirrors the `&.active, &:active` nested-state
+// selector shape inside a deep block sequence — the same shape that
+// produced a multi-line drift between the rule's reported emit-line
+// and the actual selector position in the source.
+
+.widget-up {
+  .widget-menu[data-popper] {
+    top: auto;
+    bottom: 100%;
+    margin-top: 0;
+    margin-bottom: var(--#{$prefix}widget-spacer);
+  }
+
+  .widget-toggle {
+    @include caret(up);
+  }
+}
+
+.widget-end {
+  .widget-menu[data-popper] {
+    top: 0;
+    right: auto;
+    left: 100%;
+    margin-top: 0;
+    margin-left: var(--#{$prefix}widget-spacer);
+  }
+
+  .widget-toggle {
+    @include caret(end);
+    &::after {
+      vertical-align: 0;
+    }
+  }
+}
+
+.widget-start {
+  .widget-menu[data-popper] {
+    top: 0;
+    right: 100%;
+    left: auto;
+    margin-top: 0;
+    margin-right: var(--#{$prefix}widget-spacer);
+  }
+
+  .widget-toggle {
+    @include caret(start);
+    &::before {
+      vertical-align: 0;
+    }
+  }
+}
+
+.widget-divider {
+  height: 0;
+  margin: var(--#{$prefix}widget-divider-margin-y) 0;
+  overflow: hidden;
+  border-top: 1px solid var(--#{$prefix}widget-divider-bg);
+  opacity: 1;
+}
+
+.widget-item {
+  display: block;
+  width: 100%;
+  padding: var(--#{$prefix}widget-item-padding-y) var(--#{$prefix}widget-item-padding-x);
+  clear: both;
+  font-weight: $font-weight-normal;
+  color: var(--#{$prefix}widget-link-color);
+  text-align: inherit;
+  text-decoration: if($link-decoration == none, null, none);
+  white-space: nowrap;
+  background-color: transparent;
+  border: 0;
+  @include border-radius(var(--#{$prefix}widget-item-border-radius, 0));
+
+  &:hover,
+  &:focus {
+    color: var(--#{$prefix}widget-link-hover-color);
+    text-decoration: if($link-hover-decoration == underline, none, null);
+    @include gradient-bg(var(--#{$prefix}widget-link-hover-bg));
+  }
+
+  &.active,
+  &:active {
+    color: var(--#{$prefix}widget-link-active-color);
+    text-decoration: none;
+    @include gradient-bg(var(--#{$prefix}widget-link-active-bg));
+  }
+}
