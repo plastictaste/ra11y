@@ -43,10 +43,12 @@ import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
 import {
+  applyAstroIslandUnrenderedAdjustment,
   applyFragmentInputAdjustment,
   applyScssUnresolvedVariablesAdjustment,
   buildScanMeta,
   buildScanPlan,
+  detectAstroIslandsUnrenderedFiles,
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   outputFilePathSet,
@@ -843,6 +845,10 @@ export async function runScanAndFormat(
   // when at least one matching file parsed as a fragment (no
   // `<html>`/`<body>`).
   const fragmentFiles = detectFragmentFiles(files);
+  // Astro-island file list — same predicate as
+  // `detectAstroIslandsUnrenderedFiles` in `scan-assembly.ts` so the
+  // per-rule downgrade and per-finding propagation see the same set.
+  const astroIslandUnrenderedFiles = detectAstroIslandsUnrenderedFiles(files);
   // Disambiguate `eligible === 0` extension-gated rows by probing
   // whether the gated extensions exist anywhere under cwd. Two cases
   // route to different remediations: (a) `extension-absent` — the cwd
@@ -856,16 +862,21 @@ export async function runScanAndFormat(
   // unresolved → fragment-input → extension-subkind. This chain stays
   // here because the cwd-rooted walk is async.
   const adjustedPerRuleCoverage = await applyExtensionSubkindFromRoot(
-    applyFragmentInputAdjustment(
-      applyScssUnresolvedVariablesAdjustment(
-        applyParseErrorAndCorpusRate(perRuleCoverage, files, activeRules, violationFilePaths),
+    applyAstroIslandUnrenderedAdjustment(
+      applyFragmentInputAdjustment(
+        applyScssUnresolvedVariablesAdjustment(
+          applyParseErrorAndCorpusRate(perRuleCoverage, files, activeRules, violationFilePaths),
+          files,
+          activeRules,
+          new Set(scssUnresolvedFiles),
+        ),
         files,
         activeRules,
-        new Set(scssUnresolvedFiles),
+        new Set(fragmentFiles),
       ),
       files,
       activeRules,
-      new Set(fragmentFiles),
+      new Set(astroIslandUnrenderedFiles),
     ),
     activeRules,
     cwd,
@@ -881,6 +892,7 @@ export async function runScanAndFormat(
     files,
     violationFilePaths,
     fragmentFiles,
+    astroIslandUnrenderedFiles,
   });
   // Per-rule trust telemetry. The underlying rows ride
   // in `meta.perRuleCoverage`; the top-level `ruleCoverage` derivative

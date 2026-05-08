@@ -38,8 +38,10 @@ import {
   collectParserBailedRouteFiles,
 } from "./parser-bail-route-adjustment.ts";
 import {
+  applyAstroIslandUnrenderedAdjustment,
   applyFragmentInputAdjustment,
   applyScssUnresolvedVariablesAdjustment,
+  detectAstroIslandsUnrenderedFiles,
   detectFragmentFiles,
   detectScssUnresolvedVariableFiles,
   type PerRuleCoverageMetaFragment,
@@ -165,6 +167,7 @@ export function buildSharedPerRuleCoverageMeta(
   const scssUnresolvedFiles = detectScssUnresolvedVariableFiles(parsedFiles);
   const fragmentFiles = detectFragmentFiles(parsedFiles);
   const scssPartialFiles = detectScssPartialFiles(parsedFiles);
+  const astroIslandFiles = detectAstroIslandsUnrenderedFiles(parsedFiles);
   const parseErrorAdjusted = applyParseErrorAdjustment(
     perRuleCoverage,
     parsedFiles,
@@ -210,8 +213,27 @@ export function buildSharedPerRuleCoverageMeta(
     activeRules,
     new Set(fragmentFiles),
   );
-  const scssPartialAdjusted = applyScssPartialInputAdjustment(
+  // Astro-island pass — Q19 closure for "Parser-failure invalidates
+  // per-file confidence" extended to template-island parse-as-literal
+  // classifications. Runs after the fragment-input pass so a layout-
+  // style `.astro` file lacking an `<html>` root (which both predicates
+  // fire on) keeps the stronger fragment-input reason; the astro pass
+  // contributes downgrade evidence only for `.astro` files NOT already
+  // classified as fragments. The cascade order also means rules in
+  // both downgrade sets (the document-shaped rules listed in both
+  // {@link FRAGMENT_DOWNGRADE_RULE_IDS} and
+  // {@link ASTRO_ISLAND_DOWNGRADE_RULE_IDS}) emit the fragment reason
+  // when the file has no envelope and the astro-islands reason when it
+  // does — both honest, both naming the actual substrate signal that
+  // bounded the rule's evidence model.
+  const astroIslandAdjusted = applyAstroIslandUnrenderedAdjustment(
     fragmentInputAdjusted,
+    parsedFiles,
+    activeRules,
+    new Set(astroIslandFiles),
+  );
+  const scssPartialAdjusted = applyScssPartialInputAdjustment(
+    astroIslandAdjusted,
     parsedFiles,
     activeRules,
     new Set(scssPartialFiles),

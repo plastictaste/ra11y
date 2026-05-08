@@ -903,7 +903,8 @@ export interface PerRuleCoverage {
     | "fragment-input-no-document-envelope"
     | "scss-partial-input"
     | "corpus-parse-error-rate-above-threshold"
-    | "parse-bailed-non-jsx-in-tsx-route";
+    | "parse-bailed-non-jsx-in-tsx-route"
+    | "astro-islands-unrendered-static-only";
   /**
    * Discriminator for an `eligible === 0` extension-gated row,
    * differentiating two structurally distinct gaps the original

@@ -244,12 +244,30 @@ export function enrichFindingsWithFullPerFileSubstrate<T extends FindingBucket>(
   readonly files: readonly ParsedFile[];
   readonly violationFilePaths: ReadonlySet<string>;
   readonly fragmentFiles: readonly string[];
+  /**
+   * Optional astro-island file list (typically from
+   * {@link import("./scan-assembly.ts").detectAstroIslandsUnrenderedFiles}).
+   * Default empty so legacy callers stay backward-compatible — the
+   * per-finding gate then denies attaching the
+   * `astro_islands_unrendered_static_only` substrate code (per the
+   * safer half of the asymmetric failure modes).
+   */
+  readonly astroIslandUnrenderedFiles?: readonly string[];
 }): readonly T[] {
-  const { fileEntries, adjustedPerRuleCoverage, files, violationFilePaths, fragmentFiles } = args;
+  const {
+    fileEntries,
+    adjustedPerRuleCoverage,
+    files,
+    violationFilePaths,
+    fragmentFiles,
+    astroIslandUnrenderedFiles = [],
+  } = args;
   const perRuleLimitations = buildPerRuleLimitationMap(adjustedPerRuleCoverage);
   const substrate = buildSubstrateFiles(
     partitionParseStateFiles(files, violationFilePaths),
     fragmentFiles,
+    [],
+    astroIslandUnrenderedFiles,
   );
   const perRuleEnriched = enrichFindingsWithPerRuleLimitations(
     fileEntries,

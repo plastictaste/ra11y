@@ -104,6 +104,7 @@ import {
 import {
   buildScanMeta,
   buildScanPlan,
+  detectAstroIslandsUnrenderedFiles,
   detectFragmentFiles,
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
@@ -898,6 +899,7 @@ export function assembleScanFamilyResponse(
       partitionParseStateFiles(parsedFiles, violationFilePaths),
       detectFragmentFiles(parsedFiles),
       collectParserBailedRouteFiles(parsedFiles, violationFilePaths),
+      detectAstroIslandsUnrenderedFiles(parsedFiles),
     ),
   );
   // Per-finding confidence parity, per-FILE axis (sibling of the per-

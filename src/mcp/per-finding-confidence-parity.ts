@@ -223,7 +223,12 @@ function snakeCase(code: string): string {
  * gate against. Each entry in {@link FILE_SCOPED_SUBSTRATE_CODES}
  * names one of these so the helper looks up the right file set.
  */
-type FileScopedSubstrateSet = "parseError" | "partialParse" | "fragment" | "parserBailRoute";
+type FileScopedSubstrateSet =
+  | "parseError"
+  | "partialParse"
+  | "fragment"
+  | "parserBailRoute"
+  | "astroIslandUnrendered";
 
 /**
  * File-scoped substrate codes whose propagation must gate on the
@@ -266,6 +271,14 @@ const FILE_SCOPED_SUBSTRATE_CODES: ReadonlyMap<string, FileScopedSubstrateSet> =
   ["partial_parse", "partialParse"],
   ["fragment_input_no_document_envelope", "fragment"],
   ["parse_bailed_non_jsx_in_tsx_route", "parserBailRoute"],
+  // Q19 closure: astro-islands files carry unrendered-island substrate
+  // evidence. The per-rule downgrade
+  // (`coverageConfidenceReason: "astro-islands-unrendered-static-only"`)
+  // names this signal; the per-finding propagation gates on the same
+  // file set so a finding on a non-astro `.html` peer in the same
+  // response does NOT pick up the astro substrate code, only findings
+  // emitted on the actually-substrate-affected `.astro` files do.
+  ["astro_islands_unrendered_static_only", "astroIslandUnrendered"],
 ]);
 
 /**
@@ -308,6 +321,17 @@ export interface ParseStateFiles {
    * code to a file the predicate didn't fire on).
    */
   readonly parserBailRoute?: ReadonlySet<string>;
+  /**
+   * Optional file-path set the propagation helper consults to gate the
+   * `astro_islands_unrendered_static_only` substrate code on file
+   * membership. Populated by
+   * {@link import("./scan-assembly.ts").detectAstroIslandsUnrenderedFiles}
+   * — the same predicate the per-rule adjuster used to populate
+   * `astroIslandsUnrenderedFiles[]` evidence. When omitted, the gate
+   * denies attaching the code (safer half of the asymmetric failure
+   * modes).
+   */
+  readonly astroIslandUnrendered?: ReadonlySet<string>;
 }
 
 /**
@@ -328,11 +352,15 @@ export function buildSubstrateFiles(
   parsed: { readonly parseError: ReadonlySet<string>; readonly partialParse: ReadonlySet<string> },
   fragmentFiles: readonly string[],
   parserBailRouteFiles: readonly string[] = [],
+  astroIslandUnrenderedFiles: readonly string[] = [],
 ): ParseStateFiles {
   return {
     ...parsed,
     fragment: new Set(fragmentFiles),
     ...(parserBailRouteFiles.length > 0 ? { parserBailRoute: new Set(parserBailRouteFiles) } : {}),
+    ...(astroIslandUnrenderedFiles.length > 0
+      ? { astroIslandUnrendered: new Set(astroIslandUnrenderedFiles) }
+      : {}),
   };
 }
 
@@ -497,6 +525,9 @@ function isFileInSubstrateSetForCode(
   }
   if (setName === "parserBailRoute") {
     return parseStateFiles.parserBailRoute?.has(path) === true;
+  }
+  if (setName === "astroIslandUnrendered") {
+    return parseStateFiles.astroIslandUnrendered?.has(path) === true;
   }
   if (setName === "parseError") return parseStateFiles.parseError.has(path);
   return parseStateFiles.partialParse.has(path);
