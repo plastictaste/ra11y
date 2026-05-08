@@ -69,20 +69,41 @@ import {
  */
 export interface DedupedReviewCandidate {
   /**
-   * Per-emission unique address — same recipe as {@link Violation#findingId}
-   * on the rule surface, hashed via {@link computeCandidateFindingId}
-   * over `(sortedCriteria.join(","), filePath, line, column)`. The
-   * canonical sorted-criteria join means the SAME conceptual candidate
-   * surfaces with the SAME `findingId` on `scan_file.reviewCandidates[]`,
-   * `scan_project.reviewCandidates[]`, and `checklist.items[].candidates[]`
-   * — an agent calling those tools in sequence can address the same
-   * candidate by id regardless of which surface produced it. Per AI-first
-   * doctrine "Per-finding identifiers must be addressable, not collision-
-   * prone" + "Per-tool review-candidate shape must agree across surfaces"
-   * (the candidate-shape closure pinned by
-   * `tests/integration/mcp-consistency/candidate-finding-id-cross-surface.test.ts`).
+   * Per-emission unique address — hashed via
+   * {@link computeCandidateFindingId} over the cross-criterion union
+   * plus `(filePath, line, column, reason)`. On `scan_file` /
+   * `scan_project.reviewCandidates[]` the post-dedup surface ships ONE
+   * row per `(filePath, line, column, reason)` — `findingId` is
+   * unique by construction here. The shared `findingGroupId` field
+   * (same value on this surface since one row IS one group) carries
+   * the cross-surface identity that the per-criterion checklist surface
+   * also stamps.
+   *
+   * Per AI-first doctrine "Per-finding identifiers must be addressable,
+   * not collision-prone": every `findingId` in a single response must
+   * be unique. On the per-criterion `checklist` surface where the same
+   * conceptual candidate surfaces under N items, that surface stamps a
+   * per-(criterion, emission) `findingId` — distinct addresses per
+   * row — while every per-item row carries the SAME `findingGroupId`
+   * the row on this surface ships, so an agent calling the two tools
+   * can match conceptual groups via that token.
    */
   readonly findingId: string;
+  /**
+   * Cross-surface group identity — hashed over the cross-criterion
+   * union plus `(filePath, line, column, reason)`. The SAME conceptual
+   * candidate carries the SAME `findingGroupId` across
+   * `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+   * and `checklist.items[].candidates[]`. On the per-position dedup'd
+   * surfaces (this one and `scan_project.reviewCandidates`) each row
+   * IS the group, so `findingGroupId === findingId`; on `checklist`'s
+   * per-criterion surface the per-row `findingId` differs per item
+   * while the `findingGroupId` agrees with the row on this surface.
+   *
+   * Per AI-first doctrine "Per-tool review-candidate shape must agree
+   * across surfaces."
+   */
+  readonly findingGroupId: string;
   readonly criteria: readonly string[];
   readonly line: number;
   readonly column: number;
@@ -799,8 +820,16 @@ function materializeDedupedCandidate(
     reason: g.reason,
     ...(scanRoot === undefined ? {} : { scanRoot }),
   });
+  // Cross-surface group identity — same recipe as `findingId` on this
+  // surface (one row per `(filePath, line, column, reason)`, so the
+  // group equals the emission). Stamped explicitly so the wire shape
+  // matches what `checklist.items[].candidates[]` ships, where the
+  // per-(criterion, position) row's `findingId` differs from the
+  // shared cross-item `findingGroupId`.
+  const findingGroupId = findingId;
   return {
     findingId,
+    findingGroupId,
     criteria,
     line: g.line,
     column: g.column,

@@ -1,25 +1,31 @@
 /**
- * Cross-surface candidate `findingId` invariant: the same conceptual
- * review candidate must ship the same `findingId` on every surface
+ * Cross-surface candidate group-identity invariant: the same conceptual
+ * review candidate must ship the same `findingGroupId` on every surface
  * that surfaces it — `scan_file.reviewCandidates[]`, `checklist.items[]
  * .candidates[]`, and (when the candidate is grounded under enabled
  * standards) `scan_project.reviewCandidates[]`.
  *
  * Per `docs/kb/architecture/ai-first-consumer.md` "Per-finding
  * identifiers must be addressable, not collision-prone" and "Per-tool
- * review-candidate shape must agree across surfaces": an agent
- * calling these tools in sequence (the canonical workflow) must be
- * able to address the same candidate by id regardless of which
- * surface produced it. The shared `computeCandidateFindingId` helper
- * (in `src/utils/finding-id.ts`) hashes
- * `(sortedCriteria.join(","), filePath, line, column)` so all three
- * surfaces converge on the same id for a given conceptual candidate.
+ * review-candidate shape must agree across surfaces": every
+ * `findingId` in a single response must be unique (per-emission
+ * address), and the cross-surface group identity ships on a sibling
+ * `findingGroupId` field — same value on every surface that points at
+ * the conceptual emission. The shared `computeCandidateFindingId`
+ * helper (in `src/utils/finding-id.ts`) hashes
+ * `(sortedCriteria.join(","), filePath, line, column, reason)`; on the
+ * per-position-dedup'd scan surfaces (`scan_file`,
+ * `scan_project.reviewCandidates`) `findingId === findingGroupId`
+ * because each row IS the group. On the per-criterion `checklist`
+ * surface a single conceptual emission surfaces under N items; each
+ * per-item row ships a distinct `findingId` (hashed with the per-item
+ * single criterion) while every per-item row's `findingGroupId`
+ * agrees with the scan-family row.
  *
- * Pre-closure, checklist candidates lacked `findingId` entirely while
- * scan-family findings carried both `findingId` and `findingGroupId`
- * — agents could only address review candidates by `(path, line,
- * reason)` reconstruction, which was fragile across reason-text
- * tweaks.
+ * Pre-closure, checklist candidates folded the cross-criterion union
+ * into the per-row `findingId`, so N per-item rows pointing at one
+ * conceptual emission shared one address — `suggest_fix(findingId)`
+ * resolved ambiguously.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -80,6 +86,7 @@ function body<T>(resp: JsonRpcResponse): T {
 interface ScanFileBody {
   readonly reviewCandidates?: ReadonlyArray<{
     readonly findingId: string;
+    readonly findingGroupId: string;
     readonly criteria: readonly string[];
     readonly line: number;
   }>;
@@ -90,6 +97,7 @@ interface ChecklistBody {
     readonly criteria: readonly string[];
     readonly candidates: ReadonlyArray<{
       readonly findingId: string;
+      readonly findingGroupId: string;
       readonly path: string;
       readonly line: number;
     }>;
@@ -121,8 +129,8 @@ async function makePasswordFormFixture(): Promise<{ dir: string; page: string }>
   return { dir, page };
 }
 
-describe("MCP invariant: candidate findingId is stable across scan_file and checklist surfaces", () => {
-  it("scan_file.reviewCandidates[].findingId equals checklist.items[].candidates[].findingId on the same conceptual candidate", async () => {
+describe("MCP invariant: candidate findingGroupId is stable across scan_file and checklist surfaces", () => {
+  it("scan_file.reviewCandidates[].findingGroupId equals checklist.items[].candidates[].findingGroupId on the same conceptual candidate", async () => {
     const { dir, page } = await makePasswordFormFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -143,9 +151,10 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     if (scanEntry === undefined) return;
 
     // Per AI-first doctrine "Per-finding identifiers must be
-    // addressable, not collision-prone": the field must be present on
-    // every surface that ships review candidates.
+    // addressable, not collision-prone": both fields must be present
+    // on every surface that ships review candidates.
     expect(scanEntry.findingId).toMatch(/^[0-9a-f]{12}$/);
+    expect(scanEntry.findingGroupId).toMatch(/^[0-9a-f]{12}$/);
 
     const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:3.3.8");
     expect(checklistItem).toBeDefined();
@@ -154,46 +163,55 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     expect(checklistCandidate).toBeDefined();
     if (checklistCandidate === undefined) return;
     expect(checklistCandidate.findingId).toMatch(/^[0-9a-f]{12}$/);
+    expect(checklistCandidate.findingGroupId).toMatch(/^[0-9a-f]{12}$/);
 
     // Per-tool review-candidate shape must agree across surfaces:
-    // the same conceptual candidate carries the SAME findingId on
-    // both scan_file and checklist. The shared
-    // `computeCandidateFindingId` helper hashes the sorted-criteria
-    // union plus location, so the post-dedup scan_file entry (which
-    // ships `criteria: [1.3.6, 3.3.8]`) and the per-item checklist
-    // candidate (annotated with the same `criteria` array via
-    // `annotateSharedCandidates`) converge on one id.
-    expect(checklistCandidate.findingId).toBe(scanEntry.findingId);
+    // the same conceptual candidate carries the SAME findingGroupId
+    // on both scan_file and checklist. The post-dedup scan_file entry
+    // ships `criteria: [1.3.6, 3.3.8]` and one row → `findingId ===
+    // findingGroupId` there; the per-item checklist 3.3.8 candidate
+    // hashes its per-emission `findingId` over the per-item single
+    // criterion (distinct from scan_file's row id) but its
+    // `findingGroupId` is hashed over the same cross-criterion union
+    // and matches.
+    expect(checklistCandidate.findingGroupId).toBe(scanEntry.findingGroupId);
   });
 
-  it("findingId siblings under shared (path, line, reason) on checklist all carry the same id", async () => {
+  it("findingId siblings under shared (path, line, reason) on checklist carry distinct ids; findingGroupId stays shared", async () => {
     const { dir } = await makePasswordFormFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const checklistBody = body<ChecklistBody>(responses[1]);
     // Both 1.3.6 and 3.3.8 items list the password input — when
     // annotateSharedCandidates fires, the same (path, line, reason)
-    // appears on both items and every per-item instance must carry
-    // the SAME findingId so an agent dedup-walking the group reads
-    // one id.
+    // appears on both items. Per AI-first doctrine "Per-finding
+    // identifiers must be addressable, not collision-prone": each
+    // per-item row must carry its own per-emission `findingId` while
+    // the cross-item group identity rides on `findingGroupId`.
     const a = checklistBody.items.find((i) => i.criteria[0] === "wcag22:1.3.6");
     const b = checklistBody.items.find((i) => i.criteria[0] === "wcag22:3.3.8");
     if (a === undefined || b === undefined) return;
     const aFid = a.candidates[0]?.findingId;
     const bFid = b.candidates[0]?.findingId;
+    const aGid = a.candidates[0]?.findingGroupId;
+    const bGid = b.candidates[0]?.findingGroupId;
     if (aFid === undefined || bFid === undefined) return;
-    expect(aFid).toBe(bFid);
+    if (aGid === undefined || bGid === undefined) return;
+    // Per-emission addresses are distinct per-(criterion, position).
+    expect(aFid).not.toBe(bFid);
+    // Cross-item group identity stays shared.
+    expect(aGid).toBe(bGid);
   });
 
   // Real-world drift: an agent calling `scan_file({path: "_includes/footer.html",
   // cwd: "<abs>"})` and `checklist({cwd: "<abs>"})` is the canonical bug —
   // scan_file stamps the relative path the user passed into the candidate
-  // findingId hash, while checklist's discovery walker resolves to absolute
-  // paths and stamps those, so the two surfaces produce divergent ids on the
+  // hash, while checklist's discovery walker resolves to absolute paths and
+  // stamps those, so the two surfaces produce divergent group ids on the
   // same conceptual candidate. Per AI-first doctrine "Per-finding identifiers
   // must be addressable, not collision-prone" + "Per-tool review-candidate
-  // shape must agree across surfaces": both surfaces must hash a normalized-
-  // relative path so the id is stable regardless of which input shape the
-  // caller used.
+  // shape must agree across surfaces": both surfaces must hash a normalized
+  // path so the cross-surface `findingGroupId` is stable regardless of which
+  // input shape the caller used.
   it("scan_file with relative path + cwd matches checklist on same cwd", async () => {
     const { dir, relPath } = await makeLogoFooterFixture();
     const responses = await mcpSession([
@@ -211,7 +229,7 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     const scanEntry = scanCandidates.find((c) => c.criteria.includes("wcag22:1.4.5"));
     expect(scanEntry).toBeDefined();
     if (scanEntry === undefined) return;
-    expect(scanEntry.findingId).toMatch(/^[0-9a-f]{12}$/);
+    expect(scanEntry.findingGroupId).toMatch(/^[0-9a-f]{12}$/);
 
     const checklistItem = checklistBody.items.find((i) => i.criteria[0] === "wcag22:1.4.5");
     expect(checklistItem).toBeDefined();
@@ -219,12 +237,12 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     const checklistCandidate = checklistItem.candidates[0];
     expect(checklistCandidate).toBeDefined();
     if (checklistCandidate === undefined) return;
-    expect(checklistCandidate.findingId).toMatch(/^[0-9a-f]{12}$/);
+    expect(checklistCandidate.findingGroupId).toMatch(/^[0-9a-f]{12}$/);
 
     // Same conceptual candidate at `_includes/footer.html:<line>` —
-    // findingId must agree regardless of whether the caller addressed
-    // the file by an absolute or a `cwd`-relative path.
-    expect(checklistCandidate.findingId).toBe(scanEntry.findingId);
+    // findingGroupId must agree regardless of whether the caller
+    // addressed the file by an absolute or a `cwd`-relative path.
+    expect(checklistCandidate.findingGroupId).toBe(scanEntry.findingGroupId);
   });
 
   it("scan_file with absolute path matches checklist on same cwd", async () => {
@@ -248,7 +266,7 @@ describe("MCP invariant: candidate findingId is stable across scan_file and chec
     const checklistCandidate = checklistItem.candidates[0];
     expect(checklistCandidate).toBeDefined();
     if (checklistCandidate === undefined) return;
-    expect(checklistCandidate.findingId).toBe(scanEntry.findingId);
+    expect(checklistCandidate.findingGroupId).toBe(scanEntry.findingGroupId);
   });
 });
 

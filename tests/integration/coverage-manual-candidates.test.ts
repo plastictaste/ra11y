@@ -79,6 +79,7 @@ function body<T>(resp: JsonRpcResponse): T {
 
 interface CoverageCandidate {
   readonly findingId: string;
+  readonly findingGroupId: string;
   readonly file: string;
   readonly line: number;
   readonly column: number;
@@ -100,6 +101,7 @@ interface CoverageBody {
 
 interface ChecklistCandidate {
   readonly findingId: string;
+  readonly findingGroupId: string;
   readonly path: string;
   readonly line: number;
   readonly criteria: readonly string[];
@@ -115,11 +117,15 @@ interface ChecklistBody {
 }
 
 /**
- * Indexes checklist candidate ids per criterion. Extracted from the
- * cross-surface assertion test so the test body stays under the lint's
- * cognitive-complexity ceiling.
+ * Indexes checklist candidate group ids per criterion. Extracted from
+ * the cross-surface assertion test so the test body stays under the
+ * lint's cognitive-complexity ceiling. Groups via `findingGroupId`
+ * because that is the cross-surface group identity — checklist's
+ * per-emission `findingId` is hashed with the per-item single criterion
+ * (distinct per item) while coverage's per-row `findingId` ===
+ * `findingGroupId` on its position-dedup'd shape.
  */
-function indexChecklistFindingIdsByCriterion(
+function indexChecklistFindingGroupIdsByCriterion(
   checklist: ChecklistBody,
 ): ReadonlyMap<string, ReadonlySet<string>> {
   const out = new Map<string, Set<string>>();
@@ -130,7 +136,7 @@ function indexChecklistFindingIdsByCriterion(
         bucket = new Set<string>();
         out.set(criterionId, bucket);
       }
-      for (const c of item.candidates) bucket.add(c.findingId);
+      for (const c of item.candidates) bucket.add(c.findingGroupId);
     }
   }
   return out;
@@ -200,15 +206,21 @@ describe("coverage.manualWithCandidates[] per-entry candidate-shape contract", (
     }
   });
 
-  it("findingId on coverage agrees with the id checklist ships for the same conceptual candidate", async () => {
+  it("findingGroupId on coverage agrees with the group id checklist ships for the same conceptual candidate", async () => {
     // Cross-surface invariant per
     // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
     // identifiers must be addressable, not collision-prone" + "Per-tool
     // review-candidate shape must agree across surfaces": the same
-    // conceptual candidate produces ONE `findingId` across coverage,
-    // checklist, scan_project, and scan_file. Pinned here for the
-    // coverage ↔ checklist axis specifically (the new surface added
-    // by the `manualWithCandidates[].candidates[]` embedding).
+    // conceptual candidate produces ONE `findingGroupId` across
+    // coverage, checklist, scan_project, and scan_file (the cross-
+    // surface group identity). Per-emission `findingId` differs by
+    // surface — on coverage / scan_file / scan_project the per-row
+    // dedup gives `findingId === findingGroupId`; on checklist the
+    // per-(criterion, emission) `findingId` is distinct per item while
+    // `findingGroupId` agrees with the row scan-family ships. Pinned
+    // here for the coverage ↔ checklist axis specifically (the new
+    // surface added by the `manualWithCandidates[].candidates[]`
+    // embedding).
     const dir = await makeMediaFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -218,25 +230,25 @@ describe("coverage.manualWithCandidates[] per-entry candidate-shape contract", (
     const coverage = body<CoverageBody>(responses[1]);
     const checklist = body<ChecklistBody>(responses[2]);
 
-    // Index checklist's candidate ids per criterion so we can compare
-    // per-criterion sets (every criterion in coverage's
+    // Index checklist's candidate group ids per criterion so we can
+    // compare per-criterion sets (every criterion in coverage's
     // manualWithCandidates must have a corresponding checklist item
-    // covering at least the same finding ids).
-    const checklistIdsByCriterion = indexChecklistFindingIdsByCriterion(checklist);
+    // covering at least the same finding group ids).
+    const checklistGroupIdsByCriterion = indexChecklistFindingGroupIdsByCriterion(checklist);
 
     const coverageEntries = coverage.manualWithCandidates ?? [];
     expect(coverageEntries.length).toBeGreaterThan(0);
 
     for (const entry of coverageEntries) {
-      const checklistIds = checklistIdsByCriterion.get(entry.criterionId);
+      const checklistGroupIds = checklistGroupIdsByCriterion.get(entry.criterionId);
       // `withCandidates` upstream of the entry build is sourced from
       // the same `report.candidates` checklist consumes, so every
       // criterion grounded in coverage MUST have a checklist item
-      // for the same id.
-      expect(checklistIds).toBeDefined();
-      const ids = checklistIds ?? new Set<string>();
+      // for the same group id.
+      expect(checklistGroupIds).toBeDefined();
+      const ids = checklistGroupIds ?? new Set<string>();
       for (const c of entry.candidates) {
-        expect(ids.has(c.findingId)).toBe(true);
+        expect(ids.has(c.findingGroupId)).toBe(true);
       }
     }
   });

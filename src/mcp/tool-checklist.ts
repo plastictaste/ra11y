@@ -110,26 +110,47 @@ import {
 
 interface ChecklistCandidateOut {
   /**
-   * Per-emission unique address — same recipe as the rule surface's
-   * `Violation.findingId` (location-coordinate-hashed) and the
-   * `findingId` slot on `scan_file.reviewCandidates[]` /
-   * `scan_project.reviewCandidates[]`. Computed via
-   * `computeCandidateFindingId` over `(sortedCriteria.join(","), path,
-   * line, column)` so the SAME conceptual candidate carries the SAME id
-   * across all three surfaces — agents calling them in sequence can
-   * address one candidate by id regardless of which tool produced it.
+   * Per-emission unique address — hashed over the per-item criterion
+   * (singleton list) plus `(path, line, column, reason)`. Every
+   * `findingId` in a single checklist response is unique by
+   * construction: when a finder declares N criterion IDs and emits N
+   * candidates at the same `(file, line, column, reason)` tuple, each
+   * per-criterion checklist row gets its own id. Pre-closure the hash
+   * folded the cross-criterion union into one shared id — N candidate
+   * rows in the response collapsed to one address, breaking
+   * `suggest_fix(findingId)` resolution and silently silencing sibling
+   * rows under id-keyed suppress.
+   *
+   * Per AI-first doctrine "Per-finding identifiers must be addressable,
+   * not collision-prone": every `findingId` in a single response must
+   * be unique, and the per-call surface must address one emission per
+   * id. Cross-surface group identity (the conceptual candidate the
+   * same emission represents on `scan_file.reviewCandidates[]` /
+   * `scan_project.reviewCandidates[]`) ships on the sibling
+   * {@link ChecklistCandidateOut#findingGroupId} field — same value on
+   * every surface that ships the conceptual candidate.
+   */
+  readonly findingId: string;
+  /**
+   * Cross-surface group identity — hashed over the cross-criterion
+   * union plus `(path, line, column, reason)`. The SAME conceptual
+   * candidate carries the SAME `findingGroupId` across
+   * `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+   * and `checklist.items[].candidates[]` — an agent calling those tools
+   * in sequence can address the conceptual group by this token
+   * regardless of which surface produced it.
    *
    * When this candidate also surfaces under sibling checklist items
    * (i.e. {@link ChecklistCandidateOut#criteria} is populated by
    * {@link annotateSharedCandidates}), every per-item instance carries
-   * the SAME `findingId` because the hash uses the sorted criteria
-   * union — so an agent dedup-walking the group reads one id, not N.
+   * the SAME `findingGroupId` — so an agent dedup-walking the cross-
+   * item group reads one stable token while addressing each row by its
+   * own unique `findingId`.
    *
-   * Per AI-first doctrine "Per-finding identifiers must be addressable,
-   * not collision-prone" + "Per-tool review-candidate shape must agree
+   * Per AI-first doctrine "Per-tool review-candidate shape must agree
    * across surfaces."
    */
-  readonly findingId: string;
+  readonly findingGroupId: string;
   readonly path: string;
   readonly line: number;
   readonly reason: string;
@@ -2147,7 +2168,29 @@ function mapOneCandidate(
     c.reason,
   );
   const criteria = criteriaUnionByPosition.get(positionKey) ?? [criterionId];
+  // Per-emission unique address — hashed with the per-item single
+  // criterion so each per-(criterion, position) row in a checklist
+  // response gets a distinct id. Pre-closure the hash used the cross-
+  // criterion union, so N per-item rows pointing at one conceptual
+  // emission collapsed to one shared id — `suggest_fix(findingId)`
+  // resolved ambiguously and id-keyed suppress silenced sibling rows
+  // the agent never read. Per AI-first doctrine "Per-finding
+  // identifiers must be addressable, not collision-prone."
   const findingId = computeCandidateFindingId({
+    criteria: [criterionId],
+    filePath: c.location.filePath,
+    line: c.location.line,
+    column: c.location.column,
+    reason: c.reason,
+    scanRoot,
+  });
+  // Cross-surface group identity — hashed with the cross-criterion
+  // union so the SAME conceptual candidate carries the SAME
+  // `findingGroupId` on `scan_file.reviewCandidates[]`,
+  // `scan_project.reviewCandidates[]`, and every per-item checklist
+  // row that surfaces this emission. Per AI-first doctrine "Per-tool
+  // review-candidate shape must agree across surfaces."
+  const findingGroupId = computeCandidateFindingId({
     criteria,
     filePath: c.location.filePath,
     line: c.location.line,
@@ -2157,6 +2200,7 @@ function mapOneCandidate(
   });
   return {
     findingId,
+    findingGroupId,
     path: c.location.filePath,
     line: c.location.line,
     reason: c.reason,
@@ -2332,22 +2376,23 @@ function annotateSharedCandidates(
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const ids = byKey.get(key);
       if (ids === undefined || ids.length <= 1) return c;
-      // Cross-criterion sharing — `findingId` was already hashed on
-      // mapOneCandidate over the position-keyed cross-finder /
-      // cross-standard union (so it matches the same conceptual
-      // candidate's id on `scan_file.reviewCandidates[]` /
-      // `scan_project.reviewCandidates[]` regardless of which
-      // surface reads it). The annotation here only widens the
-      // candidate's own `criteria` list to the cross-item union the
-      // checklist surface has visibility into, so an agent walking the
-      // shared group sees every standard ID this evidence covers.
-      // Per AI-first doctrine "Per-tool review-candidate shape must
-      // agree across surfaces."
+      // Cross-criterion sharing — the per-emission `findingId` stays
+      // per-(criterion, position) so the response-wide uniqueness
+      // invariant holds (each per-item row addresses one emission).
+      // The annotation here widens the candidate's own `criteria` list
+      // to the cross-item union and recomputes `findingGroupId` over
+      // that union so every per-item row pointing at the same
+      // conceptual emission ships ONE shared group token — an agent
+      // dedup-walking the cross-item group reads one stable id while
+      // still addressing each row by its own unique `findingId`. Per
+      // AI-first doctrine "Per-finding identifiers must be
+      // addressable, not collision-prone" + "Per-tool review-candidate
+      // shape must agree across surfaces."
       const column = byColumn.get(key) ?? c.line;
       const positionKey = candidateCriteriaUnionKey(c.path, c.line, column, c.reason);
       const criteriaUnion = criteriaUnionByPosition.get(positionKey);
       const criteria = criteriaUnion === undefined ? [...ids].sort() : [...criteriaUnion];
-      const findingId = computeCandidateFindingId({
+      const findingGroupId = computeCandidateFindingId({
         criteria,
         filePath: c.path,
         line: c.line,
@@ -2355,7 +2400,7 @@ function annotateSharedCandidates(
         reason: c.reason,
         scanRoot,
       });
-      return { ...c, findingId, criteria };
+      return { ...c, findingGroupId, criteria };
     }),
   }));
 }

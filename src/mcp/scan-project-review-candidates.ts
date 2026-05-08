@@ -52,17 +52,34 @@ import { buildCandidateCriteriaUnion } from "./review-candidate-dedup.ts";
  */
 export interface ScanProjectReviewCandidate {
   /**
-   * Per-emission unique address — same recipe as
-   * {@link DedupedReviewCandidate#findingId} on `scan_file` and the
-   * `findingId` checklist surfaces, hashed via
-   * {@link computeCandidateFindingId} over `(sortedCriteria.join(","),
-   * file, line, column)`. Stable across surfaces so an agent calling
-   * `scan_project` first and `checklist` second can address the same
-   * candidate by id. Per AI-first doctrine "Per-finding identifiers
-   * must be addressable, not collision-prone" + "Per-tool review-
-   * candidate shape must agree across surfaces."
+   * Per-emission unique address — hashed via
+   * {@link computeCandidateFindingId} over the cross-criterion union
+   * plus `(file, line, column, reason)`. The post-dedup surface ships
+   * ONE row per `(file, line, column, reason)` — `findingId` is unique
+   * by construction here. The sibling {@link ScanProjectReviewCandidate#findingGroupId}
+   * carries the cross-surface identity matching the same value on
+   * `scan_file.reviewCandidates[]` and the per-item rows on
+   * `checklist.items[].candidates[]` that point at this conceptual
+   * emission.
+   *
+   * Per AI-first doctrine "Per-finding identifiers must be
+   * addressable, not collision-prone": every `findingId` in a single
+   * response must be unique.
    */
   readonly findingId: string;
+  /**
+   * Cross-surface group identity — same recipe as `findingId` on this
+   * surface (one row per `(file, line, column, reason)`, so the group
+   * equals the emission). Stamped explicitly so the wire shape mirrors
+   * `checklist.items[].candidates[]`, where per-(criterion, position)
+   * rows ship distinct `findingId` values but agree on
+   * `findingGroupId` — letting an agent dedup-walk the cross-surface
+   * conceptual group via this stable token.
+   *
+   * Per AI-first doctrine "Per-tool review-candidate shape must agree
+   * across surfaces."
+   */
+  readonly findingGroupId: string;
   readonly file: string;
   readonly line: number;
   readonly column: number;
@@ -158,19 +175,22 @@ export function buildScanProjectReviewCandidates(args: {
     const criteria = [...g.criteria].sort();
     const positionKey = `${g.file}\x00${g.line}\x00${g.column}\x00${g.reason}`;
     const hashCriteria = criteriaUnionByPosition.get(positionKey) ?? criteria;
+    // Per-emission address — sorted-criteria-joined slot. On this
+    // surface `findingId === findingGroupId` because dedup ships one
+    // row per `(file, line, column, reason)`, so the emission IS the
+    // group. The pair lands on the wire so the shape mirrors
+    // `checklist.items[].candidates[]`, where the two ids diverge.
+    const findingId = computeCandidateFindingId({
+      criteria: hashCriteria,
+      filePath: g.file,
+      line: g.line,
+      column: g.column,
+      reason: g.reason,
+      ...(scanRoot === undefined ? {} : { scanRoot }),
+    });
     return {
-      // Per-emission address shared with the same conceptual candidate
-      // surfaced by `scan_file.reviewCandidates[]` and `checklist.items[]
-      // .candidates[]`. The sorted-criteria-joined ruleId slot guarantees
-      // identical ids across the three surfaces.
-      findingId: computeCandidateFindingId({
-        criteria: hashCriteria,
-        filePath: g.file,
-        line: g.line,
-        column: g.column,
-        reason: g.reason,
-        ...(scanRoot === undefined ? {} : { scanRoot }),
-      }),
+      findingId,
+      findingGroupId: findingId,
       file: g.file,
       line: g.line,
       column: g.column,
