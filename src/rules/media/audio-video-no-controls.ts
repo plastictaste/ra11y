@@ -51,7 +51,23 @@ export const rule = defineRule({
     "en301549:9.1.4.2",
     "en301549:9.2.1.1",
   ],
-  severity: "error",
+  // Severity downgraded from `error` to `warning` because the rule's
+  // fix.description hedges with "If a custom JS-driven control bar is
+  // wired up to this element, keep `controls` as a fallback... or
+  // suppress this finding... once you have verified the custom
+  // controls expose play/pause and volume to the keyboard." Per
+  // docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+  // fix-description must agree across all three channels," a
+  // fix.description that concedes the predicate may not hold (custom
+  // JS controls may already expose keyboard ops) cannot ship at
+  // `error`. Cross-file resolution of `play()` / `pause()` /
+  // `addEventListener` against the element's id is out of scope for
+  // a single-file static scanner per "Don't duplicate capability the
+  // agent already has" — the consuming agent reading the file can
+  // verify in one Read. Severity drops a notch so the attention-
+  // budget signal matches the predicate strength; the finding stays
+  // surfaced (surface-don't-suppress).
+  severity: "warning",
   scope: "node",
   fixClass: "verify-in-source",
   appliesTo: {
@@ -142,7 +158,7 @@ function emitViolation(
   emit: Emit,
 ): void {
   emit({
-    severity: "error",
+    severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: buildMessage(tagName),
     suggestion: buildSuggestion(tagName),
