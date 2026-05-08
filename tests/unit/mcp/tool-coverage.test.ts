@@ -478,6 +478,7 @@ describe("coverage tool: criterion-title resolution", () => {
     const fabricatedUnresolved = "wcag22:99.99.99";
     const fakeCandidate: ScanProjectReviewCandidate = {
       findingId: "test-finding",
+      findingGroupId: "test-finding",
       file: "page.tsx",
       line: 1,
       column: 1,
