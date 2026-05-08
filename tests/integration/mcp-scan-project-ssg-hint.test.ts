@@ -27,9 +27,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -82,7 +82,7 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 
 describe("scan_project:", () => {
   it("surfaces detectedFramework + analysisCoverage hint on an empty Jekyll repo", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-ssg-jekyll-empty-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-ssg-jekyll-empty-"));
     try {
       // Jekyll config at the repo root but no parseable content.
       // This is the zero-parseable-files branch — canonically the
@@ -92,10 +92,10 @@ describe("scan_project:", () => {
       // corroboration count at 2, so the detector resolves to
       // `confidence: "high"` (sentinel + ≥2 corroborators per the
       // graded confidence contract — see tests/unit/mcp/ssg-detect.test.ts).
-      writeFileSync(join(root, "_config.yml"), "title: My site\nmarkdown: kramdown\n");
-      mkdirSync(join(root, "_layouts"));
+      writeFileSync(posixJoin(root, "_config.yml"), "title: My site\nmarkdown: kramdown\n");
+      mkdirSync(posixJoin(root, "_layouts"));
       writeFileSync(
-        join(root, "Gemfile"),
+        posixJoin(root, "Gemfile"),
         'source "https://rubygems.org"\ngem "jekyll", "~> 4.3"\n',
       );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -128,15 +128,15 @@ describe("scan_project:", () => {
   });
 
   it("surfaces detectedFramework on a Hugo repo that also has parseable content", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-ssg-hugo-content-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-ssg-hugo-content-"));
     try {
       // Modern Hugo config + a small rendered HTML page so the scan
       // exercises the non-empty assembly branch (`formatted.meta`
       // carries real `analysisCoverage`/`filesByExtension` data).
-      writeFileSync(join(root, "hugo.toml"), 'baseURL = "https://example.org/"\n');
-      mkdirSync(join(root, "public"));
+      writeFileSync(posixJoin(root, "hugo.toml"), 'baseURL = "https://example.org/"\n');
+      mkdirSync(posixJoin(root, "public"));
       writeFileSync(
-        join(root, "public", "index.html"),
+        posixJoin(root, "public", "index.html"),
         '<html><body><img src="/hero.png"></body></html>\n',
       );
       const responses = await mcpSession([
@@ -167,10 +167,13 @@ describe("scan_project:", () => {
   it("omits detectedFramework entirely on a plain Node repo", async () => {
     // Clean honest shape per CLAUDE.md §1 "Ambiguous field shapes are
     // dishonest" — no SSG marker → field absent, not `null`.
-    const root = mkdtempSync(join(tmpdir(), "ra11y-ssg-none-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-ssg-none-"));
     try {
-      writeFileSync(join(root, "package.json"), '{"name":"x","version":"0.0.0"}\n');
-      writeFileSync(join(root, "index.html"), '<html><body><img src="/hero.png"></body></html>\n');
+      writeFileSync(posixJoin(root, "package.json"), '{"name":"x","version":"0.0.0"}\n');
+      writeFileSync(
+        posixJoin(root, "index.html"),
+        '<html><body><img src="/hero.png"></body></html>\n',
+      );
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);
@@ -190,17 +193,17 @@ describe("scan_project:", () => {
     // sub-tree without its own SSG sentinel sees `detectedFramework`
     // omitted (per CLAUDE.md §1 "Ambiguous field shapes are dishonest"
     // — present-when-meaningful, never inherited).
-    const parent = mkdtempSync(join(tmpdir(), "ra11y-ssg-subscope-"));
+    const parent = mkdtempSync(posixJoin(tmpdir(), "ra11y-ssg-subscope-"));
     try {
       // Parent looks fully Jekyll-shaped (sentinel + 2 corroborators).
-      writeFileSync(join(parent, "_config.yml"), "title: Parent corpus\n");
-      mkdirSync(join(parent, "_layouts"));
-      mkdirSync(join(parent, "_includes"));
+      writeFileSync(posixJoin(parent, "_config.yml"), "title: Parent corpus\n");
+      mkdirSync(posixJoin(parent, "_layouts"));
+      mkdirSync(posixJoin(parent, "_includes"));
       // Sub-template has its own content but no SSG sentinel.
-      const subTree = join(parent, "templates", "site-42");
+      const subTree = posixJoin(parent, "templates", "site-42");
       mkdirSync(subTree, { recursive: true });
       writeFileSync(
-        join(subTree, "index.html"),
+        posixJoin(subTree, "index.html"),
         '<html><body><img src="/hero.png"></body></html>\n',
       );
       const responses = await mcpSession([

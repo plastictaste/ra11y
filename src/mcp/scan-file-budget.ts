@@ -41,11 +41,13 @@
  * shape, different scoping (per-call findings vs per-call file fan).
  */
 
+import type { AgentFinding } from "../output/agent-response/types.ts";
 import {
   guardOversizeEnvelope,
   type OversizeEnvelopeReason,
   oversizeEnvelopeWarningsField,
 } from "./oversize-envelope.ts";
+import { pruneFixDescriptionsToReferenced, type ReferenceGuide } from "./reference-guide.ts";
 import type { ScanWarningCode, ScanWarningDetails } from "./warnings.ts";
 
 /**
@@ -158,10 +160,49 @@ export function applyScanFileBudget(args: ApplyScanFileBudgetArgs): ApplyScanFil
         totalFindings,
       }),
   });
+  const truncated = paged.truncated || guarded.triggered;
+  // Q16: stamp the always-present scan-state primitives so a clean
+  // single-file scan response and a truncated single-file scan response
+  // ship the same field set. Pre-Q16 the `totalFindings` / `truncated` /
+  // `findingsArrayDropped` triplet was conditional-spread only when
+  // paging or the slim guard fired, so a clean scan omitted them
+  // entirely — agents reading `obj.totalFindings` got `undefined` (read
+  // back as `null` in agent prose) and could not disambiguate
+  // "clean scan with the full inventory" from "field unavailable" /
+  // "scan never ran." Per `docs/kb/architecture/ai-first-consumer.md`
+  // "Ambiguous field shapes are dishonest" — these three primitives
+  // describe scan-state that ALWAYS applies to a single-file scan
+  // (every scan_file response either ran the full inventory or
+  // truncated some of it; every scan_file response either kept
+  // `findings[]` populated or dropped it under the slim envelope).
+  // The under-cap path stamps `truncated: false`,
+  // `findingsArrayDropped: false`, and `totalFindings: <count>` so the
+  // honest "this IS the full inventory" reading is explicit.
   return {
-    response: guarded.response,
-    truncated: paged.truncated || guarded.triggered,
+    response: ensureScanStatePrimitives(guarded.response, totalFindings, truncated),
+    truncated,
   };
+}
+
+/**
+ * Stamps the always-present `scan_file` scan-state primitives onto
+ * the response when neither the paging primitive nor the slim envelope
+ * has already populated them. Idempotent: if a field is already
+ * present (from `applyFindingsPaging` or `buildSlimScanFileEnvelope`),
+ * the existing value wins. Q16 closure for the `totalFindings` /
+ * `truncated` / `findingsArrayDropped` triplet — see
+ * {@link applyScanFileBudget}'s docblock for the doctrine link.
+ */
+function ensureScanStatePrimitives(
+  response: Record<string, unknown>,
+  totalFindings: number,
+  truncated: boolean,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...response };
+  if (out["totalFindings"] === undefined) out["totalFindings"] = totalFindings;
+  if (out["truncated"] === undefined) out["truncated"] = truncated;
+  if (out["findingsArrayDropped"] === undefined) out["findingsArrayDropped"] = false;
+  return out;
 }
 
 interface PagingResult {
@@ -214,6 +255,17 @@ function applyFindingsPaging(args: {
   // Exact-page or last-page request — surviving slice is everything
   // remaining. No `nextOffset` because there's nothing past the page.
   const hasNextPage = droppedTail > 0;
+  // dangling
+  // referenceGuide.fixDescriptions entries. The upstream hoist runs
+  // over the full pre-paging inventory so per-finding
+  // `fix.descriptionRef` pointers reflect the rule-wide hoist
+  // decision; once paging clips the flat findings list, prune the map
+  // to (ruleId, hash) pairs surviving on the page so an agent reading
+  // `fixDescriptions[ruleId]` doesn't see N entries when only K ≤ N
+  // findings reference them. Per `docs/kb/architecture/ai-first-
+  // consumer.md` "Composite headline counts are dishonest" — extension
+  // to per-finding fix-description duplication.
+  const prunedReferenceGuide = pruneFixDescriptionsForPagedResponse(args.response, sliced);
   const next: Record<string, unknown> = {
     ...args.response,
     findings: sliced,
@@ -223,8 +275,71 @@ function applyFindingsPaging(args: {
     effectiveLimit: sliced.length,
     pageClipReason: "limit_offset" as const,
     ...(hasNextPage ? { nextOffset: offset + sliced.length } : {}),
+    ...(prunedReferenceGuide.action === "replace"
+      ? { referenceGuide: prunedReferenceGuide.next }
+      : {}),
   };
+  if (prunedReferenceGuide.action === "drop") {
+    delete next["referenceGuide"];
+  }
   return { response: next, truncated, totalFindings };
+}
+
+/**
+ * Result of pruning `referenceGuide.fixDescriptions` to the surviving
+ * findings on a page. Three cases:
+ *
+ *   - `noop` — the response had no `referenceGuide` (opt-out path), or
+ *     the prune was identity-preserving (every map entry stayed). The
+ *     spread that placed `referenceGuide` originally survives unchanged.
+ *   - `replace` — the prune dropped some entries; ship a new
+ *     `referenceGuide` object with the trimmed map (other fields like
+ *     `suppressPlacement` carry through unchanged).
+ *   - `drop` — every map entry was dropped AND the surrounding
+ *     `suppressPlacement` block is the only surviving member. Drop the
+ *     `referenceGuide` field entirely so a caller doesn't ship a
+ *     half-empty container; per the "present-when-meaningful" rule.
+ *
+ * Distinguishing `replace` from `drop` keeps the `suppressPlacement`
+ * subfield honest: an opt-in caller paging into a slice that no longer
+ * triggers any rule's per-rule hoist threshold still benefits from
+ * the placement prose, so we keep the guide in that case.
+ */
+type PruneFixDescriptionsAction =
+  | { readonly action: "noop" }
+  | { readonly action: "replace"; readonly next: ReferenceGuide }
+  | { readonly action: "drop" };
+
+function pruneFixDescriptionsForPagedResponse(
+  response: Record<string, unknown>,
+  surviving: readonly unknown[],
+): PruneFixDescriptionsAction {
+  const guideField = response["referenceGuide"];
+  if (guideField === undefined || guideField === null || typeof guideField !== "object") {
+    return { action: "noop" };
+  }
+  const guide = guideField as ReferenceGuide;
+  const fixDescriptions = guide.fixDescriptions;
+  if (fixDescriptions === undefined) return { action: "noop" };
+  // The findings axis on scan_file is `AgentFinding[]` — the assembler
+  // hoist already ran over them. Cast through the shared shape so the
+  // prune helper can read `fix?.descriptionRef?.hash` without a wider
+  // generic on this side.
+  const pruned = pruneFixDescriptionsToReferenced(
+    fixDescriptions,
+    surviving as readonly AgentFinding[],
+  );
+  if (pruned === fixDescriptions) return { action: "noop" };
+  if (pruned === undefined) {
+    // Every (ruleId, hash) pair was dropped. Keep the suppressPlacement
+    // half of the guide if it would still be useful to the agent
+    // — the prose is per-extension, not per-finding, so a paged slice
+    // doesn't change its applicability.
+    const { fixDescriptions: _omitted, ...rest } = guide;
+    if (Object.keys(rest).length === 0) return { action: "drop" };
+    return { action: "replace", next: rest as ReferenceGuide };
+  }
+  return { action: "replace", next: { ...guide, fixDescriptions: pruned } };
 }
 
 /**

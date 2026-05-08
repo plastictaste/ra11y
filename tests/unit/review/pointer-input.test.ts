@@ -5,14 +5,14 @@
 
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { finder } from "../../../src/review/finders/pointer-input.ts";
+import { posixJoin } from "../../helpers/path.ts";
 import { runFinder } from "../../helpers/run-finder.ts";
 
-const FIXTURE_ROOT = join(import.meta.dir, "..", "..", "fixtures", "review", "pointer-input");
+const FIXTURE_ROOT = posixJoin(import.meta.dir, "..", "..", "fixtures", "review", "pointer-input");
 
 function loadFixture(kind: "good" | "bad", name: string): string {
-  return readFileSync(join(FIXTURE_ROOT, kind, name), "utf8");
+  return readFileSync(posixJoin(FIXTURE_ROOT, kind, name), "utf8");
 }
 
 describe("review/pointer-input", () => {
@@ -292,7 +292,7 @@ describe("review/pointer-input", () => {
     it("fixture: bad/swipe-lib.js fires pair + basename + class-name", () => {
       const src = loadFixture("bad", "swipe-lib.js");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "bad", "swipe-lib.js"),
+        filePath: posixJoin(FIXTURE_ROOT, "bad", "swipe-lib.js"),
       });
       expect(out.filter((c) => c.reason.includes("path-based")).length).toBeGreaterThan(0);
       expect(out.filter((c) => c.reason.includes("file basename")).length).toBeGreaterThan(0);
@@ -304,7 +304,7 @@ describe("review/pointer-input", () => {
     it("fixture: bad/pinch-zoom.ts fires basename + class-name", () => {
       const src = loadFixture("bad", "pinch-zoom.ts");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "bad", "pinch-zoom.ts"),
+        filePath: posixJoin(FIXTURE_ROOT, "bad", "pinch-zoom.ts"),
       });
       expect(out.filter((c) => c.reason.includes("file basename")).length).toBeGreaterThan(0);
       expect(
@@ -315,7 +315,7 @@ describe("review/pointer-input", () => {
     it("fixture: bad/pointerdown-pointermove-pair.ts fires pair even without name tokens", () => {
       const src = loadFixture("bad", "pointerdown-pointermove-pair.ts");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "bad", "pointerdown-pointermove-pair.ts"),
+        filePath: posixJoin(FIXTURE_ROOT, "bad", "pointerdown-pointermove-pair.ts"),
       });
       expect(out.filter((c) => c.reason.includes("path-based")).length).toBeGreaterThan(0);
     });
@@ -323,7 +323,7 @@ describe("review/pointer-input", () => {
     it("fixture: good/planet-span.ts produces no suggests/path-based candidates", () => {
       const src = loadFixture("good", "planet-span.ts");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "good", "planet-span.ts"),
+        filePath: posixJoin(FIXTURE_ROOT, "good", "planet-span.ts"),
       });
       expect(out.filter((c) => c.reason.includes("suggests")).length).toBe(0);
       expect(out.filter((c) => c.reason.includes("path-based")).length).toBe(0);
@@ -332,7 +332,7 @@ describe("review/pointer-input", () => {
     it("fixture: good/click-only.ts produces zero candidates", () => {
       const src = loadFixture("good", "click-only.ts");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "good", "click-only.ts"),
+        filePath: posixJoin(FIXTURE_ROOT, "good", "click-only.ts"),
       });
       expect(out).toEqual([]);
     });
@@ -340,7 +340,7 @@ describe("review/pointer-input", () => {
     it("fixture: good/scroll-helper.ts produces zero candidates", () => {
       const src = loadFixture("good", "scroll-helper.ts");
       const out = runFinder(finder, src, {
-        filePath: join(FIXTURE_ROOT, "good", "scroll-helper.ts"),
+        filePath: posixJoin(FIXTURE_ROOT, "good", "scroll-helper.ts"),
       });
       expect(out).toEqual([]);
     });

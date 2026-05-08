@@ -24,9 +24,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -40,7 +40,7 @@ interface ChecklistCandidate {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly ChecklistCandidate[];
 }
@@ -94,7 +94,7 @@ function body<T>(resp: JsonRpcResponse): T {
 
 describe("checklist priority drops to 'low' on minified-vendor-no-sourcemap candidates", () => {
   it("ships priority 'low' and couldBeWrongBecause stamp on a minified vendor file with a single-letter setTimeout identifier", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-min-vendor-no-sourcemap-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-min-vendor-no-sourcemap-"));
     // `lib.min.js` matches the minified-shape predicate via the `.min.`
     // infix in the basename — both the build-artifact classifier (in
     // `src/mcp/build-artifacts.ts` `detectMinInfix`) AND the timing
@@ -112,10 +112,13 @@ describe("checklist priority drops to 'low' on minified-vendor-no-sourcemap cand
     // 5ms debounce. Per AI-first doctrine "Reason / priority /
     // fix-description must agree across all three channels," the
     // priority signal must concede the predicate-strength gap.
-    await writeFile(join(dir, "lib.min.js"), `var _=5;setTimeout(function(){doStuff();},_);\n`);
+    await writeFile(
+      posixJoin(dir, "lib.min.js"),
+      `var _=5;setTimeout(function(){doStuff();},_);\n`,
+    );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -128,16 +131,12 @@ describe("checklist priority drops to 'low' on minified-vendor-no-sourcemap cand
     // Paired evidence stamp lands on every candidate so the agent reads
     // BOTH the budget signal AND the predicate-strength concession.
     expect(
-      item.candidates.every(
-        (c) =>
-          c.couldBeWrongBecause !== undefined &&
-          c.couldBeWrongBecause.includes("minified_vendor_no_sourcemap"),
-      ),
+      item.candidates.every((c) => c.couldBeWrongBecause?.includes("minified_vendor_no_sourcemap")),
     ).toBe(true);
   });
 
   it("keeps priority 'high' and omits couldBeWrongBecause when at least one candidate is on hand-authored source", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-mixed-min-vendor-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-mixed-min-vendor-"));
     // Mixed corpus: an authored `.js` with no minification AND a
     // minified vendor sibling. The all-or-nothing test mirrors the
     // existing vendor-context-priority gate — a single hand-authored
@@ -146,13 +145,16 @@ describe("checklist priority drops to 'low' on minified-vendor-no-sourcemap cand
     // siblings. couldBeWrongBecause stays omitted on the authored
     // candidate (the helper returns null for it).
     await writeFile(
-      join(dir, "src.js"),
+      posixJoin(dir, "src.js"),
       `function bootstrap(){ setTimeout(function(){ tick(); }, 5000); }\n`,
     );
-    await writeFile(join(dir, "lib.min.js"), `var _=5;setTimeout(function(){doStuff();},_);\n`);
+    await writeFile(
+      posixJoin(dir, "lib.min.js"),
+      `var _=5;setTimeout(function(){doStuff();},_);\n`,
+    );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.priority).toBe("high");

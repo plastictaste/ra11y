@@ -53,6 +53,7 @@ import { gitRoot } from "../utils/git.ts";
 import { sawProjectMarkerInWalk, shouldEmitNoConfigFound } from "./config-search-marker.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
 import { requireStringArrayParam } from "./param-validators.ts";
+import { noConfigFoundWarningDetail } from "./scanner-meta.ts";
 import {
   errorResult,
   type McpTool,
@@ -176,7 +177,13 @@ export const listSuppressionsTool: McpTool = {
       warningsDetails["session_wrappers_configured_for_different_cwd"] = {};
     }
     if (noConfigFires) {
-      warningsDetails["no_config_found"] = { searchedFrom: root };
+      // Present-when-meaningful gate via shared helper: `root` IS
+      // `meta.scanned.root` here, so the rich payload drops to the
+      // empty record and the bare warning code carries the signal.
+      warningsDetails["no_config_found"] = noConfigFoundWarningDetail({
+        searchedFrom: root,
+        scannedRoot: root,
+      });
     }
     return textResult({
       suppressions: entries,

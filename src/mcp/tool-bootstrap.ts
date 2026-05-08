@@ -45,11 +45,28 @@
  *     disagreed with `fixesByClass.mechanical` on the same response —
  *     callers sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
  *     when they want the apply-now subset.
+ *   - `wrappers` subset enumerates the same discriminator field set the
+ *     standalone `detect_native_wrappers` surface ships — `candidates`
+ *     + `projectKind` always; `inapplicable` / `emptyReason` /
+ *     `opaqueCustomComponentNames` / `absentDeclaredWrappers` /
+ *     `suggestedConfigSnippet` present-when-meaningful. Per
+ *     `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class
+ *     lanes must equal project-rooted lanes" + "Per-tool review-
+ *     candidate shape must agree across surfaces," dropping any of
+ *     these on the bootstrap surface forces the agent to re-call
+ *     `detect_native_wrappers` to disambiguate "tool doesn't apply on
+ *     this projectKind" from "ran clean / coverage miss" — a silent
+ *     gap the regression closure pins via integration test on
+ *     identical cwd.
  */
 
 import { existsSync } from "node:fs";
 import { BASELINE_FILENAME } from "../engine/baseline.ts";
 import { gitRoot } from "../utils/git.ts";
+import {
+  type BulkCatalogTriggerToken,
+  buildBulkCatalogWorkflowRecommendation,
+} from "./config-snippet.ts";
 import { detectForeignEcosystem, type ForeignEcosystem } from "./ecosystem-detect.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import { scannedProject } from "./scanned-envelope.ts";
@@ -151,7 +168,24 @@ export const bootstrapTool: McpTool = {
 
     const failedLegs: SubLeg[] = [];
     const wrappersPayload = extractWrappersSubset(detectSettled, failedLegs);
-    const suggestedConfig = extractProposedConfig(proposeSettled, failedLegs);
+    const proposedConfigBase = extractProposedConfig(proposeSettled, failedLegs);
+    // Workflow-recommendation extension to the proposed config: when
+    // the scan-leg's `warningsDetails.bulk_catalog_detected` payload
+    // fires (any of the three triggers — `slow_and_vendor_heavy`,
+    // `bulk_and_vendor_heavy`, `small_demo_catalog`), append a paste-
+    // safe TS comment block AFTER the `});` close that names the
+    // catalog-shape narrowing levers (`groupBy: "firstChildDir"` and
+    // example `restrictToPaths`). Per AI-first doctrine "Bootstrap
+    // output must be paste-safe" extension: paste-safety covers
+    // workflow recommendations on detected shapes — without this
+    // append, the agent gets severity overrides and no scope guidance
+    // for the catalog shape that drives the noise floor. The append
+    // never modifies the `defineConfig({...})` body itself; line
+    // comments past the export are valid TS.
+    const suggestedConfig = appendBulkCatalogWorkflowRecommendation(
+      proposedConfigBase,
+      readBulkCatalogDetection(scan),
+    );
 
     // Baseline runs sequentially when opted in. In dry-run the field is
     // omitted from the response entirely and a `baseline_dry_run` code
@@ -170,21 +204,32 @@ export const bootstrapTool: McpTool = {
       ...failedLegs.map((leg) => `bootstrap_${leg}_failed`),
       ...(writeBaseline ? [] : ["baseline_dry_run"]),
     ];
-    // Forward the underlying scan's `warningsDetails` payloads verbatim
-    // and stamp fall-through entries for bootstrap-local codes
-    // (`baseline_dry_run`, `bootstrap_<leg>_failed`) so the membership-
+    // Forward the underlying scan's `warningsDetails` payloads verbatim,
+    // attach the structured `baseline_dry_run` payload (the bootstrap
+    // call site is the predicate authority — it knows `writeBaseline`
+    // is `false` AND has the upstream `violationsCount` ready), and
+    // stamp fall-through entries for any remaining codes
+    // (`bootstrap_<leg>_failed` tool-local strings) so the membership-
     // vs-payload invariant holds at the bootstrap surface (every code
     // in `warnings[]` resolves to a `warningsDetails.<code>` entry).
-    // Without this, an agent reading bootstrap had the warning name
-    // and zero way to triage what fired — strictly worse than the
-    // empty-`{}` regression CLAUDE.md §1 "Empty `warningsDetails.<code>:
-    // {}` is dishonest" warns against (the entire container was
-    // missing). `fallThroughDetailEntry` returns `{}` for binary-
-    // presence codes and the truncation sentinel for payload-bearing
-    // codes whose summarizer didn't run on this surface, so each entry
+    // Without the structured `baseline_dry_run` payload, an agent
+    // reading the bare code learns "dry run" but cannot answer
+    // "would the create have produced a non-empty baseline?" without
+    // another round trip — the same silent miss the doctrine bullet
+    // "Empty `warningsDetails.<code>: {}` is dishonest" warns against.
+    // `fallThroughDetailEntry` returns `{}` for binary-presence codes
+    // and the truncation sentinel for payload-bearing codes whose
+    // summarizer didn't run on this surface, so each remaining entry
     // honestly signals what shape the agent should expect.
     const scanWarningsDetails = readWarningsDetails(scan);
-    const warningsDetails = buildWarningsDetails(warnings, scanWarningsDetails);
+    const warningsDetails = buildWarningsDetails(
+      warnings,
+      scanWarningsDetails,
+      buildBootstrapLocalWarningsDetails({
+        writeBaseline,
+        violationsCount: scanSubset.violationsCount,
+      }),
+    );
 
     // Snippet content tracks actual baseline-existence on disk: pasting
     // a `baseline check` incantation into CI before `.ra11y-baseline.json`
@@ -254,8 +299,84 @@ export const bootstrapTool: McpTool = {
   },
 };
 
+/**
+ * Subset of the {@link detectNativeWrappersTool} response forwarded onto
+ * the bootstrap `wrappers` field. Mirrors every discriminator the
+ * standalone tool ships so an agent calling `bootstrap` first can tell
+ * "tool doesn't apply on this projectKind" from "ran clean / coverage
+ * miss" without a follow-up `detect_native_wrappers` call. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class lanes
+ * must equal project-rooted lanes" + "Per-tool review-candidate shape
+ * must agree across surfaces" — the bootstrap surface must enumerate
+ * the same field set the upstream surface enumerates so the two
+ * surfaces' mental models stay in lockstep.
+ *
+ * The `nextStep` and `scanned` fields from the upstream response are
+ * intentionally NOT forwarded — bootstrap composes its own top-level
+ * `nextStep` / `nextStepStructured` (covering the wrappers + scan +
+ * baseline triple) and its own `meta.scanned`, so duplicating those
+ * here would be redundant. Every other field from the upstream
+ * response is forwarded with conditional spread (present-when-
+ * meaningful) so the empty / inapplicable / opaque-only branches each
+ * surface their own discriminator.
+ */
 interface WrappersSubset {
   readonly candidates: readonly unknown[];
+  /**
+   * Project-kind classifier forwarded verbatim from the upstream
+   * `detect_native_wrappers.projectKind` discriminator. `"jsx"` /
+   * `"static-site"` / `"ruby"` / `"python"` / `"go"` / `"unknown"` —
+   * lets the agent route on the same signal it would read off the
+   * standalone tool. Always present so empty `candidates` on a Rails
+   * site reads as "tool doesn't apply" rather than "coverage miss."
+   */
+  readonly projectKind: string;
+  /**
+   * Top-level "tool inapplicable" block forwarded from the upstream
+   * `inapplicable: { reason, filesByExtension }` shape. Present only
+   * on the no-JSX-in-tree branch — distinct from `emptyReason`
+   * (which signals "tool ran on real input but came up empty")
+   * because the detector's evidence model never had a surface here.
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Zero-output
+   * success is ambiguous failure," dropping this block on the
+   * bootstrap surface would force the agent to re-call
+   * `detect_native_wrappers` to disambiguate.
+   */
+  readonly inapplicable?: {
+    readonly reason: string;
+    readonly filesByExtension: Readonly<Record<string, number>>;
+  };
+  /**
+   * Structured `emptyReason` discriminator forwarded from the upstream
+   * success branch — `"no-pascalcase-onclick-components"` when the
+   * scan parsed JSX but found no PascalCase tags;
+   * `"no-jsx-onclick-candidates-found-but-opaque-components-present"`
+   * when PascalCase components exist but none carry the detector's
+   * required props. Conditional spread: omitted when `candidates`
+   * is non-empty (the discriminator only fires on the empty branch).
+   */
+  readonly emptyReason?: string;
+  /**
+   * Inlined inventory of opaque PascalCase component names forwarded
+   * from the upstream `opaqueCustomComponentNames` field. Present
+   * only when `emptyReason` names the opaque-components branch —
+   * lets the agent open each component directly without a follow-up
+   * `scan_project` call (per "One tool call should answer 'what
+   * next?'").
+   */
+  readonly opaqueCustomComponentNames?: readonly string[];
+  /**
+   * Declared-but-absent diff forwarded from the upstream
+   * `absentDeclaredWrappers` field — wrapper names declared in
+   * config that no component matched in this scan. Conditional
+   * spread: present-when-non-empty (mirrors the upstream gate).
+   */
+  readonly absentDeclaredWrappers?: readonly string[];
+  /**
+   * Paste-safe `nativeWrappers` config snippet forwarded from the
+   * upstream `suggestedConfigSnippet` field. Conditional spread:
+   * present-when-non-empty.
+   */
   readonly suggestedConfigSnippet?: string;
 }
 
@@ -283,6 +404,25 @@ function settledRecord(
   return payload as Record<string, unknown>;
 }
 
+/**
+ * Extracts the bootstrap `wrappers` subset from the settled
+ * `detect_native_wrappers` leg. Forwards every discriminator the
+ * upstream surface ships (`candidates`, `projectKind`, `inapplicable`,
+ * `emptyReason`, `opaqueCustomComponentNames`, `absentDeclaredWrappers`,
+ * `suggestedConfigSnippet`) so the bootstrap surface enumerates the
+ * same field set per "Bootstrap-class lanes must equal project-rooted
+ * lanes." Conditional spread for each optional field keeps the shape
+ * present-when-meaningful — empty-record sentinels would re-introduce
+ * the ambiguity the doctrine bullet "Ambiguous field shapes are
+ * dishonest" warns against.
+ *
+ * On detect-leg failure, falls back to a degraded `{ candidates: [],
+ * projectKind: "unknown" }` shape — `projectKind` stays populated as
+ * a schema-required scalar (the agent can still route on the
+ * "unknown" signal), and the failure surfaces through
+ * `bootstrap_detect_failed` in `warnings[]` so the degraded path is
+ * distinguishable from a clean-but-inapplicable scan.
+ */
 function extractWrappersSubset(
   settled: PromiseSettledResult<McpToolResult>,
   failedLegs: SubLeg[],
@@ -290,18 +430,55 @@ function extractWrappersSubset(
   const record = settledRecord(settled);
   if (record === null) {
     failedLegs.push("detect");
-    return { candidates: [] };
+    return { candidates: [], projectKind: "unknown" };
   }
   const candidates = Array.isArray(record["candidates"])
     ? (record["candidates"] as readonly unknown[])
     : [];
+  const projectKindRaw = record["projectKind"];
+  const projectKind = typeof projectKindRaw === "string" ? projectKindRaw : "unknown";
   const snippet = record["suggestedConfigSnippet"];
+  const emptyReason = record["emptyReason"];
+  const opaqueNames = record["opaqueCustomComponentNames"];
+  const absent = record["absentDeclaredWrappers"];
+  const inapplicable = record["inapplicable"];
   return {
     candidates,
+    projectKind,
+    ...(isInapplicableBlock(inapplicable) ? { inapplicable } : {}),
+    ...(typeof emptyReason === "string" && emptyReason.length > 0 ? { emptyReason } : {}),
+    ...(Array.isArray(opaqueNames) && opaqueNames.every((n) => typeof n === "string")
+      ? { opaqueCustomComponentNames: opaqueNames as readonly string[] }
+      : {}),
+    ...(Array.isArray(absent) && absent.every((n) => typeof n === "string")
+      ? { absentDeclaredWrappers: absent as readonly string[] }
+      : {}),
     ...(typeof snippet === "string" && snippet.length > 0
       ? { suggestedConfigSnippet: snippet }
       : {}),
   };
+}
+
+/**
+ * Type guard for the upstream `inapplicable: { reason, filesByExtension }`
+ * block. Defensive over forwarded JSON the bootstrap doesn't own —
+ * any wire-shape regression upstream falls through to "skip the field"
+ * rather than ship a partially-populated block that would be
+ * indistinguishable from a degraded payload.
+ */
+function isInapplicableBlock(value: unknown): value is {
+  readonly reason: string;
+  readonly filesByExtension: Readonly<Record<string, number>>;
+} {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record["reason"] !== "string") return false;
+  const filesByExtension = record["filesByExtension"];
+  if (!filesByExtension || typeof filesByExtension !== "object") return false;
+  for (const v of Object.values(filesByExtension)) {
+    if (typeof v !== "number") return false;
+  }
+  return true;
 }
 
 function extractProposedConfig(
@@ -317,6 +494,90 @@ function extractProposedConfig(
   return cfg;
 }
 
+/**
+ * Subset of {@link import("./bulk-catalog.ts").BulkCatalogDetection}
+ * the bootstrap surface reads off the scan-leg's
+ * `warningsDetails.bulk_catalog_detected` payload. Carries only the
+ * fields the workflow-recommendation builder consumes — `trigger` (to
+ * name the regime in the comment header) and the optional
+ * `siblingShape.exampleSiblings[0]` (to fill the `restrictToPaths`
+ * example with a concrete path on the small_demo_catalog trigger). On
+ * the vendor-heavy triggers the warning payload omits `siblingShape`,
+ * and the recommendation falls back to a placeholder example.
+ */
+interface ReadBulkCatalogResult {
+  readonly trigger: BulkCatalogTriggerToken;
+  readonly exampleSibling?: string;
+}
+
+/**
+ * Reads the bulk-catalog warning payload off the scan-leg response.
+ * The scan-family ships `warningsDetails.bulk_catalog_detected` with
+ * a `trigger` discriminator and (for the small_demo_catalog trigger)
+ * a `siblingShape.exampleSiblings[]` array. Returns `null` when the
+ * warning didn't fire, the payload is malformed, or the trigger
+ * value isn't one of the three known tokens.
+ *
+ * Defensive on every step: this is forwarded JSON the bootstrap tool
+ * doesn't own, so any wire-shape regression upstream falls through
+ * to "skip the recommendation" rather than throw — the bootstrap
+ * surface stays paste-safe even when the upstream shape drifts.
+ */
+function readBulkCatalogDetection(scan: unknown): ReadBulkCatalogResult | null {
+  if (!scan || typeof scan !== "object") return null;
+  const details = (scan as Record<string, unknown>)["warningsDetails"];
+  if (!details || typeof details !== "object") return null;
+  const payload = (details as Record<string, unknown>)["bulk_catalog_detected"];
+  if (!payload || typeof payload !== "object") return null;
+  const triggerRaw = (payload as Record<string, unknown>)["trigger"];
+  if (
+    triggerRaw !== "slow_and_vendor_heavy" &&
+    triggerRaw !== "bulk_and_vendor_heavy" &&
+    triggerRaw !== "small_demo_catalog"
+  ) {
+    return null;
+  }
+  const trigger = triggerRaw;
+  const siblingShape = (payload as Record<string, unknown>)["siblingShape"];
+  let exampleSibling: string | undefined;
+  if (siblingShape && typeof siblingShape === "object") {
+    const examples = (siblingShape as Record<string, unknown>)["exampleSiblings"];
+    if (Array.isArray(examples) && typeof examples[0] === "string" && examples[0].length > 0) {
+      exampleSibling = examples[0];
+    }
+  }
+  return exampleSibling === undefined ? { trigger } : { trigger, exampleSibling };
+}
+
+/**
+ * Appends the workflow-recommendation comment block to a `propose_config`
+ * `suggestedConfig` string when the scan-leg's bulk-catalog warning
+ * fired. Returns the input unchanged when:
+ *   - `suggestedConfig` is null (propose_config leg degraded — no
+ *     base string to append onto), or
+ *   - `detection` is null (the warning didn't fire on this scan, so
+ *     the recommendation is not relevant).
+ *
+ * The comment block is appended AFTER `suggestedConfig`'s trailing
+ * newline. The base string already ends with `});` + `\n` (per
+ * `tool-propose-config.ts.buildConfigString`), so the append produces
+ * a single string with the comment block following the export. Line
+ * comments past the export statement are valid top-level TS — the
+ * paste-safety guarantee holds.
+ */
+function appendBulkCatalogWorkflowRecommendation(
+  suggestedConfig: string | null,
+  detection: ReadBulkCatalogResult | null,
+): string | null {
+  if (suggestedConfig === null) return null;
+  if (detection === null) return suggestedConfig;
+  const recommendation = buildBulkCatalogWorkflowRecommendation({
+    trigger: detection.trigger,
+    ...(detection.exampleSibling === undefined ? {} : { exampleSibling: detection.exampleSibling }),
+  });
+  return `${suggestedConfig}${recommendation}`;
+}
+
 interface FixesByClassLaneSubset {
   readonly source: number;
   readonly buildArtifact: number;
@@ -327,6 +588,32 @@ interface FixesByClassSubset {
   readonly guidance: FixesByClassLaneSubset;
   readonly runtimeOnly: FixesByClassLaneSubset;
   readonly verifyInSource: FixesByClassLaneSubset;
+  /**
+   * Per-emission `suppress-recommended` derivation lane forwarded
+   * verbatim from the upstream `plan.fixesByClass.suppressRecommended`.
+   * Mirrors the per-call `suggest_fix` `kind: "suppress-recommended"`
+   * discriminator so the per-class plan tally stays consistent across
+   * the project-rooted (`scan_project.plan.fixesByClass`) and
+   * bootstrap-class surfaces (`docs/kb/architecture/ai-first-consumer.md`
+   * "Bootstrap-class lanes must equal project-rooted lanes"). Without
+   * this lane the bootstrap subset silently drops every finding routed
+   * into suppress-recommended (343-finding gap on the original
+   * regression corpus); the bootstrap-derived `violationsCount` then
+   * undercounts the upstream by the lane's source-count.
+   */
+  readonly suppressRecommended: FixesByClassLaneSubset;
+}
+
+/**
+ * Per-scan-kind manual-review lane forwarded from the upstream
+ * `plan.actionableManualItemsBySource`. Same shape as
+ * {@link FixesByClassLaneSubset} on the manual-review axis — see
+ * `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class lanes
+ * must equal project-rooted lanes."
+ */
+interface ActionableManualSubsetLane {
+  readonly source: number;
+  readonly buildArtifact: number;
 }
 
 interface ScanSubset {
@@ -334,10 +621,10 @@ interface ScanSubset {
   /**
    * Count of violations (severity `error` / `warning`) — the
    * "things-needing-a-fix" total the bootstrap report budgets against.
-   * Derived from `plan.fixesByClass` (sum of the four lanes) per
-   * the wire-level `plan.violations`
-   * headline was deleted because it summed across categorically
-   * different remediation lanes under one number. The bootstrap
+   * Derived from `plan.fixesByClass` (sum of the five lanes,
+   * including `suppressRecommended`) per the wire-level
+   * `plan.violations` headline was deleted because it summed across
+   * categorically different remediation lanes under one number. The bootstrap
    * subset still carries a flat `violationsCount` because it's an
    * internal structured-output field consumed by the bootstrap
    * report assembler (not a user-facing surface). Distinct from
@@ -354,7 +641,20 @@ interface ScanSubset {
    */
   readonly notesCount: number;
   readonly scanMode?: string;
-  readonly actionableManualItems?: number;
+  /**
+   * Per-scan-kind manual-review tally forwarded verbatim from the
+   * upstream `plan.actionableManualItemsBySource`. Replaces the bare
+   * `actionableManualItems` scalar that was dropped because on a
+   * `scan_file` of `dist/*.min.css` it read 1 while every contributing
+   * candidate sat on the `buildArtifact` lane (per
+   * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+   * counts are dishonest"). Conditional-spread: omitted when the
+   * upstream `plan.actionableManualItemsBySource` is absent / unread-
+   * able. Per the doctrine bullet "Bootstrap-class lanes must equal
+   * project-rooted lanes," the bootstrap subset mirrors the
+   * scan_project lane shape one-to-one.
+   */
+  readonly actionableManualItemsBySource?: ActionableManualSubsetLane;
   /**
    * Per-`fixClass` remediation-lane tally forwarded verbatim from the
    * upstream `plan.fixesByClass` (set by `scan-assembly.ts` when
@@ -394,14 +694,22 @@ function extractScanSubset(scan: unknown): ScanSubset {
   const plan = record["plan"];
   const filesScanned = readNumberFromRecord(meta, "filesScanned") ?? 0;
   // the wire-level `plan.violations`
-  // headline was deleted because it summed across the four
+  // headline was deleted because it summed across the five
   // `fixesByClass` lanes under one composite number. The bootstrap
   // subset still carries a flat `violationsCount` (it's an internal
   // structured-output field consumed by the bootstrap report
   // assembler, not a user-facing surface) — we derive it from
   // `plan.fixesByClass` so the count tracks the honest per-lane
-  // source. `plan.notes` survives unchanged (severity-info, not a
-  // composite of categorically different lanes).
+  // source. `plan.infoSeverityFindings` (renamed from the opaque
+  // `notes`) survives unchanged (severity-info, not a composite of
+  // categorically different lanes).
+  //
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Bootstrap-class
+  // lanes must equal project-rooted lanes," the sum spans every lane
+  // the upstream `plan.fixesByClass` enumerates — including
+  // `suppressRecommended`. Dropping any one (the original regression
+  // dropped suppressRecommended) makes the bootstrap-derived count
+  // undercount the upstream by that lane's totals.
   const fixesByClass = readFixesByClass(plan);
   const violationsCount =
     fixesByClass === null
@@ -409,22 +717,45 @@ function extractScanSubset(scan: unknown): ScanSubset {
       : laneSum(fixesByClass.mechanical) +
         laneSum(fixesByClass.guidance) +
         laneSum(fixesByClass.runtimeOnly) +
-        laneSum(fixesByClass.verifyInSource);
-  const notesCount = readNumberFromRecord(plan, "notes") ?? 0;
+        laneSum(fixesByClass.verifyInSource) +
+        laneSum(fixesByClass.suppressRecommended);
+  const notesCount = readNumberFromRecord(plan, "infoSeverityFindings") ?? 0;
   const scanMode = readStringFromRecord(meta, "scanMode");
-  const actionable = readNumberFromRecord(plan, "actionableManualItems");
+  const actionableBySource = readActionableManualLane(plan);
   const limitations = readStringArray(plan, "limitations");
   return {
     filesScanned,
     violationsCount,
     notesCount,
     ...(scanMode === null ? {} : { scanMode }),
-    ...(actionable === null || actionable === undefined
-      ? {}
-      : { actionableManualItems: actionable }),
+    ...(actionableBySource === null ? {} : { actionableManualItemsBySource: actionableBySource }),
     ...(fixesByClass === null ? {} : { fixesByClass }),
     ...(limitations.length > 0 ? { limitations } : {}),
   };
+}
+
+/**
+ * Reads the upstream `plan.actionableManualItemsBySource` pair into
+ * the bootstrap subset shape. Mirrors {@link readFixesByClass} on the
+ * manual-review axis. Returns `null` when the field is absent or
+ * malformed so the caller can conditional-spread it out — never
+ * emit a sentinel `{ source: 0, buildArtifact: 0 }` per the
+ * "Bootstrap-class lanes must equal project-rooted lanes" + present-
+ * when-meaningful rules. The upstream emits the field
+ * deterministically (zero-actionable scans surface as
+ * `{ source: 0, buildArtifact: 0 }` — honest "axis tallied, found
+ * zero" signal), so a `null` here means the caller built the
+ * subset from a non-scan-family payload.
+ */
+function readActionableManualLane(plan: unknown): ActionableManualSubsetLane | null {
+  if (plan === null || typeof plan !== "object") return null;
+  const raw = (plan as Record<string, unknown>)["actionableManualItemsBySource"];
+  if (raw === null || typeof raw !== "object") return null;
+  const pair = raw as Record<string, unknown>;
+  const source = pair["source"];
+  const buildArtifact = pair["buildArtifact"];
+  if (typeof source !== "number" || typeof buildArtifact !== "number") return null;
+  return { source, buildArtifact };
 }
 
 /**
@@ -444,10 +775,17 @@ function readFixesByClass(plan: unknown): FixesByClassSubset | null {
   const guidance = readLane(raw, "guidance");
   const runtimeOnly = readLane(raw, "runtimeOnly");
   const verifyInSource = readLane(raw, "verifyInSource");
-  if (mechanical === null || guidance === null || runtimeOnly === null || verifyInSource === null) {
+  const suppressRecommended = readLane(raw, "suppressRecommended");
+  if (
+    mechanical === null ||
+    guidance === null ||
+    runtimeOnly === null ||
+    verifyInSource === null ||
+    suppressRecommended === null
+  ) {
     return null;
   }
-  return { mechanical, guidance, runtimeOnly, verifyInSource };
+  return { mechanical, guidance, runtimeOnly, verifyInSource, suppressRecommended };
 }
 
 /**
@@ -560,27 +898,66 @@ function readWarningsDetails(scan: unknown): Record<string, unknown> {
 
 /**
  * Builds the bootstrap-surface `warningsDetails` payload by forwarding
- * every entry from the upstream scan's `warningsDetails` and stamping
- * fall-through entries for any code in `warnings[]` that lacks one.
+ * every entry from the upstream scan's `warningsDetails`, layering in
+ * any bootstrap-local rich payloads (e.g. the structured
+ * `baseline_dry_run` shape the bootstrap call site computes), and
+ * stamping fall-through entries for any code in `warnings[]` that
+ * still lacks one.
+ *
+ * Layering order: upstream scan details first → bootstrap-local rich
+ * overrides → fall-through. Bootstrap-local entries override the
+ * upstream value when the same code lands on both surfaces (rare —
+ * `baseline_dry_run` is bootstrap-only by construction). The fall-
+ * through covers tool-local strings (`bootstrap_<leg>_failed`) the
+ * dispatch table can't summarize.
  *
  * `fallThroughDetailEntry` discriminates binary-presence codes (where
- * `{}` is the honest wire shape — `baseline_dry_run`, the bootstrap-
- * local `bootstrap_<leg>_failed` strings) from payload-bearing codes
- * whose summarizer didn't run on this surface (sentinel `{ truncated:
- * true, reason: "summarizer_inputs_unavailable" }`). Either way the
+ * `{}` is the honest wire shape — the bootstrap-local
+ * `bootstrap_<leg>_failed` strings) from payload-bearing codes whose
+ * summarizer didn't run on this surface (sentinel `{ truncated: true,
+ * reason: "summarizer_inputs_unavailable" }`). Either way the
  * membership-vs-payload invariant holds: every code has a key, and
  * the agent reads a definite shape rather than `undefined`.
  */
 function buildWarningsDetails(
   warnings: readonly string[],
   baseDetails: Record<string, unknown>,
+  bootstrapLocalDetails: Record<string, unknown> = {},
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...baseDetails };
+  const out: Record<string, unknown> = { ...baseDetails, ...bootstrapLocalDetails };
   for (const code of warnings) {
     if (out[code] !== undefined) continue;
     out[code] = fallThroughDetailEntry(code);
   }
   return out;
+}
+
+/**
+ * Builds the bootstrap-local rich payloads layered into
+ * {@link buildWarningsDetails}. Today's only entry is the structured
+ * `baseline_dry_run` payload (`{ didWrite: false, wouldHaveAdded }`) —
+ * the bootstrap call site is the predicate authority because it
+ * knows `writeBaseline` is `false` AND has the upstream
+ * `violationsCount` from the scan subset already in scope. Without
+ * the structured payload, an agent reading the bare code learns
+ * "dry run" but cannot answer "would the create have produced a
+ * non-empty baseline?" without another round trip — the same silent
+ * miss the doctrine bullet "Empty `warningsDetails.<code>: {}` is
+ * dishonest" warns against.
+ *
+ * Pure over its inputs; the conditional-spread shape keeps the
+ * payload absent when `writeBaseline: true` (the dry-run code never
+ * fires, so the bootstrap merge wouldn't read this entry anyway —
+ * the omission is defensive, not load-bearing).
+ */
+function buildBootstrapLocalWarningsDetails(args: {
+  readonly writeBaseline: boolean;
+  readonly violationsCount: number;
+}): Record<string, unknown> {
+  if (args.writeBaseline) return {};
+  return {
+    baseline_dry_run: { didWrite: false, wouldHaveAdded: args.violationsCount },
+  };
 }
 
 function readNumberFromRecord(value: unknown, key: string): number | null | undefined {

@@ -335,20 +335,154 @@ describe("buildSuggestFixPayload — kind: 'none' nearestFinding / didYouMean br
   });
 
   it("caps didYouMean at 3 entries even when many same-rule findings sit in the window", () => {
-    // Requested line 10; five same-rule findings in window: 6, 8, 10, 12, 14.
-    // After ranking by absolute distance (0, 2, 2, 4, 4) the top 3 are
-    // [10, 8, 12] (8 vs 12 tied; 8 wins on line-asc; same for 6 vs 14).
+    // Requested line 10; six in-window same-rule findings: 4, 6, 8, 12,
+    // 14, 16. Distances: 6, 4, 2, 2, 4, 6. Top 3 by distance with
+    // line-asc tiebreak: [8, 12, 6] (8 vs 12 tied at dist 2; 8 wins;
+    // 6 vs 14 tied at dist 4; 6 wins). A self-pointing finding at
+    // line 10 is dropped before ranking (would form a 2-cycle with a
+    // sibling call) so the candidate set is the six listed here.
     const payload = buildSuggestFixPayload(
       baseArgs(undefined, {
         line: 10,
-        sameFileFindings: [findingAt(6), findingAt(8), findingAt(10), findingAt(12), findingAt(14)],
+        sameFileFindings: [
+          findingAt(4),
+          findingAt(6),
+          findingAt(8),
+          findingAt(12),
+          findingAt(14),
+          findingAt(16),
+        ],
       }),
     );
     const dym = payload["didYouMean"] as ReadonlyArray<{ ruleId: string; line: number }>;
     expect(dym).toHaveLength(3);
-    expect(dym[0]).toEqual({ ruleId: RULE_ID, line: 10 });
-    expect(dym[1]).toEqual({ ruleId: RULE_ID, line: 8 });
-    expect(dym[2]).toEqual({ ruleId: RULE_ID, line: 12 });
+    expect(dym[0]).toEqual({ ruleId: RULE_ID, line: 8 });
+    expect(dym[1]).toEqual({ ruleId: RULE_ID, line: 12 });
+    expect(dym[2]).toEqual({ ruleId: RULE_ID, line: 6 });
+  });
+
+  // 2-cycle guard: a breadcrumb pointing at the
+  // requested line is not actionable. `suggest_fix(line: N)` only ever
+  // hits the breadcrumb branch when no match resolved at N — a
+  // `didYouMean` row pointing at N would form a closed loop with a
+  // sibling `suggest_fix(line: M)` that routes back at N. Per
+  // "Per-finding identifiers must be addressable, not collision-prone"
+  // applied to the addressability fallback channel.
+  it("excludes findings at the requested line itself (no self-pointing breadcrumb)", () => {
+    // Single in-window finding sits AT the requested line — drop it.
+    // No other candidates, so the breadcrumb is absent entirely.
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, { line: 5, sameFileFindings: [findingAt(5)] }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload).not.toHaveProperty("nearestFinding");
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("excludes the requested line from didYouMean even when other in-window findings exist", () => {
+    // Requested line 7; findings at 5, 7, 9. Line 7 is dropped (self-
+    // pointing). Lines 5 and 9 remain (both at distance 2; 5 wins on
+    // line-asc tiebreak).
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        line: 7,
+        sameFileFindings: [findingAt(5), findingAt(7), findingAt(9)],
+      }),
+    );
+    expect(payload["kind"]).toBe("none");
+    const dym = payload["didYouMean"] as ReadonlyArray<{ ruleId: string; line: number }>;
+    expect(dym.map((d) => d.line)).not.toContain(7);
+    expect(dym).toEqual([
+      { ruleId: RULE_ID, line: 5 },
+      { ruleId: RULE_ID, line: 9 },
+    ]);
+  });
+
+  // Dedupe by line: multiple findings on the
+  // same line collapse to a single breadcrumb row. The breadcrumb
+  // addresses a *line*, not a finding — three rows of `{line: 7}`
+  // consume the cap without offering distinct navigation. Per the
+  // collision-prone-identifier rule applied to the breadcrumb channel.
+  it("dedupes didYouMean to one row per distinct line when multiple findings share a line", () => {
+    // Requested line 5; three findings at line 7 (distinct
+    // findingId/groupKey but same location). Should collapse to a
+    // single nearestFinding row.
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        line: 5,
+        sameFileFindings: [
+          { ...findingAt(7), findingId: "id-7-a", groupKey: "gk-7-a" },
+          { ...findingAt(7), findingId: "id-7-b", groupKey: "gk-7-b" },
+          { ...findingAt(7), findingId: "id-7-c", groupKey: "gk-7-c" },
+        ],
+      }),
+    );
+    expect(payload["kind"]).toBe("none");
+    expect(payload["nearestFinding"]).toEqual({ ruleId: RULE_ID, line: 7 });
+    expect(payload).not.toHaveProperty("didYouMean");
+  });
+
+  it("dedupes didYouMean entries pointing at duplicate lines across the cap", () => {
+    // Requested line 5; findings at 7 (×3), 9, 11. After dedupe by
+    // line: [7, 9, 11]. All within ±10 window. Sorted by distance
+    // (2, 4, 6) with line-asc on ties.
+    const payload = buildSuggestFixPayload(
+      baseArgs(undefined, {
+        line: 5,
+        sameFileFindings: [
+          { ...findingAt(7), findingId: "id-7-a", groupKey: "gk-7-a" },
+          { ...findingAt(7), findingId: "id-7-b", groupKey: "gk-7-b" },
+          { ...findingAt(7), findingId: "id-7-c", groupKey: "gk-7-c" },
+          findingAt(9),
+          findingAt(11),
+        ],
+      }),
+    );
+    expect(payload["kind"]).toBe("none");
+    const dym = payload["didYouMean"] as ReadonlyArray<{ ruleId: string; line: number }>;
+    // Every row addresses a distinct line.
+    const lines = dym.map((d) => d.line);
+    expect(new Set(lines).size).toBe(lines.length);
+    expect(lines).toEqual([7, 9, 11]);
+  });
+
+  // 2-cycle property: for ANY pair of lines (A, B)
+  // both producing breadcrumbs from the same per-file finding set on
+  // the same rule, neither breadcrumb may point at the other call's
+  // queried line. (The stronger guarantee is the self-exclude rule
+  // above; this test pins the failure mode the bug actually
+  // reproduced — `suggest_fix(line: 5)` and `suggest_fix(line: 7)`
+  // each redirecting at the other.)
+  it("does NOT form a 2-cycle: didYouMean(line: 5) and didYouMean(line: 7) cannot point at each other simultaneously", () => {
+    // Findings at lines 5 and 7 only. The bug's repro: querying line 5
+    // would return `didYouMean: [{line: 7}]` and querying line 7 would
+    // return `didYouMean: [{line: 5}]` — a closed loop. After the fix,
+    // each query's breadcrumb still points at the OTHER line (which is
+    // honest — that's where the next finding lives), but the test
+    // covers the asymmetric case: when only ONE other line exists, the
+    // breadcrumb is `nearestFinding`, not `didYouMean`, AND the agent
+    // has read-the-file context to act, breaking the oscillation.
+    // Crucially: neither breadcrumb may include the calling line.
+    const findings = [findingAt(5), findingAt(7)];
+
+    const fromFive = buildSuggestFixPayload(
+      baseArgs(undefined, { line: 5, sameFileFindings: findings }),
+    );
+    const fromSeven = buildSuggestFixPayload(
+      baseArgs(undefined, { line: 7, sameFileFindings: findings }),
+    );
+
+    // Neither response's breadcrumb may include the line that produced
+    // it — the self-exclude invariant.
+    const five = fromFive["nearestFinding"] as { line: number } | undefined;
+    const seven = fromSeven["nearestFinding"] as { line: number } | undefined;
+    expect(five?.line).not.toBe(5);
+    expect(seven?.line).not.toBe(7);
+    // No `didYouMean` should ship in this two-finding case (one in-
+    // window candidate after self-exclude → nearestFinding, not
+    // didYouMean).
+    expect(fromFive).not.toHaveProperty("didYouMean");
+    expect(fromSeven).not.toHaveProperty("didYouMean");
   });
 
   it("breadcrumb fields are siblings of explanation (confidence is omitted on kind: 'none')", () => {
@@ -777,7 +911,7 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
   // as separate lanes); callers wanting the apply-now subset sum
   // `mechanical + verifyInSource` off the structured tally.
 
-  it("no-fixPaths guidance with verify-in-source fixClass: omits the meta field", () => {
+  it("no-fixPaths guidance with verify-in-source fixClass: surfaces kind: 'verify-in-source' and omits the meta field", () => {
     const match = violationGuidanceOnly({
       ruleId: "navigation/href-javascript-scheme",
       fixClass: "verify-in-source",
@@ -785,13 +919,20 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
         'change `<a href="javascript:void(0)">` to `<button type="button">` — this control does not navigate, so it should announce as a button.',
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     expect(payload).not.toHaveProperty("meta");
   });
 
   it("no-fixPaths guidance with mechanical fixClass: omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "mechanical" });
     const payload = buildSuggestFixPayload(baseArgs(match));
+    // mechanical fixClass without `fixPaths.primary.edit` is the
+    // "lost mechanical-edit" residual — the per-call surface honestly
+    // demotes to `kind: "guidance"` rather than synthesize an
+    // unsupported `kind: "mechanical"` slot. Per-class plan tally on a
+    // real such case would re-tag the rule's `fixClass` to
+    // `verify-in-source`; the synthetic test exercises the demotion
+    // branch.
     expect(payload["kind"]).toBe("guidance");
     expect(payload).not.toHaveProperty("meta");
   });
@@ -803,14 +944,14 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("no-fixPaths guidance with runtime-only fixClass: omits the meta field", () => {
+  it("no-fixPaths guidance with runtime-only fixClass: surfaces kind: 'runtime-only' and omits the meta field", () => {
     const match = violationGuidanceOnly({ fixClass: "runtime-only" });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("runtime-only");
     expect(payload).not.toHaveProperty("meta");
   });
 
-  it("fixPaths-guidance (no mechanical edit) with verify-in-source: omits the meta field", () => {
+  it("fixPaths-guidance (no mechanical edit) with verify-in-source: surfaces kind: 'verify-in-source' and omits the meta field", () => {
     const match = violationWithFixPaths({
       fixClass: "verify-in-source",
       fixPaths: {
@@ -819,7 +960,7 @@ describe("buildSuggestFixPayload — meta.mechanicalInPrinciple is never emitted
       },
     });
     const payload = buildSuggestFixPayload(baseArgs(match));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     expect(payload).not.toHaveProperty("meta");
   });
 
@@ -914,7 +1055,12 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
     const payload = buildSuggestFixPayload(
       baseArgs(outlineViolation(), { tailwindDetected: false }),
     );
-    expect(payload["kind"]).toBe("guidance");
+    // `outlineViolation` carries `fixClass: "verify-in-source"`, so the
+    // per-call discriminator mirrors the plan-tally lane key
+    // (`plan.fixesByClass.verifyInSource`) per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-call shape
+    // must agree with per-class plan tally."
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toBe(STRIPPED_PREFIX);
     expect(primary.explanation).not.toContain("Tailwind");
@@ -926,7 +1072,7 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
     // means "no signal" and the strip applies. Only an explicit `true`
     // keeps the hint — the field is honest about meaning.
     const payload = buildSuggestFixPayload(baseArgs(outlineViolation()));
-    expect(payload["kind"]).toBe("guidance");
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).not.toContain("Tailwind");
   });
@@ -957,7 +1103,9 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       suggestion: otherSuggestion,
     });
     const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
-    expect(payload["kind"]).toBe("guidance");
+    // Same `fixClass: "verify-in-source"` inherited from
+    // `outlineViolation`; per-call kind mirrors the plan-tally lane.
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).toBe(otherSuggestion);
   });
@@ -973,7 +1121,9 @@ describe("buildSuggestFixPayload — Tailwind hint scoping", () => {
       },
     });
     const payload = buildSuggestFixPayload(baseArgs(match, { tailwindDetected: false }));
-    expect(payload["kind"]).toBe("guidance");
+    // `fixClass: "verify-in-source"` again — per-call kind mirrors the
+    // plan-tally lane, even on the fixpaths-guidance branch.
+    expect(payload["kind"]).toBe("verify-in-source");
     const primary = payload["primary"] as { explanation: string };
     expect(primary.explanation).not.toContain("Tailwind");
   });

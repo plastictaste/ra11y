@@ -40,7 +40,8 @@ These are non-negotiable. A PR that breaks any of them is rejected before review
 9. **Network isolation.** `src/` never references `fetch`, `node:http`, `node:https`, `node:net`, `node:dns`, or `Bun.fetch`. Enforced by `scripts/check-network-isolation.ts`. This is a compliance tool — users running it against proprietary source must trust it is offline.
 10. **No `console.*`.** Use `src/utils/logger.ts`. Biome's `noConsole` blocks this; exceptions live in `.claude/hooks/` and `scripts/` (dev-time only).
 11. **No `--no-verify`, no `git commit --amend` on pushed commits.** If a hook fails, fix the underlying issue. If you need a fix up, create a new commit.
-12. **MCP response-shape discipline.** MCP tool responses, reports, and agent-facing formatters conform to the AI-first consumer model — no labeled-bucket or heuristic suppression, verbose `meta` stays, optional fields are present-when-meaningful, zero-output success carries a structured `warnings` code, composite headline counters split by kind. Full rules in `.claude/rules/mcp-response-shapes.md` and `@docs/kb/architecture/ai-first-consumer.md`.
+12. **Cross-platform paths.** Every externally visible path string is POSIX (forward slash) regardless of host OS. Use `posixJoin` / `posixResolve` / `posixRelative` / `posixDirname` from `src/utils/path.ts` (or `tests/helpers/path.ts`) at every boundary. Enforced by `scripts/check-paths.ts` in CI. Full doctrine: `@docs/kb/architecture/cross-platform-paths.md`.
+13. **MCP response-shape discipline.** MCP tool responses, reports, and agent-facing formatters conform to the AI-first consumer model — no labeled-bucket or heuristic suppression, verbose `meta` stays, optional fields are present-when-meaningful, zero-output success carries a structured `warnings` code, composite headline counters split by kind. Full rules in `.claude/rules/mcp-response-shapes.md` and `@docs/kb/architecture/ai-first-consumer.md`.
 
 ## 4. Verification commands
 

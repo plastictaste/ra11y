@@ -33,9 +33,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -52,7 +52,7 @@ interface ChecklistCandidate {
 }
 
 interface ChecklistItem {
-  readonly criterionId: string;
+  readonly criteria: readonly string[];
   readonly priority: "high" | "medium" | "low";
   readonly candidates: readonly ChecklistCandidate[];
 }
@@ -106,14 +106,14 @@ function body<T>(resp: JsonRpcResponse): T {
 
 describe("checklist priority must not contradict predicateConceded on candidates", () => {
   it("downgrades wcag22:1.4.5 priority when every candidate ships a predicateConceded payload", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-predicate-conceded-1-4-5-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-predicate-conceded-1-4-5-"));
     // Two img elements whose evidence concedes the WCAG 1.4.5 logotype
     // exemption — alt text contains "logo" / "brand". The candidate
     // still surfaces; the predicateConceded payload lets the priority
     // surface drop to "medium" so the budget signal matches the
     // framing.
     await writeFile(
-      join(dir, "index.html"),
+      posixJoin(dir, "index.html"),
       `<html><body>
          <a href="/"><img src="/header.png" alt="Acme logo"></a>
          <a href="/about"><img src="/about-banner.png" alt="Acme brand"></a>
@@ -121,7 +121,7 @@ describe("checklist priority must not contradict predicateConceded on candidates
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const item = checklist.items.find((i) => i.criterionId === "wcag22:1.4.5");
+    const item = checklist.items.find((i) => i.criteria[0] === "wcag22:1.4.5");
     expect(item).toBeDefined();
     if (!item) return;
     expect(item.candidates.length).toBeGreaterThan(0);
@@ -144,21 +144,21 @@ describe("checklist priority must not contradict predicateConceded on candidates
   });
 
   it("does NOT propagate predicateConceded to the AAA 1.4.9 variant — logos still apply at AAA", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-predicate-conceded-1-4-9-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-predicate-conceded-1-4-9-"));
     // Same evidence as above — but the AAA "no exception" variant
     // does not exempt logos, so the priority-honesty signal must not
     // ship on that criterion. The agent reading the AAA item sees no
     // predicateConceded and budgets against the higher priority that
     // a non-conceded predicate deserves.
     await writeFile(
-      join(dir, "index.html"),
+      posixJoin(dir, "index.html"),
       `<html><body>
          <a href="/"><img src="/header.png" alt="Acme logo"></a>
        </body></html>`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { paths: [dir] })]);
     const checklist = body<ChecklistResponse>(responses[1] as JsonRpcResponse);
-    const aaa = checklist.items.find((i) => i.criterionId === "wcag22:1.4.9");
+    const aaa = checklist.items.find((i) => i.criteria[0] === "wcag22:1.4.9");
     if (aaa) {
       expect(aaa.candidates.every((c) => c.predicateConceded === undefined)).toBe(true);
     }

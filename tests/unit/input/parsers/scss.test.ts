@@ -81,6 +81,58 @@ describe("parseScss — line comments", () => {
     const rule = findRule(root.rules, ".a");
     expect(rule).toBeDefined();
   });
+
+  it("does not bleed `//` line-comment body containing `*/` into the next selector", () => {
+    // Regression: rewriting `//...<newline>` → `/*...*/` in place left
+    // any embedded `*/` inside the comment body intact, prematurely
+    // closing the synthetic block comment and exposing the rest of the
+    // body to the CSS parser as selector text. The fix strips the
+    // line comment to whitespace before the CSS parser ever sees it,
+    // so no comment-body characters can land inside a selector.
+    const src = `
+      .first { color: red; }
+
+      // For <button>*/.second:active is the inactive flavor.
+      .second:active { color: blue; }
+
+      .third { color: green; }
+    `;
+    const { root, errors } = parseScss(src);
+    expect(errors).toHaveLength(0);
+    // All three rulesets emerge with faithful selector text — no
+    // comment-body fragments and no concatenated remote selectors.
+    expect(findRule(root.rules, ".first")).toBeDefined();
+    expect(findRule(root.rules, ".second:active")).toBeDefined();
+    expect(findRule(root.rules, ".third")).toBeDefined();
+    // No selector contains comment-token characters or comment-body
+    // text. Asserts the load-bearing invariant directly: selector text
+    // must be a faithful slice of the source.
+    for (const node of root.rules) {
+      if (node.kind !== "CssRule") continue;
+      const selector = (node as CssRule).selector;
+      expect(selector.includes("//")).toBe(false);
+      expect(selector.includes("*/")).toBe(false);
+      expect(selector.includes("<button>")).toBe(false);
+      expect(selector.includes("For ")).toBe(false);
+    }
+  });
+
+  it("strips a `//` line comment that ends at EOF (no trailing newline)", () => {
+    // Edge case: the line comment runs to end-of-source without a
+    // closing newline. Must not crash and must not leak content.
+    const src = `.a { color: red; } // trailing comment with */ inside`;
+    const { root, errors } = parseScss(src);
+    expect(errors).toHaveLength(0);
+    const rule = findRule(root.rules, ".a");
+    expect(rule).toBeDefined();
+    // No selector picks up `*/` or trailing comment text.
+    for (const node of root.rules) {
+      if (node.kind !== "CssRule") continue;
+      const selector = (node as CssRule).selector;
+      expect(selector.includes("*/")).toBe(false);
+      expect(selector.includes("trailing")).toBe(false);
+    }
+  });
 });
 
 describe("parseScss — @import / @use / @forward stripping", () => {

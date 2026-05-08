@@ -17,6 +17,7 @@ import type { McpSession } from "./session.ts";
 import { applyFixTool } from "./tool-apply-fix.ts";
 import { attestTool } from "./tool-attest.ts";
 import { auditTool } from "./tool-audit.ts";
+import { auditRuleCoverageTool } from "./tool-audit-rule-coverage.ts";
 import { baselineTool } from "./tool-baseline.ts";
 import { bootstrapTool } from "./tool-bootstrap.ts";
 import { checklistTool } from "./tool-checklist.ts";
@@ -25,7 +26,10 @@ import { coverageTool } from "./tool-coverage.ts";
 import { detectNativeWrappersTool } from "./tool-detect-wrappers.ts";
 import { draftVpatNarrativeTool } from "./tool-draft-vpat-narrative.ts";
 import { explainStandardTool } from "./tool-explain-standard.ts";
+import { findingsByRuleTool } from "./tool-findings-by-rule.ts";
+import { getFindingTool } from "./tool-get-finding.ts";
 import { listAttestationsTool } from "./tool-list-attestations.ts";
+import { listFindersTool } from "./tool-list-finders.ts";
 import { listSuppressionsTool } from "./tool-list-suppressions.ts";
 import { proposeBaselineTool } from "./tool-propose-baseline.ts";
 import { proposeConfigTool } from "./tool-propose-config.ts";
@@ -35,6 +39,7 @@ import { scanDiffTool } from "./tool-scan-diff.ts";
 import { scanFileTool } from "./tool-scan-file.ts";
 import { scanProcessTool } from "./tool-scan-process.ts";
 import { scanProjectTool } from "./tool-scan-project.ts";
+import { sessionInspectTool } from "./tool-session-inspect.ts";
 import { suggestFixTool } from "./tool-suggest-fix.ts";
 import { suppressTool } from "./tool-suppress.ts";
 import { verdictCandidateTool } from "./tool-verdict-candidate.ts";
@@ -443,6 +448,8 @@ export const MCP_TOOLS: readonly McpTool[] = [
   explainStandardTool,
   suggestFixTool,
   applyFixTool,
+  getFindingTool,
+  findingsByRuleTool,
   coverageTool,
   checklistTool,
   conformanceStatementTool,
@@ -450,9 +457,11 @@ export const MCP_TOOLS: readonly McpTool[] = [
   verdictCandidateTool,
   draftVpatNarrativeTool,
   auditTool,
+  auditRuleCoverageTool,
   baselineTool,
   bootstrapTool,
   listRulesTool,
+  listFindersTool,
   listSuppressionsTool,
   suppressTool,
   attestTool,
@@ -461,4 +470,5 @@ export const MCP_TOOLS: readonly McpTool[] = [
   proposeConfigTool,
   proposeBaselineTool,
   sessionConfigureTool,
+  sessionInspectTool,
 ];

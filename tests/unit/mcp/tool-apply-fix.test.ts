@@ -18,9 +18,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { applyFixTool } from "../../../src/mcp/tool-apply-fix.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ErrorBody {
   readonly error: string;
@@ -55,7 +55,7 @@ interface SuccessBody {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-apply-fix-core-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-apply-fix-core-"));
   try {
     return await fn(dir);
   } finally {
@@ -81,7 +81,7 @@ async function call(
 }
 
 async function writeBadImg(dir: string): Promise<string> {
-  const file = join(dir, "page.html");
+  const file = posixJoin(dir, "page.html");
   await writeFile(file, '<html><body><img src="/logo.png"></body></html>\n');
   return file;
 }
@@ -121,7 +121,7 @@ describe("apply_fix: anchor uniqueness", () => {
 
   it("rejects `edit-multiple-matches` with the match count when `oldText` appears multiple times", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "dup.html");
+      const file = posixJoin(dir, "dup.html");
       await writeFile(file, '<html><body><img src="/a.png"><img src="/a.png"></body></html>\n');
       const { isError, code, body } = await call(allowWriteSession(), {
         file,
@@ -138,7 +138,7 @@ describe("apply_fix: anchor uniqueness", () => {
 describe("apply_fix: template-directive diagnosis", () => {
   it("returns `target-contains-template-directive` when oldText literally references a Liquid expression", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "page.html");
+      const file = posixJoin(dir, "page.html");
       // The author's source has a Liquid expression; the agent (off a
       // stale read or suggest_fix's guidance) constructs an oldText
       // referencing a different expression that doesn't appear in the
@@ -165,7 +165,7 @@ describe("apply_fix: template-directive diagnosis", () => {
 
   it("returns `target-contains-template-directive` when oldText fragment-matches a directive line in source (ERB)", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "view.html.erb");
+      const file = posixJoin(dir, "view.html.erb");
       // ERB extension routes through HTML parser. oldText doesn't match
       // the source byte-for-byte (rendered shape vs. authored shape), but
       // a long anchor fragment lands on the `<%= … %>` line.
@@ -193,7 +193,7 @@ describe("apply_fix: template-directive diagnosis", () => {
 
   it("falls back to `edit-no-match` when no template directives are present in oldText or near the target", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "plain.html");
+      const file = posixJoin(dir, "plain.html");
       await writeFile(file, "<html><body><p>nothing template-y here</p></body></html>\n");
       const { isError, code } = await call(allowWriteSession(), {
         file,
@@ -207,7 +207,7 @@ describe("apply_fix: template-directive diagnosis", () => {
 
   it("emits remediation steering the agent away from looping suggest_fix → apply_fix", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "page.html");
+      const file = posixJoin(dir, "page.html");
       await writeFile(file, "<html><head><title>{{ page.title }}</title></head></html>\n");
       const result = await applyFixTool.handler(
         {
@@ -232,7 +232,7 @@ describe("apply_fix: template-directive diagnosis", () => {
 describe("apply_fix: parse-error guardrail", () => {
   it("rejects `edit-introduces-parse-errors` when the post-edit source fails to parse, leaving the file untouched", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "broken.tsx");
+      const file = posixJoin(dir, "broken.tsx");
       const before = 'const x = <button aria-label="hi">click</button>;\n';
       await writeFile(file, before);
       const { isError, code, body } = await call(allowWriteSession(), {
@@ -326,7 +326,7 @@ describe("apply_fix: write-and-rescan happy path", () => {
 
   it("surfaces `newViolations` when the edit regresses a clean file", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "clean.html");
+      const file = posixJoin(dir, "clean.html");
       const original = "<html><body><p>hello</p></body></html>\n";
       await writeFile(file, original);
       const { body } = await call(allowWriteSession(), {
@@ -367,7 +367,7 @@ describe("apply_fix: meta + no-delta nextStep", () => {
 
   it("nextStep reports no-delta outcome when the edit doesn't resolve any rule-level finding", async () => {
     await withScratch(async (dir) => {
-      const file = join(dir, "neutral.html");
+      const file = posixJoin(dir, "neutral.html");
       await writeFile(file, "<html><body><p>hello</p></body></html>\n");
       const { body } = await call(allowWriteSession(), {
         file,

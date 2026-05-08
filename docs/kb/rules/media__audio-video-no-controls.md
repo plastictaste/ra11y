@@ -1,11 +1,11 @@
 ---
 title: "media/audio-video-no-controls"
-severity: "error"
+severity: "warning"
 scope: "node"
 satisfies: ["wcag22:1.4.2", "wcag22:2.1.1", "wcag21:1.4.2", "wcag21:2.1.1", "section508:1.4.2", "section508:2.1.1", "en301549:9.1.4.2", "en301549:9.2.1.1"]
 ---
 # `media/audio-video-no-controls`
-- **Severity:** error
+- **Severity:** warning
 - **Scope:** node
 - **Satisfies:** `wcag22:1.4.2`, `wcag22:2.1.1`, `wcag21:1.4.2`, `wcag21:2.1.1`, `section508:1.4.2`, `section508:2.1.1`, `en301549:9.1.4.2`, `en301549:9.2.1.1`
 - **Applies to:** .html, .htm, .tsx, .jsx

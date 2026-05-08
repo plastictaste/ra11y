@@ -33,6 +33,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type ParsedFile, runScan } from "../../../src/engine/scanner.ts";
+import { fingerprintEligibleDuplicates } from "../../../src/input/file-fingerprint.ts";
 import {
   parseAstro,
   parseCss,
@@ -51,8 +52,10 @@ import {
   classifyWrapperCandidates,
   collectWrapperCandidates,
 } from "../../../src/mcp/detect-wrappers-core.ts";
+import { stampFingerprintOccurrences } from "../../../src/mcp/file-fingerprint-stamp.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { runScanAndFormat, type ScanFormatted } from "../../../src/mcp/tools-helpers.ts";
+import { coupleSeverityToVerifyTokens } from "../../../src/mcp/violation-severity-coupling.ts";
 import { BUILTIN_CANDIDATE_FINDERS } from "../../../src/review/index.ts";
 import { BUILTIN_RULES } from "../../../src/rules/index.ts";
 import { BUILTIN_STANDARDS } from "../../../src/standards/index.ts";
@@ -87,6 +90,25 @@ export type FixtureExpectation =
       readonly inFile?: string;
     }
   | { readonly kind: "no-violation"; readonly ruleId: string }
+  /**
+   * Assert that at least one violation EXISTS for the rule, but that
+   * NONE of the matching violations have a message containing the
+   * given substring. Use this when a rule must still surface (to avoid
+   * silent suppression) but the message must NOT carry a forbidden
+   * fragment — e.g. comment-body text bleeding into a selector slice
+   * after a parser regression. Mirrors `candidate-present-without` on
+   * the violation axis.
+   *
+   * Failure messages distinguish the two failure modes:
+   *   - "no violation" → the rule emitted nothing (silent miss)
+   *   - "message contains forbidden text" → the regression leaked into
+   *     the violation message
+   */
+  | {
+      readonly kind: "violation-present-without";
+      readonly ruleId: string;
+      readonly reasonExcludes: string;
+    }
   | {
       readonly kind: "candidate-present";
       readonly criterionId: string;
@@ -169,6 +191,43 @@ export type FixtureExpectation =
       readonly predicate: MetaFieldLengthPredicate;
     }
   /**
+   * Assert that every `meta.perRuleCoverage` entry whose `ruleId`
+   * matches has `coverageConfidence` equal to `expected`. Pass
+   * `ruleId: "*"` to assert ALL rows in the array. Requires
+   * `toolInput.verboseMeta: true` on the fixture so the harness
+   * populates the verbose `meta.perRuleCoverage[]` array.
+   *
+   * When `reasonIncludes` is set, every matching row must also carry a
+   * `coverageConfidenceReason` containing the substring. Use this to pin
+   * both the downgrade AND the structured cause code in one assertion.
+   *
+   * Failure modes (distinguished in the message):
+   *   - `meta.perRuleCoverage` absent or not an array — likely
+   *     `verboseMeta` not set on `toolInput`
+   *   - no rows match `ruleId` — ruleId typo or rule not registered
+   *   - at least one matching row has the wrong `coverageConfidence`
+   *   - `reasonIncludes` set but matching row's
+   *     `coverageConfidenceReason` absent or does not contain the
+   *     substring
+   */
+  | {
+      readonly kind: "per-rule-coverage-confidence";
+      /**
+       * Rule ID to match. Use `"*"` to assert ALL rows in
+       * `meta.perRuleCoverage[]`. Use a specific rule ID when only one
+       * rule's confidence is under test.
+       */
+      readonly ruleId: string;
+      /** Expected `coverageConfidence` value on every matching row. */
+      readonly expected: "high" | "medium" | "low";
+      /**
+       * When set, every matching row's `coverageConfidenceReason` must
+       * contain this substring. Omit when the invariant is only about
+       * the confidence level, not the cause code.
+       */
+      readonly reasonIncludes?: string;
+    }
+  /**
    * Assert that `collectBuildArtifacts` does NOT label the given fixture
    * source path as a build artifact. Guards `src/mcp/build-artifacts.ts`
    * doctrine — the `scannedBuildArtifacts` label must be provable from
@@ -187,7 +246,43 @@ export type FixtureExpectation =
    * pipeline invokes, without widening the harness's surface to the
    * full MCP scan envelope.
    */
-  | { readonly kind: "no-build-artifact-label"; readonly path: string };
+  | { readonly kind: "no-build-artifact-label"; readonly path: string }
+  /**
+   * Assert that at least one finding for `ruleId` on the formatted
+   * `files[*].findings[*]` surface (i.e. post-enrichment AgentFinding
+   * shape) carries the named severity / confidence / `couldBeWrongBecause`
+   * substring. Use this when the invariant under test is the per-finding
+   * shape an agent reads on the wire — severity / confidence couplings
+   * propagated by the per-finding helpers in `src/mcp/` are visible
+   * here, NOT on the raw `Violation[]` stream the `violation-present`
+   * predicate walks.
+   *
+   * When `inFile` is set, the matching finding must live in the bucket
+   * for that file path (root-relative POSIX, matching
+   * `ScanFormatted.files[].path`). Without `inFile`, ANY file's finding
+   * counts.
+   *
+   * When `severity` / `confidence` are set, ALL of: severity matches AND
+   * confidence matches AND (when `couldBeWrongBecauseIncludes` is set)
+   * the finding's `couldBeWrongBecause` array contains that token.
+   * Predicates are ANDed across the named axes; absent axes go
+   * unchecked. At least one finding must satisfy every set axis.
+   *
+   * Failure messages distinguish the modes:
+   *   - no finding for `ruleId` (either at all, or in `inFile` when
+   *     scoped) — silent-miss regression guard
+   *   - findings exist but none satisfy the severity / confidence /
+   *     code constraints — a rule emitting at the wrong attention-budget
+   *     level for its conceded uncertainty
+   */
+  | {
+      readonly kind: "finding-shape";
+      readonly ruleId: string;
+      readonly inFile?: string;
+      readonly severity?: "error" | "warning" | "info";
+      readonly confidence?: "high" | "medium" | "low";
+      readonly couldBeWrongBecauseIncludes?: string;
+    };
 
 /** Predicates available for the {@link MetaFieldExpectation}. */
 export type MetaFieldPredicate =
@@ -257,6 +352,16 @@ export interface FixtureAssertions {
   readonly toolInput?: FixtureToolInput;
   /** The actual expectations being asserted. */
   readonly expectations: readonly FixtureExpectation[];
+  /**
+   * When `true`, the integration test runner marks this fixture as
+   * `it.todo()` — pending rather than failing. Use this ONLY for
+   * fixtures that are intentionally RED: they capture a known bug
+   * before the upstream `src/` fix lands. A fixture marked `todo`
+   * is expected to fail; the downstream fix commit removes this flag
+   * so the test turns green permanently. Never set `todo: true` on a
+   * fixture whose assertions currently pass.
+   */
+  readonly todo?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -341,13 +446,67 @@ export async function loadAndScanFixture(
   const files = parseFixtureSource(fixture.sourceDir);
   const standards = toolInput.standards ?? ["wcag22"];
 
-  const { result, report } = runScan({
+  // Mirror the production scan-family fingerprint pass: hash each
+  // parsed file's source by the canonical SHA-1 helper, group byte-
+  // identical eligible-extension copies, and thread the duplicate
+  // map through `discoveryDiagnostics` so `runScanAndFormat`'s post-
+  // scan stamp populates `vendorOccurrences` on findings emitted
+  // from canonical paths AND drops findings emitted from non-
+  // canonical duplicate paths. Bypassing this in the harness would
+  // leave the fingerprint surface untested by the real-world
+  // fixture path the dispatch contract names. Re-uses the harness's
+  // already-parsed `source` strings so no extra I/O fires.
+  const sourceByPath = new Map(files.map((f) => [f.filePath, f.source]));
+  const { duplicatesByCanonical } = await fingerprintEligibleDuplicates(
+    files.map((f) => f.filePath),
+    async (filePath) => sourceByPath.get(filePath),
+  );
+  const harnessDiscoveryDiagnostics =
+    duplicatesByCanonical.size === 0
+      ? undefined
+      : {
+          skippedByExtension: {},
+          excludedByPatternByExtension: {},
+          sourcemapFiles: [],
+          defaultExcludedArtifactPaths: [],
+          fingerprintDuplicates: duplicatesByCanonical,
+        };
+
+  const rawScan = runScan({
     standards: BUILTIN_STANDARDS,
     rules: BUILTIN_RULES,
     enabled: standards,
     files,
     finders: BUILTIN_CANDIDATE_FINDERS,
   });
+  // Mirror the production post-scan fingerprint dedupe pass so the
+  // raw `ctx.result.violations` exposed to fixture predicates matches
+  // what `runScanAndFormat`'s pipeline ships on the wire — drop
+  // findings emitted from non-canonical duplicate paths and stamp
+  // `vendorOccurrences` on canonical findings. Without this, a
+  // fixture's `violation-present` assertion against the raw scanner
+  // stream would see N parallel emissions on byte-identical sibling
+  // copies — the exact regression the dedupe pass closes — and the
+  // harness would silently pass tests that the production pipeline
+  // would catch.
+  //
+  // Mirror the verify-in-source severity coupling pass for the same
+  // reason: the production `runScanAndFormat` and `runScanAndCollect`
+  // both downgrade `severity: warning` / `error` to `info` on
+  // violations carrying a curated verify-in-source token, BEFORE the
+  // tally and AgentFinding pipeline branch off. Without mirroring here,
+  // `violation-present-without` and `candidate-present` predicates on
+  // a fixture asserting the post-coupling shape would see the raw
+  // pre-coupling severity and silently disagree with the wire shape.
+  // See `src/mcp/violation-severity-coupling.ts` for the doctrine
+  // pointer.
+  const result = {
+    ...rawScan.result,
+    violations: coupleSeverityToVerifyTokens(
+      stampFingerprintOccurrences(rawScan.result.violations, duplicatesByCanonical),
+    ),
+  };
+  const report = rawScan.report;
 
   const session = new McpSession();
   // Mirror the autoDetectWrappers logic from scan_project: run the
@@ -383,6 +542,10 @@ export async function loadAndScanFixture(
     wrapperSources,
     fixture.sourceDir,
     toolInput.verboseMeta === true,
+    undefined,
+    undefined,
+    undefined,
+    harnessDiscoveryDiagnostics,
   );
 
   // Mirror tool-scan-project's catalog-shape probe (-
@@ -625,6 +788,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalViolationPresent(fixtureId, exp, ctx.result.violations);
     case "no-violation":
       return evalNoViolation(fixtureId, exp, ctx.result.violations);
+    case "violation-present-without":
+      return evalViolationPresentWithout(fixtureId, exp, ctx.result.violations);
     case "candidate-present":
       return evalCandidatePresent(fixtureId, exp, ctx.report.candidates ?? []);
     case "no-candidate":
@@ -641,8 +806,12 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalMetaField(fixtureId, exp, ctx);
     case "meta-field-length":
       return evalMetaFieldLength(fixtureId, exp, ctx);
+    case "per-rule-coverage-confidence":
+      return evalPerRuleCoverageConfidence(fixtureId, exp, ctx);
     case "no-build-artifact-label":
       return evalNoBuildArtifactLabel(fixtureId, exp, ctx);
+    case "finding-shape":
+      return evalFindingShape(fixtureId, exp, ctx);
     default: {
       // Exhaustive switch — `never` tells us a new variant was added.
       const _exhaustive: never = exp;
@@ -787,6 +956,50 @@ function evalNoViolation(
     expectation: exp,
     pass: false,
     message: `real-world/${fixtureId}: expected no violation of '${exp.ruleId}', got ${matching.length}`,
+  };
+}
+
+// ─── violation-present-without ──────────────────────────────────────────────
+
+/**
+ * Asserts that at least one violation exists for the rule AND that
+ * none of those violations' message strings contain the forbidden
+ * substring. The violation-axis mirror of
+ * {@link evalCandidatePresentWithout}: surfacing must continue, but
+ * the message must not carry a fragment that would only appear under
+ * a regression (e.g. SCSS `//` comment-body text bleeding into a
+ * selector slice).
+ *
+ * Failure modes:
+ *   - "no violation" → rule emitted nothing (silent miss)
+ *   - "message contains forbidden text" → regression leaked into the
+ *     violation message
+ */
+function evalViolationPresentWithout(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "violation-present-without" },
+  violations: readonly Violation[],
+): ExpectationResult {
+  const matching = violations.filter((v) => v.ruleId === exp.ruleId);
+  if (matching.length === 0) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected a violation of '${exp.ruleId}' (violation-present-without), got ${summariseRuleIds(violations)}`,
+    };
+  }
+  const offender = matching.find((v) => v.message.includes(exp.reasonExcludes));
+  if (offender) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: violation '${exp.ruleId}' has a message containing forbidden substring '${exp.reasonExcludes}'. Message: ${JSON.stringify(offender.message)}`,
+    };
+  }
+  return {
+    expectation: exp,
+    pass: true,
+    message: `real-world/${fixtureId}: violation '${exp.ruleId}' present (${matching.length} match${matching.length === 1 ? "" : "es"}) and none contain '${exp.reasonExcludes}'`,
   };
 }
 
@@ -1180,6 +1393,124 @@ function formatLengthBounds(pred: MetaFieldLengthPredicate): string {
   return parts.length > 0 ? parts.join(", ") : "(no bounds specified)";
 }
 
+// ─── per-rule-coverage-confidence ───────────────────────────────────────────
+
+/**
+ * Asserts that every `meta.perRuleCoverage` row matching `ruleId`
+ * has `coverageConfidence === expected`. Requires `verboseMeta: true`
+ * on the fixture's `toolInput` so the harness populates the verbose
+ * `meta.perRuleCoverage[]` array.
+ *
+ * `ruleId: "*"` matches ALL rows in the array — use this to assert
+ * a corpus-wide invariant (e.g. "every rule on a bailed-route scan
+ * is at non-'high' confidence").
+ *
+ * Failure modes distinguished in the message:
+ *   - `meta.perRuleCoverage` absent or not an array — likely
+ *     `verboseMeta` not set
+ *   - no rows matched `ruleId` — ruleId typo or rule not registered
+ *   - at least one matching row has unexpected `coverageConfidence`
+ *   - `reasonIncludes` set but the matching row's
+ *     `coverageConfidenceReason` is absent or does not contain the
+ *     substring
+ */
+function evalPerRuleCoverageConfidence(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  ctx: FixtureScanContext,
+): ExpectationResult {
+  const { found, value } = lookupPath(ctx.formatted.meta, ["perRuleCoverage"]);
+  if (!(found && Array.isArray(value))) {
+    return {
+      expectation: exp,
+      pass: false,
+      message:
+        `real-world/${fixtureId}: per-rule-coverage-confidence requires meta.perRuleCoverage[] ` +
+        `(set toolInput.verboseMeta: true). Field was ${found ? "present but not an array" : "absent"}.`,
+    };
+  }
+  const rows = value as ReadonlyArray<Record<string, unknown>>;
+  const matched = exp.ruleId === "*" ? rows : rows.filter((r) => r["ruleId"] === exp.ruleId);
+  if (matched.length === 0) {
+    const ids = rows.map((r) => r["ruleId"]).join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message:
+        `real-world/${fixtureId}: per-rule-coverage-confidence: no rows match ruleId '${exp.ruleId}'. ` +
+        `Available ruleIds: [${ids}]`,
+    };
+  }
+  const confidenceFail = checkPerRuleCoverageConfidence(fixtureId, exp, matched);
+  if (confidenceFail !== null) return confidenceFail;
+  if (exp.reasonIncludes !== undefined) {
+    const reasonFail = checkPerRuleCoverageReason(fixtureId, exp, matched, exp.reasonIncludes);
+    if (reasonFail !== null) return reasonFail;
+  }
+  const reasonSuffix =
+    exp.reasonIncludes === undefined
+      ? ""
+      : ` with coverageConfidenceReason containing '${exp.reasonIncludes}'`;
+  return {
+    expectation: exp,
+    pass: true,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${matched.length} row(s) matching '${exp.ruleId}' all have ` +
+      `coverageConfidence='${exp.expected}'` +
+      reasonSuffix,
+  };
+}
+
+/** Returns a failure result when any matched row has wrong confidence, or null when all pass. */
+function checkPerRuleCoverageConfidence(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  matched: ReadonlyArray<Record<string, unknown>>,
+): ExpectationResult | null {
+  const bad = matched.filter((r) => r["coverageConfidence"] !== exp.expected);
+  if (bad.length === 0) return null;
+  const summary = bad
+    .slice(0, 5)
+    .map((r) => `${r["ruleId"]}:${r["coverageConfidence"]}`)
+    .join(", ");
+  const more = bad.length > 5 ? ` (and ${bad.length - 5} more)` : "";
+  return {
+    expectation: exp,
+    pass: false,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${bad.length} of ${matched.length} matching rows have ` +
+      `coverageConfidence !== '${exp.expected}': ${summary}${more}`,
+  };
+}
+
+/** Returns a failure result when any matched row has missing/wrong reason, or null when all pass. */
+function checkPerRuleCoverageReason(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "per-rule-coverage-confidence" },
+  matched: ReadonlyArray<Record<string, unknown>>,
+  reasonIncludes: string,
+): ExpectationResult | null {
+  const bad = matched.filter((r) => {
+    const reason = r["coverageConfidenceReason"];
+    return typeof reason !== "string" || !reason.includes(reasonIncludes);
+  });
+  if (bad.length === 0) return null;
+  const summary = bad
+    .slice(0, 5)
+    .map((r) => `${r["ruleId"]}:${JSON.stringify(r["coverageConfidenceReason"])}`)
+    .join(", ");
+  const more = bad.length > 5 ? ` (and ${bad.length - 5} more)` : "";
+  return {
+    expectation: exp,
+    pass: false,
+    message:
+      `real-world/${fixtureId}: per-rule-coverage-confidence: ` +
+      `${bad.length} of ${matched.length} matching rows have ` +
+      `coverageConfidenceReason not containing '${reasonIncludes}': ${summary}${more}`,
+  };
+}
 // ─── no-build-artifact-label ────────────────────────────────────────────────
 
 /**
@@ -1231,6 +1562,99 @@ function evalNoBuildArtifactLabel(
     pass: true,
     message: `real-world/${fixtureId}: '${exp.path}' is not labeled as a build artifact`,
   };
+}
+
+// ─── finding-shape ──────────────────────────────────────────────────────────
+
+/**
+ * Asserts that at least one finding for the named rule on the formatted
+ * `files[*].findings[*]` surface (post-enrichment AgentFinding shape)
+ * carries every set axis on the predicate. Distinct from
+ * `violation-present` because the AgentFinding stream rides downstream
+ * of the per-finding helpers in `src/mcp/`, where severity / confidence
+ * couplings (e.g. the verify-token coupling that downgrades layout-
+ * partial / fragment / demo-shape findings to `severity: info`) are
+ * applied. The raw `Violation[]` stream `violation-present` walks does
+ * not carry those couplings.
+ *
+ * Failure modes distinguished in the message:
+ *   - no finding for `ruleId` at all (or in `inFile` when scoped) —
+ *     silent-miss regression guard
+ *   - findings exist but none match every set axis — the per-finding
+ *     coupling is missing or partial
+ */
+function evalFindingShape(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "finding-shape" },
+  ctx: FixtureScanContext,
+): ExpectationResult {
+  const buckets =
+    exp.inFile === undefined
+      ? ctx.formatted.files
+      : ctx.formatted.files.filter((b) => b.path === exp.inFile);
+  if (exp.inFile !== undefined && buckets.length === 0) {
+    const known = ctx.formatted.files.map((b) => b.path).join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: no formatted file bucket at '${exp.inFile}' for finding-shape on ${exp.ruleId}. Buckets: [${known}]`,
+    };
+  }
+  const candidates = buckets.flatMap((b) => b.findings.filter((f) => f.ruleId === exp.ruleId));
+  if (candidates.length === 0) {
+    const where = exp.inFile === undefined ? "" : ` in '${exp.inFile}'`;
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: finding-shape: no findings for ruleId '${exp.ruleId}'${where} on the formatted files surface`,
+    };
+  }
+  const matches = candidates.filter((f) => {
+    if (exp.severity !== undefined && f.severity !== exp.severity) return false;
+    if (exp.confidence !== undefined && f.confidence !== exp.confidence) return false;
+    if (exp.couldBeWrongBecauseIncludes !== undefined) {
+      const codes = f.couldBeWrongBecause;
+      if (codes === undefined || !codes.includes(exp.couldBeWrongBecauseIncludes)) return false;
+    }
+    return true;
+  });
+  if (matches.length > 0) {
+    const axes = formatFindingShapeAxes(exp);
+    return {
+      expectation: exp,
+      pass: true,
+      message: `real-world/${fixtureId}: finding-shape: ${matches.length} of ${candidates.length} '${exp.ruleId}' findings satisfy ${axes}`,
+    };
+  }
+  const observed = candidates
+    .slice(0, 3)
+    .map(
+      (f) =>
+        `{severity:${f.severity},confidence:${f.confidence},couldBeWrongBecause:${JSON.stringify(f.couldBeWrongBecause ?? [])}}`,
+    )
+    .join(", ");
+  const more = candidates.length > 3 ? `, +${candidates.length - 3} more` : "";
+  const axes = formatFindingShapeAxes(exp);
+  return {
+    expectation: exp,
+    pass: false,
+    message: `real-world/${fixtureId}: finding-shape: 0 of ${candidates.length} '${exp.ruleId}' findings satisfy ${axes}. Observed: [${observed}${more}]`,
+  };
+}
+
+/**
+ * Compact human-readable summary of the per-axis predicate set on a
+ * `finding-shape` expectation, used in pass / fail messages so the
+ * author sees which axes were under test.
+ */
+function formatFindingShapeAxes(exp: FixtureExpectation & { kind: "finding-shape" }): string {
+  const parts: string[] = [];
+  if (exp.severity !== undefined) parts.push(`severity=${exp.severity}`);
+  if (exp.confidence !== undefined) parts.push(`confidence=${exp.confidence}`);
+  if (exp.couldBeWrongBecauseIncludes !== undefined) {
+    parts.push(`couldBeWrongBecauseIncludes='${exp.couldBeWrongBecauseIncludes}'`);
+  }
+  return parts.length === 0 ? "(no axes set)" : parts.join(", ");
 }
 
 /**

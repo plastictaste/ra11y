@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 // JSON-RPC error codes (mirrors src/mcp/server.ts).
 const PARSE_ERROR = -32700;
@@ -258,7 +258,7 @@ describe("MCP session state: reuse across requests", () => {
   });
 
   it("configure(rules: off) disables a rule on a subsequent scan_file in the same session", async () => {
-    const bad = join(
+    const bad = posixJoin(
       PROJECT_ROOT,
       "tests",
       "fixtures",

@@ -7,9 +7,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { runDoctor } from "../../../../src/cli/commands/doctor.ts";
+import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-doctor-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-doctor-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -54,7 +54,7 @@ describe("runDoctor", () => {
 
   it("reports the config file when ra11y.config.ts is present", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "ra11y.config.ts"), "export default {};\n");
+    await writeFile(posixJoin(dir, "ra11y.config.ts"), "export default {};\n");
     chdir(dir);
 
     const r = runDoctor();
@@ -64,8 +64,8 @@ describe("runDoctor", () => {
 
   it("reports tsconfig + git-repo presence accurately", async () => {
     const dir = await scratch();
-    await writeFile(join(dir, "tsconfig.json"), "{}\n");
-    await mkdir(join(dir, ".git"), { recursive: true });
+    await writeFile(posixJoin(dir, "tsconfig.json"), "{}\n");
+    await mkdir(posixJoin(dir, ".git"), { recursive: true });
     chdir(dir);
 
     const r = runDoctor();

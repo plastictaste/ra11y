@@ -9,10 +9,10 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { runCli } from "../../src/cli/run.ts";
 import type { AttestationRecord } from "../../src/types/evidence.ts";
+import { posixDirname, posixJoin } from "../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -23,7 +23,7 @@ afterAll(async () => {
 });
 
 async function makeScratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-attest-prune-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-attest-prune-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -37,8 +37,8 @@ const BASE: AttestationRecord = {
 };
 
 function writeStoreFixture(dir: string, records: readonly AttestationRecord[]): string {
-  const path = join(dir, ".ra11y", "attestations.jsonl");
-  mkdirSync(dirname(path), { recursive: true });
+  const path = posixJoin(dir, ".ra11y", "attestations.jsonl");
+  mkdirSync(posixDirname(path), { recursive: true });
   const body = records.map((r) => JSON.stringify(r)).join("\n");
   writeFileSync(path, body.length > 0 ? `${body}\n` : "", "utf8");
   return path;
@@ -47,18 +47,18 @@ function writeStoreFixture(dir: string, records: readonly AttestationRecord[]): 
 describe("ra11y attestations prune", () => {
   it("drops records pinned to deleted files and rewrites the store", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "alive.tsx"), "export {};\n");
+    await writeFile(posixJoin(dir, "alive.tsx"), "export {};\n");
     const storePath = writeStoreFixture(dir, [
       {
         ...BASE,
         scope: "file",
-        location: { filePath: join(dir, "alive.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "alive.tsx"), line: 1, column: 1 },
       },
       {
         ...BASE,
         criterionId: "wcag22:2.4.7",
         scope: "file",
-        location: { filePath: join(dir, "dead.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "dead.tsx"), line: 1, column: 1 },
       },
     ]);
 
@@ -81,19 +81,19 @@ describe("ra11y attestations prune", () => {
 
   it("reports zero drops when every pinned file still exists", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "a.tsx"), "export {};\n");
-    await writeFile(join(dir, "b.tsx"), "export {};\n");
+    await writeFile(posixJoin(dir, "a.tsx"), "export {};\n");
+    await writeFile(posixJoin(dir, "b.tsx"), "export {};\n");
     writeStoreFixture(dir, [
       {
         ...BASE,
         scope: "file",
-        location: { filePath: join(dir, "a.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "a.tsx"), line: 1, column: 1 },
       },
       {
         ...BASE,
         criterionId: "wcag22:2.4.7",
         scope: "file",
-        location: { filePath: join(dir, "b.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "b.tsx"), line: 1, column: 1 },
       },
     ]);
 
@@ -108,18 +108,18 @@ describe("ra11y attestations prune", () => {
 
   it("--dry-run reports what would be dropped without mutating the file", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "alive.tsx"), "export {};\n");
+    await writeFile(posixJoin(dir, "alive.tsx"), "export {};\n");
     const storePath = writeStoreFixture(dir, [
       {
         ...BASE,
         scope: "file",
-        location: { filePath: join(dir, "alive.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "alive.tsx"), line: 1, column: 1 },
       },
       {
         ...BASE,
         criterionId: "wcag22:2.4.7",
         scope: "file",
-        location: { filePath: join(dir, "dead.tsx"), line: 1, column: 1 },
+        location: { filePath: posixJoin(dir, "dead.tsx"), line: 1, column: 1 },
       },
     ]);
     const before = await readFile(storePath, "utf8");

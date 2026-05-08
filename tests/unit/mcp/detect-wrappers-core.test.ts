@@ -514,12 +514,14 @@ describe("buildSuggestedConfigSnippet", () => {
   // shape must be `defineConfig`-compatible (array form for name-only
   // input, object form when any row carries a native-element mapping
   // from), lexicographic sort for stability across runs,
-  // and a single trailing comma that matches project Biome style.
+  // and the final entry omits its trailing element-comma per the
+  // "Bootstrap output must be paste-safe" doctrine — only the closing
+  // `],` / `},` retains its outer object-body comma.
 
   it("emits the array form when every wrapper is name-only, sorted lexicographically", () => {
     const snippet = buildSuggestedConfigSnippet([{ component: "Link" }, { component: "Button" }]);
     expect(snippet).toBe(
-      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link",', "  ],", "});"].join(
+      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link"', "  ],", "});"].join(
         "\n",
       ),
     );
@@ -538,7 +540,7 @@ describe("buildSuggestedConfigSnippet", () => {
         "defineConfig({",
         "  nativeWrappers: {",
         '    "Button": "button",',
-        '    "Link": "a",',
+        '    "Link": "a"',
         "  },",
         "});",
       ].join("\n"),
@@ -560,7 +562,7 @@ describe("buildSuggestedConfigSnippet", () => {
         "defineConfig({",
         "  nativeWrappers: {",
         '    "Button": "button",',
-        '    "CustomThing": null,',
+        '    "CustomThing": null',
         "  },",
         "});",
       ].join("\n"),
@@ -577,7 +579,7 @@ describe("buildSuggestedConfigSnippet", () => {
       { component: "Link" },
     ]);
     expect(snippet).toBe(
-      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link",', "  ],", "});"].join(
+      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link"', "  ],", "});"].join(
         "\n",
       ),
     );
@@ -613,7 +615,7 @@ describe("buildSuggestedConfigSnippet", () => {
       { component: "Link" },
     ]);
     expect(snippet).toBe(
-      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link",', "  ],", "});"].join(
+      ["defineConfig({", "  nativeWrappers: [", '    "Button",', '    "Link"', "  ],", "});"].join(
         "\n",
       ),
     );

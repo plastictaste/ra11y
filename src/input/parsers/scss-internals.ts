@@ -171,20 +171,27 @@ export function isAtTopLevel(source: string, offset: number): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Rewrites `//...<newline>` in `out` so the CSS parser sees a block
- * comment of the same length. When the body is too short to fit the
- * minimum 4-char block-comment form we blank the whole fragment to
- * spaces (still same length, still valid CSS).
+ * Strips `//...<newline>` from `out` by replacing the entire range
+ * with spaces. Newlines outside the [start, bodyEnd) range are
+ * preserved by the caller; the range itself contains only the line
+ * comment up to (but not including) the terminating newline.
+ *
+ * Why blank-to-spaces instead of rewriting in place to a `/*...*\/`
+ * block comment: SCSS line-comment bodies frequently contain text
+ * that is illegal inside a block comment — most importantly the
+ * block-comment terminator sequence itself ("For <button>" + the
+ * terminator + ".item:active" is a real-world shape used as
+ * JSDoc-ish prose referencing CSS code). An in-place rewrite leaves
+ * the embedded terminator intact, the synthetic block comment
+ * closes at the embedded terminator, and the rest of the body (plus
+ * everything up to the next `{`) leaks into the next ruleset's
+ * selector context. Replacing the entire range with spaces — same
+ * length, no body content surviving into the token stream —
+ * eliminates the bleed by construction. Line numbers stay stable
+ * because length is preserved and the terminating newline lives
+ * outside the blanked range.
  */
 export function rewriteLineComment(out: string[], start: number, bodyEnd: number): void {
-  const bodyLen = bodyEnd - start - 2;
-  if (bodyLen >= 2) {
-    out[start] = "/";
-    out[start + 1] = "*";
-    out[bodyEnd - 2] = "*";
-    out[bodyEnd - 1] = "/";
-    return;
-  }
   for (let i = start; i < bodyEnd; i += 1) out[i] = " ";
 }
 

@@ -112,7 +112,7 @@ export async function discoverExplicitPaths(
     }
     if (info.isFile()) {
       if (hasParseableExtension(absRoot) && !userMatcher.matches(toRel(absRoot, absRoot))) {
-        out.add(absRoot);
+        out.add(toPosix(absRoot));
       }
       continue;
     }
@@ -123,7 +123,7 @@ export async function discoverExplicitPaths(
         hasParseableExtension(filePath) && !userMatcher.matches(toRel(filePath, absRoot)),
       EXPLICIT_PATH_IGNORED_DIRS,
     );
-    for (const f of found) out.add(f);
+    for (const f of found) out.add(toPosix(f));
   }
   return [...out].sort();
 }
@@ -315,6 +315,23 @@ export interface DefaultExcludedArtifactPath {
  *     so an agent triaging coverage can tell source-shaped no-ext
  *     files apart from the residual `(no-ext)` bucket (binary blobs,
  *     hash-named pointers). Counters are raw file counts.
+ *   - `excludedByPatternByExtension`: per-extension counts of files
+ *     that have a parseable extension but were filtered by
+ *     {@link DEFAULT_EXCLUDED_PATTERNS}, `.gitignore`, or user-supplied
+ *     `exclude` globs. Closes the per-extension accounting axis when
+ *     `meta.filesByExtension` undercounts ground-truth file totals
+ *     because gitignore- and user-excluded matches were silently
+ *     dropped. Together with `filesByExtension` (parsed) and
+ *     `skippedByExtension` (unparseable) plus `sourcemapFiles.length`,
+ *     this field closes the per-extension accounting invariant for
+ *     files reachable under the dir-ignore set: parsed + skipped +
+ *     excludedByPattern + sourcemap = the raw walker count. Map keys
+ *     are ext-with-dot (`.scss`); counters are raw file counts. Per
+ *     AI-first "Verbose meta is signal, not clutter," the channel
+ *     surfaces deliberately-suppressed parseable files so an agent
+ *     triaging "11 .css scanned but the repo has 47" can tell the
+ *     remainder went through `.gitignore`/excludes (visible) rather
+ *     than vanishing through a parser-routing bug (invisible).
  *   - `sourcemapFiles`: absolute paths of `.map` sourcemap files the
  *     walker considered (cleared dir-ignore + user-excludes) and
  *     rejected on the parseable-extension check. Routed into a
@@ -342,8 +359,33 @@ export interface DefaultExcludedArtifactPath {
  */
 export interface DiscoveryDiagnostics {
   readonly skippedByExtension: Readonly<Record<string, number>>;
+  readonly excludedByPatternByExtension: Readonly<Record<string, number>>;
   readonly sourcemapFiles: readonly string[];
   readonly defaultExcludedArtifactPaths: readonly DefaultExcludedArtifactPath[];
+  /**
+   * Cross-file byte-fingerprint duplicate map produced by the
+   * pre-parse fingerprint pass in `src/input/file-fingerprint.ts`.
+   * Keyed by the canonical (lex-smallest) path of each duplicate
+   * group; valued by the lex-sorted list of every other file with the
+   * same SHA-1 hash. Optional — the discovery walker itself does NOT
+   * compute fingerprints (the walker stays pure FS-traversal); the
+   * field is populated by the parser pipeline (`parseFilesWithDiagnostics`
+   * in `src/mcp/tools-helpers.ts`) after discovery returns. Discovery
+   * call sites that bypass the parser pipeline (test fixtures, the
+   * CLI's bare `discoverFiles`) leave the field undefined.
+   *
+   * Powers two downstream behaviors:
+   *   - The parser pipeline skips parsing every entry in the
+   *     duplicates list — one canonical copy parses instead of N
+   *     byte-identical copies.
+   *   - The scan-family response stamps `vendorOccurrences` on
+   *     findings emitted from canonical paths (the post-scan pass in
+   *     `src/mcp/file-fingerprint-stamp.ts`) so every collapsed copy
+   *     surfaces on the canonical finding without re-emitting per
+   *     copy. Surface-don't-suppress per AI-first doctrine — the
+   *     dedupe is lossless.
+   */
+  readonly fingerprintDuplicates?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -379,6 +421,7 @@ export async function discoverFilesWithDiagnostics(
   const userMatcher = compileGlobs([...userExcludes, ...gitignore]);
   const out = new Set<string>();
   const skippedByExtension = new Map<string, number>();
+  const excludedByPatternByExtension = new Map<string, number>();
   const sourcemapFiles = new Set<string>();
   const ignoredArtifactDirs = new Set<string>();
 
@@ -389,10 +432,11 @@ export async function discoverFilesWithDiagnostics(
       userMatcher,
       dirMatcher,
       skippedByExtension,
+      excludedByPatternByExtension,
       sourcemapFiles,
       ignoredArtifactDirs,
     );
-    for (const f of found) out.add(f);
+    for (const f of found) out.add(toPosix(f));
   }
 
   // Walk each surfaced ignored-artifact-dir shallowly to count parseable
@@ -406,6 +450,9 @@ export async function discoverFilesWithDiagnostics(
     diagnostics: {
       skippedByExtension: Object.fromEntries(
         [...skippedByExtension.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ),
+      excludedByPatternByExtension: Object.fromEntries(
+        [...excludedByPatternByExtension.entries()].sort(([a], [b]) => a.localeCompare(b)),
       ),
       sourcemapFiles: [...sourcemapFiles].sort(),
       defaultExcludedArtifactPaths,
@@ -460,9 +507,9 @@ async function summarizeIgnoredArtifactDir(
   if (accumulator.fileCount === 0) return null;
   accumulator.samples.sort();
   return {
-    path: dirPath,
+    path: toPosix(dirPath),
     fileCount: accumulator.fileCount,
-    sampleFiles: accumulator.samples,
+    sampleFiles: accumulator.samples.map(toPosix),
   };
 }
 
@@ -563,10 +610,32 @@ function recordExtensionSkip(
 ): void {
   const ext = extension(filePath);
   if (ext === SOURCEMAP_EXTENSION) {
-    sourcemapFiles.add(filePath);
+    sourcemapFiles.add(toPosix(filePath));
     return;
   }
   const key = ext === "" ? noExtensionKey(filePath) : ext;
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+/**
+ * Records a file that has a parseable extension but was filtered out
+ * by `.gitignore`, user-supplied excludes, or
+ * {@link DEFAULT_EXCLUDED_PATTERNS}. Bucketed by the file's dotted
+ * extension so the agent reading
+ * `analysisCoverage.excludedByPatternByExtension` can answer "of the
+ * 60 .js files my repo has, how many did the scanner intentionally
+ * skip via patterns?" without re-walking the tree. Sibling to
+ * {@link recordExtensionSkip}: that one captures parser-routing
+ * gaps, this one captures pattern-driven suppressions, and together
+ * the two buckets close the per-extension accounting invariant for
+ * files reachable under the dir-ignore set.
+ */
+function recordExcludedByPattern(counts: Map<string, number>, filePath: string): void {
+  const ext = extension(filePath);
+  // Caller gates on `hasParseableExtension(filePath)`, so `ext` is
+  // always a non-empty dotted extension here. Defensive: fall back to
+  // the canonical `(no-ext)` bucket if the contract ever drifts.
+  const key = ext === "" ? "(no-ext)" : ext;
   counts.set(key, (counts.get(key) ?? 0) + 1);
 }
 
@@ -871,6 +940,7 @@ async function discoverOne(
   userMatcher: GlobMatcher,
   dirMatcher: GlobMatcher,
   skippedByExtension: Map<string, number>,
+  excludedByPatternByExtension: Map<string, number>,
   sourcemapFiles: Set<string>,
   ignoredArtifactDirs: Set<string>,
 ): Promise<readonly string[]> {
@@ -882,8 +952,14 @@ async function discoverOne(
   }
   if (info.isFile()) {
     // Explicit file paths bypass default test-file exclusions, but still
-    // honor the user's own excludes.
-    if (userMatcher.matches(toRel(abs, abs))) return [];
+    // honor the user's own excludes. A user-excluded parseable file is
+    // recorded under `excludedByPatternByExtension` so the per-extension
+    // accounting invariant (parsed + skipped + excludedByPattern +
+    // sourcemap = raw walker count) holds for explicit-file roots too.
+    if (userMatcher.matches(toRel(abs, abs))) {
+      if (hasParseableExtension(abs)) recordExcludedByPattern(excludedByPatternByExtension, abs);
+      return [];
+    }
     if (hasParseableExtension(abs)) return [abs];
     recordExtensionSkip(skippedByExtension, sourcemapFiles, abs);
     return [];
@@ -894,12 +970,24 @@ async function discoverOne(
       (filePath) => hasParseableExtension(filePath) && !dirMatcher.matches(toRel(filePath, abs)),
       DEFAULT_IGNORED_DIRS,
       {
-        // Fires only for files that passed the dir-level ignore set AND
-        // failed the inline filter — the filter is parseable-extension
-        // AND not-user-excluded. We only want to surface the extension
-        // gap, not user-intentional exclusions, so re-check here.
+        // Fires for files that passed the dir-level ignore set AND
+        // failed the inline filter. The filter is parseable-extension
+        // AND not-pattern-excluded, so a rejection means one of:
+        //   - parseable + pattern-excluded → `excludedByPatternByExtension`
+        //   - non-parseable + not-pattern-excluded → `skippedByExtension`
+        //   - non-parseable + pattern-excluded → neither bucket (the
+        //     extension gap is moot once the pattern excludes the file)
+        // The split keeps the per-extension accounting invariant
+        // honest: every file the walker considered lands in exactly
+        // one diagnostic bucket OR survives into `out`.
         onRejected: (filePath) => {
-          if (dirMatcher.matches(toRel(filePath, abs))) return;
+          const patternMatch = dirMatcher.matches(toRel(filePath, abs));
+          if (patternMatch) {
+            if (hasParseableExtension(filePath)) {
+              recordExcludedByPattern(excludedByPatternByExtension, filePath);
+            }
+            return;
+          }
           recordExtensionSkip(skippedByExtension, sourcemapFiles, filePath);
         },
         // Fires once per directory the walker skipped because its name
@@ -922,6 +1010,22 @@ async function discoverOne(
 /** Path we compare against patterns — POSIX `/` and relative to the scan root. */
 function toRel(filePath: string, root: string): string {
   return relative(root, filePath).split(/[\\/]/).join("/");
+}
+
+/**
+ * Normalizes an absolute filesystem path to POSIX form (forward slashes)
+ * so downstream consumers — tests, glob matchers, MCP response shapes,
+ * cross-surface invariants — see one separator regardless of platform.
+ *
+ * Node's `fs` accepts forward-slash paths on Windows for every read/write
+ * operation, so applying this at the discovery output boundary is safe
+ * for downstream filesystem use. It also closes the cross-surface count
+ * invariant: paths emitted into `meta.scannedBuildArtifacts`,
+ * `analysisCoverage.fragmentFiles`, and `files[]` arrays match the
+ * shape an agent expects regardless of which OS the scan ran on.
+ */
+function toPosix(absPath: string): string {
+  return absPath.split(/[\\/]/).join("/");
 }
 
 /** Joins a root and a relative sub-path. Exported for tests. */

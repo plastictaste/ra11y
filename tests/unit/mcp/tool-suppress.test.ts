@@ -10,9 +10,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { suppressTool } from "../../../src/mcp/tool-suppress.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface SuccessBody {
   readonly applied: boolean;
@@ -39,7 +39,7 @@ interface ErrorBody {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-suppress-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-suppress-"));
   try {
     return await fn(dir);
   } finally {
@@ -65,7 +65,7 @@ async function call(
 describe("suppress: TSX inserts JSX-comment pragma with indentation", () => {
   it("writes `{/* ra11y-disable-next-line … */}` above the indented target line", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = [
         "export function Button() {",
         "  return (",
@@ -106,7 +106,7 @@ describe("suppress: TSX inserts JSX-comment pragma with indentation", () => {
 describe("suppress: TS emits line-comment pragma", () => {
   it("writes `// ra11y-disable-next-line …` on its own line", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "helpers.ts");
+      const filePath = posixJoin(dir, "helpers.ts");
       await writeFile(filePath, ["const x = 1;", "const y = 2;", ""].join("\n"));
 
       const session = allowWriteSession();
@@ -136,7 +136,7 @@ describe("suppress: TS emits line-comment pragma", () => {
 describe("suppress: HTML emits block-comment pragma", () => {
   it("writes `<!-- ra11y-disable-next-line … -->` above the target tag", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "index.html");
+      const filePath = posixJoin(dir, "index.html");
       const original = [
         "<!doctype html>",
         "<html>",
@@ -182,7 +182,7 @@ describe("suppress: Markdown emits HTML-comment pragma", () => {
   // for the majority of SSG findings.
   it("writes `<!-- ra11y-disable-next-line … -->` above the target line in a .md file", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "guide.md");
+      const filePath = posixJoin(dir, "guide.md");
       const original = [
         "# Embed guide",
         "",
@@ -219,7 +219,7 @@ describe("suppress: Markdown emits HTML-comment pragma", () => {
 
   it("accepts .markdown long-form extension as well", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "doc.markdown");
+      const filePath = posixJoin(dir, "doc.markdown");
       const original = ["## Stats", "", "<table><tr><td>data</td></tr></table>", ""].join("\n");
       await writeFile(filePath, original);
 
@@ -245,7 +245,7 @@ describe("suppress: Markdown emits HTML-comment pragma", () => {
   it("round-trips through parseInlineDisables — the inserted pragma silences the finding on the next scan", async () => {
     const { parseInlineDisablesDetailed } = await import("../../../src/config/inline-disables.ts");
     await withScratch(async (dir) => {
-      const filePath = join(dir, "page.md");
+      const filePath = posixJoin(dir, "page.md");
       const original = ["# Page", "", '<img src="/hero.png">', ""].join("\n");
       await writeFile(filePath, original);
 
@@ -280,7 +280,7 @@ describe("suppress: Markdown emits HTML-comment pragma", () => {
 describe("suppress: CSS emits CSS-comment pragma", () => {
   it("writes `/* ra11y-disable-next-line … */` above the target rule", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "style.css");
+      const filePath = posixJoin(dir, "style.css");
       await writeFile(
         filePath,
         [".banner {", "  color: #ccc;", "  background: #ddd;", "}", ""].join("\n"),
@@ -313,7 +313,7 @@ describe("suppress: CSS emits CSS-comment pragma", () => {
 describe("suppress: allowWrite gate", () => {
   it("rejects with `allow-write-disabled` when the session flag is off, and never touches the file", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = "export const Button = () => <div onClick={go}/>;\n";
       await writeFile(filePath, original);
 
@@ -337,7 +337,7 @@ describe("suppress: allowWrite gate", () => {
 describe("suppress: required reason", () => {
   it("rejects a missing reason with `reason-required`", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = "export const Button = () => <div onClick={go}/>;\n";
       await writeFile(filePath, original);
 
@@ -358,7 +358,7 @@ describe("suppress: required reason", () => {
 
   it("rejects a whitespace-only reason with `reason-required` (no silent bare pragma)", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = "export const Button = () => <div onClick={go}/>;\n";
       await writeFile(filePath, original);
 
@@ -401,7 +401,7 @@ describe("suppress: file-not-found", () => {
 describe("suppress: line-out-of-range", () => {
   it("rejects when line is past EOF", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "short.tsx");
+      const filePath = posixJoin(dir, "short.tsx");
       const original = "export const X = 1;\n";
       await writeFile(filePath, original);
 
@@ -423,7 +423,7 @@ describe("suppress: line-out-of-range", () => {
 
   it("rejects line 0 as `invalid-param` (1-based contract)", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "ok.tsx");
+      const filePath = posixJoin(dir, "ok.tsx");
       await writeFile(filePath, "export const X = 1;\n");
 
       const session = allowWriteSession();
@@ -445,7 +445,7 @@ describe("suppress: line-out-of-range", () => {
 describe("suppress: unsupported extension", () => {
   it("rejects with `file-unsupported` for unknown file types", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "data.json");
+      const filePath = posixJoin(dir, "data.json");
       const original = '{"k":"v"}\n';
       await writeFile(filePath, original);
 
@@ -470,7 +470,7 @@ describe("suppress: round-trip through the pragma parser", () => {
   it("produces a pragma that parseInlineDisables recognises (TSX)", async () => {
     const { parseInlineDisablesDetailed } = await import("../../../src/config/inline-disables.ts");
     await withScratch(async (dir) => {
-      const filePath = join(dir, "App.tsx");
+      const filePath = posixJoin(dir, "App.tsx");
       await writeFile(
         filePath,
         ["export function App() {", "  return <div onClick={go}/>;", "}", ""].join("\n"),
@@ -501,7 +501,7 @@ describe("suppress: round-trip through the pragma parser", () => {
 describe("suppress: dry-run mode", () => {
   it("defaults dryRun:true and returns the would-insert pragma without touching the file", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = [
         "export function Button() {",
         "  return (",
@@ -546,7 +546,7 @@ describe("suppress: dry-run mode", () => {
 
   it("explicit dryRun:true is the same envelope as the default", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "style.css");
+      const filePath = posixJoin(dir, "style.css");
       const original = [".banner {", "  color: #ccc;", "}", ""].join("\n");
       await writeFile(filePath, original);
 
@@ -578,7 +578,7 @@ describe("suppress: dry-run mode", () => {
     // learn to probe writes behind a gate that suddenly relaxes for
     // dry-run.
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = "export const Button = () => <div onClick={go}/>;\n";
       await writeFile(filePath, original);
 
@@ -601,7 +601,7 @@ describe("suppress: dry-run mode", () => {
 
   it("dryRun:true still rejects missing reason — reason-required fires before the dry-run short-circuit", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "Button.tsx");
+      const filePath = posixJoin(dir, "Button.tsx");
       const original = "export const Button = () => <div onClick={go}/>;\n";
       await writeFile(filePath, original);
 
@@ -624,7 +624,7 @@ describe("suppress: dry-run mode", () => {
 describe("suppress: write mode revertHint", () => {
   it("includes `git checkout -- <relative>` on dryRun:false success", async () => {
     await withScratch(async (dir) => {
-      const filePath = join(dir, "helpers.ts");
+      const filePath = posixJoin(dir, "helpers.ts");
       await writeFile(filePath, ["const x = 1;", ""].join("\n"));
 
       const session = allowWriteSession();

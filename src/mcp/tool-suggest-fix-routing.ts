@@ -14,6 +14,8 @@
  * Pure functions, no I/O.
  */
 
+import { resolveConfidence } from "../output/agent-response/build-finding.ts";
+import type { Confidence } from "../output/agent-response/types.ts";
 import type { Violation } from "../types/violation.ts";
 import {
   buildPerCallEnrichmentAlternatives,
@@ -25,7 +27,7 @@ import {
   isSuppressionFlavoredSuggestion,
 } from "./suggest-fix-suppress-recommended.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
-import { buildFixPathsOutcome } from "./tool-suggest-fix-fixpaths.ts";
+import { buildFixPathsOutcome, kindFromFixClass } from "./tool-suggest-fix-fixpaths.ts";
 import type { BuildSuggestFixPayloadArgs } from "./tool-suggest-fix-payload-args.ts";
 import {
   buildMarkdownHeadingCollisionOutcome,
@@ -140,7 +142,20 @@ function routeMatchedFallback(args: {
   readonly snippetField: { readonly snippet?: string };
 }): Record<string, unknown> {
   const { args: a, match, shared, snippetField } = args;
-  const confidence = match.severity === "error" ? "high" : "medium";
+  // Carry forward the source finding's confidence rather than recompute
+  // from severity. The previous local ladder
+  // (`match.severity === "error" ? "high" : "medium"`) skipped the
+  // `low` rung entirely, so an info-severity finding that scan_project
+  // ships with `confidence: low` came back from suggest_fix as
+  // `primary.confidence: medium` — the canonical drift the agent
+  // budgeting against scan_project's confidence label cannot tell from
+  // a real per-call upgrade. `resolveConfidence` is the same helper
+  // `buildAgentFinding` uses, so the per-finding and per-call surfaces
+  // partition the same finding into the same confidence bucket. Per
+  // docs/kb/architecture/ai-first-consumer.md "Per-call shape must
+  // agree with per-class plan tally" + "Per-tool review-candidate
+  // shape must agree across surfaces."
+  const confidence: Confidence = resolveConfidence(match);
   if (match.fixPaths) {
     return buildFixPathsOutcome({
       match,
@@ -158,7 +173,7 @@ function routeMatchedFallback(args: {
   const explanation = match.suggestion
     ? stripContextBlindTailwindHint(match.suggestion, a.tailwindDetected)
     : `Violation found but no fix guidance available for ${a.ruleId}. ${match.message}`;
-  const primaryConfidence = match.suggestion ? confidence : "low";
+  const primaryConfidence: Confidence = match.suggestion ? confidence : "low";
   // No rule-supplied paths to demote on this branch — populate
   // `alternatives` with per-call enrichments derived deterministically
   // from filePath + criteria so the slot the tool description promised
@@ -187,8 +202,17 @@ function routeMatchedFallback(args: {
       ...(enrichments ? { alternatives: enrichments } : {}),
     });
   }
+  // Per-call `kind` mirrors `plan.fixesByClass` lane keys when the rule
+  // routes into `runtime-only` or `verify-in-source`. The vendor /
+  // template-directive / markdown-collision / suppression-flavored
+  // branches above this fallback override the rule's lane with their
+  // own substrate-specific concern (override the upstream selector,
+  // verify after binding, resolve a markdown collision, suppress with
+  // a pragma) so they keep their own discriminators. This honest
+  // prose-only fallback is the right place for the rule-lane mirror.
+  // See `kindFromFixClass` for the doctrine rationale.
   return {
-    kind: "guidance",
+    kind: kindFromFixClass(match.fixClass),
     primary: {
       approach: deriveApproachFromProse(explanation),
       explanation,

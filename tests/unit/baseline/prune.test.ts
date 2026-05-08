@@ -5,13 +5,17 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import path from "node:path";
 import {
   type BaselineEntry,
   type BaselineFile,
   pruneBaseline,
 } from "../../../src/engine/baseline.ts";
 
-const SCAN_ROOT = "/tmp/fake-project";
+// Use a platform-resolved root so `path.resolve(SCAN_ROOT, "src/a.tsx")`
+// produces a stable absolute that we can strip back to a relative key
+// without baking in POSIX-only assumptions.
+const SCAN_ROOT = path.resolve("/tmp/fake-project");
 
 function entry(filePath: string, ruleId = "media/alt-text-missing"): BaselineEntry {
   return {
@@ -33,8 +37,13 @@ function baseline(entries: readonly BaselineEntry[]): BaselineFile {
 }
 
 const aliveIn = (paths: readonly string[]) => {
-  const alive = new Set(paths);
-  return (p: string) => alive.has(p.replace(`${SCAN_ROOT}/`, ""));
+  // Normalize the alive set against the platform separator so the
+  // predicate compares on the same shape `path.resolve` produces.
+  const alive = new Set(paths.map((p) => path.normalize(p)));
+  return (p: string) => {
+    const rel = path.relative(SCAN_ROOT, p);
+    return alive.has(path.normalize(rel));
+  };
 };
 
 describe("pruneBaseline", () => {

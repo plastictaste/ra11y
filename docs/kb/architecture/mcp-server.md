@@ -67,6 +67,7 @@ Canonical inventory: `MCP_TOOLS` in `src/mcp/tools.ts`, mirrored on the wire by 
 - `review_candidates` — tier-1 manual-review candidates with snippets + finder `reviewPrompt` text for LLM pass/fail.
 - `audit` — end-to-end gated audit covering scan + checklist + review-candidates, with structured `warnings` and nextStep hints.
 - `list_rules` — rule-centric discovery, standard-filterable.
+- `list_finders` — manual-review finder discovery (the structural counterpart to `list_rules` for the manual-review half of coverage), standard-filterable.
 - `explain_rule`, `explain_standard` — rule/standard metadata including normative WCAG quote and criterion list.
 - `detect_native_wrappers` — onboarding helper; lists PascalCase components frequently appearing with `onClick`, candidates for the `nativeWrappers` config.
 

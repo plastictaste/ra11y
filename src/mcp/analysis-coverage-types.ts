@@ -16,7 +16,12 @@ import type {
  * A file whose parser emitted errors. The `reason` is the first parse
  * error's message — surfaced as-is so an agent can branch on the root
  * cause ("Unexpected token `<`" vs "Unterminated string literal")
- * rather than guessing from the file extension.
+ * rather than guessing from the file extension. Present-when-meaningful:
+ * omitted entirely when the head parse error has no message (the parser
+ * recorded a position but no human-readable string), per the AI-first
+ * consumer model's rule against ambiguous field shapes — `reason: ""`
+ * was indistinguishable from "parser truncated to zero chars," so the
+ * field is now absent rather than empty.
  *
  * `parserAttempted` names which in-house parser owned the failure
  * (`html`, `css`, `tsx`, `jsx`, `ts`, `js`) — i.e. the routing
@@ -70,7 +75,7 @@ export interface ParseErrorEntry {
   readonly path: string;
   readonly parserAttempted: string;
   readonly naturalParser?: string;
-  readonly reason: string;
+  readonly reason?: string;
   readonly triggerToken?: string;
   readonly parsedThroughLine?: number;
 }

@@ -1,7 +1,7 @@
 ---
 title: "Coverage Matrix"
 description: "Per-criterion rule and finder coverage across all built-in standards."
-generated: "2026-04-30"
+generated: "2026-05-08"
 ---
 
 # Coverage Matrix
@@ -22,21 +22,13 @@ finders cover it and the resulting coverage verdict.
 **Finders column** strips the `review/` prefix for brevity.
 
 **Unique criteria across all standards:** 252
-**By verdict:** 140 rule · 85 finder · 25 attestation-only · 2 gap
-
-## Gaps
-
-The following criterion IDs have `gap` verdict — they are auto/partial automatable but have no rule or finder coverage yet.
-These are candidates for new rules or finders.
-
-- `wcag21:2.5.5`
-- `wcag22:2.5.5`
+**By verdict:** 142 rule · 85 finder · 25 attestation-only · 0 gap
 
 ## WCAG 2.2
 
 **ID:** `wcag22` | **Version:** 2.2 | **Criteria:** 86
 
-Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
+Coverage: 43 rule · 30 finder · 13 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -87,7 +79,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.4.3` | Focus Order | A | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
 | `wcag22:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name, visually-hidden-only-name | **rule** |
 | `wcag22:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
-| `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
+| `wcag22:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | accessible-name-redundant-composition, headings-and-labels | **rule** |
 | `wcag22:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag22:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
 | `wcag22:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
@@ -99,7 +91,7 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:2.5.2` | Pointer Cancellation | A | partial | pointer/cancellation | — | **rule** |
 | `wcag22:2.5.3` | Label in Name | A | partial | semantics/label-in-name | — | **rule** |
 | `wcag22:2.5.4` | Motion Actuation | A | manual | — | motion-actuation | **finder** |
-| `wcag22:2.5.5` | Target Size (Enhanced) | AAA | partial | — | — | **gap** |
+| `wcag22:2.5.5` | Target Size (Enhanced) | AAA | partial | pointer/target-size-enhanced | — | **rule** |
 | `wcag22:2.5.6` | Concurrent Input Mechanisms | AAA | manual | — | pointer-input | **finder** |
 | `wcag22:2.5.7` | Dragging Movements | AA | partial | pointer/drag-alternative, pointer/draggable-no-keyboard-alt | drag-events | **rule** |
 | `wcag22:2.5.8` | Target Size (Minimum) | AA | partial | pointer/target-size | — | **rule** |
@@ -124,14 +116,14 @@ Coverage: 42 rule · 30 finder · 13 attestation-only · 1 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## WCAG 2.1
 
 **ID:** `wcag21` | **Version:** 2.1 | **Criteria:** 78
 
-Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
+Coverage: 41 rule · 27 finder · 10 attestation-only · 0 gap
 
 | Criterion | Title | Level | Auto | Rules | Finders | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -182,7 +174,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.4.3` | Focus Order | A | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
 | `wcag21:2.4.4` | Link Purpose (In Context) | A | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name, visually-hidden-only-name | **rule** |
 | `wcag21:2.4.5` | Multiple Ways | AA | manual | — | multiple-ways | **finder** |
-| `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
+| `wcag21:2.4.6` | Headings and Labels | AA | partial | forms/non-empty-label, semantics/empty-heading +1 | accessible-name-redundant-composition, headings-and-labels | **rule** |
 | `wcag21:2.4.7` | Focus Visible | AA | partial | focus/outline-visible | — | **rule** |
 | `wcag21:2.4.8` | Location | AAA | manual | — | — | **attestation-only** |
 | `wcag21:2.4.9` | Link Purpose (Link Only) | AAA | partial | navigation/link-descriptive-text | — | **rule** |
@@ -191,7 +183,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:2.5.2` | Pointer Cancellation | A | partial | pointer/cancellation | — | **rule** |
 | `wcag21:2.5.3` | Label in Name | A | partial | semantics/label-in-name | — | **rule** |
 | `wcag21:2.5.4` | Motion Actuation | A | manual | — | motion-actuation | **finder** |
-| `wcag21:2.5.5` | Target Size (Enhanced) | AAA | partial | — | — | **gap** |
+| `wcag21:2.5.5` | Target Size (Enhanced) | AAA | partial | pointer/target-size-enhanced | — | **rule** |
 | `wcag21:2.5.6` | Concurrent Input Mechanisms | AAA | manual | — | pointer-input | **finder** |
 | `wcag21:3.1.1` | Language of Page | A | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `wcag21:3.1.2` | Language of Parts | AA | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
@@ -211,7 +203,7 @@ Coverage: 40 rule · 27 finder · 10 attestation-only · 1 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -246,7 +238,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:2.4.3` | Focus Order | base | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
 | `section508:2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name, visually-hidden-only-name | **rule** |
 | `section508:2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
-| `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
+| `section508:2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | accessible-name-redundant-composition, headings-and-labels | **rule** |
 | `section508:2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
 | `section508:3.1.1` | Language of Page | base | full | document/lang-attribute, parsing/html-has-lang | — | **rule** |
 | `section508:3.1.2` | Language of Parts | base | partial | document/lang-on-parts, parsing/html-has-lang | — | **rule** |
@@ -259,7 +251,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 
 ## EN 301 549
 
@@ -300,7 +292,7 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.2.4.3` | Focus Order | base | partial | focus/tabindex-positive, semantics/inline-display-none-on-focusable | focus-order | **rule** |
 | `en301549:9.2.4.4` | Link Purpose (In Context) | base | partial | navigation/link-descriptive-text, navigation/link-name-only-symbol +1 | pagination-glyph-accessible-name, visually-hidden-only-name | **rule** |
 | `en301549:9.2.4.5` | Multiple Ways | base | manual | — | multiple-ways | **finder** |
-| `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | headings-and-labels | **rule** |
+| `en301549:9.2.4.6` | Headings and Labels | base | partial | forms/non-empty-label, semantics/empty-heading +1 | accessible-name-redundant-composition, headings-and-labels | **rule** |
 | `en301549:9.2.4.7` | Focus Visible | base | partial | focus/outline-visible | — | **rule** |
 | `en301549:9.2.5.1` | Pointer Gestures | base | manual | — | pointer-input | **finder** |
 | `en301549:9.2.5.2` | Pointer Cancellation | base | partial | pointer/cancellation | — | **rule** |
@@ -317,5 +309,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | cross-file-click-handler-on-non-interactive, pagination-glyph-accessible-name +1 | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |

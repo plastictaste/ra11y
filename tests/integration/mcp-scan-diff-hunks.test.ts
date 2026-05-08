@@ -14,9 +14,9 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -89,14 +89,14 @@ function runGit(cwd: string, args: readonly string[]) {
  * `new.html` (the seed file's finding is outside any hunk).
  */
 async function seedRepoWithTwoCommits(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-hunks-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-hunks-"));
   runGit(dir, ["init", "-q", "-b", "main"]);
   runGit(dir, ["config", "user.email", "test@example.com"]);
   runGit(dir, ["config", "user.name", "Test"]);
-  await writeFile(join(dir, "old.html"), '<html><body><img src="/a.png"></body></html>\n');
+  await writeFile(posixJoin(dir, "old.html"), '<html><body><img src="/a.png"></body></html>\n');
   runGit(dir, ["add", "."]);
   runGit(dir, ["commit", "-q", "-m", "test: seed"]);
-  await writeFile(join(dir, "new.html"), '<html><body><img src="/b.png"></body></html>\n');
+  await writeFile(posixJoin(dir, "new.html"), '<html><body><img src="/b.png"></body></html>\n');
   runGit(dir, ["add", "."]);
   runGit(dir, ["commit", "-q", "-m", "test: add new"]);
   return dir;
@@ -157,9 +157,12 @@ describe("MCP scan_diff hunksOnly: PR-review primitive", () => {
   });
 
   it("returns a structured error envelope when cwd is not a git repo", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-hunks-nongit-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-hunks-nongit-"));
     try {
-      await writeFile(join(dir, "index.html"), '<html><body><img src="/a.png"></body></html>\n');
+      await writeFile(
+        posixJoin(dir, "index.html"),
+        '<html><body><img src="/a.png"></body></html>\n',
+      );
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "scan_diff", {

@@ -101,11 +101,11 @@ describe("assembleScanFamilyResponse", () => {
     // `totalFindings` was removed per "Composite headline counts are
     // dishonest." `plan.violations` was removed for the same reason
     // per. The honest plan shape carries
-    // `notes` (severity-info, single kind) plus `fixesByClass` (per-
+    // `infoSeverityFindings` (severity-info, single kind) plus `fixesByClass` (per-
     // lane structured tally, present-when-meaningful).
     expect(r.plan["totalFindings"]).toBeUndefined();
     expect(r.plan["violations"]).toBeUndefined();
-    expect(r.plan["notes"]).toBe(0);
+    expect(r.plan["infoSeverityFindings"]).toBe(0);
     // Conditional-spread zero-counts are absent, not zero.
     // `safeEditsAvailable` was dropped entirely
     // (Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT); it must never
@@ -265,7 +265,7 @@ describe("assembleScanFamilyResponse", () => {
     expect(laneSum(lanes.mechanical) + laneSum(lanes.verifyInSource)).toBe(1);
   });
 
-  it("splits notes from non-note violations via plan.notes + plan.fixesByClass (no composite headline)", () => {
+  it("splits notes from non-note violations via plan.infoSeverityFindings + plan.fixesByClass (no composite headline)", () => {
     const note: Violation = {
       ...violation("/src/a.tsx", 1),
       severity: "info",
@@ -275,12 +275,12 @@ describe("assembleScanFamilyResponse", () => {
     // `plan.violations` and `plan.totalFindings` were both removed
     // per the "Composite headline counts are dishonest" doctrine
     // (/ ADR 0024). The honest shape
-    // carries `plan.notes` (severity-info, single kind) and
-    // `plan.fixesByClass` (per-lane structured tally) — consumers
+    // carries `plan.infoSeverityFindings` (severity-info, single kind)
+    // and `plan.fixesByClass` (per-lane structured tally) — consumers
     // that want the flat error+warning total sum the four lanes.
     expect(r.plan["violations"]).toBeUndefined();
     expect(r.plan["totalFindings"]).toBeUndefined();
-    expect(r.plan["notes"]).toBe(1);
+    expect(r.plan["infoSeverityFindings"]).toBe(1);
     type Lane = { source: number; buildArtifact: number };
     const lanes = r.plan["fixesByClass"] as Record<string, Lane>;
     const laneSum = (l: Lane | undefined): number => (l?.source ?? 0) + (l?.buildArtifact ?? 0);
@@ -402,7 +402,7 @@ describe("assembleScanFamilyResponse", () => {
   // rather than the disagreement tripwire it claimed to be. Consumers
   // that want to reconcile read the structured siblings directly.
   describe("meta.countsBySurface — dropped composite, doctrine pin", () => {
-    it("cross-surface invariant — sum(files[*].findings) equals sum(plan.fixesByClass) + plan.notes on a non-truncated scan", () => {
+    it("cross-surface invariant — sum(files[*].findings) equals sum(plan.fixesByClass) + plan.infoSeverityFindings on a non-truncated scan", () => {
       const note: Violation = {
         ...violation("/src/a.tsx", 1),
         severity: "info",
@@ -426,7 +426,7 @@ describe("assembleScanFamilyResponse", () => {
         laneSum(lanes?.["guidance"]) +
         laneSum(lanes?.["runtimeOnly"]) +
         laneSum(lanes?.["verifyInSource"]);
-      const planTotal = errorWarning + (r.plan["notes"] as number);
+      const planTotal = errorWarning + (r.plan["infoSeverityFindings"] as number);
       expect(filesSurface).toBe(planTotal);
     });
 

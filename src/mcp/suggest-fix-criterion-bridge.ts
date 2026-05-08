@@ -21,10 +21,12 @@
  */
 
 import type { Rule } from "../types/rule.ts";
+import type { Criterion } from "../types/standard.ts";
 import type { McpSession } from "./session.ts";
+import { manualOnlyCriterionResult } from "./suggest-fix-manual-only-criterion.ts";
 import type { VendorContext } from "./suggest-fix-vendor-context.ts";
 import type { McpToolResult } from "./tools-helpers.ts";
-import { errorResult } from "./tools-helpers.ts";
+import { errorResult, findRule } from "./tools-helpers.ts";
 
 /**
  * Criterion IDs are namespaced `<standard>:<number>` (e.g.
@@ -97,23 +99,60 @@ export function compareRuleSpecificity(a: Rule, b: Rule): number {
 }
 
 /**
- * Three-way resolution of the `suggest_fix` `ruleId` param: either an
- * immediate error envelope (criterion ID with no satisfying rule), or
- * a `{ ruleId, disambiguationNote? }` pair the rest of the handler
- * proceeds with. Centralizes the criterion-id bridge so the
- * `tool-suggest-fix.ts` handler body stays under the
- * 150-effective-line cap. See {@link resolveCriterionInput} for the
- * underlying resolution rules.
+ * Four-way resolution of the `suggest_fix` `ruleId` param:
+ *
+ *   - `{ ruleId, … }` — input was a rule ID OR a criterion ID with at
+ *     least one satisfying rule; the rest of the handler proceeds
+ *     against `ruleId`.
+ *   - `{ manualOnlyCriterion: Criterion, inputCriterionId }` — input
+ *     was a criterion ID known to the registry but with NO automated
+ *     rule satisfying it (every `automatable: "manual"` criterion).
+ *     The handler builds a `kind: "guidance"` payload framed as
+ *     "manual-review only — verify against the normative spec text"
+ *     instead of returning a `rule-not-found` error envelope. Per
+ *     `docs/kb/architecture/ai-first-consumer.md`: "Per-tool review-
+ *     candidate shape must agree across surfaces" — `checklist` ships
+ *     these criteria as addressable items the agent walks via
+ *     `suggest_fix`; the per-call surface MUST address them honestly.
+ *   - `{ error: McpToolResult }` — input was a criterion ID NOT known
+ *     to the registry (typo, unsupported standard prefix). The
+ *     rule-not-found envelope still fires here because the criterion
+ *     itself doesn't exist; this is distinct from the manual-only
+ *     case where the criterion is real but un-automated.
+ *
+ * `inputCriterionId` is set ONLY when the caller passed a criterion ID
+ * — not on a rule-ID input. The candidate-bridge in
+ * `suggest-fix-candidate-bridge.ts` reads it to scope finder lookup to
+ * the criterion the agent actually asked about; rule-ID inputs fall
+ * back to the rule's full `satisfies[]` list.
  */
 export function applyCriterionBridge(
   inputRuleId: string,
   session: McpSession,
 ):
   | { readonly error: McpToolResult }
-  | { readonly ruleId: string; readonly disambiguationNote?: string } {
+  | {
+      readonly manualOnlyCriterion: Criterion;
+      readonly inputCriterionId: string;
+    }
+  | {
+      readonly ruleId: string;
+      readonly disambiguationNote?: string;
+      readonly inputCriterionId?: string;
+    } {
   const resolution = resolveCriterionInput(inputRuleId, session);
   if (resolution === null) return { ruleId: inputRuleId };
   if (resolution.kind === "unknown") {
+    // Distinguish "criterion exists in registry but no rule satisfies"
+    // from "criterion ID not recognized at all." The first case routes
+    // to manual-review guidance; the second is a real error envelope.
+    // Per CLAUDE.md §1 "Per-tool review-candidate shape must agree
+    // across surfaces" — `checklist` candidates carrying this
+    // criterion ID must address from `suggest_fix`.
+    const criterion = session.registry.findCriterion(inputRuleId);
+    if (criterion !== undefined) {
+      return { manualOnlyCriterion: criterion, inputCriterionId: inputRuleId };
+    }
     return {
       error: errorResult({
         code: "rule-not-found",
@@ -124,9 +163,88 @@ export function applyCriterionBridge(
       }),
     };
   }
-  return resolution.note === undefined
-    ? { ruleId: resolution.ruleId }
-    : { ruleId: resolution.ruleId, disambiguationNote: resolution.note };
+  const base = { ruleId: resolution.ruleId, inputCriterionId: inputRuleId } as const;
+  return resolution.note === undefined ? base : { ...base, disambiguationNote: resolution.note };
+}
+
+/**
+ * Combines {@link applyCriterionBridge} with the rule-existence check
+ * the handler ran inline pre-Q14, returning the bridge's three honest
+ * outcomes (error / manual-only-criterion / resolved-rule) plus the
+ * `Rule` record the rule path resolves to. Extracted so the
+ * suggest_fix handler stays under the 150-effective-line cap enforced
+ * by `scripts/check-limits.ts`.
+ *
+ * The `manualOnlyCriterion` branch passes through unchanged — there is
+ * no `Rule` to look up because no rule satisfies the criterion. The
+ * caller routes this branch to a `kind: "guidance"` payload framed as
+ * "manual-review only" rather than a rule-not-found envelope.
+ */
+export function resolveSuggestFixRule(
+  inputRuleId: string,
+  session: McpSession,
+):
+  | { readonly error: McpToolResult }
+  | {
+      readonly manualOnlyCriterion: Criterion;
+      readonly inputCriterionId: string;
+    }
+  | {
+      readonly rule: Rule;
+      readonly ruleId: string;
+      readonly disambiguationNote?: string;
+      readonly inputCriterionId?: string;
+    } {
+  const bridge = applyCriterionBridge(inputRuleId, session);
+  if ("error" in bridge) return bridge;
+  if ("manualOnlyCriterion" in bridge) return bridge;
+  const rule = findRule(bridge.ruleId, session);
+  if (!rule) {
+    return {
+      error: errorResult({
+        code: "rule-not-found",
+        message: `Rule '${bridge.ruleId}' not found.`,
+        details: { requested: bridge.ruleId },
+        remediation: "Call `list_rules` to discover valid rule IDs.",
+      }),
+    };
+  }
+  return { rule, ...bridge };
+}
+
+/**
+ * Bridge resolution + early-exit routing for the suggest_fix handler:
+ * resolves the input through {@link resolveSuggestFixRule} and routes
+ * the three terminal branches (error envelope, manual-only-criterion
+ * guidance, rule-not-found) into a single `earlyExit` discriminator
+ * the handler returns directly. The resolved-rule path returns the
+ * `{ ruleId, disambiguationNote }` pair the rest of the handler
+ * proceeds with.
+ *
+ * Lives in this module (alongside the bridge primitives) so the
+ * MCP handler in `tool-suggest-fix.ts` stays under the
+ * 150-effective-line cap enforced by `scripts/check-limits.ts`.
+ */
+export function resolveCriterionBridgeOrEarlyExit(
+  inputRuleId: string,
+  filePath: string,
+  line: number,
+  session: McpSession,
+):
+  | { readonly earlyExit: McpToolResult }
+  | { readonly ruleId: string; readonly disambiguationNote: string | undefined } {
+  const resolved = resolveSuggestFixRule(inputRuleId, session);
+  if ("error" in resolved) return { earlyExit: resolved.error };
+  if ("manualOnlyCriterion" in resolved) {
+    return {
+      earlyExit: manualOnlyCriterionResult(
+        { criterion: resolved.manualOnlyCriterion, inputCriterionId: resolved.inputCriterionId },
+        filePath,
+        line,
+      ),
+    };
+  }
+  return { ruleId: resolved.ruleId, disambiguationNote: resolved.disambiguationNote };
 }
 
 /**

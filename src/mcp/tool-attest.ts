@@ -27,7 +27,7 @@
  * committed so the audit trail persists across developers and CI.
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { appendAttestation } from "../config/attestation-store.ts";
 import {
   ATTESTATION_EVIDENCE_SOURCES,
@@ -36,6 +36,7 @@ import {
 } from "../types/evidence.ts";
 import type { Standard } from "../types/standard.ts";
 import { isIsoTimestamp } from "../utils/iso-timestamp.ts";
+import { posixResolve } from "../utils/path.ts";
 import {
   errorResult,
   type McpTool,
@@ -451,7 +452,7 @@ function findCriterion(criterionId: string, standards: readonly Standard[]): unk
 }
 
 function resolveCwd(cwd: string): string {
-  return isAbsolute(cwd) ? cwd : resolve(process.cwd(), cwd);
+  return isAbsolute(cwd) ? cwd : posixResolve(process.cwd(), cwd);
 }
 
 function readVerdict(params: Record<string, unknown>): "pass" | "fail" | "n/a" | undefined | Error {

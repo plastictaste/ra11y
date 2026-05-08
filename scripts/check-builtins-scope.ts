@@ -52,9 +52,16 @@ const IMPORT_PATTERNS: readonly RegExp[] = [
 /**
  * Allowlist predicate on paths relative to ROOT. Returns true when the
  * file is permitted to import one of the `BUILTIN_*` constants.
+ *
+ * Compares on POSIX-shaped paths so the predicate works on Windows
+ * where `path.relative` emits backslashes.
  */
 function isAllowlisted(rel: string): boolean {
-  return rel.startsWith("src/engine/registry/");
+  return toPosix(rel).startsWith("src/engine/registry/");
+}
+
+function toPosix(p: string): string {
+  return p.split(/[\\/]/).join("/");
 }
 
 interface Violation {
@@ -87,7 +94,10 @@ function walk(dir: string): void {
 }
 
 function scan(file: string): void {
-  const rel = relative(ROOT, file);
+  // Normalize to POSIX so both the allowlist predicate and the
+  // violation-output path are stable across OSes — `path.relative`
+  // emits backslashes on Windows otherwise.
+  const rel = toPosix(relative(ROOT, file));
   if (isAllowlisted(rel)) return;
 
   const content = readFileSync(file, "utf8");

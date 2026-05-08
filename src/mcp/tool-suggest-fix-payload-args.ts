@@ -10,6 +10,7 @@
  */
 
 import type { Violation } from "../types/violation.ts";
+import type { CandidateMatch } from "./suggest-fix-candidate-match.ts";
 import type {
   MarkdownHeadingIdCollision,
   TemplateDirectiveContext,
@@ -147,4 +148,25 @@ export interface BuildSuggestFixPayloadArgs {
    * `alternatives[0]`. Conditional-spread per CLAUDE.md §1.
    */
   readonly markdownHeadingCollision?: MarkdownHeadingIdCollision;
+  /**
+   * Set when no rule violation matches the requested `(file, line)`
+   * AND a manual-review candidate at the same coordinate carries a
+   * `criterionId` the requested rule satisfies. Lets the payload
+   * builder route the `match === undefined` branch to a `kind:
+   * "guidance"` outcome carrying the candidate's `reason` + the
+   * finder's `reviewPrompt`, instead of dead-ending the per-call
+   * surface with `kind: "none"` after the cross-surface tool
+   * (`checklist`, `coverage`, `review_candidates`) just pointed the
+   * agent here. Closes the checklist→suggest_fix lane parity gap per
+   * AI-first doctrine "Per-call shape must agree with per-class plan
+   * tally" extended one hop. Conditional-spread per CLAUDE.md §1
+   * "Ambiguous field shapes are dishonest" — undefined leaves behavior
+   * identical to the kind: "none" + breadcrumb path.
+   *
+   * Mutually exclusive with `match` at the resolver level: the handler
+   * looks up a candidate match only when `result.violations` had no
+   * matching emission. When a violation matches, the rule fired and
+   * the existing routing lanes own the response.
+   */
+  readonly candidateMatch?: CandidateMatch;
 }

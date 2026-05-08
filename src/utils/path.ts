@@ -1,11 +1,91 @@
 /**
  * Path helpers. Thin wrappers around node:path that narrow our surface
- * to just what the scanner needs.
+ * to just what the scanner needs, plus the POSIX-normalized boundary
+ * helpers that ra11y's externally visible paths flow through —
+ * see `docs/kb/architecture/cross-platform-paths.md` for the full
+ * invariant.
  */
 
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-export { extname, isAbsolute, join, relative, resolve, sep };
+export { dirname, extname, isAbsolute, join, relative, resolve, sep };
+
+/**
+ * Pattern that matches a single backslash. Pre-compiled so {@link toPosix}
+ * is allocation-free per call — the function is hot on every scanner
+ * output and every per-finding emission.
+ */
+const POSIX_SEP_RE = /\\/g;
+
+/**
+ * Returns `p` with every backslash replaced by a forward slash. Idempotent —
+ * a path that's already POSIX-shaped passes through unchanged. Use this
+ * at the boundary between an OS-native operation (a syscall return, a
+ * native `node:path` join chained out of a third-party helper) and the
+ * surface that an external consumer reads (MCP response, baseline JSON,
+ * suppression pragma, formatter output). Bare `toPosix` is the right
+ * helper when the path was joined deeper in the call stack and you only
+ * need to normalize once at the return; for a fresh join, prefer the
+ * dedicated wrappers below so the normalization is co-located with the
+ * `node:path` call.
+ *
+ *   toPosix("src\\app\\page.tsx")  // → "src/app/page.tsx"
+ *   toPosix("src/app/page.tsx")    // → "src/app/page.tsx"  (no-op)
+ */
+export function toPosix(p: string): string {
+  return p.replace(POSIX_SEP_RE, "/");
+}
+
+/**
+ * Drop-in for `node:path`'s {@link join} that always returns a POSIX
+ * path. Same semantics as `node:path` join (path-segment normalization,
+ * `..` collapse, drive-letter handling on Windows) — the only
+ * difference is the trailing separator-form normalization. See
+ * `docs/kb/architecture/cross-platform-paths.md` for when to use this
+ * over native `join`.
+ *
+ *   posixJoin("src", "app", "page.tsx")  // → "src/app/page.tsx" on every OS
+ */
+export function posixJoin(...segments: string[]): string {
+  return toPosix(join(...segments));
+}
+
+/**
+ * Drop-in for `node:path`'s {@link resolve} that always returns a POSIX
+ * absolute path. Same semantics as `node:path` resolve (resolves to
+ * `process.cwd()` when no absolute prefix is given, walks the segment
+ * list right-to-left until an absolute is hit) — the trailing
+ * normalization rewrites Windows backslashes only.
+ *
+ *   posixResolve("src", "app")  // → "/Users/.../src/app" on POSIX,
+ *                               //   "C:/.../src/app" on Windows
+ */
+export function posixResolve(...segments: string[]): string {
+  return toPosix(resolve(...segments));
+}
+
+/**
+ * Drop-in for `node:path`'s {@link relative} that always returns a
+ * POSIX relative path. Same semantics as `node:path` relative — the
+ * trailing normalization rewrites Windows backslashes only.
+ *
+ *   posixRelative("/repo/src", "/repo/src/app/page.tsx")
+ *     // → "app/page.tsx" on every OS
+ */
+export function posixRelative(from: string, to: string): string {
+  return toPosix(relative(from, to));
+}
+
+/**
+ * Drop-in for `node:path`'s {@link dirname} that always returns a
+ * POSIX path. Same semantics as `node:path` dirname — the trailing
+ * normalization rewrites Windows backslashes only.
+ *
+ *   posixDirname("src/app/page.tsx")  // → "src/app"
+ */
+export function posixDirname(p: string): string {
+  return toPosix(dirname(p));
+}
 
 /** Returns the POSIX extension of a file (e.g., ".tsx"), or empty string. */
 export function extension(filePath: string): string {

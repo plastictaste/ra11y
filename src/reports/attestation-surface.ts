@@ -37,7 +37,12 @@
  */
 
 import type { AttestationRecord } from "../types/evidence.ts";
-import { changedFilesBetween, headSha, stampCommitForTimestamp } from "../utils/git.ts";
+import {
+  changedFilesBetween,
+  headSha,
+  safeRealpath,
+  stampCommitForTimestamp,
+} from "../utils/git.ts";
 
 export interface AttestationSurface {
   readonly verdict: "pass" | "fail" | "n/a" | "pending";
@@ -139,7 +144,20 @@ export function buildAttestationSurface(
 
 function scopedFilePath(record: AttestationRecord): string | null {
   if (record.scope === "file" || record.scope === "line") {
-    return record.location?.filePath ?? null;
+    const filePath = record.location?.filePath;
+    if (!filePath) return null;
+    // Canonicalize via `realpathSync.native` so the Set lookup against
+    // `changedFilesBetween` (which joins git's long-form
+    // `--show-toplevel` with `--name-only` relatives) agrees on the
+    // long-form path regardless of how the attestation was originally
+    // recorded. On GitHub Actions Windows runners `os.tmpdir()` returns
+    // the 8.3 short form (`RUNNER~1`) and a record persisted from that
+    // session would otherwise stay short-form forever — losing every
+    // staleness-probe lookup against git's long-form changed set. The
+    // safeRealpath helper falls back to the input on error (e.g. the
+    // pinned file was deleted), at which point we still POSIX-normalize
+    // separators so basic cross-OS comparisons keep working.
+    return safeRealpath(filePath).split(/[\\/]/).join("/");
   }
   return null;
 }

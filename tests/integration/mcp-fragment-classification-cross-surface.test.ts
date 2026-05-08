@@ -20,9 +20,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 interface JsonRpcResponse {
   readonly id?: number;
@@ -135,23 +135,26 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
     //     meta entry reports the evidence honestly (the parent layout
     //     supplies the envelope; the file is part of a multi-file
     //     layout system, not a leaf fragment).
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-fragment-cross-surface-"));
-    await mkdir(join(dir, "_includes"), { recursive: true });
-    await mkdir(join(dir, "_layouts"), { recursive: true });
-    await mkdir(join(dir, "posts"), { recursive: true });
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-fragment-cross-surface-"));
+    await mkdir(posixJoin(dir, "_includes"), { recursive: true });
+    await mkdir(posixJoin(dir, "_layouts"), { recursive: true });
+    await mkdir(posixJoin(dir, "posts"), { recursive: true });
     await writeFile(
-      join(dir, "_includes/header.html"),
+      posixJoin(dir, "_includes/header.html"),
       '<header><nav><a href="/">Home</a></nav></header>',
     );
     await writeFile(
-      join(dir, "_layouts/default.html"),
+      posixJoin(dir, "_layouts/default.html"),
       "---\n---\n<!DOCTYPE html><html><head><title>p</title></head><body><main>{{ content }}</main></body></html>",
     );
     await writeFile(
-      join(dir, "index.html"),
+      posixJoin(dir, "index.html"),
       "<!DOCTYPE html><html><head><title>p</title></head><body><main><h1>Hi</h1></main></body></html>",
     );
-    await writeFile(join(dir, "posts/welcome.md"), "---\nlayout: post\n---\n# Hello\n\nWorld\n");
+    await writeFile(
+      posixJoin(dir, "posts/welcome.md"),
+      "---\nlayout: post\n---\n# Hello\n\nWorld\n",
+    );
 
     const responses = await mcpSession([
       initMsg(1),
@@ -200,10 +203,10 @@ describe("MCP invariant: fragment classification agrees across surfaces", () => 
     // classifier the two surfaces could disagree on edge cases (e.g.
     // when the scan-time substrate or rule-side suppression diverged
     // from the meta-side telemetry list).
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-fragment-scan-file-parity-"));
-    await mkdir(join(dir, "_includes"), { recursive: true });
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-fragment-scan-file-parity-"));
+    await mkdir(posixJoin(dir, "_includes"), { recursive: true });
     await writeFile(
-      join(dir, "_includes/header.html"),
+      posixJoin(dir, "_includes/header.html"),
       '<header><nav><a href="/">Home</a></nav></header>',
     );
 

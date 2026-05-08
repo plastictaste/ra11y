@@ -189,21 +189,42 @@ Attestation records are created by the `attest` MCP tool, by the `ra11y attest` 
 Appends a single durable attestation record to `.ra11y/attestations.jsonl`. Mirrors the `attest` MCP tool's safety posture: `--reason` is required and non-empty, the criterion must resolve to a loaded standard, any `--rule-ids` must actually satisfy the target criterion, and `--scope file|line` requires a parseable `--location`. Auditors without an MCP host use this command directly.
 
 ```bash
-ra11y attest wcag22:1.1.1 --reason "runtime harness 2026-04-19; no img elements" --verdict na --by ci-bot
-ra11y attest wcag22:2.4.7 --reason "manual keyboard test confirms focus" --scope file --location src/nav.tsx:14:3
+# Manual keyboard review — the most common case
+ra11y attest wcag22:2.4.7 \
+  --reason "manual keyboard test confirms visible focus indicator on all interactive elements" \
+  --evidence-source manual_review \
+  --scope file --location src/nav.tsx:14:3
+
+# Runtime harness result — pairs evidence-source with tool provenance
+ra11y attest wcag22:1.4.3 \
+  --reason "axe-core 4.9.1 run on staging; 0 contrast violations" \
+  --evidence-source runtime_tool \
+  --tool-name "axe-core 4.9.1" \
+  --run-url "https://ci.example.com/runs/1234" \
+  --observed-at "2026-04-19T10:30:00Z"
+
+# N/A declaration — no audio content in this app
+ra11y attest wcag22:1.1.1 \
+  --reason "runtime harness 2026-04-19; no img elements" \
+  --evidence-source declaration \
+  --verdict na --by ci-bot
 ```
 
 Key flags:
 
 - `<criterionId>` — required positional (e.g. `wcag22:2.4.7`).
 - `--reason <text>` — required; non-empty justification. Bare invocations exit `2`.
+- `--evidence-source <source>` — required; one of `runtime_tool`, `manual_review`, `human_study`, `declaration`. Tells conformance statement readers and VPAT auditors how the evidence was produced — a `runtime_tool` pass from a CI harness carries different weight than a `declaration`. The command exits `2` when this flag is absent.
 - `--verdict <pass|fail|na|pending>` — defaults to `pass`. `na` is the shell-friendly alias for `n/a`.
 - `--rule-ids <id>,<id>` — optional; must satisfy the target criterion. Repeatable.
 - `--scope <project|file|line>` — defaults to project-wide. `file` and `line` require `--location`.
 - `--location <file>:<line>[:<col>]` — file + line (+ optional column) anchor.
 - `--by <who>` — records the attester. Defaults to `agent`.
+- `--tool-name <name>` — optional; meaningful only when `--evidence-source runtime_tool`. Free-form label identifying the harness (e.g. `"axe-core 4.9.1"`). Surfaces verbatim in VPAT remarks and conformance summaries.
+- `--run-url <url>` — optional; meaningful only when `--evidence-source runtime_tool`. URL of the CI run or report that produced the verdict. Surfaces verbatim in VPAT remarks.
+- `--observed-at <iso>` — optional; ISO-8601 timestamp of when the evidence was collected (e.g. `"2026-04-19T10:30:00Z"`). Defaults to the current time when absent. Useful when recording results from a past run.
 
-Exit codes: `0` on append; `2` on missing/empty `--reason`, unknown criterion, unknown rule IDs, malformed location, scope↔location mismatch, or file-write failure. Outside a git repo the command still appends but stderr carries `warnings=non_git_repo_commit_omitted`.
+Exit codes: `0` on append; `2` on missing/empty `--reason`, missing `--evidence-source`, unknown criterion, unknown rule IDs, malformed location, malformed `--observed-at` timestamp, scope↔location mismatch, or file-write failure. Outside a git repo the command still appends but stderr carries `warnings=non_git_repo_commit_omitted`.
 
 ### ra11y conformance
 

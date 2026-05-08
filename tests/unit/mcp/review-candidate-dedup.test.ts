@@ -1,29 +1,24 @@
 /**
- * Unit tests for `dedupeReviewCandidatesForSingleFile`. Two passes:
+ * Unit tests for `dedupeReviewCandidatesForSingleFile`. Single fold:
  *
- *   Pass 1 (within-finder cross-standard fold) collapses per-criterion
- *   copies a single finder emits with identical reason text — the
+ *   Within-finder cross-standard fold collapses per-criterion copies
+ *   a single finder emits with identical reason text — the
  *   `wcag22:1.3.6` + `wcag21:1.3.6` pair from `review/identify-purpose`
  *   on the same `<input>` is the canonical shape. Pre-fold N entries,
  *   post-fold one with `criteria` carrying both IDs.
  *
- *   Pass 2 (cross-finder positional fold) collapses entries from
- *   distinct finders that emit at the same `(line, column)` for
- *   genuinely different criteria. Canonical shape: `<input
- *   type="password">` triggers BOTH `review/identify-purpose` (1.3.6)
- *   AND `review/password-inputs` (3.3.8) at the same byte position;
- *   pre-fold the agent saw two entries with different reasons,
- *   post-fold one entry with `criteria` listing both standards and
- *   `reason` concatenating the per-finder framings via `" | "` so
- *   each finder's WCAG-specific guidance survives.
- *
- * The asymmetry the dedup fixes: `checklist.items[].candidates`
- * already annotates cross-criterion sharing via `criteria: [...]` on
- * every instance per `annotateSharedCandidates`. Without Pass 2,
- * `scan_file.reviewCandidates` shipped the same line under N
- * different reasons in one tool and under one merged badge in the
- * other — a cross-surface drift the AI-first consumer model warns
- * against.
+ * Cross-finder coincidences at the same `(line, column)` with DISTINCT
+ * reason text stay as separate entries — the helper does NOT fold
+ * them. Pre-Q15 closure, a cross-finder positional fold concatenated
+ * the per-finder reasons via `" | "` and unioned their criteria into
+ * one entry; per AI-first doctrine extension to "Composite headline
+ * counts are dishonest" composite reason text across distinct criteria
+ * forces the agent to dismiss the union, so each finder's per-
+ * criterion entry surfaces on its own row with its own `findingId`.
+ * Canonical trigger was a bare `<audio>` element fanning out to four
+ * AA/AAA criteria with four framing reasons — the same shape applies
+ * to `<input type="password">` (1.3.6 + 3.3.8) and any other cross-
+ * finder coincidence.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -76,11 +71,21 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 1 (within-finder cross-st
   });
 });
 
-describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positional fold)", () => {
-  it("folds two finders at the same (line, column) with different reasons into one entry", () => {
+describe("dedupeReviewCandidatesForSingleFile — cross-finder positional NON-fold", () => {
+  // Pre-Q15 closure, a "Pass 2" cross-finder fold at the same `(line,
+  // column)` collapsed distinct-reason candidates into one entry with
+  // reasons concatenated via `" | "` and criteria unioned. Per AI-first
+  // doctrine extension to "Composite headline counts are dishonest" —
+  // composite reason text across distinct criteria forces the agent to
+  // dismiss the union — that fold is gone. Each finder's per-criterion
+  // entry surfaces as its own row so per-criterion suppression /
+  // verdict has a stable address.
+
+  it("keeps two finders at the same (line, column) with different reasons as DISTINCT entries", () => {
     // Canonical case: `<input type="password">` at line 7, column 2
     // triggers `review/identify-purpose` for 1.3.6 and
-    // `review/password-inputs` for 3.3.8.
+    // `review/password-inputs` for 3.3.8 with DISTINCT reason text.
+    // Each finder's framing surfaces on its own entry.
     const reasonAutocomplete =
       "<input> no autocomplete attribute — if this control collects information matching a WCAG Input Purpose, set autocomplete=...";
     const reasonAuth =
@@ -90,17 +95,44 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positiona
       candidate("wcag21:1.3.6", reasonAutocomplete, 7, 2),
       candidate("wcag22:3.3.8", reasonAuth, 7, 2),
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.criteria).toEqual(["wcag21:1.3.6", "wcag22:1.3.6", "wcag22:3.3.8"]);
-    // Reason text concatenates with " | " so each finder's framing
-    // survives. Order = first-seen by within-finder collapse.
-    expect(out[0]?.reason).toBe(`${reasonAutocomplete} | ${reasonAuth}`);
+    expect(out).toHaveLength(2);
+    // The 1.3.6 entry carries its within-finder cross-standard set
+    // (wcag22 + wcag21) and its own framing reason — NO `" | "`.
+    const identifyPurpose = out.find((e) => e.criteria.includes("wcag22:1.3.6"));
+    expect(identifyPurpose).toBeDefined();
+    expect(identifyPurpose?.criteria).toEqual(["wcag21:1.3.6", "wcag22:1.3.6"]);
+    expect(identifyPurpose?.reason).toBe(reasonAutocomplete);
+    expect(identifyPurpose?.reason).not.toContain(" | ");
+    // The 3.3.8 entry carries only its own criterion and reason.
+    const passwordInputs = out.find((e) => e.criteria.includes("wcag22:3.3.8"));
+    expect(passwordInputs).toBeDefined();
+    expect(passwordInputs?.criteria).toEqual(["wcag22:3.3.8"]);
+    expect(passwordInputs?.reason).toBe(reasonAuth);
+    expect(passwordInputs?.reason).not.toContain(" | ");
+  });
+
+  it("never concatenates reasons across cross-finder coincidences at the same byte position", () => {
+    // Three distinct finders at the same byte position with three
+    // distinct reasons → three entries, each with one reason. Pre-
+    // closure, the helper produced one entry whose reason was
+    // `"reason A | reason B | reason C"`.
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("std:a", "reason A", 4, 0),
+      candidate("std:b", "reason B", 4, 0),
+      candidate("std:c", "reason C", 4, 0),
+    ]);
+    expect(out).toHaveLength(3);
+    for (const entry of out) {
+      expect(entry.reason).not.toContain(" | ");
+    }
+    // Each entry carries its own criteria — no cross-finder union.
+    const seen = new Set(out.flatMap((e) => e.criteria));
+    expect(seen).toEqual(new Set(["std:a", "std:b", "std:c"]));
   });
 
   it("keeps entries at different positions distinct even when reasons share fragments", () => {
-    // Two password inputs on different lines must stay separate — the
-    // positional fold only collapses the same byte position, never
-    // across lines.
+    // Two password inputs on different lines must stay separate —
+    // never folded across lines.
     const r = '<input type="password">';
     const out = dedupeReviewCandidatesForSingleFile([
       candidate("wcag22:3.3.8", r, 5, 2),
@@ -109,24 +141,27 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positiona
     expect(out).toHaveLength(2);
   });
 
-  it("idempotent: running pass 2 on already-merged data does not duplicate the reason fragment", () => {
-    const a = "reason A";
-    const b = "reason B";
-    // Three finders at the same position; second and third both
-    // contribute new reasons. Reason should be `A | B | C`, NOT
-    // `A | B | A | B | C` after multiple round-trips.
-    const c = "reason C";
+  it("preserves first-seen order across distinct entries at the same line", () => {
     const out = dedupeReviewCandidatesForSingleFile([
-      candidate("std:a", a, 4, 0),
-      candidate("std:b", b, 4, 0),
-      candidate("std:c", c, 4, 0),
+      candidate("std:a", "rA", 5, 0),
+      candidate("std:b", "rB", 9, 0),
+      candidate("std:c", "rC", 5, 0), // distinct reason at same (line, column)
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.reason).toBe(`${a} | ${b} | ${c}`);
-    expect(out[0]?.criteria).toEqual(["std:a", "std:b", "std:c"]);
+    expect(out).toHaveLength(3);
+    // First-seen order: 5 (rA), 9 (rB), 5 (rC).
+    expect(out[0]?.line).toBe(5);
+    expect(out[0]?.reason).toBe("rA");
+    expect(out[1]?.line).toBe(9);
+    expect(out[2]?.line).toBe(5);
+    expect(out[2]?.reason).toBe("rC");
   });
 
-  it("back-fills structured evidence (vendorPathHint, durationLiteralMs, snippet) from later finders", () => {
+  it("each per-finder entry at the same byte position carries its own per-finder structured evidence (no back-fill across distinct reasons)", () => {
+    // Pre-closure, the cross-finder fold back-filled missing
+    // `vendorPathHint` / `durationLiteralMs` / `snippet` from the
+    // later finder onto the merged entry. Post-closure each finder's
+    // entry stays distinct so its own per-finder evidence surfaces
+    // unchanged — no implicit cross-finder copy.
     const out = dedupeReviewCandidatesForSingleFile([
       candidate("std:a", "reason A", 4, 0),
       candidate("std:b", "reason B", 4, 0, {
@@ -135,39 +170,15 @@ describe("dedupeReviewCandidatesForSingleFile — Pass 2 (cross-finder positiona
         snippet: '<button onclick="...">',
       }),
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.vendorPathHint).toBe(true);
-    expect(out[0]?.durationLiteralMs).toBe(2000);
-    expect(out[0]?.snippet).toBe('<button onclick="...">');
-  });
-
-  it("back-fills durationExpression from a later finder when the first carries no duration evidence", () => {
-    // Mirror of the durationLiteralMs back-fill: the non-literal
-    // sibling string field must traverse the cross-finder fold the
-    // same way so that an agent reading the deduped surface sees the
-    // verbatim expression regardless of which finder contributed it.
-    const out = dedupeReviewCandidatesForSingleFile([
-      candidate("std:a", "reason A", 4, 0),
-      candidate("std:b", "reason B", 4, 0, {
-        durationExpression: "self.options.interval",
-      }),
-    ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.durationExpression).toBe("self.options.interval");
-    // Single-typed channels: literal field stays absent because no
-    // numeric literal was observed at this site.
-    expect(out[0]?.durationLiteralMs).toBeUndefined();
-  });
-
-  it("preserves first-seen order across pass 2 folds", () => {
-    const out = dedupeReviewCandidatesForSingleFile([
-      candidate("std:a", "rA", 5, 0),
-      candidate("std:b", "rB", 9, 0),
-      candidate("std:c", "rC", 5, 0), // folds with first
-    ]);
     expect(out).toHaveLength(2);
-    expect(out[0]?.line).toBe(5);
-    expect(out[1]?.line).toBe(9);
+    const a = out.find((e) => e.reason === "reason A");
+    const b = out.find((e) => e.reason === "reason B");
+    expect(a?.vendorPathHint).toBeUndefined();
+    expect(a?.durationLiteralMs).toBeUndefined();
+    expect(a?.snippet).toBeUndefined();
+    expect(b?.vendorPathHint).toBe(true);
+    expect(b?.durationLiteralMs).toBe(2000);
+    expect(b?.snippet).toBe('<button onclick="...">');
   });
 });
 
@@ -241,23 +252,29 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
     expect(out[0]?.priority).toBe("high");
   });
 
-  it("populates findingId via location-coordinate hash with sorted-criteria-joined ruleId slot", () => {
-    // Two finders at the same byte position fold to one entry. The
-    // emitted findingId must be deterministic from the sorted-criteria
-    // union + path + line + column — that's the canonical recipe the
-    // shared `computeCandidateFindingId` helper applies on every
-    // surface that ships review candidates. Per AI-first doctrine
-    // "Per-finding identifiers must be addressable, not collision-
-    // prone."
+  it("populates per-entry findingId via location-coordinate hash with sorted-criteria-joined ruleId slot", () => {
+    // Two finders at the same byte position with distinct reasons
+    // surface as TWO entries (no cross-finder fold). Each entry's
+    // findingId is deterministic from its own sorted-criteria + path
+    // + line + column — the shared `computeCandidateFindingId` recipe
+    // every review-candidate-bearing surface applies. Per AI-first
+    // doctrine "Per-finding identifiers must be addressable, not
+    // collision-prone": the two entries get DISTINCT ids since their
+    // criteria differ.
     const out = dedupeReviewCandidatesForSingleFile([
       candidate("wcag22:1.3.6", "reason A", 7, 2),
       candidate("wcag22:3.3.8", "reason B", 7, 2),
     ]);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.findingId).toBeDefined();
-    // Length is the FINDING_ID_LENGTH (12) hex chars used by the
-    // rule surface — the shared helper preserves that contract.
-    expect(out[0]?.findingId).toMatch(/^[0-9a-f]{12}$/);
+    expect(out).toHaveLength(2);
+    for (const entry of out) {
+      expect(entry.findingId).toBeDefined();
+      // Length is the FINDING_ID_LENGTH (12) hex chars used by the
+      // rule surface — the shared helper preserves that contract.
+      expect(entry.findingId).toMatch(/^[0-9a-f]{12}$/);
+    }
+    // Distinct addresses: per-criterion suppression / verdict has a
+    // stable per-entry id.
+    expect(out[0]?.findingId).not.toBe(out[1]?.findingId);
   });
 
   it("findingId distinguishes two candidates that differ only by line", () => {
@@ -272,14 +289,42 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
     expect(a[0]?.findingId).toBe(b[0]?.findingId);
   });
 
-  it("takes the highest confidence across the cross-finder fold (Pass 2)", () => {
+  it("findingId distinguishes two candidates with identical criteria union but distinct reasons at the same position", () => {
+    // Canonical regression: two finders firing at the same byte
+    // position with identical `criterionIds` (e.g.
+    // `review/alt-duplicates-sibling-text` and
+    // `review/redundant-alt-text` both declaring
+    // `["wcag22:1.1.1", "wcag21:1.1.1"]`) but DIFFERENT `reason`
+    // text. Pre-closure, the per-position cross-standard fold key
+    // included `reason` so each reason became its own dedup group,
+    // BUT the findingId hash only saw `(criteria, file, line,
+    // column)` — identical across the two groups → identical id.
+    // `suggest_fix(findingId)` resolved ambiguously, and an agent's
+    // id-keyed suppress silenced a sibling reason it never read.
+    //
+    // Per AI-first doctrine "Per-finding identifiers must be
+    // addressable, not collision-prone": fold the reason into the
+    // findingId hash so the per-position dedup key's reason axis
+    // carries through to the addressable id.
+    const out = dedupeReviewCandidatesForSingleFile([
+      candidate("wcag22:1.1.1", "alt repeats sibling text", 7, 2),
+      candidate("wcag22:1.1.1", "alt repeats parent text", 7, 2),
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]?.findingId).not.toBe(out[1]?.findingId);
+  });
+
+  it("each per-finder entry preserves its own confidence (no cross-finder rollup)", () => {
     const levels = new Map<string, string>([
       ["std:a", "AA"],
       ["std:b", "AA"],
     ]);
-    // Two finders at the same position; one carries low confidence,
-    // the other high. The folded entry takes "high" — a single high
-    // hit sizes the entry honestly.
+    // Two finders at the same position with distinct reasons — each
+    // ships as its own entry, each with its own confidence value.
+    // Pre-closure, the cross-finder fold rolled them up to a single
+    // entry whose confidence was the highest across the union; per-
+    // criterion addressability now requires per-entry confidence
+    // signal so the agent can budget by finder.
     const out = dedupeReviewCandidatesForSingleFile(
       [
         candidate("std:a", "reason A", 7, 2, { confidence: "low" }),
@@ -287,8 +332,11 @@ describe("dedupeReviewCandidatesForSingleFile — priority and confidence", () =
       ],
       levels,
     );
-    expect(out).toHaveLength(1);
-    expect(out[0]?.confidence).toBe("high");
+    expect(out).toHaveLength(2);
+    const a = out.find((e) => e.reason === "reason A");
+    const b = out.find((e) => e.reason === "reason B");
+    expect(a?.confidence).toBe("low");
+    expect(b?.confidence).toBe("high");
   });
 });
 
@@ -350,14 +398,17 @@ describe("dedupeReviewCandidatesForSingleFile — minified-vendor-no-sourcemap s
 });
 
 describe("dedupeReviewCandidatesByReason — cross-criterion fold for the by-row surface", () => {
-  // The by-row review-candidates surface uses Pass-1-only semantics:
+  // The by-row review-candidates surface and the per-position surfaces
+  // (`scan_file.reviewCandidates[]` /
+  // `scan_project.reviewCandidates[]`) share the same fold semantics:
   // same finder, same evidence, distinct criteria fold; cross-finder
   // coincidences at the same `(line, column)` with different reasons
   // stay distinct so each finder's WCAG-specific framing survives.
-  // The per-position surfaces (`scan_file.reviewCandidates[]` /
-  // `scan_project.reviewCandidates[]`) collapse cross-finder hits via
-  // `dedupeReviewCandidatesForSingleFile`'s Pass 2 because that surface
-  // is a per-position tree rather than a flat by-row list.
+  // The per-position surface used to fold cross-finder hits via a
+  // `" | "` reason concatenation but that fold was removed because it
+  // erased per-criterion addressability — see
+  // `dedupeReviewCandidatesForSingleFile — cross-finder positional
+  // NON-fold` above.
 
   it("folds N per-criterion copies of one finder into one row carrying every covered criterion", () => {
     const r = "<input> no autocomplete attribute";
@@ -375,11 +426,9 @@ describe("dedupeReviewCandidatesByReason — cross-criterion fold for the by-row
   });
 
   it("keeps cross-finder coincidences at the same (line, column) as distinct rows when reasons differ", () => {
-    // Pass-1-only: the by-row surface is a flat list, not a per-
-    // position tree, so each finder's WCAG-specific framing survives
-    // as its own row. (The per-position surface collapses these via
-    // Pass 2 because that surface only carries one entry per byte
-    // position.)
+    // Each finder's WCAG-specific framing surfaces as its own row.
+    // Same shape as the per-position surfaces post-Q15: cross-finder
+    // distinct-reason hits are NEVER collapsed.
     const out = dedupeReviewCandidatesByReason([
       candidate("wcag22:1.3.6", "reason A", 7, 2),
       candidate("wcag22:3.3.8", "reason B", 7, 2),

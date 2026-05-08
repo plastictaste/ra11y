@@ -12,6 +12,14 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import path from "node:path";
+
+/**
+ * Project root resolved relatively from the test file's directory.
+ * Using `path.join(...)` instead of a forward-slash `replace()` keeps
+ * this test working on Windows, where `import.meta.dir` is backslash-separated.
+ */
+const PROJECT_ROOT = path.join(import.meta.dir, "..", "..", "..");
 
 /**
  * Helper: sends a JSON-RPC message to the server subprocess and
@@ -23,7 +31,7 @@ async function rpc(message: Record<string, unknown>): Promise<Record<string, unk
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    cwd: import.meta.dir.replace("/tests/unit/mcp", ""),
+    cwd: PROJECT_ROOT,
   });
 
   const payload = `${JSON.stringify(message)}\n`;
@@ -80,13 +88,14 @@ describe("MCP server JSON-RPC", () => {
 
     expect(res.id).toBe(2);
     const result = res.result as { tools: Array<{ name: string }> };
-    expect(result.tools.length).toBe(29);
+    expect(result.tools.length).toBe(34);
 
     const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "apply_fix",
       "attest",
       "audit",
+      "audit_rule_coverage",
       "baseline",
       "bootstrap",
       "checklist",
@@ -96,7 +105,10 @@ describe("MCP server JSON-RPC", () => {
       "draft_vpat_narrative",
       "explain_rule",
       "explain_standard",
+      "findings_by_rule",
+      "get_finding",
       "list_attestations",
+      "list_finders",
       "list_rules",
       "list_suppressions",
       "propose_baseline",
@@ -108,6 +120,7 @@ describe("MCP server JSON-RPC", () => {
       "scan_process",
       "scan_project",
       "sessionConfigure",
+      "session_inspect",
       "suggest_fix",
       "suppress",
       "verdict_candidate",
@@ -168,7 +181,7 @@ describe("MCP server JSON-RPC", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
-      cwd: import.meta.dir.replace("/tests/unit/mcp", ""),
+      cwd: PROJECT_ROOT,
     });
 
     proc.stdin.write("not valid json\n");

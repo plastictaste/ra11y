@@ -135,9 +135,28 @@ export function buildRunScanOptions(args: {
   readonly processes: readonly import("../types/config.ts").Process[] | undefined;
   readonly wrapperElements: Readonly<Record<string, string>>;
   readonly session: McpSession;
+  /**
+   * Caller-supplied scan root (typically the explicit `cwd` the agent
+   * passed). Plumbed into the engine's per-emission `findingId` hash
+   * so scan_file (relative input) and scan_project / checklist
+   * (absolute discovery walk) produce the same id on the same
+   * conceptual rule emission. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+   * identifiers must be addressable, not collision-prone."
+   */
+  readonly scanRoot?: string;
 }): Parameters<typeof runScan>[0] {
-  const { activeRules, enabled, files, level, attestations, processes, wrapperElements, session } =
-    args;
+  const {
+    activeRules,
+    enabled,
+    files,
+    level,
+    attestations,
+    processes,
+    wrapperElements,
+    session,
+    scanRoot,
+  } = args;
   return {
     standards: session.registry.standards,
     rules: activeRules,
@@ -150,6 +169,7 @@ export function buildRunScanOptions(args: {
     ...(Object.keys(wrapperElements).length > 0 && {
       nativeWrapperElements: wrapperElements,
     }),
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   };
 }
 

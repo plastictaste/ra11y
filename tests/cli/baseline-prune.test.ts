@@ -7,9 +7,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { runCli } from "../../src/cli/run.ts";
+import { posixJoin } from "../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -20,7 +20,7 @@ afterAll(async () => {
 });
 
 async function makeScratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-baseline-prune-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-baseline-prune-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -29,7 +29,7 @@ async function writeBaselineFixture(
   dir: string,
   entries: Array<{ filePath: string; ruleId: string }>,
 ): Promise<string> {
-  const baselinePath = join(dir, ".ra11y-baseline.json");
+  const baselinePath = posixJoin(dir, ".ra11y-baseline.json");
   const file = {
     version: 1,
     generatedAt: "2026-04-17T00:00:00Z",
@@ -49,7 +49,7 @@ async function writeBaselineFixture(
 describe("ra11y baseline prune", () => {
   it("removes dead entries and rewrites the baseline file", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "alive.html"), "<html></html>\n");
+    await writeFile(posixJoin(dir, "alive.html"), "<html></html>\n");
     const baselinePath = await writeBaselineFixture(dir, [
       { filePath: "alive.html", ruleId: "media/alt-text-missing" },
       { filePath: "dead.html", ruleId: "aria/label-missing" },
@@ -73,8 +73,8 @@ describe("ra11y baseline prune", () => {
 
   it("reports zero removals when every entry's file still exists", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "a.html"), "<html></html>\n");
-    await writeFile(join(dir, "b.html"), "<html></html>\n");
+    await writeFile(posixJoin(dir, "a.html"), "<html></html>\n");
+    await writeFile(posixJoin(dir, "b.html"), "<html></html>\n");
     await writeBaselineFixture(dir, [
       { filePath: "a.html", ruleId: "media/alt-text-missing" },
       { filePath: "b.html", ruleId: "media/alt-text-missing" },
@@ -91,7 +91,7 @@ describe("ra11y baseline prune", () => {
 
   it("--dry-run reports what would be removed without mutating the file", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, "alive.html"), "<html></html>\n");
+    await writeFile(posixJoin(dir, "alive.html"), "<html></html>\n");
     const baselinePath = await writeBaselineFixture(dir, [
       { filePath: "alive.html", ruleId: "media/alt-text-missing" },
       { filePath: "dead.html", ruleId: "aria/label-missing" },
@@ -122,7 +122,7 @@ describe("ra11y baseline prune", () => {
 
   it("errors non-zero when the baseline file is malformed JSON", async () => {
     const dir = await makeScratch();
-    await writeFile(join(dir, ".ra11y-baseline.json"), "{ this is not json", "utf8");
+    await writeFile(posixJoin(dir, ".ra11y-baseline.json"), "{ this is not json", "utf8");
 
     chdir(dir);
     const r = await runCli(["baseline", "prune"]);

@@ -47,7 +47,7 @@ function mkTmp(): string {
 
 interface ChecklistEnvelope {
   readonly items?: ReadonlyArray<{
-    readonly criterionId?: string;
+    readonly criteria?: readonly string[];
     readonly candidates?: ReadonlyArray<{
       readonly path?: string;
       readonly scanKind?: "buildArtifact";
@@ -85,7 +85,7 @@ describe("checklist tool: per-candidate vendor-context echo", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0]?.text ?? "{}");
-    const item = data.items?.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = data.items?.find((i) => i.criteria?.[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     const vendorCandidate = item?.candidates?.find((c) => c.path?.endsWith("vendor.min.js"));
     expect(vendorCandidate).toBeDefined();
@@ -112,7 +112,7 @@ describe("checklist tool: per-candidate vendor-context echo", () => {
 
     expect(result.isError).toBeUndefined();
     const data = parseEnvelope(result.content[0]?.text ?? "{}");
-    const item = data.items?.find((i) => i.criterionId === "wcag22:2.2.1");
+    const item = data.items?.find((i) => i.criteria?.[0] === "wcag22:2.2.1");
     expect(item).toBeDefined();
     const sourceCandidate = item?.candidates?.find((c) => c.path?.endsWith("page.tsx"));
     expect(sourceCandidate).toBeDefined();
@@ -152,7 +152,7 @@ describe("checklist tool: per-candidate vendor-context echo", () => {
     const scanFileData = JSON.parse(scanFileResult.content[0]?.text ?? "{}") as ScanFileEnvelope;
 
     const checklistCandidate = checklistData.items
-      ?.find((i) => i.criterionId === "wcag22:2.2.1")
+      ?.find((i) => i.criteria?.[0] === "wcag22:2.2.1")
       ?.candidates?.find((c) => c.path?.endsWith("vendor.min.js"));
     const scanFileCandidate = scanFileData.reviewCandidates?.find((c) =>
       c.criteria?.includes("wcag22:2.2.1"),

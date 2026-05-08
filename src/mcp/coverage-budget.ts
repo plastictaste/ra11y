@@ -45,11 +45,20 @@
  *     `likelyIrrelevantCriteria`, `failingAutomatedCriteria`,
  *     `warningAutomatedCriteria` dropped (the canonical-criterion lists
  *     the agent gets back via `checklist` on a narrower scope).
- *   - Counter scalars retained (`actionableManualItems`, `untargetedCriteria`,
+ *   - Counter scalars retained (`untargetedCriteriaForProject`,
  *     `criteriaAutomatable`, `criteriaEvaluated`, `criteriaClean`,
  *     `criteriaWithFindings`, `criteriaTotalForProfile`, `criteriaByLevel`,
  *     `automatedCriteriaPassRate`, `summary`) — the load-bearing routing
- *     channel the agent budgets against.
+ *     channel the agent budgets against. The criteria-axis count for
+ *     manual-review items rides under `summary.actionable.criteria`;
+ *     the untestable count rides under
+ *     `summary.automatedCoverage.criteriaWithoutEligibleInputs`. The
+ *     legacy top-level `actionableManualItems` and `criteriaUntestable`
+ *     scalars were deleted in the full envelope per
+ *     "Sibling fields naming the same concept must use one shape" —
+ *     agents derive them from the structured `summary` block here,
+ *     identical to how `checklist.summary.actionable.criteria` already
+ *     exposes the same count.
  *   - `nextStep` rewritten to recommend narrower scope.
  *   - `warnings[]` extends with `response_dropped_files_oversize`;
  *     `warningsDetails.response_dropped_files_oversize` carries the
@@ -94,10 +103,17 @@ export const SLIM_COVERAGE_META_KEYS: readonly string[] = [
  * the corpus. Listed explicitly so the slim builder's discard set is
  * inspectable and the contract stays stable across refactors.
  *
- * The corresponding scalar counters (`actionableManualItems`,
- * `untargetedCriteria`, `criteriaUntestable`, etc.) ride alongside in
- * the un-dropped fields — the agent still sees how many criteria are in
- * each bucket, just not the per-criterion identifier list.
+ * The corresponding scalar counters (`untargetedCriteriaForProject`,
+ * `criteriaEvaluated`, `criteriaClean`, `criteriaWithFindings`, etc.)
+ * ride alongside in the un-dropped fields — the agent still sees how
+ * many criteria are in each bucket, just not the per-criterion
+ * identifier list. The criteria-axis manual-review count and the
+ * untestable count come back through the structured `summary` block
+ * (`summary.actionable.criteria` /
+ * `summary.automatedCoverage.criteriaWithoutEligibleInputs`); the
+ * standalone top-level `actionableManualItems` and `criteriaUntestable`
+ * scalars no longer ship on the full envelope and therefore can't be
+ * "retained" here.
  */
 export const SLIM_COVERAGE_DROPPED_TOP_KEYS: readonly string[] = [
   "untargetedCriteriaList",
@@ -114,6 +130,44 @@ interface ApplyCoverageBudgetArgs {
   readonly response: Record<string, unknown>;
   /** Optional override for the hard ceiling — tests pass a smaller cap. */
   readonly hardCeilingChars?: number;
+  /**
+   * Pre-computed narrowing pivot for the slim envelope's structured
+   * nextStep. When present, the slim guard routes
+   * `nextStepStructured` to `scan_project({restrictToPaths:
+   * [narrowingDir], cwd})` so the agent's recovery call traverses a
+   * deterministically narrower file set rather than the
+   * `propose_config({})` fallback (which carries no narrowing args —
+   * `propose_config` only accepts `cwd`, so empty args echo the same
+   * scope that just produced the oversize envelope).
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+   * must terminate at a narrowing tool, never form a cycle between
+   * transport-failing siblings": when the scan classifier identifies a
+   * dominant non-vendor top-level directory in the corpus, routing the
+   * agent at that subtree directly skips the `propose_config` round-
+   * trip entirely. The propose_config fallback stays in place when no
+   * dominant authored subtree is honestly derivable (every top dir is
+   * vendor-classified, the inventory ties on count, files all sit at
+   * the root with no subdirectory) — fabricating a narrowing dir on
+   * weaker evidence is the symmetric twin of heuristic suppression.
+   *
+   * Computed at the call site via {@link pickNonVendorNarrowingDirFromPaths}
+   * over the parsed-file relative paths and the same vendor predicate
+   * the `meta.scannedBuildArtifacts` field carries.
+   */
+  readonly narrowingDir?: string;
+  /**
+   * The caller's resolved `cwd` (the scanned root). Echoed onto the
+   * structured next-call args alongside `narrowingDir` so the
+   * `scan_project({restrictToPaths: [narrowingDir], cwd})` re-scan
+   * resolves to the same scan root the agent just queried — without
+   * `cwd`, `restrictToPaths` would resolve relative to wherever the
+   * MCP server happened to spawn, silently shifting scope. Also feeds
+   * the `propose_config({cwd})` fallback when no narrowing dir is
+   * available — `propose_config` accepts `cwd` (its only arg) and
+   * passing it explicitly avoids the implicit-default ambiguity.
+   */
+  readonly cwd?: string;
 }
 
 export interface ApplyCoverageBudgetResult {
@@ -137,7 +191,7 @@ export interface ApplyCoverageBudgetResult {
  * the same `arrayKey` knob `oversize-envelope.ts` exposes.
  */
 export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverageBudgetResult {
-  const { response, hardCeilingChars } = args;
+  const { response, hardCeilingChars, narrowingDir, cwd } = args;
   // Per-rule-coverage rows are the canonical bloat surface — count
   // them as the "files dropped" denominator so the warning payload
   // stays comparable to scan_project's counter framing on bulk
@@ -157,6 +211,8 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
         original: response,
         reason,
         perRuleCoverageCount,
+        ...(narrowingDir === undefined ? {} : { narrowingDir }),
+        ...(cwd === undefined ? {} : { cwd }),
       }),
   });
   // The helper's `droppedFileCountFromRequestedLimit` field reads off
@@ -183,15 +239,17 @@ export function applyCoverageBudget(args: ApplyCoverageBudgetArgs): ApplyCoverag
  * comes back on that call.
  *
  * Retains every scalar counter (`actionableManualItems`,
- * `untargetedCriteria`, `criteriaEvaluated` …), the `summary` prose,
+ * `untargetedCriteriaForProject`, `criteriaEvaluated` …), the `summary` prose,
  * `nextStep`, the slimmed `meta` block, and the warnings channel.
  */
 function buildSlimCoverageEnvelope(args: {
   readonly original: Record<string, unknown>;
   readonly reason: OversizeEnvelopeReason;
   readonly perRuleCoverageCount: number;
+  readonly narrowingDir?: string;
+  readonly cwd?: string;
 }): Record<string, unknown> {
-  const { original, reason } = args;
+  const { original, reason, narrowingDir, cwd } = args;
   const slimMeta = buildSlimCoverageMeta(original);
   const originalMeta = readMeta(original);
   const metaFieldsDropped =
@@ -224,7 +282,10 @@ function buildSlimCoverageEnvelope(args: {
   const slim: Record<string, unknown> = {
     ...original,
     nextStep: SLIM_NEXT_STEP_PROSE,
-    nextStepStructured: buildSlimNextStepStructured(original),
+    nextStepStructured: buildSlimNextStepStructured({
+      ...(narrowingDir === undefined ? {} : { narrowingDir }),
+      ...(cwd === undefined ? {} : { cwd }),
+    }),
     warnings: merged.warnings,
     warningsDetails: merged.warningsDetails,
     meta: slimMeta,
@@ -326,45 +387,96 @@ function fixupOversizeDropCounter(
 /**
  * Prose for the slim envelope's nextStep. Names the recovery the
  * agent needs to perform: the response shape itself signals "I had
- * to drop the per-rule coverage detail to fit." Concrete options:
- * scope to a single subdirectory, narrow by standard/level, or pivot
- * to `checklist` for the manual-review-half angle.
+ * to drop the per-rule coverage detail to fit."
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+ * must terminate at a narrowing tool, never form a cycle between
+ * transport-failing siblings": when this surface's slim guard fires
+ * on a bulk-vendor / oversize corpus, `checklist` on the same cwd is
+ * the OTHER project-rooted tool the doctrine warns against pointing
+ * at — the cross-corpus sweep observed `coverage.nextStep → checklist`
+ * AND `checklist.nextStep → coverage` both transport-failing on the
+ * same input, leaving the agent in a circular handoff with no
+ * narrowing path in the cycle. The recovery now points at
+ * `propose_config` — a deterministic narrowing tool that emits an
+ * `exclude` block from the same `scannedBuildArtifacts` evidence the
+ * over-cap envelope carries. The next `scan_project` call after the
+ * agent applies the proposed excludes traverses a narrower file set
+ * by construction. Concrete narrowing knobs (`cwd`, `paths`,
+ * `standard` / `level`) are still named in the prose for callers
+ * that want to skip the round-trip.
  */
 const SLIM_NEXT_STEP_PROSE =
   "The full response was over the MCP host's token ceiling, so the per-rule and per-criterion detail surfaces were dropped to keep the envelope routable. " +
-  "Re-call `coverage` with a narrower scope to recover the full detail: pass a tighter `cwd` (a single subdirectory), " +
-  "use `paths` to scope to a specific file set, or restrict by `standard` / `level`. " +
-  "For the manual-review angle without the per-rule fan, call `checklist` on the same cwd — its `items[]` carries the " +
-  "actionable criteria with grounded candidates.";
+  "Call `propose_config` to emit an `exclude` block from the build-artifact classifier, then re-run `scan_project` (or `coverage`) over the narrowed file set. " +
+  "Alternatively re-call `coverage` directly with a narrower scope: pass a tighter `cwd` (a single subdirectory), " +
+  "`paths` to scope to a specific file set, or restrict by `standard` / `level`. " +
+  'Do NOT re-call `checklist` on the same cwd — that surface ships the same scope-classifier and will transport-fail the same way (per `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs must terminate at a narrowing tool").';
 
 /**
- * Structured nextStep for the slim envelope. Routes to a DIFFERENT
- * surface than `coverage` — `checklist` is the manual-review-half
- * surface that doesn't traverse the per-rule coverage envelope, so
- * the recovery call won't re-trip the slim guard. Echoes the caller's
- * `cwd` when the original meta carried it; otherwise ships empty
- * args (per "Ambiguous field shapes are dishonest," omitting cwd is
- * honest when we have no provenance for it).
+ * Structured nextStep for the slim envelope. Three routing arms close
+ * the matrix per `docs/kb/architecture/ai-first-consumer.md` "NextStep
+ * handoffs must terminate at a narrowing tool, never form a cycle
+ * between transport-failing siblings":
+ *
+ *   1. **Dominant non-vendor top-level dir derivable** → `scan_project`
+ *      with `args: { restrictToPaths: [narrowingDir], cwd }`. The most
+ *      direct scope-narrowing call available — the next response
+ *      traverses the named subtree alone, sized far below the oversize
+ *      envelope that just fired. Skips the `propose_config` round-trip
+ *      entirely since the narrowing target is already known. Mirrors
+ *      `scan_project`'s bulk-vendor scope-down override
+ *      ({@link applyBulkVendorScopeDownOverride} in
+ *      `tool-scan-project.ts`) so the slim envelope's recovery path
+ *      stays identical across project-rooted tools per "Per-tool lane
+ *      and warning-set classification must agree."
+ *
+ *   2. **`cwd` known but no narrowing dir** → `propose_config` with
+ *      `args: { cwd }`. `propose_config` accepts only `cwd` as input
+ *      (its inputSchema in `tool-propose-config.ts`); passing the
+ *      caller's `cwd` explicitly avoids the implicit-default ambiguity
+ *      where `propose_config` would resolve to the MCP server's spawn
+ *      directory rather than the scope the agent just queried. The
+ *      agent applies the proposed `exclude` block from the build-
+ *      artifact classifier, then re-runs `scan_project` over the
+ *      narrowed file set.
+ *
+ *   3. **Neither `cwd` nor narrowing dir** → `propose_config` with
+ *      `args: {}`. Last-resort fallback when no scope evidence flowed
+ *      through to the helper. `propose_config` then resolves its own
+ *      scan root from the spawn directory, matching the legacy shape.
+ *
+ * Cycle-break invariant: arm 1 routes at `scan_project` (NOT a
+ * project-rooted sibling that ships from the same scope-classifier);
+ * arms 2 and 3 route at `propose_config` (a deterministic narrowing
+ * tool, not the sibling `checklist` that would re-trigger the slim
+ * guard on the same corpus). Per backlog Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW
+ * the empty-args propose_config route is the worst routing decision —
+ * it implies "rerun on same cwd" with no scope reduction; arms 1 and
+ * 2 close that asymmetry.
  */
-function buildSlimNextStepStructured(original: Record<string, unknown>): {
+function buildSlimNextStepStructured(args: {
+  readonly narrowingDir?: string;
+  readonly cwd?: string;
+}): {
   readonly tool: string;
   readonly args: Record<string, unknown>;
 } {
-  const cwd = readCwd(original);
+  const { narrowingDir, cwd } = args;
+  if (narrowingDir !== undefined && cwd !== undefined) {
+    return {
+      tool: "scan_project",
+      args: { restrictToPaths: [narrowingDir], cwd },
+    };
+  }
+  if (cwd !== undefined) {
+    return {
+      tool: "propose_config",
+      args: { cwd },
+    };
+  }
   return {
-    tool: "checklist",
-    args: cwd === undefined ? {} : { cwd },
+    tool: "propose_config",
+    args: {},
   };
-}
-
-/**
- * Reads `meta.cwd` off the original response. Returns `undefined` when
- * the field is absent or shaped unexpectedly — defensive narrowing
- * matches the rest of this module's `Record<string, unknown>` reads.
- */
-function readCwd(original: Record<string, unknown>): string | undefined {
-  const meta = readMeta(original);
-  if (meta === undefined) return undefined;
-  const cwd = meta["cwd"];
-  return typeof cwd === "string" && cwd.length > 0 ? cwd : undefined;
 }

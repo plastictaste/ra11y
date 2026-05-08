@@ -22,7 +22,9 @@ import type {
   ReviewCandidateVendorContext,
   ReviewConfidence,
 } from "../types/review.ts";
+import type { Violation } from "../types/violation.ts";
 import { computeCandidateFindingId } from "../utils/finding-id.ts";
+import { posixRelative } from "../utils/path.ts";
 import {
   buildSnippetForReason,
   buildTightLineSnippet,
@@ -32,7 +34,9 @@ import {
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { applyChecklistBudget } from "./checklist-budget.ts";
+import { collapseAcrossFilesByReason } from "./checklist-cross-file-reason-collapse.ts";
 import { pragmaFormForExtension } from "./checklist-suppress-pragma.ts";
+import { collapseRepeatedAcrossFiles } from "./checklist-vendor-collapse.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import {
@@ -41,13 +45,23 @@ import {
   irrelevanceReason,
   isLikelyIrrelevant,
 } from "./manual-applicability.ts";
-import { tallyManualCriteriaFromCoverage } from "./manual-criteria-tally.ts";
+import {
+  collectInScopeCriteria,
+  collectVerifyTokenViolationCriteria,
+  tallyManualCandidateEmissions,
+  tallyManualCriteriaFromCoverage,
+} from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { pickNonVendorNarrowingDirFromPaths } from "./narrowing-dir-from-paths.ts";
 import {
   requireBooleanParam,
   requireNumberParam,
   requireStringArrayParam,
 } from "./param-validators.ts";
+import {
+  buildCandidateCriteriaUnion,
+  candidateCriteriaUnionKey,
+} from "./review-candidate-dedup.ts";
 import {
   candidateHedges,
   couldBeWrongBecauseForVendorBuildArtifact,
@@ -67,6 +81,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  numParam,
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
@@ -177,32 +192,43 @@ interface ChecklistCandidateOut {
    */
   readonly suppressWith: string;
   /**
-   * Every criterion ID this candidate covers, sorted, when the same
-   * `(path, line, reason)` evidence supports more than one criterion —
-   * e.g. a `<video>` at `Home.tsx:42` that surfaces under `wcag22:1.2.1`
-   * / `1.2.3` / `1.2.5`. Previously three separate item entries sharing
-   * one line; now one emitted shape + `criteria: [...ids...]` so the
-   * agent reads the dedup signal as a typed list rather than parsing
-   * "this row also matches…" reason text. Always populated with ≥2 IDs
-   * when present; omitted (present-when-meaningful per CLAUDE.md §1)
-   * when the candidate is single-criterion.
+   * Every criterion ID this candidate's evidence covers, sorted. Always
+   * populated (≥1 element) — same shape and semantics as
+   * `scan_file.reviewCandidates[].criteria` and
+   * `scan_project.reviewCandidates[].criteria` so an agent walking the
+   * same conceptual candidate across surfaces reads ONE field name and
+   * shape regardless of which tool produced it. The array is the agent-
+   * side dedup tool when ≥2 criteria share `(path, line, column)` — e.g.
+   * a `<video>` at `Home.tsx:42` that surfaces under `wcag22:1.2.1` /
+   * `1.2.3` / `1.2.5` (three separate item entries, one shared
+   * candidate, one `criteria: [1.2.1, 1.2.3, 1.2.5]` list per
+   * instance).
    *
-   * The candidate still ships on every owning item per ADR 0010's
-   * cross-tool count invariant (`coverage.manualWithCandidates`-vs-
-   * `checklist.items` parity is load-bearing — see
-   * `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`).
-   * The `criteria: [...]` array is the agent-side dedup tool: walk the
-   * group once via the array rather than re-reading the same file:line
-   * under N items.
+   * Computed via the same `(filePath, line, column)`-keyed union scan_
+   * file's deduped surface uses, so a single-criterion candidate carries
+   * `["wcag22:3.3.8"]` here AND on scan_file — same `findingId` carries
+   * the same `criteria` array. Pre-closure the field was conditionally
+   * omitted on single-criterion entries while scan_file populated even
+   * length-1 arrays — the omitted-vs-populated split was the canonical
+   * "Ambiguous field shapes are dishonest" + "Per-tool review-candidate
+   * shape must agree across surfaces" failure mode (per
+   * `docs/kb/architecture/ai-first-consumer.md`): an agent reading a
+   * checklist candidate alone could not tell whether the missing field
+   * meant "no criteria" or "single criterion that we hid for terseness."
    *
-   * Renamed from `criteriaIds` (2026-04-26) — the new name makes the
-   * field a closer mirror of `Violation.criteria` on the rule surface
-   * (same shape, same semantics) and removes the awkward singular/
-   * plural mismatch between `criterionId` (the owning item's ID) and
-   * the array of co-covered criteria. No alias; this is a flat rename
-   * before the field had downstream consumers outside the MCP response.
+   * The candidate still ships on every owning checklist item per ADR
+   * 0010's cross-tool count invariant (`coverage.manualWithCandidates`-
+   * vs-`checklist.items` parity is load-bearing — see
+   * `tests/integration/mcp-consistency/coverage-checklist-consistency.test.ts`);
+   * the `criteria: [...]` array lets the agent walk the cross-item
+   * group once rather than re-reading the same file:line under N items.
+   *
+   * Mirrors `Violation.criteria` on the rule surface (same shape, same
+   * semantics) and pairs with the parent {@link ChecklistItemOut#criteria}
+   * (length-1 array) so an agent reads one consistent field name across
+   * row-level and candidate-level surfaces.
    */
-  readonly criteria?: readonly string[];
+  readonly criteria: readonly string[];
   /**
    * Structured vendor-path-shape evidence passed through from the
    * finder (see `ReviewCandidate.vendorPathHint`). True when the cited
@@ -358,6 +384,50 @@ interface ChecklistCandidateOut {
    * the response had already classified as vendor.
    */
   readonly scanKind?: "buildArtifact";
+  /**
+   * Number of distinct file paths whose candidates folded into this
+   * canonical row when the same `(line, reason, snippet)` fingerprint
+   * fired across more than `MIN_OCCURRENCES_TO_COLLAPSE` (= 5)
+   * distinct paths within this checklist item. The canonical row's
+   * `path` field names the lexicographically-earliest source; sibling
+   * cohort members are summarized via {@link
+   * ChecklistCandidateOut#samplePaths}.
+   *
+   * Canonical regression: a website-templates corpus with 74 sub-sites
+   * each shipping `fancybox.pack.js` produced 74 byte-identical
+   * candidate rows per criterion under `likelyIrrelevant`. The bucket
+   * label was doctrine-correct (deterministic "no `<video>`/`<audio>`
+   * parsed") but the *quantity* was not. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+   * counts are dishonest" extended to per-row volume — the agent
+   * reads the same evidence once with a count, never N copies of one
+   * line.
+   *
+   * Per AI-first doctrine "Surface, don't suppress" the row stays in
+   * the response — only the redundant per-path duplicates fold into
+   * `samplePaths`. The threshold is intentionally above 2-3 distinct
+   * vendor copies so two genuine same-line cohorts on different
+   * codebases still surface separately.
+   *
+   * Present-when-meaningful per CLAUDE.md §1: omitted on candidates
+   * that did not collapse. When present, the value is always > 5 AND
+   * paired with `samplePaths.length >= 2`.
+   */
+  readonly occurrences?: number;
+  /**
+   * Up to 5 cited file paths from the cohort that triggered the
+   * occurrence collapse — see {@link ChecklistCandidateOut#occurrences}.
+   * Listed in encounter order (matching the engine's per-`(filePath,
+   * line, column)` emit sort), so the canonical `path` field is also
+   * the first sample. The agent reads the cap as "here are 5
+   * instances; there are `occurrences` total."
+   *
+   * Present-when-meaningful per CLAUDE.md §1: omitted whenever
+   * `occurrences` is omitted; populated only when collapse fired.
+   * Never empty when present — `samplePaths.length === Math.min(
+   * distinct cohort paths, 5)` by construction.
+   */
+  readonly samplePaths?: readonly string[];
 }
 
 type ChecklistPriority = "high" | "medium" | "low";
@@ -368,7 +438,26 @@ interface WcagPrinciple {
 }
 
 interface ChecklistItemOut {
-  readonly criterionId: string;
+  /**
+   * Criterion ID(s) this checklist row covers, sorted. Always exactly
+   * one element by construction (each row is scoped per-criterion), but
+   * shaped as a `string[]` so the field name and shape match the
+   * cross-standard `criteria: string[]` array on
+   * {@link import("../types/violation.ts").Violation}, on
+   * `scan_file.reviewCandidates[].criteria`, and on
+   * `scan_project.reviewCandidates[].criteria`. An agent walking from
+   * a finding to its checklist row reads the same field name on both
+   * surfaces and a stable `readonly string[]` shape — closes the
+   * `criterionId` (singular scalar) vs `criteria` (plural array) field-
+   * name drift the prior shape carried.
+   *
+   * Per `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+   * candidate shape must agree across surfaces" + "Sibling fields
+   * naming the same concept must use one shape." The integration test
+   * `tests/integration/mcp-consistency/checklist-criteria-field-name-cross-surface.test.ts`
+   * pins the shape across all four candidate-bearing surfaces.
+   */
+  readonly criteria: readonly string[];
   readonly title: string;
   readonly level: string;
   readonly priority: ChecklistPriority;
@@ -777,28 +866,91 @@ function detectPerCriterionClamp(
 
 /**
  * Builds the structured `summary.actionable` shape from the cross-tool
- * canonical criteria tally and the paginated checklist page. Three
- * counts: `criteria` (cross-tool canonical, matches
- * `scan_project.plan.actionableManualItems`), `candidatesUncapped`
- * (pre-clip inventory; matches the response-level `totalCandidates`),
- * and `candidatesReturned` (post-clip page count). Extracted to a
- * helper so the main handler stays under the lint's cognitive-
- * complexity ceiling — the per-item summing loop counts as branching.
+ * canonical criteria tally and the paginated checklist page. Four
+ * counts, each naming a distinct slice on the candidate-axis pipeline:
+ *
+ *   - `criteria` — cross-tool canonical criteria-axis count, matches
+ *     `scan_project.plan.actionableManualItemsBySource.source +
+ *     .buildArtifact` and `coverage[].manualWithCandidates.length`.
+ *   - `emissionsTotal` — RAW pre-collapse, pre-clip per-emission count
+ *     of review candidates against the in-scope manual criteria set.
+ *     Computed via the shared `tallyManualCandidateEmissions` helper
+ *     in `manual-criteria-tally.ts` so the value agrees with
+ *     `coverage.summary.actionable.emissionsTotal` /
+ *     `coverage.manualCandidateEmissionsTotal` on identical cwd. THIS
+ *     is the cross-surface invariant slice the integration test pins.
+ *   - `emissionsAfterCollapse` — checklist-specific tally that reflects
+ *     the post-`collapseRepeatedAcrossFiles` /
+ *     `collapseAcrossFilesByReason` inventory (the count `checklist`
+ *     surfaces under the `totalCandidates` field). Can disagree with
+ *     `emissionsTotal` by up to 187× on bulk corpora when the cross-
+ *     file fold fires (canonical fancybox.pack.js cohort case). The
+ *     name carries the post-transform stage so an agent doesn't read
+ *     it as "the raw count" — closes the manual-candidate cross-
+ *     surface drift shape where `candidatesUncapped` was named as if
+ *     uncapped while actually carrying a folded count.
+ *   - `emissionsReturnedAfterClip` — post-pagination, post-per-criterion
+ *     clip count of candidates actually shipped on this page.
+ *     `≤ emissionsAfterCollapse ≤ emissionsTotal`.
+ *
+ * Extracted to a helper so the main handler stays under the lint's
+ * cognitive-complexity ceiling.
  */
 function buildChecklistSummaryActionable(
   criteriaCount: number,
+  emissionsTotal: number,
   page: PaginatedChecklist,
 ): {
   readonly criteria: number;
-  readonly candidatesUncapped: number;
-  readonly candidatesReturned: number;
+  readonly emissionsTotal: number;
+  readonly emissionsAfterCollapse: number;
+  readonly emissionsReturnedAfterClip: number;
 } {
-  let candidatesReturned = 0;
-  for (const item of page.items) candidatesReturned += item.candidates.length;
+  let emissionsReturnedAfterClip = 0;
+  for (const item of page.items) emissionsReturnedAfterClip += item.candidates.length;
   return {
     criteria: criteriaCount,
-    candidatesUncapped: page.totalCandidates,
-    candidatesReturned,
+    emissionsTotal,
+    emissionsAfterCollapse: page.totalCandidates,
+    emissionsReturnedAfterClip,
+  };
+}
+
+/**
+ * Builds the conditional-spread parse-error scalars fragment for the
+ * checklist `summary` block. Lifts `parseErrorFileCount` /
+ * `partialParseFileCount` off the `analysisCoverageField` record so
+ * the headline `summary` mirrors the cross-surface scan-confidence
+ * telemetry `coverage.analysisCoverage` and `scan_project.meta.
+ * analysisCoverage` already lift — pinned by the integration test in
+ * `tests/integration/mcp-counts-agree.test.ts`.
+ *
+ * Present-when-meaningful: each scalar is omitted from `summary`
+ * when the scan recorded zero parse errors of that kind, so a clean
+ * scan keeps the summary terse and a scan with ≥1 parse failure
+ * surfaces the count alongside `actionable.criteria`. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Ambiguous field shapes
+ * are dishonest": the analysisCoverage block ships `0` (always-
+ * populated when the scan ran), and the summary copy mirrors that
+ * semantics by only including the field when ≥1 entry exists — the
+ * agent reading the headline gets a non-zero counter or no field at
+ * all, never a zero counter that competes with the warning channel
+ * for attention.
+ *
+ * Extracted from the handler so the parent function stays under the
+ * lint's cognitive-complexity cap.
+ */
+function buildSummaryParseErrorScalars(
+  analysisCoverageField: ReturnType<typeof buildAnalysisCoverage>,
+): { readonly parseErrorFileCount?: number; readonly partialParseFileCount?: number } {
+  const ac = analysisCoverageField.analysisCoverage as
+    | { parseErrorFileCount?: number; partialParseFileCount?: number }
+    | undefined;
+  const parseErrorFileCount = ac?.parseErrorFileCount ?? 0;
+  const partialParseFileCount = ac?.partialParseFileCount ?? 0;
+  return {
+    ...(parseErrorFileCount > 0 ? { parseErrorFileCount } : {}),
+    ...(partialParseFileCount > 0 ? { partialParseFileCount } : {}),
   };
 }
 
@@ -822,7 +974,9 @@ function buildChecklistReviewCandidatePrompts(args: {
   readonly needsReview: readonly ChecklistItemOut[];
 }): Record<string, unknown> {
   const manualIds = new Set<string>();
-  for (const it of args.needsReview) manualIds.add(it.criterionId);
+  for (const it of args.needsReview) {
+    for (const cid of it.criteria) manualIds.add(cid);
+  }
   const prompts = buildReviewCandidatePrompts({
     candidates: args.reportCandidates,
     manualIds,
@@ -840,18 +994,48 @@ function buildChecklistReviewCandidatePrompts(args: {
  * complexity ceiling and so the conditional-skip-set spread (the
  * only branch on this seam) lives next to the helper call.
  */
+/**
+ * Q15-LANDMARK-MAIN: builds the verify-token violation criteria set
+ * the checklist handler threads through `bucketChecklistItems` and
+ * the actionable/untargeted partition. Walks every coverage entry's
+ * `criteria[]` once to build the in-scope union, then collects
+ * verify-token violation criteria gated by that union. Extracted so
+ * the handler closure stays under the lint's cognitive-complexity
+ * ceiling.
+ */
+function collectChecklistVerifyTokenCriteria(
+  coverage: readonly PerStandardCoverage[],
+  violations: readonly Violation[],
+): ReadonlySet<string> {
+  const inScopeCriteria = new Set<string>();
+  for (const c of coverage) {
+    for (const cc of c.criteria) inScopeCriteria.add(cc.criterionId);
+  }
+  return collectVerifyTokenViolationCriteria(violations, inScopeCriteria, undefined);
+}
+
 function computeChecklistSummaryTally(
   coverage: readonly PerStandardCoverage[],
   applicability: Applicability,
   candidates: readonly ReviewCandidate[],
   skipSet: ReadonlySet<string> | undefined,
+  violations: readonly Violation[],
 ): { readonly actionable: number; readonly untargeted: number } {
-  if (skipSet === undefined) {
-    return tallyManualCriteriaFromCoverage(coverage, applicability, candidates);
-  }
-  return tallyManualCriteriaFromCoverage(coverage, applicability, candidates, {
-    skipCriteria: skipSet,
-  });
+  // Q15-LANDMARK-MAIN: thread the raw violation stream so verify-token
+  // findings (severity `info` + a code from VERIFY_IN_SOURCE_TOKENS on
+  // `couldBeWrongBecause`) contribute their criteria to the actionable
+  // count alongside grounded review candidates. Cross-surface count
+  // invariant requires checklist's `summary.actionable.criteria` to
+  // agree with `scan_project.plan.actionableManualItems` and
+  // `coverage[].manualWithCandidates.length` on identical input.
+  const filters: {
+    readonly skipCriteria?: ReadonlySet<string>;
+    readonly violations: readonly Violation[];
+  } = {
+    ...(skipSet === undefined ? {} : { skipCriteria: skipSet }),
+    violations,
+  };
+  return tallyManualCriteriaFromCoverage(coverage, applicability, candidates, filters);
 }
 
 /**
@@ -871,14 +1055,14 @@ function buildUntargetedField(
   const raw = params["showUntargeted"];
   if (raw === true) return { untargetedCriteriaList: untargeted };
   if (raw === false) return {};
-  return { untargetedCriteriaList: untargeted.map((i) => i.criterionId) };
+  return { untargetedCriteriaList: untargeted.flatMap((i) => i.criteria) };
 }
 
 export const checklistTool: McpTool = {
   def: {
     name: "checklist",
     description:
-      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, candidatesUncapped, candidatesReturned }` — three honest counts so a clipped/paginated response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItems` and `coverage[].manualWithCandidates.length`); `candidatesUncapped` is the pre-clip inventory across actionable items; `candidatesReturned` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteria`: the count of criteria with no candidates the finders could ground in code. By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
+      "Get the manual review checklist — criteria that can't be fully automated. Returns `items` (criteria with concrete candidate locations — start here) and `likelyIrrelevant` (criteria the scan can tell don't apply, e.g., no <video>/<audio> for 1.2.*). The summary reports `actionable: { criteria, emissionsTotal, emissionsAfterCollapse, emissionsReturnedAfterClip }` — four honest counts so a clipped/paginated/folded response cannot read as \"N things to verify\" while N criteria carry far more elided candidates. `criteria` is the cross-tool canonical count (matches `scan_project.plan.actionableManualItemsBySource.{source,buildArtifact}` sum and `coverage[].manualWithCandidates.length`); `emissionsTotal` is the RAW pre-collapse per-emission count (matches `coverage.summary.actionable.emissionsTotal` on identical cwd via the shared `tallyManualCandidateEmissions` helper); `emissionsAfterCollapse` is the checklist-specific post-collapse inventory (folds cross-file repeated candidates into one row when the same `(line, reason, snippet)` fingerprint fires on >5 distinct paths, OR the same `reason` fires on >20 distinct paths) — can be much smaller than `emissionsTotal` on bulk corpora; `emissionsReturnedAfterClip` counts what shipped on this page after `limit` / `maxCandidatesPerCriterion`. The summary also reports `untargetedCriteriaForProject`: the count of criteria with no candidates the finders could ground in code (project-walk scope; mirrors `scan_project.plan.untargetedCriteriaForProject` and `coverage[].summary.untargetedCriteriaForProject`; the per-file twin `untargetedCriteriaForFile` ships from `scan` / `scan_file`). By default the response ships `untargetedCriteriaList` as a bare criterion-ID array so you can enumerate those criteria without a second call; pass `showUntargeted: true` to upgrade it to full items (title + level + principle + empty candidates) when you're preparing a VPAT or running a formal audit, or `showUntargeted: false` to omit the list entirely under size pressure. Each candidate also carries `suppressWith: string` — the canonical region-form `ra11y-disable` pragma scoped to the owning criterion AND keyed off the candidate's file extension (HTML comment for .html/.md/.svg/.astro/.vue/.svelte/.erb/.liquid; CSS block comment for .css/.scss/.sass/.less/.js/.ts/.mjs/.cjs; JSX expression for .jsx/.tsx/.mdx). The earlier 4-key `{ html, jsx, liquid, hugo }` shape was replaced because shipping every dialect on every candidate let agents pick a syntactically-invalid form for the file (e.g. an HTML comment in a `.scss` source) and corrupt source. When the same `(path, line, reason)` evidence supports multiple criteria, the candidate carries `criteria: [...]` listing every covered criterion so an agent walking the group dedup-once via the array rather than re-reading the same file:line under N items.",
     inputSchema: {
       type: "object",
       properties: {
@@ -898,7 +1082,7 @@ export const checklistTool: McpTool = {
         showUntargeted: {
           type: "boolean",
           description:
-            "Tri-state controller for `untargetedCriteriaList`. Default (unset) emits bare criterion IDs so enumeration is cheap. `true` upgrades to full items (title + level + principle + empty candidates) for VPAT drafting. `false` omits the list entirely — size-pressure escape hatch. The summary always reports `untargetedCriteria` (count) regardless.",
+            "Tri-state controller for `untargetedCriteriaList`. Default (unset) emits bare criterion IDs so enumeration is cheap. `true` upgrades to full items (title + level + principle + empty candidates) for VPAT drafting. `false` omits the list entirely — size-pressure escape hatch. The summary always reports `untargetedCriteriaForProject` (count) regardless.",
         },
         limit: {
           type: "number",
@@ -933,6 +1117,11 @@ export const checklistTool: McpTool = {
           required: ["afterCriterion", "afterCandidateIndex"],
         },
         skipCriterion: skipCriterionSchema,
+        maxBytes: {
+          type: "number",
+          description:
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
+        },
         metaMode: metaModeSchema,
       },
     },
@@ -1019,6 +1208,7 @@ export const checklistTool: McpTool = {
         activeRules,
         attestations,
         projectConfig,
+        scanRoot: cwd,
       });
 
     // thread testableCriteria so the
@@ -1069,6 +1259,29 @@ export const checklistTool: McpTool = {
         (e) => e.path,
       ),
     );
+    // Per-emission `findingId` cross-surface invariant: hash with the
+    // same position-keyed cross-criterion / cross-finder union scan_file
+    // and scan_project use, AND with the same scan-root path
+    // normalization, so the same conceptual candidate produces ONE
+    // `findingId` regardless of which surface ships it. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+    // identifiers must be addressable, not collision-prone" + "Per-tool
+    // review-candidate shape must agree across surfaces."
+    const criteriaUnionByPosition = buildCandidateCriteriaUnion(reportCandidates);
+    // Q15-LANDMARK-MAIN: collect verify-token violation criteria so
+    // `appendPartialCriterionItems` emits a checklist item for
+    // partial-automatable criteria whose only actionable signal lives
+    // on the violation axis (canonical case: `landmark-main` shipped
+    // at severity `info` with `couldBeWrongBecause:
+    // ["isolated_component_demo_page"]`). Without this thread,
+    // `coverage.manualWithCandidates` includes the criterion (via
+    // Q15's union in `tool-coverage.ts`) but `checklist.items[]` does
+    // not — the cross-surface invariant pinned by the consistency
+    // suite breaks.
+    const verifyTokenViolationCriteria = collectChecklistVerifyTokenCriteria(
+      coverage,
+      result.violations,
+    );
     const { needsReview, likelyIrrelevant } = bucketChecklistItems(
       coverage,
       reportCandidates,
@@ -1078,6 +1291,9 @@ export const checklistTool: McpTool = {
       stalenessProbe,
       session,
       buildArtifactPaths,
+      criteriaUnionByPosition,
+      cwd,
+      verifyTokenViolationCriteria,
     );
     // Actionable items (concrete candidates) stay in `items`; criteria
     // the finders couldn't ground in code move to `untargeted`. Keeping
@@ -1087,8 +1303,8 @@ export const checklistTool: McpTool = {
     // [...items, ...untargeted].
     const skipCriterion = strArrayParam(params, "skipCriterion");
     const skipSet = skipCriterion && skipCriterion.length > 0 ? new Set(skipCriterion) : undefined;
-    const keep = (i: { criterionId: string }) =>
-      skipSet === undefined || !skipSet.has(i.criterionId);
+    const keep = (i: { criteria: readonly string[] }) =>
+      skipSet === undefined || i.criteria.every((cid) => !skipSet.has(cid));
     // annotate candidates whose
     // (file, line, reason) surfaces under ≥2 items with `criteria:
     // [...]` so an agent walking a shared candidate reads one entry
@@ -1100,9 +1316,29 @@ export const checklistTool: McpTool = {
     // the raw `ReviewCandidate[]` since the output shape doesn't
     // carry `column` (`reportCandidates` does).
     const columnByKey = buildCandidateColumnLookup(reportCandidates);
-    const annotatedNeedsReview = annotateSharedCandidates(needsReview, columnByKey);
-    const actionable = annotatedNeedsReview.filter((i) => i.candidates.length > 0 && keep(i));
-    const untargeted = annotatedNeedsReview.filter((i) => i.candidates.length === 0 && keep(i));
+    const annotatedNeedsReview = annotateSharedCandidates(
+      needsReview,
+      columnByKey,
+      criteriaUnionByPosition,
+      cwd,
+    );
+    // Q15-LANDMARK-MAIN: a checklist item is "actionable" when the
+    // response carries an actionable signal for its criterion —
+    // either a grounded review candidate (the historical predicate)
+    // OR a low-confidence verify-token violation (the rule said
+    // "please verify in source"). Without the verify-token branch,
+    // the cross-surface invariant `coverage.manualWithCandidates ===
+    // checklist.items[].criteria` breaks on the canonical
+    // isolated-component-demo fixture: coverage's `withCandidates`
+    // includes `wcag22:1.3.1` via the union; checklist's actionable
+    // filter would have routed the candidate-less item to
+    // `untargeted` and dropped the criterion from `items[]`. Items
+    // covered by neither signal stay in `untargeted` — the bare
+    // criterion-prompt subset.
+    const itemHasActionableSignal = (i: ChecklistItemOut): boolean =>
+      i.candidates.length > 0 || i.criteria.some((id) => verifyTokenViolationCriteria.has(id));
+    const actionable = annotatedNeedsReview.filter((i) => itemHasActionableSignal(i) && keep(i));
+    const untargeted = annotatedNeedsReview.filter((i) => !itemHasActionableSignal(i) && keep(i));
     const filteredIrrelevant = likelyIrrelevant.filter(keep);
     // pagination over the candidate stream. The
     // scan still evaluates every criterion — this caps response size
@@ -1191,14 +1427,18 @@ export const checklistTool: McpTool = {
     // deletion on 2026-04-24), deletion is the durable answer rather
     // than label-stretching; callers compose their own summary line
     // from the per-kind counters below if they need one.
-    // Canonical count field is `untargetedCriteria` across all MCP tools.
-    // scan_project uses it on `plan`; checklist matches here on `summary`;
-    // coverage on its per-standard entry.
-    // Previous names (`untargeted` count, `manualUntargetedCount`) are
-    // removed — a minor shape break, called out in CHANGELOG so a
-    // single grep surfaces the migration.
+    // Canonical count field is `untargetedCriteriaForProject` across
+    // all project-rooted MCP tools (`scan_project.plan`, `checklist.summary`,
+    // `coverage[].summary` and top-level). The per-file lane (`scan`,
+    // `scan_file`) emits the parallel `untargetedCriteriaForFile` so
+    // the project-vs-file slice is explicit on the wire — the bare
+    // `untargetedCriteria` is no longer emitted (deletion-not-renaming
+    // per the dishonest-composite precedent). Previous names
+    // (`untargeted` count, `manualUntargetedCount`,
+    // `untargetedCriteria`) are removed — a minor shape break called
+    // out in CHANGELOG so a single grep surfaces the migration.
     //
-    // Cross-surface count invariant: `actionable` and `untargetedCriteria`
+    // Cross-surface count invariant: `actionable` and `untargetedCriteriaForProject`
     // are derived from the shared `tallyManualCriteriaFromCoverage` helper
     // — the same algorithm `scan_project` and `coverage` use over
     // identical `coverage[].manualCriteria` + `applicability` +
@@ -1213,22 +1453,80 @@ export const checklistTool: McpTool = {
       applicability,
       reportCandidates,
       skipSet,
+      result.violations,
     );
     // Q-doctrine (composite headline counts are dishonest, ai-first-consumer.md):
     // the prior `summary.actionable: number` headline counted *criteria* with
     // grounded candidates. When `perCriterionClipped` (or even just a deep page)
     // elides candidates per criterion, an agent reading "actionable: 2" reads
     // it as "2 things to verify" — but each criterion may carry 10+ candidates
-    // beyond the cap. The structured shape splits the headline into the three
-    // honest counts (criteria / candidatesUncapped / candidatesReturned) so the
-    // agent can budget against the right axis. Always-split is preferred over
-    // asymmetric clipped-vs-unclipped per the dispatch — keeps callers from
-    // branching on shape. Cross-surface invariant:
-    // `scan_file.plan.actionableManualItems` === `summary.actionable.criteria`.
-    const summaryActionable = buildChecklistSummaryActionable(summaryTally.actionable, page);
+    // beyond the cap. The structured shape splits the headline into four honest
+    // counts (criteria / emissionsTotal / emissionsAfterCollapse /
+    // emissionsReturnedAfterClip) so the agent can budget against the right
+    // axis. Always-split is preferred over asymmetric clipped-vs-unclipped per
+    // the dispatch — keeps callers from branching on shape. Cross-surface
+    // invariants: `summary.actionable.criteria` agrees with
+    // `scan_project.plan.actionableManualItemsBySource.{source,buildArtifact}`
+    // sum and `coverage.summary.actionable.criteria`;
+    // `summary.actionable.emissionsTotal` (RAW, pre-collapse, computed via
+    // shared `tallyManualCandidateEmissions` helper) agrees with
+    // `coverage.summary.actionable.emissionsTotal` /
+    // `coverage.manualCandidateEmissionsTotal` on identical cwd —
+    // closes the manual-candidate cross-surface drift shape where
+    // `candidatesUncapped` (post-collapse) and `manualCandidatesTotal`
+    // (raw) shipped under one named concept with up to 187× drift.
+    const inScopeCriteria = collectInScopeCriteria(coverage);
+    const emissionsTally = tallyManualCandidateEmissions(
+      reportCandidates,
+      inScopeCriteria,
+      skipSet,
+    );
+    const summaryActionable = buildChecklistSummaryActionable(
+      summaryTally.actionable,
+      emissionsTally.emissionsTotal,
+      page,
+    );
+    // Build `analysisCoverageField` here (rather than later alongside the
+    // response assembly) so the parse-error scalars below can read from
+    // it without recomputing the bucket split. The field also feeds the
+    // top-level `analysisCoverage` block on the response and the
+    // `buildScanTimeWarnings` call further down — same return value used
+    // in three places, computed once.
+    const analysisCoverageField = buildAnalysisCoverage(
+      files,
+      session.config.nativeWrappers,
+      activeRules,
+      false,
+      0,
+      undefined,
+      discoveryDiagnostics,
+      // Parse-error split by same rule as the scan surfaces: files
+      // that produced at least one violation OR review candidate land
+      // in `partialParseFiles` (output present, recall degraded); files
+      // whose parser errored without emitting anything stay in
+      // `parseErrorFiles` (invisible to rules and finders alike).
+      // Threaded from the shared cross-surface scan helper so the
+      // per-bucket assignment agrees with `scan_project` on identical
+      // input — not just the totals.
+      outputFilePaths,
+    );
+    const parseErrorScalars = buildSummaryParseErrorScalars(analysisCoverageField);
     const summary = {
       actionable: summaryActionable,
-      untargetedCriteria: summaryTally.untargeted,
+      // Project-walk scope: `checklist` is project-rooted (config-walks
+      // up from cwd, finder runs over the discovered file set), so the
+      // untargeted count is the project-total, not a per-file slice.
+      // The field name is `untargetedCriteriaForProject` so consumers
+      // reading the scalar can't conflate it with a `scan_file`
+      // per-file count (which would over-count on the same corpus).
+      // Cross-surface count invariant: equals
+      // `scan_project.plan.untargetedCriteriaForProject` and
+      // `coverage[].summary.untargetedCriteriaForProject` on identical
+      // cwd — same name, same value across all project-rooted surfaces.
+      // See `buildScanPlan` docblock in `scan-assembly.ts` for the
+      // rationale; the rename was the closure for the dishonest-headline
+      // pattern observed when the same name shipped two slices.
+      untargetedCriteriaForProject: summaryTally.untargeted,
       // One-line gloss: untargeted count is cryptic on its own — the
       // agent's read-order goes summary → items, so the definition
       // belongs here, not buried in the tool docstring.
@@ -1236,6 +1534,7 @@ export const checklistTool: McpTool = {
         "manual-review criteria whose candidate finder could not ground them in code. By default `untargetedCriteriaList` ships as a bare criterion-ID array; pass `showUntargeted: true` for full items (title + level + principle + empty candidates), or `showUntargeted: false` to omit the list entirely under size pressure.",
       likelyIrrelevant: filteredIrrelevant.length,
       automatedCoverage,
+      ...parseErrorScalars,
       ...(skipSet === undefined ? {} : { skippedByCaller: [...skipSet].sort() }),
     };
 
@@ -1290,7 +1589,7 @@ export const checklistTool: McpTool = {
       allActionableOnVendor,
     });
     // Doctrine (CLAUDE.md §1 "Zero-output success is ambiguous failure"):
-    // a `checklist` response shaped like `{ items: [], untargetedCriteria: 0 }`
+    // a `checklist` response shaped like `{ items: [], untargetedCriteriaForProject: 0 }`
     // is indistinguishable from "tool never ran" unless we surface the
     // honest "scanned_zero_files" code on a real-but-empty scan root.
     // checklist has no root-resolution step (it takes `paths` directly,
@@ -1317,30 +1616,12 @@ export const checklistTool: McpTool = {
     // telemetry we DO ship under delta mode is scan-confidence data
     // the agent uses to cross-check parity with the scan-family
     // tools, not trimmed for terseness).
-    const analysisCoverageField = buildAnalysisCoverage(
-      files,
-      session.config.nativeWrappers,
-      activeRules,
-      false,
-      0,
-      undefined,
-      discoveryDiagnostics,
-      // Parse-error split by same rule as the scan surfaces: files
-      // that produced at least one violation OR review candidate land
-      // in `partialParseFiles` (output present, recall degraded); files
-      // whose parser errored without emitting anything stay in
-      // `parseErrorFiles` (invisible to rules and finders alike). The
-      // candidate union is load-bearing per-
-      // MIXED-SIGNAL — a source-text finder (e.g. `review/timing`
-      // regex-scanning `ctx.source` even when the AST parse failed) can
-      // surface grounded candidates from a file that produced zero
-      // rule violations; without the union those files would mis-bucket
-      // as `invisible-to-rules` while live candidates reach the caller.
-      // Threaded from the shared cross-surface scan helper so the
-      // per-bucket assignment agrees with `scan_project` on identical
-      // input — not just the totals.
-      outputFilePaths,
-    );
+    //
+    // `analysisCoverageField` is built once above (next to the
+    // `summary.parseErrorFileCount` / `partialParseFileCount` scalars
+    // that read from it) so the same record feeds the top-level
+    // `analysisCoverage` block, the `summary` parse-error counters,
+    // and `buildScanTimeWarnings` below — three readers, one compute.
     const filesByExtension = countFilesByExtension(files);
     // emit the same `scanned` envelope
     // `scan_project`/`coverage` use so an agent cross-referencing the
@@ -1445,10 +1726,72 @@ export const checklistTool: McpTool = {
     // "Per-tool lane and warning-set classification must agree" — same
     // warning code (`response_dropped_files_oversize`) and same
     // byte-arithmetic payload as `scan_project` / `scan_file`.
-    const budgeted = applyChecklistBudget({ response: fullResponse });
+    // Q17-CHECKLIST-COVERAGE-NO-MINIMUM-HONEST-ENVELOPE: thread the
+    // caller's `maxBytes` override (when supplied) into the budget
+    // helper so test fixtures and tighter-host configurations can
+    // drive the slim envelope on tractable response sizes. Mirrors
+    // `scan_file`'s `maxBytes` → `applyScanFileBudget.maxBytes` wiring.
+    // Without this seam, an integration test would need to assemble a
+    // 100+ KB corpus to hit the natural 96000-char ceiling on this
+    // tool — brittle and slow. Per AI-first doctrine "Per-tool lane
+    // and warning-set classification must agree": same override knob
+    // shape across every project-rooted tool that runs the slim guard.
+    const maxBytes = numParam(params, "maxBytes");
+    // Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW: pre-compute the
+    // dominant non-vendor top-level directory so the slim envelope's
+    // structured nextStep can route directly at
+    // `scan_project({restrictToPaths: [narrowingDir], cwd})` rather
+    // than the legacy `propose_config({})` fallback that names no
+    // narrowing args. The propose_config tool only accepts `cwd`, so
+    // empty args echoed the same scope that produced the oversize
+    // envelope — the worst routing decision the slim path could make
+    // per the AI-first doctrine "NextStep handoffs must terminate at a
+    // narrowing tool, never form a cycle between transport-failing
+    // siblings." When no dominant authored subtree is honestly
+    // derivable (every top dir vendor-classified, files all sit at
+    // root, top-dir tally ties), `narrowingDir` is `undefined` and the
+    // helper falls back to `propose_config({cwd})` — still narrower
+    // than `propose_config({})` because the explicit cwd avoids the
+    // implicit-default ambiguity. The vendor predicate is built off
+    // the same `buildArtifactPaths` set the response-assembler uses
+    // for the `couldBeWrongBecause` stamp, so the per-tool lane
+    // classification stays in agreement per "Per-tool lane and
+    // warning-set classification must agree."
+    const narrowingDir = pickChecklistNarrowingDir(files, cwd, buildArtifactPaths);
+    const budgeted = applyChecklistBudget({
+      response: fullResponse,
+      ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+      ...(narrowingDir === undefined ? {} : { narrowingDir }),
+      cwd,
+    });
     return textResult(budgeted.response);
   },
 };
+
+/**
+ * Computes the dominant non-vendor top-level directory for the slim
+ * envelope's structured nextStep. Maps absolute parsed-file paths and
+ * the vendor classification set to root-relative POSIX, then delegates
+ * to {@link pickNonVendorNarrowingDirFromPaths} for the tally + tie-
+ * break logic. Returns `undefined` when no dominant subtree is
+ * honestly derivable — the call site's slim helper then falls back to
+ * `propose_config({cwd})` rather than fabricating a narrowing pivot.
+ *
+ * Extracted from the handler so the handler stays under the lint's
+ * cognitive-complexity cap. Mirrors the conversion shape `tool-coverage.ts`
+ * uses for the same predicate so the cross-tool slim envelope routing
+ * stays symmetric per AI-first doctrine "Per-tool lane and warning-set
+ * classification must agree."
+ */
+function pickChecklistNarrowingDir(
+  files: readonly ParsedFile[],
+  cwd: string,
+  buildArtifactPaths: ReadonlySet<string>,
+): string | undefined {
+  const vendorRelative = new Set([...buildArtifactPaths].map((abs) => posixRelative(cwd, abs)));
+  const relativePaths = files.map((f) => posixRelative(cwd, f.filePath));
+  return pickNonVendorNarrowingDirFromPaths(relativePaths, (rel) => vendorRelative.has(rel));
+}
 
 /**
  * Assembles the `warnings` + `warningsDetails` fragment for `checklist`.
@@ -1585,6 +1928,17 @@ function buildChecklistWarnings(args: {
             clippedAt: args.nextCursorClipDetails.clippedAt,
             totalAvailable: args.nextCursorClipDetails.totalAvailable,
             nextCursor: args.nextCursor,
+            // Cross-link to the canonical truncation reporter on the
+            // top-level pagination block. Per
+            // `docs/kb/architecture/ai-first-consumer.md` "Truncation
+            // reporters must reconcile across warnings": multiple
+            // truncation signals (the warning code here, the
+            // `truncated: true` boolean, the `pageClipReason`
+            // discriminator) must reconcile by reference rather than
+            // by independent enumeration. The agent following the
+            // warning channel reads `seeAlso` and finds the canonical
+            // axis discriminator without parsing the warning name.
+            seeAlso: "pageClipReason",
           },
         }
       : {}),
@@ -1710,10 +2064,21 @@ function mapCandidates(
   candidates: readonly ReviewCandidate[],
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): PrePriorityChecklistCandidate[] {
   return candidates
     .filter((c) => c.criterionId === criterionId)
-    .map((c) => mapOneCandidate(c, criterionId, sources, buildArtifactPaths));
+    .map((c) =>
+      mapOneCandidate(
+        c,
+        criterionId,
+        sources,
+        buildArtifactPaths,
+        criteriaUnionByPosition,
+        scanRoot,
+      ),
+    );
 }
 
 /**
@@ -1730,6 +2095,8 @@ function mapOneCandidate(
   criterionId: string,
   sources: ReadonlyMap<string, SourceEntry>,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): PrePriorityChecklistCandidate {
   // Compose the structured-evidence-stamp channel that pairs with the
   // per-item priority drop. The same gate that drops priority to
@@ -1759,19 +2126,34 @@ function mapOneCandidate(
   // `confidence` passes through verbatim from the finder. See
   // CLAUDE.md §1 — this is identity-like metadata, not an
   // optional enrichment, so it is always present.
-  // `findingId` is the per-emission address — hashed from
-  // `[criterionId]` here so a singleton checklist candidate gets the
-  // same id its sibling on `scan_file.reviewCandidates[]` /
-  // `scan_project.reviewCandidates[]` does. When the candidate later
-  // joins a cross-criterion group via `annotateSharedCandidates`, the
-  // id is recomputed there over the sorted-criteria union so all
-  // sibling instances share one id (still matching the dedup'd
-  // single-entry id on `scan_file`).
+  // `findingId` is the per-emission address — hashed from the
+  // per-`(filePath, line, column, reason)` within-finder cross-
+  // standard union the raw `ReviewCandidate[]` stream carries at
+  // this byte position. Matches what scan_file's deduped surface
+  // hashes (post-Pass-1, no cross-finder positional fold) so the
+  // same conceptual candidate produces ONE `findingId` across
+  // `scan_file.reviewCandidates[]`, `scan_project.reviewCandidates[]`,
+  // and `checklist.items[].candidates[]`. Per `docs/kb/architecture/
+  // ai-first-consumer.md` "Per-finding identifiers must be
+  // addressable, not collision-prone" + "Per-tool review-candidate
+  // shape must agree across surfaces." Falls back to `[criterionId]`
+  // only when the per-reason lookup is empty (defensive: every
+  // emitted candidate is in the union since the union is built from
+  // the same stream).
+  const positionKey = candidateCriteriaUnionKey(
+    c.location.filePath,
+    c.location.line,
+    c.location.column,
+    c.reason,
+  );
+  const criteria = criteriaUnionByPosition.get(positionKey) ?? [criterionId];
   const findingId = computeCandidateFindingId({
-    criteria: [criterionId],
+    criteria,
     filePath: c.location.filePath,
     line: c.location.line,
     column: c.location.column,
+    reason: c.reason,
+    scanRoot,
   });
   return {
     findingId,
@@ -1779,6 +2161,20 @@ function mapOneCandidate(
     line: c.location.line,
     reason: c.reason,
     confidence: c.confidence,
+    // Always populate `criteria` (≥1 element, sorted) so the same
+    // conceptual candidate carries the same field set on
+    // `scan_file.reviewCandidates[]` / `scan_project.reviewCandidates[]`
+    // and `checklist.items[].candidates[]`. The position-keyed union is
+    // the same recipe scan_file's deduped surface uses; populating both
+    // surfaces from the same source closes the "single-criterion
+    // omitted on checklist while scan_file populates even length-1"
+    // shape drift per `docs/kb/architecture/ai-first-consumer.md`
+    // "Per-tool review-candidate shape must agree across surfaces" +
+    // "Ambiguous field shapes are dishonest." Note: the criteria array
+    // is also load-bearing for the `findingId` hash above — the same
+    // sorted union that lands on the wire IS the criteria input the
+    // hash was computed over.
+    criteria,
     suppressWith: pragmaFormForExtension(c.location.filePath, criterionId),
     ...mapOneCandidateAdditiveFields(c, snippet, couldBeWrongBecause, buildArtifactPaths),
   };
@@ -1870,7 +2266,7 @@ function mapOneCandidateAdditiveFields(
  * criteria share the location.
  *
  * Why not collapse across items: the cross-tool invariant
- * (`checklist.items[].criterionId ≡ coverage.manualWithCandidates[].criterionId`)
+ * (`checklist.items[].criteria[0] ≡ coverage.manualWithCandidates[].criterionId`)
  * is load-bearing — it's how
  * the two tools read as one surface per ADR 0010. Dropping secondary
  * items would silently re-classify a
@@ -1910,6 +2306,8 @@ function buildCandidateColumnLookup(
 function annotateSharedCandidates(
   items: readonly ChecklistItemOut[],
   byColumn: ReadonlyMap<string, number>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): ChecklistItemOut[] {
   // Map dedup-key → every criterion ID that owns this location.
   const byKey = new Map<string, string[]>();
@@ -1917,10 +2315,14 @@ function annotateSharedCandidates(
     for (const c of item.candidates) {
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const existing = byKey.get(key);
+      // Each item owns exactly one criterion (length-1 array by
+      // construction); pull the canonical id without re-iterating.
+      const itemCid = item.criteria[0];
+      if (itemCid === undefined) continue;
       if (existing === undefined) {
-        byKey.set(key, [item.criterionId]);
-      } else if (!existing.includes(item.criterionId)) {
-        existing.push(item.criterionId);
+        byKey.set(key, [itemCid]);
+      } else if (!existing.includes(itemCid)) {
+        existing.push(itemCid);
       }
     }
   }
@@ -1930,20 +2332,28 @@ function annotateSharedCandidates(
       const key = `${c.path}\x00${c.line}\x00${c.reason}`;
       const ids = byKey.get(key);
       if (ids === undefined || ids.length <= 1) return c;
-      // Cross-criterion sharing — recompute `findingId` over the
-      // sorted-criteria union so every sibling per-item instance under
-      // this group reads the SAME id, AND the id matches the same
-      // conceptual candidate's id on `scan_file.reviewCandidates[]` /
-      // `scan_project.reviewCandidates[]` (those surfaces compute the
-      // hash over the same sorted-criteria union via the shared
-      // `computeCandidateFindingId` helper). Per AI-first doctrine
-      // "Per-tool review-candidate shape must agree across surfaces."
-      const criteria = [...ids].sort();
+      // Cross-criterion sharing — `findingId` was already hashed on
+      // mapOneCandidate over the position-keyed cross-finder /
+      // cross-standard union (so it matches the same conceptual
+      // candidate's id on `scan_file.reviewCandidates[]` /
+      // `scan_project.reviewCandidates[]` regardless of which
+      // surface reads it). The annotation here only widens the
+      // candidate's own `criteria` list to the cross-item union the
+      // checklist surface has visibility into, so an agent walking the
+      // shared group sees every standard ID this evidence covers.
+      // Per AI-first doctrine "Per-tool review-candidate shape must
+      // agree across surfaces."
+      const column = byColumn.get(key) ?? c.line;
+      const positionKey = candidateCriteriaUnionKey(c.path, c.line, column, c.reason);
+      const criteriaUnion = criteriaUnionByPosition.get(positionKey);
+      const criteria = criteriaUnion === undefined ? [...ids].sort() : [...criteriaUnion];
       const findingId = computeCandidateFindingId({
         criteria,
         filePath: c.path,
         line: c.line,
-        column: byColumn.get(key) ?? 1,
+        column,
+        reason: c.reason,
+        scanRoot,
       });
       return { ...c, findingId, criteria };
     }),
@@ -2030,9 +2440,50 @@ function buildChecklistItem(
   stalenessProbe: AttestationStalenessProbe | undefined,
   buildArtifactPaths: ReadonlySet<string>,
   findersByCriterion: ReadonlyMap<string, CandidateFinder>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
 ): { item: ChecklistItemOut; relevant: boolean } {
-  const mappedRaw = mapCandidates(criterion.id, candidates, sources, buildArtifactPaths);
-  const mapped = partitionVendorCandidatesLast(mappedRaw, buildArtifactPaths);
+  const mappedRaw = mapCandidates(
+    criterion.id,
+    candidates,
+    sources,
+    buildArtifactPaths,
+    criteriaUnionByPosition,
+    scanRoot,
+  );
+  // Cross-file repeated-candidate fold — when the same `(line, reason,
+  // snippet)` fingerprint fired on > 5 distinct file paths within this
+  // criterion (canonical case: 74 copies of `fancybox.pack.js:4` on a
+  // website-templates corpus), collapse to ONE canonical row carrying
+  // `occurrences: N` + `samplePaths: [up-to-5]`. Per AI-first doctrine
+  // "Composite headline counts are dishonest" extended to per-row
+  // volume: the agent reads the underlying evidence once with a total
+  // count rather than N near-identical rows. Runs BEFORE the vendor
+  // partition so the cohort discovery isn't perturbed by a pre-sort —
+  // the engine's `(filePath, line, column)`-asc emit order makes the
+  // first cohort member the lexicographically-earliest path, which is
+  // the canonical sample. The vendor partition then runs over the
+  // already-collapsed list (cohort representatives surface or fall
+  // last by their canonical path's vendor classification).
+  const mappedCollapsed = collapseRepeatedAcrossFiles(mappedRaw);
+  // Cross-file SAME-REASON fold — sibling pass to the line-keyed
+  // collapse above. When the same `reason` text fires across N > 20
+  // distinct file paths within this criterion at *varying* lines
+  // (canonical case: 528 sub-site `index.html` files all firing
+  // `wcag22:2.4.5` with byte-identical reason "Likely root layout has
+  // no search/sitemap/breadcrumb" but at different line numbers), the
+  // line-keyed pass partitions every candidate into its own cohort
+  // and never collapses. This pass keys on `reason` alone — line-
+  // agnostic — and folds residual templated fan-outs to ONE row
+  // carrying `occurrences: N` + `samplePaths: [up-to-5]`. Per AI-first
+  // doctrine "Composite headline counts are dishonest" extended to
+  // per-row volume; "Labeled buckets are suppression too" satisfied
+  // because the predicate ("same reason, N>20 distinct files") is
+  // provable from the code. Pre-collapsed rows from the line-keyed
+  // pass are skipped (they already represent a folded cohort and
+  // refolding would lose the line precision the earlier pass earned).
+  const mappedCollapsedByReason = collapseAcrossFilesByReason(mappedCollapsed);
+  const mapped = partitionVendorCandidatesLast(mappedCollapsedByReason, buildArtifactPaths);
   const principle = wcagPrincipleFor(criterion.standardId, criterion.localId);
   // Bare-criterion items (no candidates grounded by a finder) carry
   // "low" confidence — by definition the scanner has no specific
@@ -2075,7 +2526,7 @@ function buildChecklistItem(
   // bare-criterion item with no finder backing it).
   const reviewPrompt = findersByCriterion.get(criterion.id)?.docs.reviewPrompt;
   const base: ChecklistItemOut = {
-    criterionId: criterion.id,
+    criteria: [criterion.id],
     title: criterion.title,
     level: criterion.level,
     priority: itemPriority,
@@ -2102,6 +2553,9 @@ function bucketChecklistItems(
   stalenessProbe: AttestationStalenessProbe | undefined,
   session: import("./session.ts").McpSession,
   buildArtifactPaths: ReadonlySet<string>,
+  criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>,
+  scanRoot: string,
+  verifyTokenViolationCriteria: ReadonlySet<string>,
 ): { needsReview: ChecklistItemOut[]; likelyIrrelevant: ChecklistItemOut[] } {
   const needsReview: ChecklistItemOut[] = [];
   const likelyIrrelevant: ChecklistItemOut[] = [];
@@ -2128,6 +2582,8 @@ function bucketChecklistItems(
     stalenessProbe,
     buildArtifactPaths,
     findersByCriterion,
+    criteriaUnionByPosition,
+    scanRoot,
   } as const;
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
@@ -2146,6 +2602,7 @@ function bucketChecklistItems(
     emittedCriterionIds,
     needsReview,
     likelyIrrelevant,
+    verifyTokenViolationCriteria,
   );
   const rank: Readonly<Record<ChecklistPriority, number>> = { high: 0, medium: 1, low: 2 };
   needsReview.sort((a, b) => rank[a.priority] - rank[b.priority]);
@@ -2171,6 +2628,8 @@ function pushChecklistItem(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2185,6 +2644,8 @@ function pushChecklistItem(
     builderArgs.stalenessProbe,
     builderArgs.buildArtifactPaths,
     builderArgs.findersByCriterion,
+    builderArgs.criteriaUnionByPosition,
+    builderArgs.scanRoot,
   );
   emittedCriterionIds.add(criterion.id);
   (relevant ? needsReview : likelyIrrelevant).push(item);
@@ -2226,20 +2687,31 @@ function appendPartialCriterionItems(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
   likelyIrrelevant: ChecklistItemOut[],
+  verifyTokenViolationCriteria: ReadonlySet<string>,
 ): void {
-  const candidateCriterionIds = new Set<string>();
-  for (const c of candidates) candidateCriterionIds.add(c.criterionId);
+  // Q15-LANDMARK-MAIN: union grounded review-candidate criteria with
+  // low-confidence verify-token violation criteria so the checklist
+  // emits an item for `wcag22:1.3.1` (and similar partial-automatable
+  // criteria) when only the violation axis carries the actionable
+  // signal. Without this union, `coverage.manualWithCandidates`
+  // includes the criterion but `checklist.items[]` does not — the
+  // cross-surface invariant pinned by the consistency suite breaks.
+  const actionableCriterionIds = new Set<string>();
+  for (const c of candidates) actionableCriterionIds.add(c.criterionId);
+  for (const id of verifyTokenViolationCriteria) actionableCriterionIds.add(id);
   for (const entry of coverage) {
     const standard = findStandard(entry.standardId, session);
     if (!standard) continue;
     appendPartialItemsFromEntry(
       entry,
       standard,
-      candidateCriterionIds,
+      actionableCriterionIds,
       builderArgs,
       emittedCriterionIds,
       needsReview,
@@ -2268,6 +2740,8 @@ function appendPartialItemsFromEntry(
     readonly stalenessProbe: AttestationStalenessProbe | undefined;
     readonly buildArtifactPaths: ReadonlySet<string>;
     readonly findersByCriterion: ReadonlyMap<string, CandidateFinder>;
+    readonly criteriaUnionByPosition: ReadonlyMap<string, readonly string[]>;
+    readonly scanRoot: string;
   },
   emittedCriterionIds: Set<string>,
   needsReview: ChecklistItemOut[],
@@ -2539,7 +3013,7 @@ export function paginateChecklistItems(
       candidates: item.candidates.slice(sliceStart, sliceEnd),
     });
   }
-  const truncated = rangeEnd < postClipTotal;
+  const globalClipped = rangeEnd < postClipTotal;
   // hint = min(largest
   // uncapped count, MAX_MAX_PER_CRITERION). Only meaningful when at
   // least one criterion clipped — otherwise the caller already saw
@@ -2556,7 +3030,7 @@ export function paginateChecklistItems(
       offset,
       pageItems,
       rangeEnd,
-      truncated,
+      globalClipped,
       perCriterionClipped: firstClippedCursor !== undefined,
       ...(firstClippedCursor
         ? {
@@ -2613,8 +3087,13 @@ function clipChecklistItems(
       continue;
     }
     if (firstClippedCursor === undefined) {
+      const itemCid = item.criteria[0];
+      if (itemCid === undefined) {
+        clipped.push(item);
+        continue;
+      }
       firstClippedCursor = {
-        afterCriterion: item.criterionId,
+        afterCriterion: itemCid,
         afterCandidateIndex: cap - 1,
       };
       firstClippedTotalAvailable = item.candidates.length;
@@ -2659,7 +3138,7 @@ function paginateChecklistResume(
   let target: ChecklistItemOut | undefined;
   for (const item of items) {
     totalCandidates += item.candidates.length;
-    if (item.criterionId === cursor.afterCriterion && target === undefined) {
+    if (item.criteria[0] === cursor.afterCriterion && target === undefined) {
       target = item;
     }
   }
@@ -2679,9 +3158,11 @@ function paginateChecklistResume(
   const tail = target.candidates.slice(resumeStart, resumeEnd);
   const pageItems: ChecklistItemOut[] = tail.length === 0 ? [] : [{ ...target, candidates: tail }];
   const moreRemaining = resumeEnd < target.candidates.length;
-  const nextCursor: ChecklistCursor | undefined = moreRemaining
-    ? { afterCriterion: target.criterionId, afterCandidateIndex: resumeEnd - 1 }
-    : undefined;
+  const targetCid = target.criteria[0];
+  const nextCursor: ChecklistCursor | undefined =
+    moreRemaining && targetCid !== undefined
+      ? { afterCriterion: targetCid, afterCandidateIndex: resumeEnd - 1 }
+      : undefined;
   // same hint shape on the
   // resume branch — only emitted when more tail remains, since the
   // agent has already seen everything we have on the criterion when
@@ -2697,17 +3178,27 @@ function paginateChecklistResume(
   // resumeEnd - 1), `totalAvailable` is the criterion's full pre-clip
   // candidate count. Paired with `nextCursor` so cross-channel readers
   // (top-level pagination block, warning details payload) agree.
-  const nextCursorClipDetails = nextCursor
-    ? {
-        criterionId: target.criterionId,
-        clippedAt: resumeEnd,
-        totalAvailable: target.candidates.length,
-      }
-    : undefined;
+  const nextCursorClipDetails =
+    nextCursor && targetCid !== undefined
+      ? {
+          criterionId: targetCid,
+          clippedAt: resumeEnd,
+          totalAvailable: target.candidates.length,
+        }
+      : undefined;
   return {
     items: pageItems,
     totalCandidates,
     paginationFields: {
+      // Resume mode: when more candidates remain on the named criterion,
+      // the response is partial — emit the canonical `truncated: true`
+      // boolean (per `docs/kb/architecture/ai-first-consumer.md`
+      // "Truncation reporters must reconcile across warnings"). Pair
+      // `pageClipReason: "per_criterion_cap"` so axis discrimination
+      // matches the non-cursor branch's shape.
+      ...(nextCursor
+        ? { truncated: true as const, pageClipReason: "per_criterion_cap" as const }
+        : {}),
       ...(nextCursor ? { nextCursor } : {}),
       ...(nextCursorClipDetails ? { nextCursorClipDetails } : {}),
       ...(maxCandidatesPerCriterionHint === undefined ? {} : { maxCandidatesPerCriterionHint }),
@@ -2728,13 +3219,29 @@ function paginateChecklistResume(
  * truncation, non-zero offset, or per-criterion clip), `pageClipReason`
  * names the regime when `effectiveLimit < requestedLimit`. Cross-
  * surface consumers read the same vocabulary on both tools.
+ *
+ * `truncated: true` is the canonical "this response is partial — the
+ * agent must page" boolean. Per `docs/kb/architecture/ai-first-consumer.md`
+ * "Truncation reporters must reconcile across warnings", a partial
+ * response shaped like `{ pageClipReason: "per_criterion_cap", warnings:
+ * ["results_truncated_use_nextcursor"], <no truncated key> }` ships three
+ * concurrent truncation signals while the canonical boolean is missing —
+ * the agent reading top-down sees `pageClipReason` and the warning but
+ * has no boolean to predicate "is this partial" against. Closure path (a)
+ * from doctrine: one canonical reporter — `truncated: true` — fires
+ * whenever ANY axis clipped (global limit OR per-criterion cap), and the
+ * warning's `seeAlso` cross-links to `pageClipReason` for the axis
+ * discrimination. `nextOffset` stays gated to the global-limit axis (it's
+ * the resume token for the flat stream); the per-criterion-clip resume
+ * token is `nextCursor`. `pageClipReason` discriminates the axis so
+ * callers branch on a discriminator, not on shape.
  */
 function buildChecklistPaginationFields(args: {
   readonly limit: number;
   readonly offset: number;
   readonly pageItems: readonly ChecklistItemOut[];
   readonly rangeEnd: number;
-  readonly truncated: boolean;
+  readonly globalClipped: boolean;
   readonly perCriterionClipped: boolean;
   readonly nextCursor?: ChecklistCursor;
   readonly nextCursorClipDetails?: NonNullable<
@@ -2747,7 +3254,7 @@ function buildChecklistPaginationFields(args: {
     offset,
     pageItems,
     rangeEnd,
-    truncated,
+    globalClipped,
     perCriterionClipped,
     nextCursor,
     nextCursorClipDetails,
@@ -2758,17 +3265,22 @@ function buildChecklistPaginationFields(args: {
   // both the global limit AND per-criterion clip.
   let pageCandidateCount = 0;
   for (const item of pageItems) pageCandidateCount += item.candidates.length;
+  // Canonical "this response is partial" boolean. Fires on any clip
+  // axis (global OR per-criterion) so the agent has one boolean to
+  // predicate on; axis discrimination lives on `pageClipReason`.
+  const truncated = globalClipped || perCriterionClipped;
   // Pagination is active when the response carries any non-trivial
   // paging state. Trivial "whole inventory fit, nothing clipped"
   // pages omit the triple entirely — there's no ambiguity to resolve.
-  const paginationActive = truncated || offset > 0 || perCriterionClipped;
+  const paginationActive = truncated || offset > 0;
   const pageClipReason = computeChecklistPageClipReason({
-    truncated,
+    globalClipped,
     perCriterionClipped,
     pageIsShort: pageCandidateCount < limit,
   });
   return {
-    ...(truncated ? { truncated: true as const, nextOffset: rangeEnd } : {}),
+    ...(truncated ? { truncated: true as const } : {}),
+    ...(globalClipped ? { nextOffset: rangeEnd } : {}),
     ...(perCriterionClipped ? { perCriterionClipped: true as const } : {}),
     ...(paginationActive ? { requestedLimit: limit, effectiveLimit: pageCandidateCount } : {}),
     ...(paginationActive && pageClipReason !== undefined ? { pageClipReason } : {}),
@@ -2782,18 +3294,20 @@ function buildChecklistPaginationFields(args: {
  * Pure tri-state reducer — returns `undefined` when nothing clipped
  * below the ask, or the `PageClipReason`-aligned token when a single-
  * axis regime fired:
- *   - `per_criterion_cap` — per-criterion clip AND no further trunc.
+ *   - `per_criterion_cap` — per-criterion clip (regardless of further
+ *     global truncation; the per-criterion axis is the more specific
+ *     diagnosis since `nextCursor` is the resume token the agent needs).
  *   - `end_of_results` — tail ran out, no per-criterion involvement.
  * Mid-page full pages (effective === requested) carry no reason.
  */
 function computeChecklistPageClipReason(args: {
-  readonly truncated: boolean;
+  readonly globalClipped: boolean;
   readonly perCriterionClipped: boolean;
   readonly pageIsShort: boolean;
 }): "end_of_results" | "per_criterion_cap" | undefined {
-  if (!args.pageIsShort) return undefined;
-  if (args.truncated) return undefined;
   if (args.perCriterionClipped) return "per_criterion_cap";
+  if (!args.pageIsShort) return undefined;
+  if (args.globalClipped) return undefined;
   return "end_of_results";
 }
 
@@ -2813,10 +3327,11 @@ interface ChecklistNextStepInputs {
   readonly maxCandidatesPerCriterionHint: number | undefined;
   /**
    * Pre-clip inventory total across actionable items (matches
-   * `summary.actionable.candidatesUncapped`). Used together with
-   * `limit` to detect the "near limit" branch where the structured
-   * nextStep should advertise paginate args instead of the generic
-   * iterate-items[] prose.
+   * `summary.actionable.emissionsAfterCollapse` — the post-collapse
+   * checklist-specific tally). Used together with `limit` to detect
+   * the "near limit" branch where the structured nextStep should
+   * advertise paginate args instead of the generic iterate-items[]
+   * prose.
    */
   readonly totalCandidates: number;
   /** Effective `limit` after clamping; paired with `totalCandidates`. */
@@ -2953,7 +3468,7 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   // not arbitrary.
   if (totalCandidates > limit * CHECKLIST_NEAR_LIMIT_RATIO) {
     return {
-      nextStep: `Total candidates (${totalCandidates}) is at >${Math.round(CHECKLIST_NEAR_LIMIT_RATIO * 100)}% of \`limit\` (${limit}); the response is near capacity. Call \`checklist\` again with \`offset: <n>, limit: <n>\` to walk the queue deliberately, or raise \`limit\` to fit the full inventory in one page. After verifying each item, call \`attest\` with the item's \`criterionId\`, a \`verdict\` (\`pass\` / \`fail\` / \`n/a\`), a \`reason\`, and an \`evidenceSource\` to record the verdict durably.`,
+      nextStep: `Total candidates (${totalCandidates}) is at >${Math.round(CHECKLIST_NEAR_LIMIT_RATIO * 100)}% of \`limit\` (${limit}); the response is near capacity. Call \`checklist\` again with \`offset: <n>, limit: <n>\` to walk the queue deliberately, or raise \`limit\` to fit the full inventory in one page. After verifying each item, call \`attest\` with the item's \`criteria[0]\` as \`criterionId\`, a \`verdict\` (\`pass\` / \`fail\` / \`n/a\`), a \`reason\`, and an \`evidenceSource\` to record the verdict durably.`,
       nextStepStructured: {
         tool: "checklist",
         args: buildChecklistArgs(inputs, { offset: 0, limit }),
@@ -2970,7 +3485,7 @@ function buildChecklistNextStep(inputs: ChecklistNextStepInputs): {
   // fabricating provenance.
   return {
     nextStep:
-      "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
+      "Iterate `items[]`, reading each cited file and line. After verifying an item, call `attest` with the item's `criteria[0]` as `criterionId`, a `verdict` (`pass` / `fail` / `n/a`), a `reason`, and an `evidenceSource` to record the verdict durably; call `scan_project` to re-run after fixing violations.",
     nextStepStructured: { tool: "scan_project", args: { cwd } },
   };
 }

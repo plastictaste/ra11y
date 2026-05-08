@@ -11,19 +11,27 @@ import { buildCoverageReport } from "../reports/coverage.ts";
 import type { ReviewCandidate } from "../types/review.ts";
 import type { Rule } from "../types/rule.ts";
 import type { Violation } from "../types/violation.ts";
+import { posixRelative } from "../utils/path.ts";
 import { buildAnalysisCoverage } from "./analysis-coverage.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
 import { applyCoverageBudget } from "./coverage-budget.ts";
 import { runScanForCrossSurfaceParity } from "./cross-surface-scan.ts";
 import { probeExtensionsPresentAtRoot } from "./extension-subkind.ts";
 import { detectApplicability, splitManualCriteria } from "./manual-applicability.ts";
+import { collectVerifyTokenViolationCriteria } from "./manual-criteria-tally.ts";
 import { applyMetaCacheMode, metaModeSchema } from "./meta-cache.ts";
+import { pickNonVendorNarrowingDirFromPaths } from "./narrowing-dir-from-paths.ts";
 import { requireBooleanParam, requireStringArrayParam } from "./param-validators.ts";
 import {
   buildSharedPerRuleCoverageMeta,
   type SharedPerRuleCoverageMetaResult,
 } from "./per-rule-coverage-shared.ts";
 import { buildRulesEvaluated, type RulesEvaluated, resolveActiveRules } from "./rules-evaluated.ts";
+import { buildVendorPredicate } from "./scan-project-budget.ts";
+import {
+  buildScanProjectReviewCandidates,
+  type ScanProjectReviewCandidate,
+} from "./scan-project-review-candidates.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
 import { type ScannedEnvelope, scannedProject } from "./scanned-envelope.ts";
 import { configSearchedFromField } from "./scanner-meta.ts";
@@ -34,6 +42,7 @@ import {
   firstUnknownStandard,
   loadDurableAttestations,
   type McpTool,
+  numParam,
   parseFilesWithDiagnostics,
   resolveLevel,
   resolveStandards,
@@ -67,12 +76,17 @@ export const coverageTool: McpTool = {
         showUntargeted: {
           type: "boolean",
           description:
-            "Include the full `untargetedCriteriaList` (bare WCAG titles for criteria no finder grounded in code). Default false; `untargetedCriteria` (the count) is always returned. Mirrors the `checklist` tool so both surfaces behave consistently.",
+            "Include the full `untargetedCriteriaList` (bare WCAG titles for criteria no finder grounded in code). Default false; `untargetedCriteriaForProject` (the count) is always returned. Mirrors the `checklist` tool so both surfaces behave consistently.",
         },
         verboseMeta: {
           type: "boolean",
           description:
             "When true, the meta block expands its compact summaries into the underlying per-row payloads. Affects: `perRuleCoverage[]` (full per-rule coverage rows — at default verbosity replaced by `perRuleCoverageSummary: { ruleCount, ruleIds }`) and `analysisCoverage.parseErrorFiles` / `partialParseFiles` (full per-entry `{ path, parserAttempted, naturalParser?, reason }` arrays uncapped — at default verbosity, counts ≤ 20 still ship inline; above 20 the response surfaces the `parseErrorTopReasons` / `partialParseTopReasons` rollup of top distinct reasons by frequency). `parserAttempted` is the parser the dispatcher actually invoked (routing decision); `naturalParser` is present-when-meaningful, only surfaced when the dispatcher routed the file through a non-natural parser (`.js` → tsx, `.svg` → html). The count scalar (`parseErrorFileCount` / `partialParseFileCount`) and the scan-confidence telemetry (`rulesEvaluated`, `filesWithAnyRuleEvaluated` / `filesWithZeroRuleEvaluation`, `rulesNotEvaluatedDueToInputType`) stay inline at every verbosity. Off by default to keep responses bounded on bulk-template scans; flip when triaging which specific files failed to parse or auditing per-rule confidence.",
+        },
+        maxBytes: {
+          type: "number",
+          description:
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
         },
         metaMode: metaModeSchema,
       },
@@ -139,16 +153,16 @@ export const coverageTool: McpTool = {
         activeRules,
         attestations,
         projectConfig,
+        scanRoot: cwd,
       });
 
-    const candidateCriteria = new Set((report.candidates ?? []).map((c) => c.criterionId));
-    // Per-criterion candidate counts the per-entry
-    // `manualCandidatesTotal` reads off. Single pass over the candidate
-    // stream populates every entry the per-standard split below needs;
-    // the standard-level filter happens at read time when we sum over
-    // `withCandidates` (level-filtered, in-scope criteria for the
-    // entry). See {@link buildCandidateCountByCriterion} for doctrine.
-    const candidateCountByCriterion = buildCandidateCountByCriterion(report.candidates ?? []);
+    // candidateCriteria + candidateCountByCriterion + candidatesByCriterion
+    // all derive from `report.candidates` and feed the per-entry
+    // `manualWithCandidates` build. Bundled into one helper so the
+    // handler closure stays under the lint's cognitive-complexity ceiling
+    // as scan-confidence telemetry accretes on the response shape.
+    const { candidateCriteria, candidateCountByCriterion, candidatesByCriterion } =
+      buildCandidateIndexes({ reportCandidates: report.candidates ?? [], scanRoot: cwd });
     const criteriaWithErrorViolations = collectErrorSeverityCriteria(result.violations);
     const applicability = detectApplicability(files, discoveryDiagnostics);
     // Q-SHARED-PASS-RATE-COMPOSITE: build the testable set from
@@ -202,11 +216,20 @@ export const coverageTool: McpTool = {
       activeRules,
       level,
     );
+    // Q15-LANDMARK-MAIN: low-confidence verify-token findings (severity
+    // `info` paired with a code from `VERIFY_IN_SOURCE_TOKENS` on
+    // `couldBeWrongBecause`) are the rule's way of saying "please
+    // verify this in source." Their criteria union into the actionable
+    // axis alongside grounded review candidates so the cross-surface
+    // count invariant holds: `scan.plan.actionableManualItems ===
+    // checklist.summary.actionable.criteria === sum of
+    // coverage[].manualWithCandidates.length` on identical cwd.
+    const actionableCriteria = buildActionableCriteriaSet(
+      coverage,
+      candidateCriteria,
+      result.violations,
+    );
     const entries = coverage.map((c) => {
-      // Split by applicability first so the counts align with scan_project
-      // and checklist — media-only criteria move to likelyIrrelevant
-      // when there's no <video>/<audio>, and never inflate the
-      // review-required number.
       const { applicable, likelyIrrelevant } = splitManualCriteria(c.manualCriteria, applicability);
       // Q13-SCAN-FILE-PLAN-VS-REVIEW-CANDIDATES-DISAGREE:
       // `withCandidates` lists every distinct criterion in THIS
@@ -233,31 +256,84 @@ export const coverageTool: McpTool = {
       // appear when the caller scopes to `level: "AA"` — matches the
       // helper's level-filter scope and the checklist `items[]`
       // build that iterates `manualCriteria` (also level-filtered).
+      // Q15-LANDMARK-MAIN: `actionableCriteria` is candidates ∪
+      // verify-token violation criteria — see the outer-scope helper
+      // call for the doctrine pointer. `withCandidates` is the per-
+      // entry intersection so cross-surface count agreement holds
+      // (`scan.plan.actionableManualItems === sum of
+      // coverage[].manualWithCandidates.length`). For a verify-token-
+      // only criterion, this entry's `candidates: []` rides empty
+      // because the actionable item lives on the violations axis
+      // (`files[].findings[]`), not the review-candidate axis — the
+      // agent reads the violations stream for that criterion's
+      // grounded location.
       const withCandidates = c.criteria
         .map((cc) => cc.criterionId)
-        .filter((id) => candidateCriteria.has(id));
+        .filter((id) => actionableCriteria.has(id));
       // Candidate-level total scoped to the same in-scope, level-
       // filtered criteria `withCandidates` is computed from.
-      // `withCandidates.length` / `actionableManualItems` is the
-      // criteria-axis sibling; `manualCandidatesTotal` is the
-      // candidate-axis sibling — names make the kind explicit so an
+      // `withCandidates.length` is the criteria-axis sibling;
+      // `manualCandidateEmissionsTotal` (the wire-side rename of
+      // `manualCandidatesTotal`) is the candidate-axis sibling — names
+      // make the kind AND the transformation stage explicit so an
       // agent reading both does not silently reconcile two numbers
       // that measure different units (per
       // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
       // naming the same concept must use one shape"). Cross-surface
-      // invariant: agrees with `checklist.totalCandidates` and
-      // `checklist.summary.actionable.candidatesUncapped` on identical
-      // cwd.
+      // invariant: agrees with `checklist.summary.actionable.emissionsTotal`
+      // (the raw pre-collapse count) on identical cwd via the shared
+      // `tallyManualCandidateEmissions` helper. Verify-token-only
+      // criteria contribute zero to this count because they have no
+      // review-candidate entries — the candidate-axis sum stays
+      // anchored to the candidate stream.
       const manualCandidatesTotal = sumCandidatesAcrossCriteria(
         withCandidates,
         candidateCountByCriterion,
       );
-      const untargeted = applicable.filter((id) => !candidateCriteria.has(id));
+      const untargeted = applicable.filter((id) => !actionableCriteria.has(id));
       const { failingErrorIds, warningOnlyIds } = splitFailingByErrorPresence(
         c.failingCriteria,
         criteriaWithErrorViolations,
       );
       const registryAutomatable = automatableByRegistry.get(c.standardId) ?? c.automatable;
+      // Pre-compute the present-when-meaningful spread payloads as
+      // single-key objects so the entry literal stays free of inline
+      // ternaries (each ternary inside the literal would bump the
+      // map closure's cognitive-complexity score). Empty arrays drop
+      // entirely via `buildOptionalArrayField` so the wire shape
+      // signals "absent on this corpus" via field omission rather
+      // than an empty-array sentinel.
+      const untestableField = buildOptionalArrayField(
+        "untestableCriteria",
+        withTitles(c.untestableCriteria, session),
+      );
+      // Per-tool review-candidate shape
+      // must agree across surfaces. Embed the deduped candidate surface
+      // (`{findingId, file, line, column, criteria, reason, confidence,
+      // snippet?}`) under each `manualWithCandidates` entry so an agent
+      // walking `coverage` does not have to round-trip to `checklist`
+      // (or `scan_file`) for the per-criterion file:line evidence the
+      // scan already produced. Backed by `dedupedCandidates` (same recipe
+      // `scan_project.reviewCandidates[]` ships) so `findingId` is
+      // identical on both surfaces — the cross-surface candidate
+      // identifier contract pinned by
+      // `tests/integration/coverage-manual-candidates.test.ts`.
+      //
+      // The previous shape was `{criterionId, title, level}` only — agents
+      // had to call `checklist` to recover the per-criterion candidate
+      // list `coverage` had already discarded; that disagreement was the
+      // canonical "Per-tool review-candidate shape must agree across
+      // surfaces" failure mode (the silent-miss case where the per-tool
+      // shape forces an extra round trip to recover information the first
+      // tool already had in hand).
+      const manualWithCandidatesField = buildOptionalArrayField(
+        "manualWithCandidates",
+        withTitlesAndCandidates(withCandidates, session, candidatesByCriterion),
+      );
+      const untargetedListField = buildUntargetedListField(
+        showUntargeted,
+        withTitles(untargeted, session),
+      );
       return {
         standardId: c.standardId,
         // Named so the denominator is unmistakable: it's the share of
@@ -301,7 +377,7 @@ export const coverageTool: McpTool = {
         // value. Closes Q9-COVERAGE-CRITERIA-AUTOMATABLE-DRIFTS-NARROW-VS-BULK.
         criteriaAutomatable: registryAutomatable,
         criteriaAutomatablePassing: c.passing,
-        // Four-counter split for the corpus-derived evaluation of the
+        // Three-counter split for the corpus-derived evaluation of the
         // criteria the rule library can statically address. Each counts
         // one kind of thing (per CLAUDE.md §1 "Composite headline counts
         // are dishonest"):
@@ -309,76 +385,99 @@ export const coverageTool: McpTool = {
         //     withFindings).
         //   - `criteriaClean`: ran, zero violations.
         //   - `criteriaWithFindings`: ran, ≥1 violation.
-        //   - `criteriaUntestable`: rule declared extension eligibility
-        //     but saw zero applicable input in this scan — the canonical
-        //     Tailwind-pre-build / reveal-slide vendor-bundle shape. The
-        //     list rides under `untestableCriteria` (with titles) so the
-        //     agent can call out what it couldn't verify.
+        // The "rule declared extension eligibility but saw zero
+        // applicable input" lane (canonical Tailwind-pre-build /
+        // reveal-slide vendor-bundle shape) is named once on this
+        // response by the `untestableCriteria` array — agents derive
+        // the count via `untestableCriteria.length` (or read it off
+        // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+        // already on this entry). The previous `criteriaUntestable`
+        // scalar sibling was deleted because it duplicated the array
+        // length verbatim — the canonical "Sibling fields naming the
+        // same concept must use one shape" failure mode in
+        // `docs/kb/architecture/ai-first-consumer.md`.
         // Invariant on the corpus-derived lane:
         // `criteriaEvaluated === criteriaClean + criteriaWithFindings`.
         // `criteriaAutomatable` is registry-derived (see comment above)
         // and is not necessarily equal to `criteriaEvaluated +
-        // criteriaUntestable` — a metadata-manual criterion satisfied by
-        // a registered rule that didn't fire counts in
-        // `criteriaAutomatable` but stays in the manual lane (`manualCriteria`).
+        // untestableCriteria.length` — a metadata-manual criterion
+        // satisfied by a registered rule that didn't fire counts in
+        // `criteriaAutomatable` but stays in the manual lane
+        // (`manualCriteria`).
         criteriaEvaluated: c.evaluated,
         criteriaClean: c.clean,
         criteriaWithFindings: c.withFindings,
-        criteriaUntestable: c.untestable,
-        untestableCriteria: withTitles(c.untestableCriteria, session),
-        // Split the manual-review pile across two top-level counters
-        // exactly as `scan_project.plan` and `checklist.summary` ship —
-        // `actionableManualItems` (criteria with shipped grounded
-        // candidates, file:line addressable) and `untargetedCriteria`
-        // (applicable manual-only criteria with no candidate, bare WCAG
-        // prompts). The legacy composite `criteriaManualReviewRequired`
-        // summed the two categorically different sub-buckets under one
-        // headline, repeating the dishonest-composite shape
-        // `plan.totalFindings` had been deleted for; agents budgeting
-        // against the composite mis-sized the work because grounded
-        // candidates and bare prompts are not interchangeable. Per
-        // `docs/kb/architecture/ai-first-consumer.md` "Composite
-        // headline counts are dishonest" the durable answer is deletion
-        // (not rename to `criteriaManualReviewRequiredComposite`) — the
-        // structured per-lane siblings already carry the honest signal,
-        // and callers that want the legacy total sum the two on read.
-        // Cross-surface count invariant: this `actionableManualItems`
-        // equals `scan_project.plan.actionableManualItems`,
-        // `checklist.summary.actionable.criteria`, and
-        // `manualWithCandidates.length` here — same name on every
-        // surface so the agent can compare without a translation table.
-        actionableManualItems: withCandidates.length,
-        // Candidate-axis sibling to `actionableManualItems` (the
-        // criteria-axis count). `actionableManualItems: N` reads as
-        // "N criteria have grounded candidates"; `manualCandidatesTotal: K`
-        // reads as "K total candidates ride under those criteria." The
-        // two sit alongside so an agent asking "how many manual-review
-        // items are there" sees both axes in one read instead of having
-        // to pivot to `checklist` to learn the candidate-level tally.
-        // Cross-surface count invariant
+        // Present-when-meaningful: when the rule library satisfied
+        // every applicable input lane on this corpus, an empty array
+        // would be the dishonest sentinel-empty-list shape per
+        // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields
+        // naming the same concept must use one shape" (omit empty
+        // arrays when meaning is "absent on this corpus"). Agents
+        // enumerate the criteria the static scan couldn't verify by
+        // reading `untestableCriteria`; an absent field is the honest
+        // answer for "nothing in this lane on this corpus" — the
+        // structured
+        // `summary.automatedCoverage.criteriaWithoutEligibleInputs`
+        // count still rides on this same entry for the per-axis tally.
+        ...untestableField,
+        // Candidate-axis sibling to `manualWithCandidates.length` (the
+        // criteria-axis count). `manualWithCandidates.length: N` reads
+        // as "N criteria have grounded candidates";
+        // `manualCandidateEmissionsTotal: K` reads as "K raw
+        // per-emission candidates ride under those criteria." The two
+        // sit alongside so an agent asking "how many manual-review
+        // items are there" sees both axes in one read instead of
+        // having to pivot to `checklist` to learn the candidate-level
+        // tally. Cross-surface count invariant
         // (`docs/kb/architecture/ai-first-consumer.md`): equals
-        // `checklist.totalCandidates` and
-        // `checklist.summary.actionable.candidatesUncapped` on identical
-        // cwd; pinned by the integration test in
-        // `tests/integration/mcp-counts-agree.test.ts`.
-        manualCandidatesTotal,
-        // Split the manual-review pile so agents can see at the coverage
-        // level (without a second checklist call) how many manual
-        // criteria have concrete candidates worth reviewing vs pure
-        // WCAG prompts the finders couldn't ground in code.
-        manualWithCandidates: withTitles(withCandidates, session),
+        // `checklist.summary.actionable.emissionsTotal` (the raw
+        // pre-collapse count) on identical cwd; pinned by the
+        // integration test in `tests/integration/mcp-counts-agree.test.ts`.
+        // The bare `manualCandidatesTotal` name shipped under one
+        // concept while the post-collapse `candidatesUncapped` count
+        // (checklist) shipped under another — the rename to
+        // `*EmissionsTotal` makes the slice explicit so the cross-
+        // surface invariant pins the raw count both surfaces compute,
+        // not whichever one the agent happens to read first.
+        manualCandidateEmissionsTotal: manualCandidatesTotal,
+        // Manual-review pile in array form. Agents derive the
+        // criteria-axis count via `manualWithCandidates.length`; the
+        // structured `summary.actionable.criteria` ships the same
+        // value alongside for the parallel `summary` access path that
+        // mirrors `checklist.summary.actionable.criteria`. The
+        // previous `actionableManualItems` scalar sibling was deleted
+        // — duplicate of the array length, the "Sibling fields naming
+        // the same concept must use one shape" failure mode in
+        // `docs/kb/architecture/ai-first-consumer.md`. Present-when-
+        // meaningful: omit when empty so the response distinguishes
+        // "no grounded candidates this corpus" (field absent) from
+        // "scanner ran and grounded these criteria" (populated array).
+        // Cross-surface count invariant:
+        // `manualWithCandidates.length` equals
+        // `scan_project.plan.actionableManualItems` and
+        // `checklist.summary.actionable.criteria` on identical cwd —
+        // same value, accessed through the array length on this
+        // surface and a sibling scalar on the others.
+        ...manualWithCandidatesField,
         // Count is always informative ("how big is the untargeted tail");
         // the list is gated behind showUntargeted so the default response
         // doesn't ship 16 entries of bare WCAG titles that mirror the
         // checklist tool's showUntargeted default.
         //
-        // Canonical count field is `untargetedCriteria`
-        // (matches scan_project's `plan` and
-        // checklist's `summary`). The list uses the distinct name
-        // `untargetedCriteriaList` so the number and array fields don't
-        // collide when both are present.
-        untargetedCriteria: untargeted.length,
-        ...(showUntargeted ? { untargetedCriteriaList: withTitles(untargeted, session) } : {}),
+        // Project-walk scope: `coverage` is project-rooted (config-walks
+        // up from cwd), so the count is a project-total, not a per-file
+        // slice. The field name is `untargetedCriteriaForProject` so
+        // consumers reading the scalar can't conflate it with a
+        // `scan_file` per-file count (which would over-count on the
+        // same corpus). Cross-surface count invariant: equals
+        // `scan_project.plan.untargetedCriteriaForProject` and
+        // `checklist.summary.untargetedCriteriaForProject` on identical
+        // cwd. The list uses the distinct name `untargetedCriteriaList`
+        // so the number and array fields don't collide when both are
+        // present. See `buildScanPlan` docblock in `scan-assembly.ts`
+        // for the cross-surface rationale.
+        untargetedCriteriaForProject: untargeted.length,
+        ...untargetedListField,
         likelyIrrelevantCriteria: withTitles(likelyIrrelevant, session),
         // Renamed from "automatedGaps" — agents consistently misread
         // that as "criteria automation can't cover" when it actually
@@ -397,8 +496,9 @@ export const coverageTool: McpTool = {
         warningAutomatedCriteria: withTitles(warningOnlyIds, session),
         // Structured summary dict — mirrors `checklist.summary`'s key
         // shape so an agent that reads `summary.actionable.criteria`
-        // / `summary.untargetedCriteria` / `summary.likelyIrrelevant`
-        // on either surface gets the same path resolution. Pre-fix
+        // / `summary.untargetedCriteriaForProject` /
+        // `summary.likelyIrrelevant` on either surface gets the same
+        // path resolution. Pre-fix
         // this field shipped as a prose string while
         // `checklist.summary` shipped as a dict — same field name on
         // sibling tools, two shapes — the canonical "Sibling fields
@@ -433,19 +533,30 @@ export const coverageTool: McpTool = {
         summary: {
           // Two-axis split mirrors `checklist.summary.actionable` —
           // `criteria` (criteria-axis, matches
-          // `scan_project.plan.actionableManualItems` and the sibling
-          // `actionableManualItems` scalar on this entry) and
-          // `candidates` (candidate-axis, matches
-          // `checklist.summary.actionable.candidatesUncapped`,
-          // `checklist.totalCandidates`, and the sibling
-          // `manualCandidatesTotal` scalar on this entry). Naming
-          // makes the unit explicit so an agent reading the field
-          // does not silently treat one count as the other — per
+          // `scan_project.plan.actionableManualItemsBySource.source +
+          // .buildArtifact` and the sibling `manualWithCandidates.length`
+          // on this entry) and `emissionsTotal` (candidate-axis, raw
+          // per-emission tally — agrees with
+          // `checklist.summary.actionable.emissionsTotal` on identical
+          // cwd via the shared `tallyManualCandidateEmissions` helper
+          // in `manual-criteria-tally.ts`). The previous `candidates`
+          // sub-field was renamed to `emissionsTotal` so the slice is
+          // explicit on the wire — the same field name shipped on
+          // checklist's `candidatesUncapped` carried a post-collapse
+          // count that disagreed with this raw count by up to 187× on
+          // bulk corpora (Q-MANUAL-CANDIDATE cross-surface drift).
+          // Naming makes the unit AND the transformation stage explicit
+          // so an agent reading the field does not silently treat one
+          // count as the other — per
           // `docs/kb/architecture/ai-first-consumer.md` "Sibling
           // fields naming the same concept must use one shape" the
           // candidate-vs-criteria split is named, not implied.
-          actionable: { criteria: withCandidates.length, candidates: manualCandidatesTotal },
-          untargetedCriteria: untargeted.length,
+          actionable: { criteria: withCandidates.length, emissionsTotal: manualCandidatesTotal },
+          // Mirror `checklist.summary.untargetedCriteriaForProject` —
+          // both surfaces are project-rooted and emit the same scope-
+          // disambiguated name. See `buildScanPlan` docblock in
+          // `scan-assembly.ts` for the cross-surface rationale.
+          untargetedCriteriaForProject: untargeted.length,
           likelyIrrelevant: likelyIrrelevant.length,
           automatedCoverage: {
             standardId: c.standardId,
@@ -576,7 +687,19 @@ export const coverageTool: McpTool = {
     if (sharedPerRuleCoverage.fragment.perRuleCoverageTruncated !== undefined) {
       metaTruncatedFields.push("perRuleCoverage");
     }
-    const baseWarnings = buildScanTimeWarnings({
+    // Per `docs/kb/architecture/ai-first-consumer.md` "Truncation
+    // reporters must reconcile across warnings": spread only the
+    // `analysisCoverage` block onto the wire; the bare
+    // `metaArrayTruncated: true` scalar `buildAnalysisCoverage` returns
+    // is an internal signal already routed through the
+    // `metaArrayTruncatedFields` warning-channel payload above.
+    // Spreading the full helper result would leak the scalar as an
+    // orphan third reporter alongside the warning channel.
+    const analysisCoverageSpread =
+      analysisCoverageField.analysisCoverage === undefined
+        ? {}
+        : { analysisCoverage: analysisCoverageField.analysisCoverage };
+    const scanTime = buildScanTimeWarnings({
       parsedFiles: files,
       violations: result.violations,
       root: cwd,
@@ -600,7 +723,6 @@ export const coverageTool: McpTool = {
       // re-fetch under `verboseMeta: true` or scope down on.
       ...(metaTruncatedFields.length > 0 ? { metaArrayTruncatedFields: metaTruncatedFields } : {}),
     });
-    const warnings = baseWarnings;
     // every tool that runs the scanner
     // ships a `meta` block carrying load-bearing scan-confidence
     // telemetry — `filesScanned`, `configSource`, `rootSource`,
@@ -628,6 +750,19 @@ export const coverageTool: McpTool = {
         perRuleCoverage: sharedPerRuleCoverage.adjustedPerRuleCoverage,
       }),
       perRuleCoverageFragment: sharedPerRuleCoverage.fragment,
+      // Lifted onto `meta` here per
+      // `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+      // the same concept must use one shape" — `buildArtifactsMetaField`
+      // is the canonical grouped/decorated shape of the per-file build-
+      // artifact classification. The `meta.scannedBuildArtifacts` slot
+      // mirrors the shape `scan_project` and `scan_file` already lift
+      // from the same helper, closing the cross-surface lane drift on
+      // identical cwd. Pre-fix, this tool spread the entire helper-
+      // result object at the top level of the response, leaking three
+      // sibling empty containers (`buildArtifactEntries: []`,
+      // `buildArtifactsMetaField: {}`, `scssUnresolvedVariableFiles: []`)
+      // for the same conceptual "absent on this corpus" state.
+      buildArtifactsMetaField: scanTime.buildArtifactsMetaField,
       enabledStandards: standards,
       level,
       cwd,
@@ -654,9 +789,18 @@ export const coverageTool: McpTool = {
       //   - both empty → omit (clean report, no follow-up to name).
       // Conditional-spread discipline (CLAUDE.md §1): `nextStep` +
       // `nextStepStructured` ship as one unit or not at all.
+      // `manualWithCandidates` is present-when-meaningful — it is
+      // conditional-spread off the entry when empty so the omit-
+      // empty rule on the wire shape stays honest. The route
+      // predicate ("non-empty → checklist") collapses to the same
+      // reading by treating the absent field as zero. Pre-compute
+      // here so the inline `buildCoverageNextStep` call stays free
+      // of optional-chain noise (and the handler's cognitive-
+      // complexity score stays bounded).
+      const manualWithCandidatesLen = readManualWithCandidatesLen(entry);
       const nextStep = entry
         ? buildCoverageNextStep({
-            manualWithCandidatesLen: entry.manualWithCandidates.length,
+            manualWithCandidatesLen,
             // Sum the two severity-split lanes so the route still
             // fires when the only emissions are `warning`-severity —
             // an agent that ignores warning-only criteria would still
@@ -684,9 +828,9 @@ export const coverageTool: McpTool = {
         // of how `analysisCoverage` already escapes the meta block on
         // this tool.
         scanned: scannedProject(cwd),
-        ...analysisCoverageField,
+        ...analysisCoverageSpread,
         ...metaField,
-        ...warnings,
+        ...selectScanTimeWireFields(scanTime),
       };
       // last-resort
       // hard-ceiling guard. After every other clip pass settled
@@ -703,12 +847,108 @@ export const coverageTool: McpTool = {
       // — same warning code (`response_dropped_files_oversize`) and
       // same byte-arithmetic payload as `scan_project` / `scan_file`
       // / `checklist`.
-      const budgeted = applyCoverageBudget({ response: fullResponse });
+      // Q17-CHECKLIST-COVERAGE-NO-MINIMUM-HONEST-ENVELOPE: thread the
+      // caller's `maxBytes` override (when supplied) into the budget
+      // helper. Extracted into a helper so the handler stays under the
+      // lint's cognitive-complexity cap. Mirrors `scan_file`'s
+      // `maxBytes` knob and `checklist`'s parallel knob.
+      // Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW: thread the
+      // pre-computed dominant non-vendor top-level directory (and the
+      // resolved cwd) so the slim envelope routes
+      // `nextStepStructured` to `scan_project({restrictToPaths:
+      // [narrowingDir], cwd})` rather than the legacy
+      // `propose_config({})` fallback. The vendor predicate uses the
+      // same `meta.scannedBuildArtifacts` evidence that already rides
+      // on the response so the lane classification stays in agreement
+      // with `scan_project` per "Per-tool lane and warning-set
+      // classification must agree."
+      const budgeted = applyCoverageBudgetWithMaxBytes(fullResponse, params, {
+        files,
+        cwd,
+        buildArtifactsMetaField: scanTime.buildArtifactsMetaField,
+      });
       return textResult(budgeted.response);
     }
     return textResult(entries);
   },
 };
+
+/**
+ * Applies the oversize-envelope budget guard to the assembled
+ * `coverage` response, threading the caller's `maxBytes` override
+ * (when supplied) through to the helper as `hardCeilingChars`.
+ *
+ * Extracted from the handler so the handler stays under the lint's
+ * cognitive-complexity cap. Mirrors the pattern in
+ * `tool-checklist.ts` for the same `maxBytes` knob — the helper is
+ * a thin shim that translates the agent-facing param name
+ * (`maxBytes`, the same wire-level name `scan_file` uses) into the
+ * helper-facing param name (`hardCeilingChars`).
+ *
+ * Per AI-first doctrine "Per-tool lane and warning-set classification
+ * must agree": same override knob shape across every project-rooted
+ * tool that runs the slim guard.
+ */
+function applyCoverageBudgetWithMaxBytes(
+  response: Record<string, unknown>,
+  params: Record<string, unknown>,
+  routingInputs: {
+    readonly files: readonly ParsedFile[];
+    readonly cwd: string;
+    readonly buildArtifactsMetaField: { readonly scannedBuildArtifacts?: unknown };
+  },
+): { readonly response: Record<string, unknown>; readonly truncated: boolean } {
+  const maxBytes = numParam(params, "maxBytes");
+  const narrowingDir = pickCoverageNarrowingDir(
+    routingInputs.files,
+    routingInputs.cwd,
+    routingInputs.buildArtifactsMetaField,
+  );
+  return applyCoverageBudget({
+    response,
+    ...(maxBytes === undefined ? {} : { hardCeilingChars: maxBytes }),
+    ...(narrowingDir === undefined ? {} : { narrowingDir }),
+    cwd: routingInputs.cwd,
+  });
+}
+
+/**
+ * Computes the dominant non-vendor top-level directory for the slim
+ * envelope's structured nextStep. Uses the
+ * `scanTime.buildArtifactsMetaField` already in scope to derive the
+ * vendor predicate (mirroring `scan_project`'s
+ * {@link buildVendorPredicate} so the lane classification agrees
+ * across surfaces) and delegates to
+ * {@link pickNonVendorNarrowingDirFromPaths} for the tally + tie-break
+ * logic.
+ *
+ * Returns `undefined` when no dominant subtree is honestly derivable —
+ * the slim helper then falls back to `propose_config({cwd})` per the
+ * Q16-PROPOSE-CONFIG-NEXTSTEP-DOES-NOT-NARROW closure: explicit `cwd`
+ * is still narrower than the legacy `propose_config({})` because the
+ * implicit-default ambiguity is resolved.
+ *
+ * Extracted so the handler stays under the lint's cognitive-complexity
+ * cap and the conversion shape stays parallel to
+ * `tool-checklist.ts.pickChecklistNarrowingDir` per AI-first doctrine
+ * "Per-tool lane and warning-set classification must agree."
+ */
+function pickCoverageNarrowingDir(
+  files: readonly ParsedFile[],
+  cwd: string,
+  buildArtifactsMetaField: { readonly scannedBuildArtifacts?: unknown },
+): string | undefined {
+  // The shared vendor predicate keys off `scannedBuildArtifacts`
+  // entries' `path` field, which is root-relative POSIX (per
+  // build-artifacts.ts emission). The relative path we pass in
+  // matches that key shape exactly, so the predicate fires on the
+  // intended files.
+  const isVendor = buildVendorPredicate({
+    scannedBuildArtifacts: buildArtifactsMetaField.scannedBuildArtifacts,
+  });
+  const relativePaths = files.map((f) => posixRelative(cwd, f.filePath));
+  return pickNonVendorNarrowingDirFromPaths(relativePaths, isVendor);
+}
 
 /**
  * Assembles the `meta` field for `coverage`.-
@@ -778,6 +1018,23 @@ function buildCoverageMetaField(args: {
    * same input shipped ~95 rows.
    */
   readonly perRuleCoverageFragment: import("./scan-assembly.ts").PerRuleCoverageMetaFragment;
+  /**
+   * Grouped build-artifact classification fragment threaded from
+   * {@link buildScanTimeWarnings} so the canonical
+   * `meta.scannedBuildArtifacts` slot ships on `coverage` the same
+   * shape `scan_project` and `scan_file` already surface. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+   * the same concept must use one shape" — one canonical surface for
+   * per-file build-artifact classification, consumed by every project-
+   * rooted tool through this single channel. The fragment itself is
+   * `{ scannedBuildArtifacts?: BuildArtifactsGrouped }`, present-when-
+   * meaningful — empty when the corpus has zero classified artifacts,
+   * collapsing the field name out of the response (no empty-object
+   * sentinel).
+   */
+  readonly buildArtifactsMetaField: {
+    readonly scannedBuildArtifacts?: import("./build-artifacts.ts").BuildArtifactsGrouped;
+  };
   readonly enabledStandards: readonly string[];
   readonly level: "A" | "AA" | "AAA";
   readonly cwd: string;
@@ -813,6 +1070,14 @@ function buildCoverageMetaField(args: {
     // scan-confidence telemetry the agent reads to triage which
     // extensions the scan never saw.
     ...args.perRuleCoverageFragment,
+    // Canonical surface for the per-file build-artifact classification
+    // — `meta.scannedBuildArtifacts: { grouped, classified }` matches
+    // the shape `scan_project` / `scan_file` already lift from the same
+    // helper. Conditional-spread per the helper's present-when-
+    // meaningful contract (the fragment is `{}` when the corpus has
+    // zero classified artifacts, so the field name disappears entirely
+    // from the response — no empty-object sentinel).
+    ...args.buildArtifactsMetaField,
   };
   return {
     meta: applyMetaCacheMode({
@@ -876,12 +1141,49 @@ function buildCoverageNextStep({
 }
 
 /**
+ * Resolves a single criterion ID to its `{title, level}` from any
+ * loaded standard, returning `undefined` when the ID does not match a
+ * registered criterion. Centralizes the registry walk so callers can
+ * filter unresolved IDs out of their emission rather than fall back to
+ * an empty-string placeholder. Per the AI-first consumer model's
+ * "Ambiguous field shapes are dishonest" rule (see
+ * `docs/kb/architecture/ai-first-consumer.md`), `null`/`""` as the
+ * "didn't resolve" sentinel forces the agent to disambiguate "criterion
+ * exists with no title" from "criterion ID didn't match any loaded
+ * standard," and the silent-miss failure mode is identical to the
+ * canonical empty-string sentinel. Returning `undefined` lets the
+ * `withTitles` / `withTitlesAndCandidates` array helpers omit the
+ * unresolved entry entirely so the headline `length` stays honest.
+ */
+function resolveCriterionMeta(
+  id: string,
+  session: import("./session.ts").McpSession,
+): { readonly title: string; readonly level: string } | undefined {
+  for (const std of session.registry.standards) {
+    const c = std.criteria.find((cr) => cr.id === id);
+    if (c) return { title: c.title, level: c.level };
+  }
+  return undefined;
+}
+
+/**
  * Enriches bare criterion IDs (e.g. "wcag22:2.4.11") with their titles
  * ("Focus Not Obscured (Minimum)") so agents don't have to look them up.
- * Falls back to ID-only if a criterion isn't found in any loaded standard.
+ * Unresolved IDs (no matching criterion in any loaded standard) are
+ * omitted from the returned array — per the AI-first consumer model's
+ * "Ambiguous field shapes are dishonest" rule, the previous fallback
+ * `{ criterionId: id, title: "", level: "" }` used the empty string as
+ * an unknown-sentinel and forced the agent to disambiguate "criterion
+ * exists with no title" from "criterion ID didn't resolve." Omitting
+ * keeps the headline `length` honest (every entry that ships is a
+ * resolved criterion); under normal operation the inputs are
+ * registry-sourced (`c.criteria`, `applicable`, `c.untestableCriteria`,
+ * `failingErrorIds`, etc.) so the filter is a no-op, but a fabricated
+ * unresolved ID can never sneak through as an empty-string row.
  *
  * `criterionId` is the canonical field — matches
- * `checklist.items[].criterionId` and the namespaced-id convention used
+ * `checklist.items[].criteria[0]` (length-1 array — the row's owning
+ * criterion ID) and the namespaced-id convention used
  * elsewhere across the MCP surface (`wcag22:1.4.3`). The legacy `id`
  * alias was previously emitted alongside `criterionId` (under the
  * `deprecated_field_id_renamed_criterionId` warning code) but was
@@ -892,7 +1194,7 @@ function buildCoverageNextStep({
  * under different names on every coverage response inflated payloads
  * and forced the agent to disambiguate which name to read.
  */
-function withTitles(
+export function withTitles(
   criterionIds: readonly string[],
   session: import("./session.ts").McpSession,
 ): readonly {
@@ -900,13 +1202,175 @@ function withTitles(
   readonly title: string;
   readonly level: string;
 }[] {
-  return criterionIds.map((id) => {
-    for (const std of session.registry.standards) {
-      const c = std.criteria.find((cr) => cr.id === id);
-      if (c) return { criterionId: id, title: c.title, level: c.level };
+  const out: { criterionId: string; title: string; level: string }[] = [];
+  for (const id of criterionIds) {
+    const meta = resolveCriterionMeta(id, session);
+    if (meta !== undefined) {
+      out.push({ criterionId: id, title: meta.title, level: meta.level });
     }
-    return { criterionId: id, title: "", level: "" };
+  }
+  return out;
+}
+
+/**
+ * Hard cap on the deduped review-candidate list `coverage` ships under
+ * each `manualWithCandidates` entry. Mirrors `scan_project`'s
+ * `MAX_PAGE_LIMIT` (= 2000) so the two project-rooted candidate
+ * surfaces budget against the same ceiling. The cap only narrows the
+ * deduped position-keyed surface (one entry per `(file, line, column,
+ * reason)` group) — typical real corpora ship far fewer entries; the
+ * cap exists to bound the worst case before the coverage slim envelope
+ * (`applyCoverageBudget`) drops `manualWithCandidates` entirely.
+ */
+const MANUAL_WITH_CANDIDATES_HARD_CAP = 2000;
+
+/**
+ * Per-tool review-candidate
+ * shape must agree across surfaces. Builds the per-entry shape
+ * `{criterionId, title, level, candidates: ScanProjectReviewCandidate[]}`
+ * for `coverage.manualWithCandidates[]` so the array form carries the
+ * grounded file:line evidence already in hand. The candidate count is
+ * `entry.candidates.length` (no scalar twin per "Sibling fields naming
+ * the same concept must use one shape").
+ *
+ * Each criterion's `candidates` is the subset of `dedupedCandidates`
+ * whose `criteria[]` array contains the criterion ID — a candidate
+ * satisfying multiple criteria appears under each owning entry, mirroring
+ * how `checklist.items[].candidates[]` repeats a shared-location candidate
+ * under each owning checklist item. The cross-tool cardinality invariant
+ * (`coverage.manualWithCandidates.length === checklist.items.length` for
+ * the same scope) is preserved by `withCandidates` (the criterion-axis
+ * filter); this helper only attaches the existing candidates surface.
+ *
+ * Falls back to `candidates: []` when the criterion has no grounded
+ * deduped entries. Q15 widened the upstream filter (`withCandidates`)
+ * to include verify-token violation criteria — those criteria appear
+ * in the actionable axis on the violations stream
+ * (`files[].findings[]`) rather than the review-candidate axis, so the
+ * per-entry `candidates: []` shape is honest signal: "the actionable
+ * item lives elsewhere in the response." The agent reads
+ * `meta.findingsByRule` / the violations stream for that criterion's
+ * grounded location. Pre-Q15 this was a defensive-only fallback the
+ * upstream filter prevented; post-Q15 it can fire on a verify-token-
+ * only criterion. The candidate-axis sibling
+ * (`manualCandidateEmissionsTotal`) stays anchored to the review-
+ * candidate stream and reads zero for these entries — the criteria-axis
+ * vs. candidate-axis split is preserved.
+ *
+ * Unresolved IDs (no matching criterion in any loaded standard) are
+ * omitted from the returned array — same closure as `withTitles`.
+ * Pre-fix the helper emitted `{ criterionId: id, title: "", level: "",
+ * candidates }` as an unknown-sentinel row, the canonical "Ambiguous
+ * field shapes are dishonest" failure mode (per
+ * `docs/kb/architecture/ai-first-consumer.md`) — the empty strings
+ * forced the agent to disambiguate "criterion exists with no title"
+ * from "criterion ID didn't resolve" and the cross-surface count
+ * invariant (`coverage[].manualWithCandidates.length` parity with
+ * `checklist.summary.actionable.criteria`) silently inflated when an
+ * unresolved ID slipped through. Inputs are registry-sourced under
+ * normal operation so the filter is a no-op, but a fabricated
+ * unresolved ID can never ship as an empty-string row.
+ */
+export function withTitlesAndCandidates(
+  criterionIds: readonly string[],
+  session: import("./session.ts").McpSession,
+  candidatesByCriterion: ReadonlyMap<string, readonly ScanProjectReviewCandidate[]>,
+): readonly {
+  readonly criterionId: string;
+  readonly title: string;
+  readonly level: string;
+  readonly candidates: readonly ScanProjectReviewCandidate[];
+}[] {
+  const out: {
+    criterionId: string;
+    title: string;
+    level: string;
+    candidates: readonly ScanProjectReviewCandidate[];
+  }[] = [];
+  for (const id of criterionIds) {
+    const meta = resolveCriterionMeta(id, session);
+    if (meta !== undefined) {
+      const candidates = candidatesByCriterion.get(id) ?? [];
+      out.push({ criterionId: id, title: meta.title, level: meta.level, candidates });
+    }
+  }
+  return out;
+}
+
+/**
+ * Indexes the deduped review-candidate stream by criterion ID so the
+ * per-entry `manualWithCandidates[].candidates[]` surface can attach in
+ * O(1) per lookup. A candidate satisfying N criteria appears under each
+ * of the N criterion keys — same conceptual shape `checklist.items[]`
+ * uses when annotating shared candidates across criteria. Encounter
+ * order is preserved (the dedup helper's first-seen ordering) so the
+ * per-entry surface stays deterministic across runs.
+ */
+function indexDedupedCandidatesByCriterion(
+  candidates: readonly ScanProjectReviewCandidate[],
+): ReadonlyMap<string, readonly ScanProjectReviewCandidate[]> {
+  const out = new Map<string, ScanProjectReviewCandidate[]>();
+  for (const c of candidates) {
+    for (const criterionId of c.criteria) {
+      let bucket = out.get(criterionId);
+      if (bucket === undefined) {
+        bucket = [];
+        out.set(criterionId, bucket);
+      }
+      bucket.push(c);
+    }
+  }
+  return out;
+}
+
+/**
+ * Bundles the three per-criterion indexes the per-entry
+ * `manualWithCandidates` build reads from:
+ *   - `candidateCriteria`: the union of every criterion ID a candidate
+ *     touched (drives the `withCandidates` filter on each entry).
+ *   - `candidateCountByCriterion`: per-criterion candidate counts the
+ *     `manualCandidateEmissionsTotal` aggregate sums over.
+ *   - `candidatesByCriterion`: deduped position-keyed candidate list
+ *     attached to each entry's `candidates[]` array (per-tool
+ *     review-candidate shape parity with `scan_project.reviewCandidates[]`
+ *     and `checklist.items[].candidates[]`, including stable
+ *     `findingId`).
+ *
+ * Bundled into one helper so the `handler` closure's cognitive-
+ * complexity score stays under the lint cap as new scan-confidence
+ * telemetry accretes on the response shape. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-candidate
+ * shape must agree across surfaces": the `findingId`, criteria union,
+ * file/line/column/reason fields are shared with the surfaces
+ * `scan_project` and `checklist` already ship, so an agent calling any
+ * of the three on the same cwd addresses the same conceptual candidate
+ * by the same id.
+ *
+ * The deduped surface is capped at `MANUAL_WITH_CANDIDATES_HARD_CAP`
+ * (matching `scan_project`'s `MAX_PAGE_LIMIT`); the coverage slim
+ * envelope (`applyCoverageBudget`) drops `manualWithCandidates`
+ * entirely on oversize so this surface never needs pagination in the
+ * wire shape — the agent's recovery is to re-call with narrower
+ * scope.
+ */
+function buildCandidateIndexes(args: {
+  readonly reportCandidates: readonly ReviewCandidate[];
+  readonly scanRoot: string;
+}): {
+  readonly candidateCriteria: ReadonlySet<string>;
+  readonly candidateCountByCriterion: ReadonlyMap<string, number>;
+  readonly candidatesByCriterion: ReadonlyMap<string, readonly ScanProjectReviewCandidate[]>;
+} {
+  const candidateCriteria = new Set(args.reportCandidates.map((c) => c.criterionId));
+  const candidateCountByCriterion = buildCandidateCountByCriterion(args.reportCandidates);
+  const dedupedCandidates = buildScanProjectReviewCandidates({
+    candidates: args.reportCandidates,
+    manualIds: candidateCriteria,
+    limit: MANUAL_WITH_CANDIDATES_HARD_CAP,
+    scanRoot: args.scanRoot,
   });
+  const candidatesByCriterion = indexDedupedCandidatesByCriterion(dedupedCandidates);
+  return { candidateCriteria, candidateCountByCriterion, candidatesByCriterion };
 }
 
 /**
@@ -1013,12 +1477,14 @@ function buildCandidateCountByCriterion(
  * complexity ceiling. Returns 0 when the list is empty or no criterion
  * has a counted candidate.
  *
- * Doctrine: `manualCandidatesTotal` is the candidate-axis sibling to
- * `actionableManualItems` (criteria-axis); the value must agree with
- * `checklist.totalCandidates` and
- * `checklist.summary.actionable.candidatesUncapped` on identical cwd
- * via the cross-surface count invariant in
- * `docs/kb/architecture/ai-first-consumer.md`.
+ * Doctrine: `manualCandidateEmissionsTotal` (renamed from the bare
+ * `manualCandidatesTotal`) is the candidate-axis sibling to
+ * `manualWithCandidates.length` (criteria-axis); the value must agree
+ * with `checklist.summary.actionable.emissionsTotal` (the shared raw
+ * pre-collapse count) on identical cwd via the cross-surface count
+ * invariant in `docs/kb/architecture/ai-first-consumer.md`. Both
+ * surfaces consume the shared `tallyManualCandidateEmissions` helper
+ * in `manual-criteria-tally.ts` so the count agrees by construction.
  */
 function sumCandidatesAcrossCriteria(
   criteriaWithCandidates: readonly string[],
@@ -1029,6 +1495,55 @@ function sumCandidatesAcrossCriteria(
     total += candidateCountByCriterion.get(id) ?? 0;
   }
   return total;
+}
+
+/**
+ * Q15-LANDMARK-MAIN: union of grounded review-candidate criteria with
+ * low-confidence verify-token violation criteria. Drives the per-
+ * entry `withCandidates` membership test and the `untargeted`
+ * complement, so a `landmark-main` finding shipped at `confidence:
+ * "low"` with `couldBeWrongBecause: ["isolated_component_demo_page"]`
+ * pulls its criterion (`wcag22:1.3.1`) into the `actionableManualItems`
+ * count even though no review candidate was emitted on the candidate
+ * axis. Returns the first input reference unchanged when the second
+ * is empty (no-op fast path) — the common case (zero verify-token
+ * findings) pays nothing.
+ */
+function unionCoverageCriteria(
+  candidateCriteria: ReadonlySet<string>,
+  verifyTokenCriteria: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (verifyTokenCriteria.size === 0) return candidateCriteria;
+  const out = new Set<string>(candidateCriteria);
+  for (const id of verifyTokenCriteria) out.add(id);
+  return out;
+}
+
+/**
+ * Q15-LANDMARK-MAIN: builds the actionable-criteria set the per-entry
+ * `withCandidates` / `untargeted` derivations consume. Walks every
+ * coverage entry's `criteria[]` once to build the in-scope union,
+ * collects verify-token violation criteria gated by that union, then
+ * unions with the grounded review-candidate set. Extracted from the
+ * handler closure so its cognitive-complexity score stays under the
+ * lint cap as scan-confidence telemetry accretes on the response
+ * shape.
+ */
+function buildActionableCriteriaSet(
+  coverage: ReadonlyArray<{ readonly criteria: ReadonlyArray<{ readonly criterionId: string }> }>,
+  candidateCriteria: ReadonlySet<string>,
+  violations: readonly Violation[],
+): ReadonlySet<string> {
+  const allInScopeCriteria = new Set<string>();
+  for (const c of coverage) {
+    for (const cc of c.criteria) allInScopeCriteria.add(cc.criterionId);
+  }
+  const verifyTokenViolationCriteria = collectVerifyTokenViolationCriteria(
+    violations,
+    allInScopeCriteria,
+    undefined,
+  );
+  return unionCoverageCriteria(candidateCriteria, verifyTokenViolationCriteria);
 }
 
 /**
@@ -1081,4 +1596,89 @@ function splitFailingByErrorPresence(
     }
   }
   return { failingErrorIds, warningOnlyIds };
+}
+
+/**
+ * Builds a `{ [key]: titled }` object when the titled array is
+ * non-empty, or an empty object otherwise. Pulls the
+ * present-when-meaningful ternary out of the `entries.map` closure
+ * so the wire-shape's omit-empty contract stays honest while the
+ * map callback's cognitive-complexity score stays bounded.
+ *
+ * Used for both `untestableCriteria` and `manualWithCandidates` —
+ * the two array-form fields whose scalar twins were deleted per
+ * `docs/kb/architecture/ai-first-consumer.md` "Sibling fields naming
+ * the same concept must use one shape." When the upstream array is
+ * empty the field name disappears entirely from the response — an
+ * empty-array sentinel would be the dishonest shape the doctrine
+ * warns against.
+ */
+function buildOptionalArrayField<K extends string, V>(
+  key: K,
+  titled: readonly V[],
+): { readonly [P in K]?: readonly V[] } {
+  if (titled.length === 0) return {};
+  return { [key]: titled } as { readonly [P in K]?: readonly V[] };
+}
+
+/**
+ * Builds the `untargetedCriteriaList` spread payload conditional on
+ * the caller's `showUntargeted` flag. The list rides as a sibling to
+ * the always-present `untargetedCriteriaForProject` count; pulled
+ * into a helper so the entry literal stays free of inline ternaries.
+ */
+function buildUntargetedListField(
+  showUntargeted: boolean,
+  titled: ReturnType<typeof withTitles>,
+): { readonly untargetedCriteriaList?: ReturnType<typeof withTitles> } {
+  if (!showUntargeted) return {};
+  return { untargetedCriteriaList: titled };
+}
+
+/**
+ * Reads the criteria-axis count off an entry's
+ * `manualWithCandidates` array, returning 0 when the field was
+ * conditionally spread out (the array's length-zero / omit-empty
+ * branch). Pulling the optional-chain narrowing into a helper keeps
+ * the `handler` closure's cognitive-complexity score bounded.
+ */
+function readManualWithCandidatesLen(
+  entry: { readonly manualWithCandidates?: ReadonlyArray<unknown> } | undefined,
+): number {
+  if (!entry) return 0;
+  const arr = entry.manualWithCandidates;
+  return arr === undefined ? 0 : arr.length;
+}
+
+/**
+ * Extracts the `{ warnings, warningsDetails }` wire surface from the
+ * full {@link buildScanTimeWarnings} result. The helper returns four
+ * additional fields (`buildArtifactEntries`, `buildArtifactsMetaField`,
+ * `scssUnresolvedVariableFiles`) that are internal predicate inputs —
+ * `buildArtifactsMetaField` is lifted onto `meta.scannedBuildArtifacts`
+ * by {@link buildCoverageMetaField}, and the other two never reach the
+ * wire (the SCSS list rides on
+ * `warningsDetails.scss_unresolved_variables.files[]` already).
+ *
+ * Pre-fix, the handler spread the entire helper result, leaking three
+ * sibling empty containers at the top level for the same conceptual
+ * "absent on this corpus" state — the canonical "Sibling fields naming
+ * the same concept must use one shape" failure mode in
+ * `docs/kb/architecture/ai-first-consumer.md`. Conditional-spread per
+ * the present-when-meaningful contract — codes only appear when at
+ * least one fired.
+ */
+function selectScanTimeWireFields(scanTime: {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+}): {
+  readonly warnings?: readonly import("./warnings.ts").ScanWarningCode[];
+  readonly warningsDetails?: import("./warnings.ts").ScanWarningDetails;
+} {
+  return {
+    ...(scanTime.warnings === undefined ? {} : { warnings: scanTime.warnings }),
+    ...(scanTime.warningsDetails === undefined
+      ? {}
+      : { warningsDetails: scanTime.warningsDetails }),
+  };
 }

@@ -10,7 +10,6 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { conformanceStatementTool } from "../../../src/mcp/tool-conformance-statement.ts";
 import {
@@ -19,9 +18,10 @@ import {
   verifyConformanceBundle,
 } from "../../../src/reports/conformance-signature.ts";
 import { BUILTIN_STANDARDS } from "../../../src/standards/index.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-conform-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-conform-"));
   try {
     return await fn(dir);
   } finally {
@@ -39,9 +39,9 @@ async function call(
 }
 
 async function seedAttestations(cwd: string, records: readonly Record<string, unknown>[]) {
-  await mkdir(join(cwd, ".ra11y"), { recursive: true });
+  await mkdir(posixJoin(cwd, ".ra11y"), { recursive: true });
   await writeFile(
-    join(cwd, ".ra11y", "attestations.jsonl"),
+    posixJoin(cwd, ".ra11y", "attestations.jsonl"),
     `${records.map((r) => JSON.stringify(r)).join("\n")}\n`,
     "utf8",
   );
@@ -53,7 +53,7 @@ describe("conformance_statement: refusal path", () => {
       // Minimal scan target — a single TSX file with no obvious
       // violations. The statement should still refuse because
       // automatable criteria have no non-candidate sources.
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -73,7 +73,7 @@ describe("conformance_statement: refusal path", () => {
 describe("conformance_statement: profile validation", () => {
   it("accepts level=base", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -101,7 +101,7 @@ describe("conformance_statement: profile validation", () => {
 describe("conformance_statement: named profile scope", () => {
   it("profile: wcag22-aa narrows the statement to wcag22 criteria at AA", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -144,7 +144,7 @@ describe("conformance_statement: named profile scope", () => {
 describe("conformance_statement: WCAG §5.3.1 required claim fields", () => {
   it("emits the six required claim fields", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -164,7 +164,7 @@ describe("conformance_statement: WCAG §5.3.1 required claim fields", () => {
 
   it("forwards caller-declared technologies", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -181,7 +181,7 @@ describe("conformance_statement: WCAG §5.3.1 required claim fields", () => {
 
   it("scope.configSnapshot carries session config fields", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { isError, body } = await call(session, {
         standard: "wcag22",
@@ -203,7 +203,7 @@ describe("conformance_statement: durable attestations clear blockers", () => {
       // Seed an attestation for one AA criterion so it clears that
       // specific blocker. Other criteria remain blockers but the
       // count goes down.
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       await seedAttestations(cwd, [
         {
           criterionId: "wcag22:2.4.7",
@@ -247,7 +247,7 @@ function runGit(cwd: string, ...args: string[]): void {
 
 async function initGitRepo(cwd: string): Promise<void> {
   runGit(cwd, "init", "-q", "-b", "main");
-  await writeFile(join(cwd, "README.md"), "# scratch\n");
+  await writeFile(posixJoin(cwd, "README.md"), "# scratch\n");
   runGit(cwd, "add", ".");
   runGit(cwd, "commit", "-q", "-m", "initial");
 }
@@ -283,7 +283,7 @@ function attestationsForProfile(
 describe("conformance_statement: signing flow", () => {
   it("emits warnings: [non_git_repo_signature_omitted] when the project is not a git repo", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       // No commit hash → no signature and the warning fires.
@@ -295,7 +295,7 @@ describe("conformance_statement: signing flow", () => {
   it("omits signature + warning on non-conformant git-repo scan", async () => {
     await withScratch(async (cwd) => {
       await initGitRepo(cwd);
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       // Conformant: false because nothing's attested — no signature
@@ -309,7 +309,7 @@ describe("conformance_statement: signing flow", () => {
   it("signs the statement when every criterion is attested and verifies round-trip", async () => {
     await withScratch(async (cwd) => {
       await initGitRepo(cwd);
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       // Attest every A-level criterion so the ledger has non-candidate
       // evidence for every in-scope criterion — the refusal gate opens
       // and the signing path runs.
@@ -337,7 +337,7 @@ describe("conformance_statement: signing flow", () => {
   it("mutating the file manifest invalidates the signature on re-verify", async () => {
     await withScratch(async (cwd) => {
       await initGitRepo(cwd);
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       await seedAttestations(cwd, attestationsForProfile("wcag22", "A"));
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "A", cwd });
@@ -359,7 +359,7 @@ describe("conformance_statement: signing flow", () => {
   it("mutating the config fingerprint invalidates the signature", async () => {
     await withScratch(async (cwd) => {
       await initGitRepo(cwd);
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       await seedAttestations(cwd, attestationsForProfile("wcag22", "A"));
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "A", cwd });
@@ -382,9 +382,9 @@ describe("conformance_statement: scope.files cap", () => {
     await withScratch(async (cwd) => {
       // Three TSX files — well under the default 50 cap. Expect the
       // full list to ship inline and no truncation warning.
-      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
-      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
-      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      await writeFile(posixJoin(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(posixJoin(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(posixJoin(cwd, "c.tsx"), "export const C = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       const scope = body["scope"] as {
@@ -421,9 +421,9 @@ describe("conformance_statement: scope.files cap", () => {
       // A tiny cap (2) exercises the truncation branch without needing
       // hundreds of fixture files. Three files > cap of 2 → `files`
       // omitted, `filesCount` still names the real count, warning fires.
-      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
-      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
-      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      await writeFile(posixJoin(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(posixJoin(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(posixJoin(cwd, "c.tsx"), "export const C = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, {
         standard: "wcag22",
@@ -451,9 +451,9 @@ describe("conformance_statement: scope.files cap", () => {
 
   it("verboseMeta: true bypasses the cap and returns the full manifest with no truncation warning", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "a.tsx"), "export const A = () => null;\n");
-      await writeFile(join(cwd, "b.tsx"), "export const B = () => null;\n");
-      await writeFile(join(cwd, "c.tsx"), "export const C = () => null;\n");
+      await writeFile(posixJoin(cwd, "a.tsx"), "export const A = () => null;\n");
+      await writeFile(posixJoin(cwd, "b.tsx"), "export const B = () => null;\n");
+      await writeFile(posixJoin(cwd, "c.tsx"), "export const C = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, {
         standard: "wcag22",
@@ -480,7 +480,7 @@ describe("conformance_statement: scope.files cap", () => {
       // 51 files trips the default cap of 50.
       const fileCount = 51;
       for (let i = 0; i < fileCount; i++) {
-        await writeFile(join(cwd, `f${i}.tsx`), `export const F${i} = () => null;\n`);
+        await writeFile(posixJoin(cwd, `f${i}.tsx`), `export const F${i} = () => null;\n`);
       }
       const session = new McpSession();
       const { body: defaultBody } = await call(session, {
@@ -544,9 +544,9 @@ describe("conformance_statement: build-artifact files excluded from claim scope"
       // Two authored TSX files plus one minified CSS bundle. The
       // `.min.css` infix triggers the deterministic
       // `definite-min-infix` classifier verdict.
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
-      await writeFile(join(cwd, "page.tsx"), "export const Page = () => null;\n");
-      await writeFile(join(cwd, "vendor.min.css"), ".a{color:red}\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "page.tsx"), "export const Page = () => null;\n");
+      await writeFile(posixJoin(cwd, "vendor.min.css"), ".a{color:red}\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       const scope = body["scope"] as {
@@ -572,7 +572,7 @@ describe("conformance_statement: build-artifact files excluded from claim scope"
 
   it("omits scope.skippedFiles + scope.skippedFilesCount when no file was flagged", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       const scope = body["scope"] as {
@@ -592,9 +592,9 @@ describe("conformance_statement: build-artifact files excluded from claim scope"
     // enumeration always sees the same value. Composite headline
     // counters split by kind keep this honest at every layer.
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
-      await writeFile(join(cwd, "lib.min.js"), "var a=1;\n");
-      await writeFile(join(cwd, "tooling.min.css"), ".x{}\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "lib.min.js"), "var a=1;\n");
+      await writeFile(posixJoin(cwd, "tooling.min.css"), ".x{}\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       const scope = body["scope"] as {
@@ -612,8 +612,8 @@ describe("conformance_statement: build-artifact files excluded from claim scope"
 
   it("conformance markdown surfaces 'Files skipped (build artifacts)' line when skippedFilesCount > 0", async () => {
     await withScratch(async (cwd) => {
-      await writeFile(join(cwd, "app.tsx"), "export const App = () => null;\n");
-      await writeFile(join(cwd, "vendor.min.css"), ".a{}\n");
+      await writeFile(posixJoin(cwd, "app.tsx"), "export const App = () => null;\n");
+      await writeFile(posixJoin(cwd, "vendor.min.css"), ".a{}\n");
       const session = new McpSession();
       const { body } = await call(session, { standard: "wcag22", level: "AA", cwd });
       expect(typeof body["markdown"]).toBe("string");

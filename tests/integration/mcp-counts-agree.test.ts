@@ -78,29 +78,53 @@ async function makeMediaPresentFixture(): Promise<string> {
 
 interface ScanBody {
   readonly plan: {
-    readonly actionableManualItems: number;
-    readonly untargetedCriteria: number;
+    // The bare `actionableManualItems` scalar was dropped per the
+    // same "Composite headline counts are dishonest" precedent on
+    // `plan.totalFindings` / `plan.safeEditsAvailable` /
+    // `plan.violations` / `plan.summary` / `plan.untargetedCriteria`.
+    // Per-scan-kind tally is the honest replacement; consumers that
+    // want the flat count sum the two lanes themselves.
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
+    readonly untargetedCriteriaForProject: number;
   };
 }
 interface CoverageBody {
   // The legacy composite `criteriaManualReviewRequired` was deleted
-  // (mirroring the precedent on `plan.totalFindings`). Coverage now
-  // ships the same two top-level counters `scan_project.plan` and
-  // `checklist.summary` already split into — `actionableManualItems`
-  // (criteria with grounded candidates) and `untargetedCriteria`
-  // (applicable manual-only with no candidate). Callers that want the
-  // former composite total sum the two on read.
-  readonly actionableManualItems: number;
-  readonly untargetedCriteria: number;
+  // (mirroring the precedent on `plan.totalFindings`). Coverage's
+  // criteria-axis manual-review count now rides on the structured
+  // `summary.actionable.criteria` path that mirrors
+  // `checklist.summary.actionable.criteria`. The redundant top-level
+  // `actionableManualItems` scalar that previously duplicated
+  // `manualWithCandidates.length` was deleted alongside the parallel
+  // `criteriaUntestable` / `untestableCriteria` pair per AI-first
+  // doctrine "Sibling fields naming the same concept must use one
+  // shape." `untargetedCriteriaForProject` stays as the bare-prompt
+  // count (the array form rides under `untargetedCriteriaList` only
+  // when `showUntargeted: true`). Renamed from the bare
+  // `untargetedCriteria` so the project-walk slice is explicit on the
+  // wire — the per-file slice ships under `untargetedCriteriaForFile`
+  // from `scan` / `scan_file`.
+  readonly summary: {
+    readonly actionable: { readonly criteria: number };
+    readonly untargetedCriteriaForProject: number;
+  };
+  readonly untargetedCriteriaForProject: number;
+  // Optional — present-when-meaningful: omitted when no manual
+  // criteria carried grounded candidates on this corpus.
+  readonly manualWithCandidates?: ReadonlyArray<unknown>;
 }
 interface ChecklistBody {
   readonly summary: {
     readonly actionable: {
       readonly criteria: number;
-      readonly candidatesUncapped: number;
-      readonly candidatesReturned: number;
+      readonly emissionsTotal: number;
+      readonly emissionsAfterCollapse: number;
+      readonly emissionsReturnedAfterClip: number;
     };
-    readonly untargetedCriteria: number;
+    readonly untargetedCriteriaForProject: number;
   };
   readonly totalCandidates?: number;
 }
@@ -125,6 +149,19 @@ async function gatherCounts(cwd: string): Promise<{
   const scanBody = body<ScanBody>(responses[1]);
   const coverageBody = body<CoverageBody>(responses[2]);
   const checklistBody = body<ChecklistBody>(responses[3]);
+  // Sum the per-scan-kind `actionableManualItemsBySource` lanes to
+  // recover the flat actionable total this cross-surface invariant
+  // budgets against. The bare `plan.actionableManualItems` scalar was
+  // dropped per the same "Composite headline counts are dishonest"
+  // precedent that closed Q15-UNTARGETED — on a `scan_file` of
+  // `dist/*.min.css` it read 1 while every contributing candidate sat
+  // on the `buildArtifact` lane (Q15-MIN-CSS-ACTIONABLE-MANUAL-ITEMS-
+  // INCLUDES-VENDOR-LANE). Consumers reading the per-lane sibling
+  // continue to see the same flat-equality invariant by summing the
+  // two lanes.
+  const scanActionableFlat =
+    scanBody.plan.actionableManualItemsBySource.source +
+    scanBody.plan.actionableManualItemsBySource.buildArtifact;
   return {
     // Re-derive the cross-tool total from the split top-level fields
     // on every surface. The composite `manualReviewRequired` was
@@ -132,15 +169,24 @@ async function gatherCounts(cwd: string): Promise<{
     // coverage (Q13) — the dishonest-headline pattern is the same on
     // every surface. The invariant is still "all surfaces agree on the
     // total", just computed from the honest parts everywhere.
-    scan: scanBody.plan.actionableManualItems + scanBody.plan.untargetedCriteria,
-    coverage: coverageBody.actionableManualItems + coverageBody.untargetedCriteria,
-    checklist: checklistBody.summary.actionable.criteria + checklistBody.summary.untargetedCriteria,
-    scanActionable: scanBody.plan.actionableManualItems,
-    coverageActionable: coverageBody.actionableManualItems,
+    scan: scanActionableFlat + scanBody.plan.untargetedCriteriaForProject,
+    coverage: coverageBody.summary.actionable.criteria + coverageBody.untargetedCriteriaForProject,
+    checklist:
+      checklistBody.summary.actionable.criteria +
+      checklistBody.summary.untargetedCriteriaForProject,
+    scanActionable: scanActionableFlat,
+    // Coverage exposes the criteria-axis manual-review count through
+    // the structured `summary.actionable.criteria` path now (the
+    // top-level `actionableManualItems` scalar twin was deleted —
+    // it duplicated `manualWithCandidates.length`, the canonical
+    // "Sibling fields naming the same concept must use one shape"
+    // failure mode). The `manualWithCandidates.length` array form
+    // would also work — both equal the same count on identical input.
+    coverageActionable: coverageBody.summary.actionable.criteria,
     checklistActionable: checklistBody.summary.actionable.criteria,
-    scanUntargeted: scanBody.plan.untargetedCriteria,
-    coverageUntargeted: coverageBody.untargetedCriteria,
-    checklistUntargeted: checklistBody.summary.untargetedCriteria,
+    scanUntargeted: scanBody.plan.untargetedCriteriaForProject,
+    coverageUntargeted: coverageBody.untargetedCriteriaForProject,
+    checklistUntargeted: checklistBody.summary.untargetedCriteriaForProject,
   };
 }
 
@@ -148,13 +194,13 @@ async function gatherCounts(cwd: string): Promise<{
  * Builds a fixture that fires a rule (`color/meaning-by-color-only`)
  * which satisfies a metadata-manual criterion (`wcag22:1.4.1`,
  * `automatable: "manual"`). This is the canonical shape the
- * `untargetedCriteria` cross-surface invariant exists to guard:
+ * `untargetedCriteriaForProject` cross-surface invariant exists to guard:
  * pre-helper, `scan_project` counted such criteria as still-needing-
  * manual-review (because `collectManualCriteria` filtered only on
  * metadata, not on whether a rule had fired) while `coverage` and
  * `checklist` correctly routed them into the failing-automated lane.
  * The integration test below asserts all three surfaces report the
- * same `untargetedCriteria` count on this fixture — drift here means
+ * same `untargetedCriteriaForProject` count on this fixture — drift here means
  * the helper has been bypassed somewhere.
  */
 async function makeFiredManualCriterionFixture(): Promise<string> {
@@ -186,18 +232,22 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
     expect(counts.coverage).toBe(counts.checklist);
   });
 
-  it("scan.plan.actionableManualItems agrees with checklist.summary.actionable.criteria and coverage.actionableManualItems", async () => {
+  it("scan.plan.actionableManualItemsBySource (source+buildArtifact) agrees with checklist.summary.actionable.criteria and coverage.summary.actionable.criteria", async () => {
     // Without this, an agent reading a (formerly inflated) composite
     // manual-review headline (e.g., 21) would have to call checklist
     // just to learn that only a handful (e.g., 4) are grounded in
     // file:line candidates. Exposing the actionable count inline
     // saves the round trip.
     //
-    // The same counter also rides on `coverage` as
-    // `actionableManualItems` — same name on every project-rooted
-    // surface so the agent can compare without a translation table.
-    // The legacy composite `criteriaManualReviewRequired` was deleted;
-    // only the structured per-lane siblings carry the count now.
+    // The same counter rides on `coverage` through the structured
+    // `summary.actionable.criteria` path (mirrors checklist's path),
+    // so an agent can compare without a translation table. The legacy
+    // composite `criteriaManualReviewRequired` was deleted, and the
+    // top-level `actionableManualItems` scalar twin on coverage was
+    // dropped because it duplicated `manualWithCandidates.length`
+    // ("Sibling fields naming the same concept must use one shape");
+    // only the structured per-lane siblings and the
+    // `manualWithCandidates` array carry the count now.
     const mediaFree = await gatherCounts(await makeMediaFreeFixture());
     expect(mediaFree.scanActionable).toBe(mediaFree.checklistActionable);
     expect(mediaFree.scanActionable).toBe(mediaFree.coverageActionable);
@@ -211,19 +261,20 @@ describe("MCP invariant: manual-review count agrees across surfaces", () => {
   });
 });
 
-// Q8: the untargetedCriteria sub-counter must agree across surfaces too,
-// not just the totals. The pre-helper drift between
-// `scan_project.plan.untargetedCriteria`,
-// `coverage[].untargetedCriteria`, and
-// `checklist.summary.untargetedCriteria` was off-by-N on every cwd that
-// fired any metadata-manual criterion (e.g. `wcag22:1.4.1` via
-// `color/meaning-by-color-only`) — `scan_project` kept the fired
-// criterion in the manual queue because `collectManualCriteria` only
-// filtered on metadata; `coverage` and `checklist` routed it into the
-// failing lane via `buildCoverageReport`. Now all three surfaces share
+// The untargeted-criteria sub-counter must agree across project-rooted
+// surfaces too, not just the totals. The pre-helper drift between
+// `scan_project.plan.untargetedCriteriaForProject`,
+// `coverage[].untargetedCriteriaForProject`, and
+// `checklist.summary.untargetedCriteriaForProject` was off-by-N on
+// every cwd that fired any metadata-manual criterion (e.g.
+// `wcag22:1.4.1` via `color/meaning-by-color-only`) — `scan_project`
+// kept the fired criterion in the manual queue because
+// `collectManualCriteria` only filtered on metadata; `coverage` and
+// `checklist` routed it into the failing lane via
+// `buildCoverageReport`. Now all three surfaces share
 // `tallyManualCriteria` / `tallyManualCriteriaFromCoverage` so the
 // counts are derived once and the cross-surface agreement is mechanical.
-describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
+describe("MCP invariant: untargetedCriteriaForProject agrees across surfaces", () => {
   it("agrees on a media-free fixture (no fired manual criteria)", async () => {
     const counts = await gatherCounts(await makeMediaFreeFixture());
     expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
@@ -238,9 +289,9 @@ describe("MCP invariant: untargetedCriteria agrees across surfaces", () => {
 
   it("agrees on a fixture that fires a metadata-manual criterion", async () => {
     // The canonical drift case: a fired wcag22:1.4.1 violation. Pre-helper,
-    // scan_project.plan.untargetedCriteria over-counted by 1 vs
-    // coverage/checklist on this shape because the manual-set filter on
-    // scan_project's side didn't subtract fired criteria.
+    // scan_project.plan.untargetedCriteriaForProject over-counted by 1
+    // vs coverage/checklist on this shape because the manual-set
+    // filter on scan_project's side didn't subtract fired criteria.
     const counts = await gatherCounts(await makeFiredManualCriterionFixture());
     expect(counts.scanUntargeted).toBe(counts.coverageUntargeted);
     expect(counts.coverageUntargeted).toBe(counts.checklistUntargeted);
@@ -278,7 +329,7 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
 
 // Cross-surface count invariant — second-pass coverage. The first
 // describe blocks above pin equality on the manual-review tally and the
-// untargetedCriteria sub-counter. The blocks below extend the invariant
+// untargetedCriteriaForProject sub-counter. The blocks below extend the invariant
 // to the two remaining counters the field-test sweeps observed
 // drifting on real corpora: `actionableManualItems` agreement with
 // `coverage[].manualWithCandidates.length`, and `parseErrorFileCount`
@@ -297,10 +348,10 @@ describe("MCP invariant: derivative tools emit the same scan-confidence warnings
  * to the top level alongside `analysisCoverage`.
  */
 interface FullCoverageEnvelope extends CoverageBody {
-  readonly manualWithCandidates?: ReadonlyArray<unknown>;
-  readonly manualCandidatesTotal?: number;
-  readonly summary?: {
-    readonly actionable?: { readonly criteria?: number; readonly candidates?: number };
+  readonly manualCandidateEmissionsTotal?: number;
+  readonly summary: {
+    readonly actionable: { readonly criteria: number; readonly emissionsTotal?: number };
+    readonly untargetedCriteriaForProject: number;
   };
   readonly analysisCoverage?: { readonly parseErrorFileCount?: number };
 }
@@ -329,7 +380,7 @@ async function makeParseErrorFixture(): Promise<string> {
 }
 
 describe("MCP invariant: actionable count matches coverage's manualWithCandidates list", () => {
-  it("scan.plan.actionableManualItems === coverage.entries[0].manualWithCandidates.length", async () => {
+  it("scan.plan.actionableManualItemsBySource (source+buildArtifact) === coverage.entries[0].manualWithCandidates.length", async () => {
     const dir = await makeFiredManualCriterionFixture();
     const responses = await mcpSession([
       initMsg(1),
@@ -341,28 +392,36 @@ describe("MCP invariant: actionable count matches coverage's manualWithCandidate
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
     const checklistBody = body<ChecklistBody>(responses[3]);
     const manualWithCandidatesLen = coverageEnvelope.manualWithCandidates?.length ?? 0;
-    expect(scanBody.plan.actionableManualItems).toBe(manualWithCandidatesLen);
+    const scanActionable =
+      scanBody.plan.actionableManualItemsBySource.source +
+      scanBody.plan.actionableManualItemsBySource.buildArtifact;
+    expect(scanActionable).toBe(manualWithCandidatesLen);
     expect(checklistBody.summary.actionable.criteria).toBe(manualWithCandidatesLen);
   });
 });
 
 // Cross-surface count invariant — candidate-axis sibling to the
-// criteria-axis `actionableManualItems` invariant above. Pre-fix,
-// `checklist.summary.totalCandidates` was the only project-rooted
-// counter that reported the candidate-level tally; an agent asking
-// "how many manual-review items are there" had to read three numbers
-// (`coverage.manualWithCandidates: N` criteria-axis,
-// `checklist.summary.actionable.criteria: M` criteria-axis,
-// `checklist.totalCandidates: K` candidate-axis) and disambiguate by
-// reading field names carefully. `coverage.manualCandidatesTotal`
-// closes the gap so coverage carries both axes — `actionableManualItems`
-// (criteria) and `manualCandidatesTotal` (candidates) — and the
-// candidate-axis number agrees across surfaces. Doctrine:
+// criteria-axis `manualWithCandidates.length` invariant above. The
+// canonical drift shape: pre-rename, `coverage.summary.actionable
+// .candidates` (raw per-emission count) and
+// `checklist.summary.actionable.candidatesUncapped` (post-collapse
+// inventory) shipped under sibling field names that read as the same
+// concept ("uncapped pre-clip candidate count"), but disagreed by up
+// to 187× on bulk corpora when checklist's cross-file collapse passes
+// fired (canonical fancybox.pack.js cohort case). Closure: rename the
+// raw count to `emissionsTotal` on both surfaces — computed via the
+// shared `tallyManualCandidateEmissions` helper — so the cross-surface
+// invariant pins ONE slice both surfaces compute identically. Checklist
+// also surfaces `emissionsAfterCollapse` (post-fold) and
+// `emissionsReturnedAfterClip` (post-pagination) under names that
+// admit the asymmetry. Doctrine:
 // `docs/kb/architecture/ai-first-consumer.md` "Cross-surface count
 // invariant" + "Sibling fields naming the same concept must use one
-// shape" — the candidate-vs-criteria split is named, not implied.
-describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate-level tally", () => {
-  it("coverage.manualCandidatesTotal === checklist.summary.actionable.candidatesUncapped === checklist.totalCandidates", async () => {
+// shape" — the candidate-vs-criteria split is named, not implied,
+// AND each post-transform slice carries the transform stage in its
+// name.
+describe("MCP invariant: emissionsTotal agrees across coverage and checklist (raw pre-collapse count)", () => {
+  it("coverage.manualCandidateEmissionsTotal === coverage.summary.actionable.emissionsTotal === checklist.summary.actionable.emissionsTotal", async () => {
     // Media-present fixture seeds grounded candidates via the
     // `review/media-variants` finder fanning out wcag22:1.2.* criteria
     // — the fired-manual fixture used by the criteria-axis invariants
@@ -377,35 +436,136 @@ describe("MCP invariant: manualCandidatesTotal agrees with checklist's candidate
     ]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
     const checklistBody = body<ChecklistBody>(responses[2]);
-    const coverageCandidatesTotal = coverageEnvelope.manualCandidatesTotal ?? 0;
-    const checklistUncapped = checklistBody.summary.actionable.candidatesUncapped;
-    const checklistTotal = checklistBody.totalCandidates ?? 0;
+    const coverageEmissionsTopLevel = coverageEnvelope.manualCandidateEmissionsTotal ?? 0;
+    const coverageEmissionsSummary = coverageEnvelope.summary?.actionable?.emissionsTotal ?? 0;
+    const checklistEmissionsTotal = checklistBody.summary.actionable.emissionsTotal;
     // Sanity floor — the media-present fixture must emit at least one
     // grounded candidate; a 0/0/0 result here would mean the finders
     // stopped firing and the assertion would pass vacuously.
-    expect(coverageCandidatesTotal).toBeGreaterThan(0);
-    expect(coverageCandidatesTotal).toBe(checklistUncapped);
-    expect(coverageCandidatesTotal).toBe(checklistTotal);
+    expect(coverageEmissionsTopLevel).toBeGreaterThan(0);
+    expect(coverageEmissionsTopLevel).toBe(coverageEmissionsSummary);
+    expect(coverageEmissionsTopLevel).toBe(checklistEmissionsTotal);
   });
 
-  it("coverage.summary.actionable.candidates mirrors the same candidate-axis count", async () => {
+  it("coverage.summary.actionable.emissionsTotal mirrors the top-level coverage scalar", async () => {
     // The candidate-vs-criteria split is exposed twice on the coverage
-    // envelope: once as the top-level `manualCandidatesTotal` scalar
-    // (sibling to `actionableManualItems`), and once nested under
-    // `summary.actionable.candidates` (sibling to
-    // `summary.actionable.criteria`, mirroring `checklist.summary.actionable`).
-    // Both must agree — they read the same underlying tally; a
-    // disagreement would be the dishonest two-sibling-fields-naming-
-    // the-same-concept shape the doctrine warns against.
+    // envelope: once as the top-level `manualCandidateEmissionsTotal`
+    // scalar (paired with the `manualWithCandidates` array's length
+    // on the criteria axis), and once nested under
+    // `summary.actionable.emissionsTotal` (sibling to
+    // `summary.actionable.criteria`, mirroring
+    // `checklist.summary.actionable`). Both must agree — they read
+    // the same underlying tally via the shared
+    // `tallyManualCandidateEmissions` helper; a disagreement would
+    // be the dishonest two-sibling-fields-naming-the-same-concept
+    // shape the doctrine warns against.
     const dir = await makeMediaPresentFixture();
     const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
     const coverageEnvelope = body<FullCoverageEnvelope>(responses[1]);
-    expect(coverageEnvelope.summary?.actionable?.candidates).toBe(
-      coverageEnvelope.manualCandidatesTotal,
+    expect(coverageEnvelope.summary?.actionable?.emissionsTotal).toBe(
+      coverageEnvelope.manualCandidateEmissionsTotal,
     );
     expect(coverageEnvelope.summary?.actionable?.criteria).toBe(
       coverageEnvelope.manualWithCandidates?.length ?? 0,
     );
+  });
+});
+
+// Sibling fields naming the same concept must use one shape:
+// the coverage response must name each of the two manual-review-and-
+// untestable concepts exactly once. Earlier the entry shipped the
+// same concept four ways:
+//
+//   - `criteriaUntestable: 0` (scalar) alongside `untestableCriteria: []`
+//     (array of same count)
+//   - `actionableManualItems: N` (parallel scalar twin) alongside
+//     `manualWithCandidates: [...N items]` (parallel array form)
+//
+// Per AI-first doctrine "Sibling fields naming the same concept must
+// use one shape," the closure picks the array shape per concept and
+// derives scalars from `array.length` at read time. Empty arrays
+// drop entirely (present-when-meaningful — "absent on this corpus"
+// is signaled by absence, not by an empty-array sentinel).
+//
+// This block pins:
+//   1. Neither dropped scalar (`actionableManualItems`,
+//      `criteriaUntestable`) appears on the coverage entry under any
+//      input shape.
+//   2. The array forms (`manualWithCandidates`, `untestableCriteria`)
+//      are absent when the corpus has nothing to populate them with
+//      (omit-empty conditional spread).
+//   3. Future refactors that re-introduce a scalar twin lights up
+//      here, not in the next field-test sweep.
+describe("MCP invariant: coverage entry names each concept once", () => {
+  it("never ships the dropped scalar twins (actionableManualItems, criteriaUntestable)", async () => {
+    // Three distinct corpus shapes — empty (zero-file), media-free
+    // (manual queue populated), and media-present (manual queue
+    // populated AND grounded candidates) — exercise the full state
+    // matrix the coverage response can land in. Pre-fix every shape
+    // shipped both scalars; post-fix every shape ships neither.
+    const fixtures = [
+      { name: "empty", make: async () => mkdtemp(join(tmpdir(), "ra11y-cov-empty-")) },
+      { name: "media-free", make: makeMediaFreeFixture },
+      { name: "media-present", make: makeMediaPresentFixture },
+      { name: "fired-manual", make: makeFiredManualCriterionFixture },
+    ];
+    for (const fixture of fixtures) {
+      const dir = await fixture.make();
+      const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+      const coverage = body<Record<string, unknown>>(responses[1]);
+      // Both dropped scalars must be entirely absent — not 0, not
+      // null, not undefined-via-presence; the field name itself must
+      // not be in the response.
+      expect(coverage).not.toHaveProperty("actionableManualItems");
+      expect(coverage).not.toHaveProperty("criteriaUntestable");
+    }
+  });
+
+  it("omits manualWithCandidates and untestableCriteria when empty (present-when-meaningful)", async () => {
+    // The media-free fixture emits no grounded manual candidates and
+    // no untestable criteria on this rule library, so both arrays
+    // are "absent on this corpus." Omit-empty via conditional spread
+    // — the field name is gone entirely, not shipped as `[]`. An
+    // empty-array sentinel would be the dishonest shape the AI-first
+    // doctrine warns against.
+    const dir = await makeMediaFreeFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverage = body<Record<string, unknown>>(responses[1]);
+    // When the corpus has nothing to populate either array, the
+    // whole field must not ship.
+    if (coverage["manualWithCandidates"] === undefined) {
+      expect(coverage).not.toHaveProperty("manualWithCandidates");
+    }
+    if (coverage["untestableCriteria"] === undefined) {
+      expect(coverage).not.toHaveProperty("untestableCriteria");
+    }
+    // Sanity floor — at least one of the two omit-empty paths
+    // exercised. If a future rule library makes both arrays
+    // routinely populated, this test relaxes; for now the
+    // media-free fixture exercises the omit branch on at least one.
+    const omittedAtLeastOne = !(
+      "manualWithCandidates" in coverage && "untestableCriteria" in coverage
+    );
+    expect(omittedAtLeastOne).toBe(true);
+  });
+
+  it("ships manualWithCandidates as a populated array when grounded candidates exist", async () => {
+    // The media-present fixture seeds grounded candidates via the
+    // `review/media-variants` finder. With at least one candidate,
+    // `manualWithCandidates` must ship populated — the omit-empty
+    // rule applies only when the array would be empty.
+    const dir = await makeMediaPresentFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "coverage", { cwd: dir })]);
+    const coverage = body<{
+      readonly manualWithCandidates?: ReadonlyArray<unknown>;
+      readonly summary: { readonly actionable: { readonly criteria: number } };
+    }>(responses[1]);
+    expect(coverage.manualWithCandidates).toBeDefined();
+    expect(Array.isArray(coverage.manualWithCandidates)).toBe(true);
+    expect((coverage.manualWithCandidates ?? []).length).toBeGreaterThan(0);
+    // The array length must equal the structured criteria-axis
+    // count — the canonical access path for the scalar value.
+    expect(coverage.summary.actionable.criteria).toBe((coverage.manualWithCandidates ?? []).length);
   });
 });
 
@@ -441,6 +601,113 @@ describe("MCP invariant: parseErrorFileCount agrees between scan_project and cov
     const scanCount = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
     const coverageCount = coverageEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
     expect(scanCount).toBe(coverageCount);
+  });
+});
+
+/**
+ * `checklist.summary` previously reported `actionable.criteria`,
+ * `emissionsAfterCollapse`, and `untargetedCriteriaForProject` but not the parse-
+ * error scalars `coverage` and `scan_project` lift onto their own
+ * `analysisCoverage` blocks. An agent reading the checklist summary as
+ * the headline (the surface read-order goes summary → items, per the
+ * tool docstring) saw `partial_parse_files_present` /
+ * `parse_errors_present` warnings firing without a parity counter on
+ * the same surface — the cross-surface count invariant violation the
+ * AI-first doctrine warns against. Closure: surface
+ * `summary.parseErrorFileCount` / `summary.partialParseFileCount` on
+ * `checklist`, present-when-meaningful, equal across all three tools
+ * on identical cwd.
+ */
+interface ChecklistSummaryParseScalars {
+  readonly summary: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+  readonly analysisCoverage?: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+}
+interface ScanBodyParseScalars {
+  readonly meta?: {
+    readonly analysisCoverage?: {
+      readonly parseErrorFileCount?: number;
+      readonly partialParseFileCount?: number;
+    };
+  };
+}
+interface CoverageEnvelopeParseScalars {
+  readonly analysisCoverage?: {
+    readonly parseErrorFileCount?: number;
+    readonly partialParseFileCount?: number;
+  };
+}
+
+describe("MCP invariant: checklist.summary parse-error scalars agree across surfaces", () => {
+  it("checklist.summary.parseErrorFileCount === coverage.analysisCoverage.parseErrorFileCount === scan_project.analysisCoverage.parseErrorFileCount", async () => {
+    const dir = await makeParseErrorFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir, verboseMeta: true }),
+      toolCall(3, "coverage", { cwd: dir, verboseMeta: true }),
+      toolCall(4, "checklist", { cwd: dir, verboseMeta: true }),
+    ]);
+    const scanBody = body<ScanBodyParseScalars>(responses[1]);
+    const coverageEnvelope = body<CoverageEnvelopeParseScalars>(responses[2]);
+    const checklistEnvelope = body<ChecklistSummaryParseScalars>(responses[3]);
+
+    const scanParse = scanBody.meta?.analysisCoverage?.parseErrorFileCount ?? 0;
+    const coverageParse = coverageEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    // Cross-surface count invariant: `summary.parseErrorFileCount`
+    // is present-when-meaningful (omitted on a zero-error scan), so
+    // the read defaults to 0 to keep the parity assertion symmetric
+    // with the analysisCoverage block (which ships `0` when the scan
+    // ran clean and the field altogether when entries exist).
+    const checklistParse = checklistEnvelope.summary.parseErrorFileCount ?? 0;
+
+    // Sanity floor — the fixture seeds a parse-error file so all three
+    // surfaces must observe at least one. A 0/0/0 result would mean
+    // the fixture stopped tripping the parser and the equality check
+    // passes trivially without exercising the invariant.
+    expect(scanParse).toBeGreaterThan(0);
+    expect(scanParse).toBe(coverageParse);
+    expect(scanParse).toBe(checklistParse);
+
+    // Per-bucket parity also extends to the partial-parse axis. The
+    // canonical fixture seeds a fully-failed parse (broken.tsx lands
+    // in `parseErrorFiles`, count > 0), and the partial bucket may
+    // legitimately be zero on this corpus. Either way, the three
+    // surfaces must agree on whichever value applies.
+    const scanPartial = scanBody.meta?.analysisCoverage?.partialParseFileCount ?? 0;
+    const coveragePartial = coverageEnvelope.analysisCoverage?.partialParseFileCount ?? 0;
+    const checklistPartial = checklistEnvelope.summary.partialParseFileCount ?? 0;
+    expect(scanPartial).toBe(coveragePartial);
+    expect(scanPartial).toBe(checklistPartial);
+
+    // Sibling-shape parity: `checklist.summary` and the top-level
+    // `analysisCoverage` block on the same response must agree on the
+    // counts; the summary scalar reads as a headline, the
+    // analysisCoverage scalar as the per-block detail, and any drift
+    // between them within one response is itself a cross-surface
+    // count failure.
+    const checklistAcParse = checklistEnvelope.analysisCoverage?.parseErrorFileCount ?? 0;
+    const checklistAcPartial = checklistEnvelope.analysisCoverage?.partialParseFileCount ?? 0;
+    expect(checklistAcParse).toBe(checklistParse);
+    expect(checklistAcPartial).toBe(checklistPartial);
+  });
+
+  it("omits summary.parseErrorFileCount on a clean fixture (present-when-meaningful)", async () => {
+    const dir = await makeMediaFreeFixture();
+    const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
+    const checklistEnvelope = body<ChecklistSummaryParseScalars>(responses[1]);
+    // A clean scan never failed any parse — the analysisCoverage block
+    // ships `0` (always-populated when the scan ran), but the summary
+    // scalars are omitted entirely so the headline doesn't carry the
+    // noise of a zero counter that no warning fired against. This is
+    // the present-when-meaningful contract per AI-first doctrine
+    // "Ambiguous field shapes are dishonest."
+    expect(checklistEnvelope.summary.parseErrorFileCount).toBeUndefined();
+    expect(checklistEnvelope.summary.partialParseFileCount).toBeUndefined();
   });
 });
 

@@ -54,12 +54,18 @@ ATTESTATIONS
                          Flags entries removed since HEAD, backdated vs
                          their adding commit, or future-dated before
                          commit. Exit 2 on any hard finding.
-  ra11y attest <criterionId> --reason <text> [--verdict pass|fail|na|pending]
+  ra11y attest <criterionId> --reason <text> --evidence-source <source>
+                             [--verdict pass|fail|na|pending]
                              [--rule-ids <id>,<id>] [--scope project|file|line]
                              [--location <file>:<line>[:<col>]] [--by <who>]
+                             [--tool-name <name>] [--run-url <url>]
+                             [--observed-at <iso>]
                          Append a durable attestation to .ra11y/attestations.jsonl.
-                         Reason is required and non-empty. Bare invocations
-                         (missing --reason or empty) exit with code 2.
+                         --reason and --evidence-source are required.
+                         evidence-source: runtime_tool | manual_review |
+                           human_study | declaration.
+                         Bare invocations (missing --reason, --evidence-source,
+                         or empty reason) exit with code 2.
 
 CONFORMANCE
   ra11y conformance [--profile <name>] [--output markdown|json] [--scan-root <path>]

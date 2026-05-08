@@ -83,6 +83,16 @@ export interface RuleRunnerInput extends ContextInput {
    * that don't care about the coverage shape.
    */
   readonly tracker?: RuleEvaluationTracker;
+  /**
+   * Caller-supplied scan root for path normalization in the per-emission
+   * `findingId` hash. When provided, relative `filePath` values resolve
+   * to absolute under this root before hashing so the same rule
+   * emission produces ONE id whether the caller addressed the file
+   * by an absolute path or a `cwd`-relative shape. Per
+   * `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+   * identifiers must be addressable, not collision-prone."
+   */
+  readonly scanRoot?: string;
 }
 
 /** Runs every applicable rule against the given file and returns violations. */
@@ -198,6 +208,7 @@ function runOneRule(rule: Rule, input: RuleRunnerInput, out: Violation[]): void 
         input.filePath,
         input.source,
         input.ast,
+        input.scanRoot,
       ),
     );
   }
@@ -240,6 +251,7 @@ function computeBothIds(
   ruleId: string,
   filePath: string,
   source: string,
+  scanRoot: string | undefined,
 ): { findingId: string; findingGroupId: string } {
   const variantSpread = emitted.variantKey ? { variantKey: emitted.variantKey } : {};
   const findingId = computeFindingId({
@@ -248,6 +260,14 @@ function computeBothIds(
     line: emitted.location.line,
     column: emitted.location.column,
     ...variantSpread,
+    // Per-emission `findingId` cross-surface invariant — see
+    // `src/utils/finding-id.ts` for path-shape semantics. Plumbed
+    // through so the same conceptual rule emission produces ONE id
+    // whether it surfaced via `scan_file` (relative `parsed.filePath`
+    // when the agent passed `path: "rel"` + `cwd`) or
+    // `scan_project` / `checklist` (always absolute, from the
+    // discovery walker).
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   const findingGroupId = computeFindingGroupId({
     ruleId,
@@ -255,6 +275,11 @@ function computeBothIds(
     source,
     line: emitted.location.line,
     ...variantSpread,
+    // findingGroupId stays cross-machine-stable (relativized via the
+    // helper) — its consumers (baseline, scan_diff) read across
+    // machines and need that shape. The scanRoot here is the same
+    // input; the helper applies different normalization per token.
+    ...(scanRoot === undefined ? {} : { scanRoot }),
   });
   return { findingId, findingGroupId };
 }
@@ -280,8 +305,9 @@ function stampViolation(
   filePath: string,
   source: string,
   ast: Ast,
+  scanRoot: string | undefined,
 ): Violation {
-  const { findingId, findingGroupId } = computeBothIds(emitted, ruleId, filePath, source);
+  const { findingId, findingGroupId } = computeBothIds(emitted, ruleId, filePath, source, scanRoot);
   const groupKey = computeGroupKey({
     ruleId,
     shape: shapeAtLocation(ast, emitted.location.line, emitted.location.column),

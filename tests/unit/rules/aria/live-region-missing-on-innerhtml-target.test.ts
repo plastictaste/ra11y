@@ -34,6 +34,15 @@ function scan(files: readonly ParsedFile[]): readonly Violation[] {
   return result.violations.filter((v) => v.ruleId === rule.id);
 }
 
+function scanWithCoverage(files: readonly ParsedFile[]): ReturnType<typeof runScan> {
+  return runScan({
+    standards: [wcag22],
+    rules: [rule],
+    enabled: ["wcag22"],
+    files,
+  });
+}
+
 describe("rule aria/live-region-missing-on-innerhtml-target", () => {
   describe("fires a violation when", () => {
     it("setInterval rewrites innerHTML on a host with no aria-live", () => {
@@ -56,7 +65,7 @@ describe("rule aria/live-region-missing-on-innerhtml-target", () => {
       expect(v[0]?.suggestion).toContain("app.js:2");
       expect(v[0]?.confidence).toBe("medium");
       expect(v[0]?.couldBeWrongBecause).toEqual([
-        "cross_file_html_target_resolution_limited_on_this_input",
+        "cross_file_innerhtml_target_resolution_not_attempted_by_rule",
       ]);
     });
 
@@ -212,6 +221,59 @@ describe("rule aria/live-region-missing-on-innerhtml-target", () => {
       // heuristic emission on speculation, which the AI-first doctrine
       // rejects.
       expect(v).toHaveLength(0);
+    });
+  });
+
+  // Per-rule coverage downgrade — doctrine source:
+  // docs/kb/architecture/ai-first-consumer.md "Per-finding confidence
+  // must reflect per-rule coverage limitations." The rule walks both
+  // halves in `afterProject` when both reach the scan, but on a
+  // single-file substrate (`scan_file` on the HTML alone or JS alone)
+  // the rule cannot resolve the other half — a `coverageConfidence:
+  // "high"` row on this shape would silently mis-state the evidence
+  // model. Declaring `crossFileCapable: false` downgrades to `medium`
+  // with the structured `_not_attempted_by_rule` reason.
+  describe("per-rule coverage downgrade", () => {
+    it("reports coverageConfidence: medium with _not_attempted_by_rule reason on a single-file scan", () => {
+      const { perRuleCoverage } = scanWithCoverage([
+        htmlFile("index.html", `<div id="clock"></div>`),
+      ]);
+      const row = perRuleCoverage.find((r) => r.ruleId === rule.id);
+      expect(row).toBeDefined();
+      expect(row?.coverageConfidence).toBe("medium");
+      expect(row?.reason).toBe("cross_file_innerhtml_target_resolution_not_attempted_by_rule");
+    });
+
+    it("reason code uses the _not_attempted_by_rule suffix (never _limited_on_this_input)", () => {
+      // Suffix-agreement invariant — doctrine source:
+      // docs/kb/architecture/ai-first-consumer.md "Reason-token
+      // suffixes must name the actual predicate, not an input-specific
+      // hiccup." The rule declares `crossFileCapable: false`, so its
+      // cross-file limitation is a permanent rule-design fact, not an
+      // input-specific hiccup. Pin that the per-finding
+      // `couldBeWrongBecause` carries `_not_attempted_by_rule` (never
+      // `_limited_on_this_input`) so per-finding and per-rule layers
+      // agree on the suffix shape.
+      const v = scan([
+        htmlFile(
+          "index.html",
+          `<!DOCTYPE html><html><body><div id="clock"></div><script src="./app.js"></script></body></html>`,
+        ),
+        jsFile(
+          "app.js",
+          `setInterval(() => { document.getElementById('clock').innerHTML = '12:00'; }, 1000);`,
+        ),
+      ]);
+      expect(v.length).toBeGreaterThan(0);
+      for (const finding of v) {
+        const codes = finding.couldBeWrongBecause ?? [];
+        const limitedOnInput = codes.filter((c) => c.endsWith("_limited_on_this_input")).length;
+        const notAttempted = codes.filter((c) => c.endsWith("_not_attempted_by_rule")).length;
+        // At most one of the two suffix shapes; never both.
+        expect(limitedOnInput + notAttempted).toBeLessThanOrEqual(1);
+        expect(limitedOnInput).toBe(0);
+        expect(notAttempted).toBeGreaterThanOrEqual(1);
+      }
     });
   });
 });

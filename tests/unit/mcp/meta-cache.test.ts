@@ -131,7 +131,7 @@ describe("computeMetaDelta", () => {
 
   it("lists fields present in baseline but absent in curr under removedFields", () => {
     const { delta, removedFields } = computeMetaDelta(
-      { filesScanned: 5, autoDetectedWrappers: ["Button"] },
+      { filesScanned: 5, autoDetectedWrappers: { ran: true, candidates: ["Button"] } },
       { filesScanned: 5 },
     );
     expect(delta).toEqual({});
@@ -208,7 +208,7 @@ describe("applyMetaCacheMode", () => {
     applyMetaCacheMode({
       toolName: "scan_project",
       params,
-      fullMeta: { filesScanned: 5, autoDetectedWrappers: ["Button"] },
+      fullMeta: { filesScanned: 5, autoDetectedWrappers: { ran: true, candidates: ["Button"] } },
       session,
     });
     const second = applyMetaCacheMode({

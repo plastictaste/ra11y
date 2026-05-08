@@ -7,7 +7,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { posixDirname, posixJoin } from "../utils/path.ts";
 
 const CONFIG_FILENAMES = [
   "ra11y.config.ts",
@@ -39,7 +39,7 @@ export function buildConfigHint(
   // hint must earn its place in every response, not be wallpaper.
   const nearby = findNearbyConfig(resolvedCwd);
   if (nearby !== null) {
-    return `No ra11y.config found walking up from ${resolvedCwd}${explicitCwd === undefined ? " (the MCP server's spawn directory)" : ""}. A config exists at ${nearby} — retry with \`cwd: "${dirname(nearby)}"\` to load it.`;
+    return `No ra11y.config found walking up from ${resolvedCwd}${explicitCwd === undefined ? " (the MCP server's spawn directory)" : ""}. A config exists at ${nearby} — retry with \`cwd: "${posixDirname(nearby)}"\` to load it.`;
   }
   // No nearby config and caller was explicit about cwd: they're
   // running on defaults intentionally. Silent.
@@ -61,10 +61,10 @@ function findNearbyConfig(startDir: string): string | null {
   let dir = startDir;
   for (let i = 0; i < MAX_ANCESTORS_TO_SEARCH; i += 1) {
     for (const filename of CONFIG_FILENAMES) {
-      const candidate = join(dir, filename);
+      const candidate = posixJoin(dir, filename);
       if (existsSync(candidate)) return candidate;
     }
-    const parent = dirname(dir);
+    const parent = posixDirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }

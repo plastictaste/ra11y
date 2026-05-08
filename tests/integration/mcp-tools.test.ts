@@ -15,11 +15,11 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
-const BAD_ALT_FILE = join(BAD_ALT_DIR, "img-no-alt.html");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const BAD_ALT_FILE = posixJoin(BAD_ALT_DIR, "img-no-alt.html");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -258,7 +258,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: {
           mechanical: { source: number; buildArtifact: number };
           guidance: { source: number; buildArtifact: number };
@@ -271,7 +271,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.meta.scanned).toEqual({ mode: "project", root: BAD_ALT_DIR });
     // The flat `plan.violations`
     // headline was deleted — sum the structured per-lane tally
-    // alongside `plan.notes` for the total finding count.
+    // alongside `plan.infoSeverityFindings` for the total finding count.
     const lanes = body.plan.fixesByClass;
     const errorWarning = lanes
       ? lanes.mechanical.source +
@@ -280,7 +280,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
         (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
       : 0;
-    expect(errorWarning + body.plan.notes).toBeGreaterThan(0);
+    expect(errorWarning + body.plan.infoSeverityFindings).toBeGreaterThan(0);
     expect(body.meta.scanMode).toBe("full");
   });
 
@@ -288,9 +288,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // Initialize a git repo with an initial commit, then write a new bad
     // file and stage it. `changedOnly: true` should scan only that one
     // staged file and truthfully report `scanMode: "changedOnly"`.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-staged-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-staged-"));
     try {
-      await writeFile(join(dir, "clean.html"), "<html><body></body></html>\n");
+      await writeFile(posixJoin(dir, "clean.html"), "<html><body></body></html>\n");
       const git = (args: readonly string[]) =>
         spawnSync("git", [...args], { cwd: dir, stdio: "ignore" });
       git(["init"]);
@@ -299,7 +299,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       git(["add", "."]);
       git(["commit", "-m", "initial"]);
       // New bad file staged on top of the initial commit.
-      await writeFile(join(dir, "bad.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(posixJoin(dir, "bad.html"), '<html><body><img src="/x.png"></body></html>\n');
       git(["add", "bad.html"]);
       const responses = await mcpSession([
         initMsg(1),
@@ -326,9 +326,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // couldn't detect that their diff gate was a no-op. The honest shape
     // is a `no-staged-files` error envelope so the agent can surface
     // the precondition miss and stage files (or drop changedOnly).
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-no-staged-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-no-staged-"));
     try {
-      await writeFile(join(dir, "index.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(
+        posixJoin(dir, "index.html"),
+        '<html><body><img src="/x.png"></body></html>\n',
+      );
       const git = (args: readonly string[]) =>
         spawnSync("git", [...args], { cwd: dir, stdio: "ignore" });
       git(["init"]);
@@ -369,9 +372,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (run a full scan rather than error) but STOP lying about it:
     // `scanMode` reports "full-fallback", never "changedOnly", and
     // `fallbackReason` names why.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-project-not-git-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-project-not-git-"));
     try {
-      await writeFile(join(dir, "index.html"), '<html><body><img src="/x.png"></body></html>\n');
+      await writeFile(
+        posixJoin(dir, "index.html"),
+        '<html><body><img src="/x.png"></body></html>\n',
+      );
       const responses = await mcpSession([
         initMsg(1),
         toolCall(2, "scan_project", { cwd: dir, changedOnly: true }),
@@ -543,9 +549,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // path end-to-end for one of the newly-wired rules
     // (aria/redundant-role-on-host-element — pure deletion, simplest
     // deterministic edit).
-    const tmpDir = await mkdtemp(join(tmpdir(), "ra11y-suggest-fix-edit-"));
+    const tmpDir = await mkdtemp(posixJoin(tmpdir(), "ra11y-suggest-fix-edit-"));
     try {
-      const badFile = join(tmpDir, "index.html");
+      const badFile = posixJoin(tmpDir, "index.html");
       await writeFile(
         badFile,
         '<!DOCTYPE html>\n<html lang="en"><body>\n<nav role="navigation">Links</nav>\n</body></html>\n',
@@ -652,17 +658,62 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(body.disambiguationNote).toMatch(/satisfies|alphabetic|most-specific/);
   });
 
-  it("suggest_fix with a criterion ID that no rule satisfies returns rule-not-found naming the criterion", async () => {
-    // `wcag22:2.4.5` is a manual-only criterion — no automated rule
-    // satisfies it. The criterion bridge falls through to a rule-not-
-    // found envelope; the message must name the criterion (not echo
-    // it as a `ruleId`) so the agent reads the failure honestly. The
-    // remediation hint points at `explain_standard` so the agent has a
-    // next-call pivot beyond `list_rules`.
+  it("suggest_fix with a manual-only criterion ID returns kind: 'guidance' framed as manual-review", async () => {
+    // `wcag22:2.4.5` ("Multiple Ways") is a manual-only criterion — no
+    // automated rule satisfies it. `checklist` ships this criterion as
+    // an addressable item the agent walks via `suggest_fix`, so the
+    // per-call surface MUST address the call honestly rather than fail
+    // with rule-not-found. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Per-tool review-
+    // candidate shape must agree across surfaces" + "One tool call
+    // should answer 'what next?'." The honest shape is `kind: "guidance"`
+    // framed as "manual-review only — verify against the normative spec
+    // text," with the criterion's description and URL embedded so the
+    // agent has the spec hand-off without a second tool call.
     const responses = await mcpSession([
       initMsg(1),
       toolCall(2, "suggest_fix", {
         ruleId: "wcag22:2.4.5",
+        file: BAD_ALT_FILE,
+        line: 1,
+      }),
+    ]);
+    const result = responses[1].result as { isError?: boolean };
+    expect(result.isError).toBeFalsy();
+    const body = bodyOf(responses[1]) as {
+      kind?: string;
+      primary?: { explanation?: string; approach?: string; confidence?: string };
+      alternatives?: { approach: string; explanation: string }[];
+    };
+    expect(body.kind).toBe("guidance");
+    // Explanation must quote the criterion ID + title so the agent
+    // reads the framing as "manual-only" not "we don't know."
+    expect(body.primary?.explanation).toContain("wcag22:2.4.5");
+    expect(body.primary?.explanation).toContain("Multiple Ways");
+    expect(body.primary?.explanation).toMatch(/manual-review only/i);
+    // Spec URL embedded so the agent can pivot directly to the normative
+    // text instead of round-tripping through `explain_standard`.
+    expect(body.primary?.explanation).toContain("https://www.w3.org/TR/WCAG");
+    expect(body.primary?.confidence).toBe("medium");
+    // Alternatives must include a "read the spec" pointer — the
+    // suppression-pragma alternative the prose-only fallback offers is
+    // omitted because pasting a pragma for a criterion the scanner
+    // cannot detect would silence nothing meaningful.
+    expect(body.alternatives?.length).toBeGreaterThan(0);
+    expect(body.alternatives?.some((a) => /spec/i.test(a.approach))).toBe(true);
+  });
+
+  it("suggest_fix with an unrecognized criterion ID still returns rule-not-found", async () => {
+    // Distinct from the manual-only case: a criterion ID that does not
+    // exist in the registry (typo, unsupported standard prefix) is a
+    // real failure mode — the criterion itself is unknown. The handler
+    // routes to rule-not-found (not guidance) so the agent reads the
+    // failure honestly rather than receiving a manual-review pointer to
+    // a criterion that doesn't exist.
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "suggest_fix", {
+        ruleId: "wcag22:99.99.99",
         file: BAD_ALT_FILE,
         line: 1,
       }),
@@ -678,10 +729,8 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.code).toBe("rule-not-found");
-    expect(result.structuredContent?.message).toContain("wcag22:2.4.5");
-    expect(result.structuredContent?.message).toMatch(/criterion/i);
-    expect(result.structuredContent?.details?.requested).toBe("wcag22:2.4.5");
-    expect(result.structuredContent?.remediation).toContain("explain_standard");
+    expect(result.structuredContent?.message).toContain("wcag22:99.99.99");
+    expect(result.structuredContent?.details?.requested).toBe("wcag22:99.99.99");
   });
 
   it("coverage returns automated pass-rate counts for the session standard", async () => {
@@ -691,15 +740,18 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       criteriaTotalForProfile: number;
       criteriaByLevel: Record<string, number>;
       automatedCriteriaPassRate: number;
-      untargetedCriteria: number;
+      untargetedCriteriaForProject: number;
       untargetedCriteriaList?: unknown;
     };
     expect(body.standardId).toBe("wcag22");
     expect(body.criteriaTotalForProfile).toBeGreaterThan(0);
     expect(typeof body.automatedCriteriaPassRate).toBe("number");
     // Count always present; list gated behind showUntargeted (mirrors
-    // checklist tool so default responses stay compact).
-    expect(typeof body.untargetedCriteria).toBe("number");
+    // checklist tool so default responses stay compact). The project-
+    // walk slice ships under `untargetedCriteriaForProject` (the
+    // per-file twin `untargetedCriteriaForFile` ships from `scan` /
+    // `scan_file` instead).
+    expect(typeof body.untargetedCriteriaForProject).toBe("number");
     expect(body.untargetedCriteriaList).toBeUndefined();
   });
 
@@ -710,21 +762,21 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList?: readonly unknown[];
-      untargetedCriteria: number;
+      untargetedCriteriaForProject: number;
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
-    expect(body.untargetedCriteriaList?.length).toBe(body.untargetedCriteria);
+    expect(body.untargetedCriteriaList?.length).toBe(body.untargetedCriteriaForProject);
   });
 
   it("clean scan surfaces limitations as a structured field (not buried in prose)", async () => {
     // Agents skimming a clean response for the next action can miss a
     // "don't claim a11y clean" caveat tucked into nextStep. Surface
     // it as a structured field so the signal is harder to drop.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: {
-        notes: number;
+        infoSeverityFindings: number;
         fixesByClass?: Record<string, number>;
         limitations?: readonly string[];
       };
@@ -876,7 +928,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 
   it("clean scan (directory mode) points at checklist via the structured pair", async () => {
     // top-level location.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan", { paths: [goodDir] })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -899,7 +951,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // finding can be named) is covered by the unit test; end-to-end
     // scans don't reach it via the public surface.
     // top-level location.
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -921,9 +973,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (mirrors the prompts-dedupe on review_candidates). Findings keep
     // `suppressWith` inline because the ruleId makes each one unique
     // and short; only the long placement prose is deduped.
+    // `referenceGuide` is opt-in (default off) per the agent-response
+    // token-cap regression — pass `includeReferenceGuide: true` so the
+    // hoisted prose ships and the assertions below have something to
+    // read.
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR }),
+      toolCall(2, "scan_project", { cwd: BAD_ALT_DIR, includeReferenceGuide: true }),
     ]);
     const body = bodyOf(responses[1]) as {
       files: readonly { findings: readonly Record<string, unknown>[] }[];
@@ -961,9 +1017,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // (`tagName, type, attributes-modulo-id`) differs across siblings
     // and the rollup does not engage — three distinct findings still
     // fire, exercising the fix-description hoist as intended.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-fixdesc-hoist-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-fixdesc-hoist-"));
     try {
-      const fixturePath = join(dir, "form.html");
+      const fixturePath = posixJoin(dir, "form.html");
       await writeFile(
         fixturePath,
         `<!DOCTYPE html>
@@ -977,7 +1033,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
 </html>
 `,
       );
-      const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: dir })]);
+      // `referenceGuide` is opt-in (default off) — pass
+      // `includeReferenceGuide: true` so the hoisted `fixDescriptions`
+      // map ships and the per-rule assertion below has something to
+      // read.
+      const responses = await mcpSession([
+        initMsg(1),
+        toolCall(2, "scan_project", { cwd: dir, includeReferenceGuide: true }),
+      ]);
       const body = bodyOf(responses[1]) as unknown as FixDescriptionHoistBody;
       // At least one rule fired with ≥2 duplicates that hoisted.
       const hoistedRuleIds = Object.keys(body.referenceGuide?.fixDescriptions ?? {});
@@ -1026,9 +1089,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // sibling `fixDescriptionRef` rides anywhere and the prose-bearing
     // field on `fix` is one of `description` (string) or
     // `descriptionRef.hash` (12-hex), never both, never neither.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-cross-surface-fix-shape-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cross-surface-fix-shape-"));
     try {
-      const fixturePath = join(dir, "form.html");
+      const fixturePath = posixJoin(dir, "form.html");
       await writeFile(
         fixturePath,
         `<!DOCTYPE html>
@@ -1110,7 +1173,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("clean scan omits referenceGuide entirely (no findings → no guide)", async () => {
-    const goodDir = join(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
+    const goodDir = posixJoin(PROJECT_ROOT, "tests", "fixtures", "good", "alt-text-missing");
     const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: goodDir })]);
     const body = bodyOf(responses[1]) as {
       plan: { fixesByClass?: Record<string, number> };
@@ -1132,9 +1195,9 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // it satisfies (1.2.4/1.2.6/1.2.7/1.2.8 + cross-standard echoes).
     // After dedup we expect a single entry whose `criteria` array
     // contains the wcag22 video SCs.
-    const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-file-candidates-"));
+    const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-file-candidates-"));
     try {
-      const fixturePath = join(dir, "video.html");
+      const fixturePath = posixJoin(dir, "video.html");
       await writeFile(
         fixturePath,
         "<html><body><video src='/intro.mp4' controls></video></body></html>\n",
@@ -1167,9 +1230,12 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("scan_file hoists suppressPlacement the same way scan_project does", async () => {
+    // `referenceGuide` is opt-in (default off) on both surfaces — pass
+    // `includeReferenceGuide: true` so the hoisted suppressPlacement
+    // map ships and the parity assertion below has something to read.
     const responses = await mcpSession([
       initMsg(1),
-      toolCall(2, "scan_file", { path: BAD_ALT_FILE }),
+      toolCall(2, "scan_file", { path: BAD_ALT_FILE, includeReferenceGuide: true }),
     ]);
     const body = bodyOf(responses[1]) as {
       findings: readonly Record<string, unknown>[];
@@ -1385,11 +1451,11 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR] }),
     ]);
     const baselineBody = bodyOf(baseline[1]) as {
-      items: Array<{ criterionId: string }>;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      items: Array<{ criteria: readonly string[] }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
     };
-    const firstCrit = baselineBody.items[0]?.criterionId;
-    const firstIrrelevant = baselineBody.likelyIrrelevant[0]?.criterionId;
+    const firstCrit = baselineBody.items[0]?.criteria[0];
+    const firstIrrelevant = baselineBody.likelyIrrelevant[0]?.criteria[0];
     if (!(firstCrit && firstIrrelevant)) throw new Error("fixture produced no items");
 
     const skipped = await mcpSession([
@@ -1400,20 +1466,21 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       }),
     ]);
     const body = bodyOf(skipped[1]) as {
-      items: Array<{ criterionId: string }>;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      items: Array<{ criteria: readonly string[] }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
         likelyIrrelevant: number;
         skippedByCaller?: readonly string[];
       };
     };
-    expect(body.items.some((i) => i.criterionId === firstCrit)).toBe(false);
-    expect(body.likelyIrrelevant.some((i) => i.criterionId === firstIrrelevant)).toBe(false);
+    expect(body.items.some((i) => i.criteria[0] === firstCrit)).toBe(false);
+    expect(body.likelyIrrelevant.some((i) => i.criteria[0] === firstIrrelevant)).toBe(false);
     expect(body.summary.skippedByCaller).toEqual([firstCrit, firstIrrelevant].sort());
     expect(body.summary.actionable.criteria).toBeLessThan(baselineBody.items.length + 1);
   });
@@ -1434,7 +1501,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     type Lane = { source: number; buildArtifact: number };
     type PlanShape = {
-      readonly notes: number;
+      readonly infoSeverityFindings: number;
       readonly fixesByClass?: {
         readonly mechanical: Lane;
         readonly guidance: Lane;
@@ -1444,7 +1511,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     };
     function planTotal(plan: PlanShape): number {
       // Per: sum the per-lane tally
-      // alongside `plan.notes` for the total finding count.
+      // alongside `plan.infoSeverityFindings` for the total finding count.
       const lanes = plan.fixesByClass;
       const errorWarning = lanes
         ? lanes.mechanical.source +
@@ -1453,7 +1520,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
           (lanes.runtimeOnly.source + lanes.runtimeOnly.buildArtifact) +
           (lanes.verifyInSource.source + lanes.verifyInSource.buildArtifact)
         : 0;
-      return errorWarning + plan.notes;
+      return errorWarning + plan.infoSeverityFindings;
     }
     const baselineBody = bodyOf(baseline[1]) as {
       plan: PlanShape;
@@ -1508,19 +1575,20 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: unknown[];
         principle?: { number: number; name: string };
       }>;
       untargetedCriteriaList?: unknown;
-      likelyIrrelevant: Array<{ criterionId: string }>;
+      likelyIrrelevant: Array<{ criteria: readonly string[] }>;
       summary: {
         actionable: {
           criteria: number;
-          candidatesUncapped: number;
-          candidatesReturned: number;
+          emissionsTotal: number;
+          emissionsAfterCollapse: number;
+          emissionsReturnedAfterClip: number;
         };
-        untargetedCriteria: number;
+        untargetedCriteriaForProject: number;
         likelyIrrelevant: number;
       } & Record<string, unknown>;
     };
@@ -1531,12 +1599,19 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     const untargetedIds = body.untargetedCriteriaList as readonly unknown[];
     expect(untargetedIds.every((id) => typeof id === "string")).toBe(true);
-    expect(untargetedIds.length).toBe(body.summary.untargetedCriteria);
-    expect(body.items.every((i) => i.candidates.length > 0)).toBe(true);
+    expect(untargetedIds.length).toBe(body.summary.untargetedCriteriaForProject);
+    // Q15-LANDMARK-MAIN: an actionable item carries either a grounded
+    // review candidate (the historical predicate) OR a low-confidence
+    // verify-token violation (the rule said "please verify in
+    // source"). Both axes contribute actionable signal that lands in
+    // `items[]`; the test asserts the union, not just the candidate
+    // axis. The bare-criterion-prompt subset (no grounded candidate
+    // AND no verify-token violation) lives in `untargetedCriteriaForProject`.
+    expect(body.items.length).toBeGreaterThan(0);
     expect(body.summary.actionable.criteria).toBe(body.items.length);
     expect(body.summary.likelyIrrelevant).toBe(body.likelyIrrelevant.length);
     // The previous composite `manualReviewRequired = actionable +
-    // untargetedCriteria` counter was the canonical dishonest-headline
+    // untargetedCriteriaForProject` counter was the canonical dishonest-headline
     // example in docs/kb/architecture/ai-first-consumer.md. It is now
     // absent; callers read the two split counters separately.
     expect(body.summary).not.toHaveProperty("manualReviewRequired");
@@ -1556,12 +1631,13 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // A/AA criterion. The field is dropped — confidence is the
     // honest signal-bearing axis.
     expect(body.summary).not.toHaveProperty("byPriority");
-    // WCAG principle is spec-defined data derived from criterionId;
+    // WCAG principle is spec-defined data derived from criteria[0];
     // surfacing it lets the agent sort beyond level without us
     // inventing a priority ranking.
     for (const item of body.items) {
-      if (!item.criterionId.startsWith("wcag")) continue;
-      const expectedPrincipleNumber = Number(item.criterionId.split(":")[1]?.split(".")[0]);
+      const cid = item.criteria[0];
+      if (cid === undefined || !cid.startsWith("wcag")) continue;
+      const expectedPrincipleNumber = Number(cid.split(":")[1]?.split(".")[0]);
       expect(item.principle?.number).toBe(expectedPrincipleNumber);
       expect(["Perceivable", "Operable", "Understandable", "Robust"]).toContain(
         item.principle?.name ?? "",
@@ -1619,14 +1695,14 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
       toolCall(2, "checklist", { paths: [BAD_ALT_DIR], showUntargeted: true }),
     ]);
     const body = bodyOf(responses[1]) as {
-      untargetedCriteriaList: Array<{ criterionId: string; candidates: unknown[] }>;
-      summary: { untargetedCriteria: number };
+      untargetedCriteriaList: Array<{ criteria: readonly string[]; candidates: unknown[] }>;
+      summary: { untargetedCriteriaForProject: number };
     };
     expect(Array.isArray(body.untargetedCriteriaList)).toBe(true);
     expect(body.untargetedCriteriaList.every((i) => i.candidates.length === 0)).toBe(true);
-    // Full-item shape: each entry carries criterionId + empty candidates array.
-    expect(body.untargetedCriteriaList.every((i) => typeof i.criterionId === "string")).toBe(true);
-    expect(body.summary.untargetedCriteria).toBe(body.untargetedCriteriaList.length);
+    // Full-item shape: each entry carries criteria + empty candidates array.
+    expect(body.untargetedCriteriaList.every((i) => Array.isArray(i.criteria))).toBe(true);
+    expect(body.summary.untargetedCriteriaForProject).toBe(body.untargetedCriteriaList.length);
   });
 
   it("checklist omits untargetedCriteriaList entirely when showUntargeted: false (size-pressure escape)", async () => {
@@ -1640,10 +1716,10 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       untargetedCriteriaList?: unknown;
-      summary: { untargetedCriteria: number };
+      summary: { untargetedCriteriaForProject: number };
     };
     expect(body.untargetedCriteriaList).toBeUndefined();
-    expect(typeof body.summary.untargetedCriteria).toBe("number");
+    expect(typeof body.summary.untargetedCriteriaForProject).toBe("number");
   });
 
   it("checklist annotates candidates that span multiple criteria with criteria array", async () => {
@@ -1656,15 +1732,15 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // signal the agent consumes.
     const { mkdtemp, writeFile } = await import("node:fs/promises");
     const { tmpdir: _tmpdir } = await import("node:os");
-    const dir = await mkdtemp(join(_tmpdir(), "ra11y-criteria-"));
+    const dir = await mkdtemp(posixJoin(_tmpdir(), "ra11y-criteria-"));
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       `<html><body><video src="x.mp4"></video></body></html>`,
     );
     const responses = await mcpSession([initMsg(1), toolCall(2, "checklist", { cwd: dir })]);
     const bodyData = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{
           path: string;
           line: number;
@@ -1700,7 +1776,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{
           path: string;
           suppressWith?: string;
@@ -1713,7 +1789,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
         expect(typeof c.suppressWith).toBe("string");
         expect(c.suppressWith).toContain("ra11y-disable");
         // Scoped to the owning criterion ID.
-        expect(c.suppressWith).toContain(item.criterionId);
+        expect(c.suppressWith).toContain(item.criteria[0]);
         // Per-extension form: HTML / CSS / JSX comment shape MUST
         // match the file's extension so the agent pasting the pragma
         // doesn't corrupt source.
@@ -1774,7 +1850,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     // divergent route files — a reliable source of review candidates
     // grounded in real file:line, which is what the snippet path
     // needs to populate.
-    const fixtureDir = join(
+    const fixtureDir = posixJoin(
       PROJECT_ROOT,
       "tests",
       "fixtures",
@@ -1811,7 +1887,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
   });
 
   it("checklist candidate entries carry snippet with the same shape", async () => {
-    const fixtureDir = join(
+    const fixtureDir = posixJoin(
       PROJECT_ROOT,
       "tests",
       "fixtures",
@@ -1825,7 +1901,7 @@ describe("MCP tools/call round-trip: coverage for all registered tools", () => {
     ]);
     const body = bodyOf(responses[1]) as {
       items: Array<{
-        criterionId: string;
+        criteria: readonly string[];
         candidates: Array<{ path: string; line: number; snippet?: string }>;
       }>;
     };
@@ -1960,7 +2036,8 @@ describe("MCP tools/call: missing-required-param error envelopes", () => {
 // criterion prompts into a single inflated number; the old
 // `plan.fixSuggestionAvailable` summed mechanical edits with prose-only
 // guidance. The manual half is now split into honest top-level counters
-// (`actionableManualItems` + `untargetedCriteria`); the fix half is
+// (`actionableManualItemsBySource` + `untargetedCriteriaForProject` on the project-walk
+// surface, `untargetedCriteriaForFile` on the per-file surface); the fix half is
 // surfaced exclusively as the structured per-lane `fixesByClass` tally
 // (agents sum `fixesByClass.mechanical + fixesByClass.verifyInSource`
 // for the apply-now subset). The former `safeEditsAvailable` composite
@@ -1978,8 +2055,10 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     type Lane = { source: number; buildArtifact: number };
     const body = bodyOf(responses[1]) as {
       plan: Record<string, unknown> & {
-        actionableManualItems?: number;
-        untargetedCriteria?: number;
+        // Per-scan-kind manual-review tally — replaces the dropped bare
+        // `actionableManualItems` headline (Q15-MIN-CSS).
+        actionableManualItemsBySource?: Lane;
+        untargetedCriteriaForProject?: number;
         fixesByClass?: {
           mechanical?: Lane;
           guidance?: Lane;
@@ -1988,16 +2067,26 @@ describe("scan_project plan: composite counters split into honest top-level fiel
         };
       };
     };
-    // Manual split: both counters are top-level integers, present even
-    // when one is zero. Zero on actionable is the honest reading of
-    // "the finders didn't ground anything" — omitting the field would
-    // re-introduce the ambiguity the composite-counter split closed.
-    expect(typeof body.plan.actionableManualItems).toBe("number");
-    expect(typeof body.plan.untargetedCriteria).toBe("number");
-    expect(body.plan.actionableManualItems).toBeGreaterThanOrEqual(0);
-    expect(body.plan.untargetedCriteria).toBeGreaterThanOrEqual(0);
+    // Manual split: the per-scan-kind tally + untargeted count are
+    // top-level structured fields, present even when zero. `scan_project`
+    // is project-walk scope so the untargeted-criteria count ships
+    // under `untargetedCriteriaForProject` (the per-file twin
+    // `untargetedCriteriaForFile` ships from `scan` / `scan_file`).
+    // The bare `actionableManualItems` scalar was dropped per Q15-MIN-CSS
+    // — on a `scan_file` of `dist/*.min.css` it read 1 while every
+    // contributing candidate sat on the `buildArtifact` lane (per
+    // `docs/kb/architecture/ai-first-consumer.md` "Composite headline
+    // counts are dishonest"). Agents sum `source + buildArtifact`
+    // off the structured sibling for the flat budget.
+    expect(typeof body.plan.actionableManualItemsBySource).toBe("object");
+    expect(typeof body.plan.actionableManualItemsBySource?.source).toBe("number");
+    expect(typeof body.plan.actionableManualItemsBySource?.buildArtifact).toBe("number");
+    expect(typeof body.plan.untargetedCriteriaForProject).toBe("number");
+    expect(body.plan.actionableManualItemsBySource?.source ?? -1).toBeGreaterThanOrEqual(0);
+    expect(body.plan.actionableManualItemsBySource?.buildArtifact ?? -1).toBeGreaterThanOrEqual(0);
+    expect(body.plan.untargetedCriteriaForProject).toBeGreaterThanOrEqual(0);
     // The fixture has a full WCAG load, so untargeted is populated.
-    expect(body.plan.untargetedCriteria ?? 0).toBeGreaterThan(0);
+    expect(body.plan.untargetedCriteriaForProject ?? 0).toBeGreaterThan(0);
     // Fix split: the per-lane `fixesByClass` tally is the sole honest
     // shape — the former `safeEditsAvailable` composite was dropped
     // per Q-SHARED-SAFE-EDITS-VS-MECHANICAL-DISAGREEMENT. `fixesByClass`
@@ -2067,6 +2156,13 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     const body = bodyOf(responses[1]) as { plan: Record<string, unknown> };
     expect(body.plan).not.toHaveProperty("manualReviewRequired");
     expect(body.plan).not.toHaveProperty("fixSuggestionAvailable");
+    // Q15-MIN-CSS: the bare `actionableManualItems` scalar was
+    // dropped — the per-scan-kind `actionableManualItemsBySource`
+    // sibling is the honest replacement, and keeping a flat scalar
+    // alongside would re-create the dishonest-composite shape (on
+    // `dist/*.min.css` the bare count read 1 while every contributing
+    // candidate sat on the `buildArtifact` lane).
+    expect(body.plan).not.toHaveProperty("actionableManualItems");
   });
 
   it("scan_project.plan does not carry a `summary` prose blurb — dropped composite", async () => {
@@ -2074,7 +2170,8 @@ describe("scan_project plan: composite counters split into honest top-level fiel
     // tally, notes, actionable manual review, untargeted criteria) into
     // a single composite sentence the agent would read first — a
     // duplicate of the structured siblings (`fixesByClass`, `notes`,
-    // `actionableManualItems`, `untargetedCriteria`). Per the
+    // `actionableManualItems`, `untargetedCriteriaForProject` /
+    // `untargetedCriteriaForFile`). Per the
     // doctrine in `docs/kb/architecture/ai-first-consumer.md`
     // "Composite headline counts are dishonest" the prose was
     // dropped (not renamed) so the structured siblings carry the data

@@ -20,13 +20,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { DEFAULT_CONFIG } from "../../../src/config/defaults.ts";
 import { loadConfig } from "../../../src/config/loader.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "ra11y-config-processes-"));
+  return mkdtempSync(posixJoin(tmpdir(), "ra11y-config-processes-"));
 }
 
 interface StderrCapture {
@@ -63,7 +62,7 @@ describe("loadConfig processes primitive", () => {
   });
 
   it("defaults processes to [] when the field is absent", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({}));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({}));
     const loaded = await loadConfig({ cwd: dir });
     expect(loaded.processes).toEqual([]);
   });
@@ -77,7 +76,7 @@ describe("loadConfig processes primitive", () => {
   it("accepts an explicit empty processes: [] without error", async () => {
     const cap = captureStderr();
     try {
-      writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({ processes: [] }));
+      writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({ processes: [] }));
       const loaded = await loadConfig({ cwd: dir });
       expect(loaded.processes).toEqual([]);
       // Empty array is a valid shape — no stderr diagnostic should fire.
@@ -94,7 +93,7 @@ describe("loadConfig processes primitive", () => {
       "src/pages/checkout/confirm.tsx",
     ];
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ processes: [{ name: "checkout", pages }] }),
     );
     const loaded = await loadConfig({ cwd: dir });
@@ -111,7 +110,7 @@ describe("loadConfig processes primitive", () => {
     // navigation order. See ADR 0016.
     const pages = ["src/c.tsx", "src/a.tsx", "src/b.tsx"];
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ processes: [{ name: "signup", pages }] }),
     );
     const loaded = await loadConfig({ cwd: dir });
@@ -123,7 +122,7 @@ describe("loadConfig processes primitive", () => {
 
   it("accepts multiple distinct processes", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         processes: [
           { name: "checkout", pages: ["src/pages/checkout/cart.tsx"] },
@@ -139,7 +138,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({
           processes: [
             { name: "checkout", pages: ["a.tsx"] },
@@ -162,7 +161,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({ processes: [{ name: "checkout", pages: [] }] }),
       );
       const loaded = await loadConfig({ cwd: dir });
@@ -179,7 +178,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({ processes: [{ name: "", pages: ["a.tsx"] }] }),
       );
       const loaded = await loadConfig({ cwd: dir });
@@ -196,7 +195,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({
           processes: [{ name: "checkout", pages: ["a.tsx", 42, "b.tsx"] }],
         }),
@@ -215,7 +214,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({
           processes: [{ name: "checkout", pages: ["a.tsx", ""] }],
         }),
@@ -233,7 +232,7 @@ describe("loadConfig processes primitive", () => {
     const cap = captureStderr();
     try {
       writeFileSync(
-        join(dir, "ra11y.config.json"),
+        posixJoin(dir, "ra11y.config.json"),
         JSON.stringify({ processes: { name: "oops", pages: ["a.tsx"] } }),
       );
       const loaded = await loadConfig({ cwd: dir });
@@ -247,7 +246,10 @@ describe("loadConfig processes primitive", () => {
   it("rejects a non-object process entry with a clear stderr diagnostic", async () => {
     const cap = captureStderr();
     try {
-      writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({ processes: ["checkout"] }));
+      writeFileSync(
+        posixJoin(dir, "ra11y.config.json"),
+        JSON.stringify({ processes: ["checkout"] }),
+      );
       const loaded = await loadConfig({ cwd: dir });
       expect(loaded.processes).toEqual([]);
       expect(cap.output()).toContain("processes[0]");

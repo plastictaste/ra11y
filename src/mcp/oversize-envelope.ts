@@ -287,13 +287,44 @@ export function oversizeEnvelopeWarningsField(args: {
   if (!warnings.includes("response_dropped_files_oversize")) {
     warnings.push("response_dropped_files_oversize");
   }
+  // Per the AI-first doctrine "Truncation reporters must reconcile
+  // across warnings": when the meta-array cap fired earlier in the
+  // pipeline (`response_meta_truncated` already in `baseWarnings`) AND
+  // the slim envelope is now dropping top-level meta keys, both
+  // reporters carry truncation evidence on disjoint scopes. The cross-
+  // links point each reporter at the other so an agent reading either
+  // side discovers the second channel without enumerating every
+  // warning code blind. Both `seeAlso` strings are dotted payload
+  // paths, deterministic across runs.
+  const metaArrayReporterCofires =
+    warnings.includes("response_meta_truncated") &&
+    metaFieldsDropped !== undefined &&
+    metaFieldsDropped.length > 0;
+  // Patch `response_meta_truncated.seeAlso` onto the carried base
+  // payload when both reporters co-fire. The base details are spread
+  // first into the new details object, so we materialize a fresh
+  // payload value rather than mutating the input — preserves purity.
+  const patchedBaseDetails: Record<string, unknown> = { ...(baseWarningsDetails ?? {}) };
+  if (metaArrayReporterCofires) {
+    const existingMetaTruncated = patchedBaseDetails["response_meta_truncated"];
+    if (
+      existingMetaTruncated !== undefined &&
+      existingMetaTruncated !== null &&
+      typeof existingMetaTruncated === "object"
+    ) {
+      patchedBaseDetails["response_meta_truncated"] = {
+        ...(existingMetaTruncated as Record<string, unknown>),
+        seeAlso: "warningsDetails.response_dropped_files_oversize.metaFieldsDropped",
+      };
+    }
+  }
   // Warnings-details schema discipline: stamp the rich payload for
   // `response_dropped_files_oversize` first, then run
   // `fillMissingWarningDetails` to ensure every other code carried in
   // from `baseWarnings` (binary-presence codes that the caller's
   // base channel built without keys, defensively) also has a key.
   const warningsDetails = fillMissingWarningDetails(warnings, {
-    ...(baseWarningsDetails ?? {}),
+    ...patchedBaseDetails,
     response_dropped_files_oversize: {
       preDropBytes: reason.preDropBytes,
       hardCeilingBytes: reason.hardCeilingBytes,
@@ -301,6 +332,9 @@ export function oversizeEnvelopeWarningsField(args: {
       totalFilesWithFindings: reason.totalFilesWithFindings,
       ...(metaFieldsDropped !== undefined && metaFieldsDropped.length > 0
         ? { metaFieldsDropped }
+        : {}),
+      ...(metaArrayReporterCofires
+        ? { metaTruncationSeeAlso: "warningsDetails.response_meta_truncated.fields" }
         : {}),
       ...(slimTruncations !== undefined && slimTruncations.length > 0 ? { slimTruncations } : {}),
     },

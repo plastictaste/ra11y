@@ -63,12 +63,8 @@ async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   }
 }
 
-function git(cwd: string, args: readonly string[], env?: Record<string, string>): void {
-  const res = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: env === undefined ? process.env : { ...process.env, ...env },
-  });
+function git(cwd: string, args: readonly string[]): void {
+  const res = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (res.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed: ${res.stderr}`);
   }
@@ -88,17 +84,60 @@ function initRepo(cwd: string): void {
 }
 
 /**
- * Commit every staged + working-tree change with explicit author and
- * committer dates. `git rev-list --before=<ts>` reads committer-date,
- * so pinning both timestamps makes stamp resolution deterministic
- * across machines regardless of wall-clock precision.
+ * Commit every staged + working-tree change with whatever wall-clock
+ * date git happens to assign. We deliberately AVOID `GIT_AUTHOR_DATE`
+ * / `GIT_COMMITTER_DATE` env-var passthrough — Windows runners have
+ * shown the env passthrough to be unreliable in practice (Bun /
+ * spawnSync env-block encoding subtleties), and when committer-date
+ * defaults to wall-clock-now while the test stamps the attestation at
+ * a hard-coded past timestamp, `git rev-list --before=<stamp>` finds
+ * no commit and the staleness probe returns null — the test then sees
+ * `entry.stale === undefined` instead of `true`.
+ *
+ * The env-free contract: tests using this helper read back the actual
+ * committer-date (`%cI`) and compute relative stamp timestamps from
+ * those values, so resolution stays deterministic regardless of host
+ * OS or env-var fidelity. {@link readCommitterDateOfHead} is the
+ * companion helper.
  */
-function commit(cwd: string, message: string, isoDate: string): void {
+function commit(cwd: string, message: string): void {
   git(cwd, ["add", "-A"]);
-  git(cwd, ["commit", "--quiet", "--allow-empty", "--date", isoDate, "-m", message], {
-    GIT_AUTHOR_DATE: isoDate,
-    GIT_COMMITTER_DATE: isoDate,
-  });
+  git(cwd, ["commit", "--quiet", "--allow-empty", "-m", message]);
+}
+
+/**
+ * Returns the committer-date of HEAD as an ISO 8601 string.
+ * `git log -1 --format=%cI` emits a strict ISO 8601 timestamp; we
+ * pass it back to `Date.parse` to compute "halfway between two
+ * commits" timestamps for stamp positioning.
+ */
+function readCommitterDateOfHead(cwd: string): string {
+  const r = spawnSync("git", ["log", "-1", "--format=%cI"], { cwd, encoding: "utf8" });
+  if (r.status !== 0) throw new Error(`git log failed: ${r.stderr}`);
+  return r.stdout.trim();
+}
+
+/**
+ * Returns an ISO timestamp halfway between two ISO timestamps. Used
+ * to position an attestation stamp strictly between two commits so
+ * `git rev-list --before=<stamp>` deterministically picks the earlier
+ * commit even when the two committer-dates are seconds apart.
+ */
+function midpointIso(earlierIso: string, laterIso: string): string {
+  const ms = (Date.parse(earlierIso) + Date.parse(laterIso)) / 2;
+  return new Date(ms).toISOString();
+}
+
+/**
+ * Sleeps long enough that two consecutive `git commit` calls land on
+ * distinct committer-second timestamps. Git's committer-date has
+ * 1-second resolution, so 1100ms is the minimum guarantee. Used by
+ * tests that need `commit1.cdate < commit2.cdate` to compute a
+ * midpoint — without the wait, both commits stamp the same second and
+ * the midpoint computation collapses.
+ */
+async function waitForNextCommitterSecond(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 1100));
 }
 
 async function callTool(cwd: string): Promise<ListAttestationsResponse> {
@@ -108,14 +147,6 @@ async function callTool(cwd: string): Promise<ListAttestationsResponse> {
   return JSON.parse(result.content[0]?.text ?? "") as ListAttestationsResponse;
 }
 
-// Fixed timeline shared across tests. Commits authored at T0 and T2,
-// attestations stamped at T1 (strictly between). Explicit dates make
-// `git rev-list --before=<ts>` resolution deterministic regardless of
-// the test host's wall-clock precision.
-const T0 = "2026-01-01T00:00:00.000Z";
-const T1 = "2026-02-01T00:00:00.000Z";
-const T2 = "2026-03-01T00:00:00.000Z";
-
 describe("list_attestations: empty ledger", () => {
   // Guards the affirmative-empty contract: an empty ledger surfaces
   // `attestations: []` and `totalCount: 0` — not a sign the tool never
@@ -124,7 +155,7 @@ describe("list_attestations: empty ledger", () => {
     await withScratch(async (dir) => {
       initRepo(dir);
       await writeFile(join(dir, "README.md"), "# scratch\n");
-      commit(dir, "initial", T0);
+      commit(dir, "initial");
       const body = await callTool(dir);
       expect(body.attestations).toEqual([]);
       expect(body.meta.totalCount).toBe(0);
@@ -143,15 +174,21 @@ describe("list_attestations: fresh attestation", () => {
     await withScratch(async (dir) => {
       initRepo(dir);
       await writeFile(join(dir, "README.md"), "# scratch\n");
-      commit(dir, "initial", T0);
+      commit(dir, "initial");
+      // Read the actual committer-date of the only commit; stamp the
+      // attestation 1ms after it so the probe resolves stamp → initial
+      // commit, which is also HEAD. Reading committer-date back from
+      // git itself sidesteps any host-specific env-var passthrough
+      // weirdness — see the `commit` helper's docblock for why we
+      // avoid GIT_AUTHOR_DATE / GIT_COMMITTER_DATE on Windows.
+      const initialCdate = readCommitterDateOfHead(dir);
+      const stampIso = new Date(Date.parse(initialCdate) + 1).toISOString();
 
-      // Stamp the attestation at T1 (> T0, no commits after). The
-      // probe resolves stamp → initial commit === HEAD → fresh.
       await appendAttestation(dir, {
         criterionId: "wcag22:2.4.7",
         by: "ci-bot",
         reason: "runtime harness 2026-04-18 reported pass for focus-visible",
-        attestedAt: T1,
+        attestedAt: stampIso,
         evidenceSource: "runtime_tool",
         toolName: "runtime-harness 1.0.0",
         verdict: "pass",
@@ -193,31 +230,39 @@ describe("list_attestations: stale attestation", () => {
       const targetFile = join(dir, "src", "Button.tsx");
       await mkdir(join(dir, "src"), { recursive: true });
       await writeFile(targetFile, "export function Button() { return null; }\n");
-      commit(dir, "initial", T0);
+      commit(dir, "initial");
+      const initialCdate = readCommitterDateOfHead(dir);
 
-      // Stamp the attestation at T1 — after the initial commit but
-      // before any further commits. `git rev-list --before=T1` picks
-      // the initial commit as the stamp, while HEAD will advance to
-      // the second commit below.
-      await appendAttestation(dir, {
-        criterionId: "wcag22:2.4.7",
-        by: "alice",
-        reason: "manual keyboard traversal confirmed for Button",
-        attestedAt: T1,
-        evidenceSource: "manual_review",
-        verdict: "pass",
-        scope: "file",
-        location: { filePath: targetFile, line: 1, column: 1 },
-      });
+      // Force a 1-second gap so the second commit lands on a distinct
+      // committer-second; without this, `--before=midpoint` resolution
+      // is ambiguous when both commits share a second.
+      await waitForNextCommitterSecond();
 
-      // Mutate the scoped file and commit at T2 so the probe sees a
+      // Mutate the scoped file and commit so the probe sees a
       // non-empty `changedFilesBetween(stamp, HEAD)` containing the
       // scoped Button.tsx path.
       await writeFile(
         targetFile,
         "export function Button() { return <button type='button' />; }\n",
       );
-      commit(dir, "update Button", T2);
+      commit(dir, "update Button");
+      const updateCdate = readCommitterDateOfHead(dir);
+
+      // Stamp the attestation strictly between the two commits so
+      // `git rev-list -n 1 --before=<stamp> HEAD` deterministically
+      // picks the initial commit as the stamp anchor, while HEAD
+      // remains at the update commit.
+      const stampIso = midpointIso(initialCdate, updateCdate);
+      await appendAttestation(dir, {
+        criterionId: "wcag22:2.4.7",
+        by: "alice",
+        reason: "manual keyboard traversal confirmed for Button",
+        attestedAt: stampIso,
+        evidenceSource: "manual_review",
+        verdict: "pass",
+        scope: "file",
+        location: { filePath: targetFile, line: 1, column: 1 },
+      });
 
       const body = await callTool(dir);
       expect(body.attestations.length).toBe(1);
@@ -283,25 +328,29 @@ describe("list_attestations: file-scope with unrelated changes", () => {
       const unrelatedFile = join(dir, "src", "Icon.tsx");
       await writeFile(scopedFile, "export const Button = () => null;\n");
       await writeFile(unrelatedFile, "export const Icon = () => null;\n");
-      commit(dir, "initial", T0);
+      commit(dir, "initial");
+      const initialCdate = readCommitterDateOfHead(dir);
 
+      await waitForNextCommitterSecond();
+
+      // Change ONLY the unrelated file, then commit. The probe reads
+      // changedFilesBetween(stamp, HEAD) and sees just Icon.tsx — the
+      // scoped Button.tsx is absent, so the record stays fresh.
+      await writeFile(unrelatedFile, "export const Icon = () => <svg />;\n");
+      commit(dir, "update Icon");
+      const updateCdate = readCommitterDateOfHead(dir);
+
+      const stampIso = midpointIso(initialCdate, updateCdate);
       await appendAttestation(dir, {
         criterionId: "wcag22:2.4.7",
         by: "alice",
         reason: "manual keyboard traversal confirmed for Button",
-        attestedAt: T1,
+        attestedAt: stampIso,
         evidenceSource: "manual_review",
         verdict: "pass",
         scope: "file",
         location: { filePath: scopedFile, line: 1, column: 1 },
       });
-
-      // Change ONLY the unrelated file, then commit at T2. The probe
-      // reads changedFilesBetween(stamp, HEAD) and sees just
-      // Icon.tsx — the scoped Button.tsx is absent, so the record
-      // stays fresh.
-      await writeFile(unrelatedFile, "export const Icon = () => <svg />;\n");
-      commit(dir, "update Icon", T2);
 
       const body = await callTool(dir);
       expect(body.attestations.length).toBe(1);

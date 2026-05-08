@@ -25,17 +25,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   _resetExtensionPresenceProbeCache,
   probeExtensionsAtRoot,
 } from "../../../src/mcp/extension-presence-probe.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 describe("probeExtensionsAtRoot", () => {
   let tmp: string;
   beforeEach(() => {
     _resetExtensionPresenceProbeCache();
-    tmp = mkdtempSync(join(tmpdir(), "ra11y-extprobe-"));
+    tmp = mkdtempSync(posixJoin(tmpdir(), "ra11y-extprobe-"));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
@@ -49,7 +49,7 @@ describe("probeExtensionsAtRoot", () => {
   });
 
   it("returns the matching extension set when files exist at the root (extension-present)", async () => {
-    writeFileSync(join(tmp, "styles.css"), "/* canonical source */", "utf8");
+    writeFileSync(posixJoin(tmp, "styles.css"), "/* canonical source */", "utf8");
     const found = await probeExtensionsAtRoot(tmp, new Set([".css"]));
     expect(found.has(".css")).toBe(true);
   });
@@ -58,8 +58,8 @@ describe("probeExtensionsAtRoot", () => {
     // The whole point of the probe is to detect what scope filters
     // pruned. `dist/` is a `DEFAULT_IGNORED_DIRS` entry the discovery
     // walker skips by default — the probe must NOT skip it.
-    mkdirSync(join(tmp, "dist"), { recursive: true });
-    writeFileSync(join(tmp, "dist", "styles.css"), "/* compiled */", "utf8");
+    mkdirSync(posixJoin(tmp, "dist"), { recursive: true });
+    writeFileSync(posixJoin(tmp, "dist", "styles.css"), "/* compiled */", "utf8");
     const found = await probeExtensionsAtRoot(tmp, new Set([".css"]));
     expect(found.has(".css")).toBe(true);
   });
@@ -69,22 +69,22 @@ describe("probeExtensionsAtRoot", () => {
     // not authored code) — the probe skips them so a Tailwind project
     // with vendored CSS in a transitive dependency doesn't read as
     // "extension present at cwd."
-    mkdirSync(join(tmp, "node_modules", "some-pkg"), { recursive: true });
+    mkdirSync(posixJoin(tmp, "node_modules", "some-pkg"), { recursive: true });
     writeFileSync(
-      join(tmp, "node_modules", "some-pkg", "vendored.css"),
+      posixJoin(tmp, "node_modules", "some-pkg", "vendored.css"),
       "/* irrelevant */",
       "utf8",
     );
-    mkdirSync(join(tmp, ".git", "objects"), { recursive: true });
-    writeFileSync(join(tmp, ".git", "irrelevant.css"), "/* git internal */", "utf8");
+    mkdirSync(posixJoin(tmp, ".git", "objects"), { recursive: true });
+    writeFileSync(posixJoin(tmp, ".git", "irrelevant.css"), "/* git internal */", "utf8");
     const found = await probeExtensionsAtRoot(tmp, new Set([".css"]));
     expect(found.size).toBe(0);
   });
 
   it("returns multiple extensions when several wanted shapes exist in the tree", async () => {
-    writeFileSync(join(tmp, "page.html"), "<!doctype html>", "utf8");
-    mkdirSync(join(tmp, "src"), { recursive: true });
-    writeFileSync(join(tmp, "src", "App.tsx"), "export {}", "utf8");
+    writeFileSync(posixJoin(tmp, "page.html"), "<!doctype html>", "utf8");
+    mkdirSync(posixJoin(tmp, "src"), { recursive: true });
+    writeFileSync(posixJoin(tmp, "src", "App.tsx"), "export {}", "utf8");
     const found = await probeExtensionsAtRoot(tmp, new Set([".html", ".tsx", ".css"]));
     expect(found.has(".html")).toBe(true);
     expect(found.has(".tsx")).toBe(true);
@@ -92,23 +92,23 @@ describe("probeExtensionsAtRoot", () => {
   });
 
   it("returns an empty set when extensions arg is empty (no walk, no I/O)", async () => {
-    writeFileSync(join(tmp, "anything.css"), "/* never inspected */", "utf8");
+    writeFileSync(posixJoin(tmp, "anything.css"), "/* never inspected */", "utf8");
     const found = await probeExtensionsAtRoot(tmp, new Set());
     expect(found.size).toBe(0);
   });
 
   it("returns empty when root does not exist (defensive fallthrough)", async () => {
-    const found = await probeExtensionsAtRoot(join(tmp, "does-not-exist"), new Set([".css"]));
+    const found = await probeExtensionsAtRoot(posixJoin(tmp, "does-not-exist"), new Set([".css"]));
     expect(found.size).toBe(0);
   });
 
   it("caches per (root, wanted) pair so repeat invocations skip filesystem work", async () => {
-    writeFileSync(join(tmp, "first.css"), "/* */", "utf8");
+    writeFileSync(posixJoin(tmp, "first.css"), "/* */", "utf8");
     const a = await probeExtensionsAtRoot(tmp, new Set([".css"]));
     expect(a.has(".css")).toBe(true);
     // Add another file after the first probe — if the cache is honored,
     // the second call returns the cached set without seeing `.html`.
-    writeFileSync(join(tmp, "second.html"), "<!doctype html>", "utf8");
+    writeFileSync(posixJoin(tmp, "second.html"), "<!doctype html>", "utf8");
     const b = await probeExtensionsAtRoot(tmp, new Set([".css"]));
     // Same wanted set as the first call — cache must hit, so the
     // second probe still reports only `.css` (the cached answer)

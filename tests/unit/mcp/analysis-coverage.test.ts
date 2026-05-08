@@ -1857,6 +1857,52 @@ describe("buildAnalysisCoverage — hints", () => {
       expect(Object.hasOwn(entries?.[0] ?? {}, "triggerToken")).toBe(false);
     });
 
+    it("omits reason when the parser records no message (present-when-meaningful, no empty-string sentinel)", () => {
+      // Per the AI-first consumer model's "Ambiguous field shapes are
+      // dishonest" rule: a parse-error entry whose head error has no
+      // human-readable message must omit the `reason` field entirely
+      // rather than ship `reason: ""`. An agent reading `reason: ""`
+      // cannot distinguish "parser had no message" from "parser
+      // truncated to zero chars," and the silent-miss failure mode is
+      // identical to the canonical empty-string sentinel.
+      const noMessage: ParsedFile = {
+        filePath: "noisy.html",
+        source: "",
+        ast: {
+          language: "html",
+          root: {
+            kind: "HtmlDocument",
+            range: { start: 0, end: 0 },
+            loc: {
+              start: { line: 1, column: 1, offset: 0 },
+              end: { line: 1, column: 1, offset: 0 },
+            },
+            children: [],
+          },
+          errors: [
+            {
+              message: "",
+              position: { line: 3, column: 1, offset: 0 },
+              recoverable: true,
+            },
+          ],
+        },
+      };
+      const { analysisCoverage } = buildAnalysisCoverage([noMessage], [], NO_RULES, true);
+      const entries = analysisCoverage?.["parseErrorFiles"] as
+        | {
+            path: string;
+            parserAttempted: string;
+            naturalParser?: string;
+            reason?: string;
+            triggerToken?: string;
+          }[]
+        | undefined;
+      expect(entries?.[0]?.path).toBe("noisy.html");
+      expect(entries?.[0]?.reason).toBeUndefined();
+      expect(Object.hasOwn(entries?.[0] ?? {}, "reason")).toBe(false);
+    });
+
     it("names the underlying parser honestly even when the extension disguises it (e.g. .mdx parses through the TSX bridge)", () => {
       // `file.ast.language` is the source of truth for `parser`: an
       // `.mdx` path routed through the MDX → TSX bridge emits
@@ -3077,22 +3123,31 @@ describe("buildAnalysisCoverage — hints", () => {
       });
     });
 
-    it("does not label `.md` / `.markdown` as the bare `html` tag (markdown source, not native HTML)", () => {
-      // The disclosure axis is orthogonal to AST language: `.md`
-      // routes through the HTML parser per ADR 0025 Option B, but the
-      // source is not HTML — ATX/Setext headings are stripped before
-      // the residue reaches `parseHtml`, link text and prose
-      // readability are out-of-scope. A bare `"html"` value would
-      // silently mis-cue an agent into expecting full HTML coverage.
-      // Pin equality on the distinct token so the disclosure can't
-      // regress to the conflated shape.
-      const files = [fileWith("readme.md", "html"), fileWith("changelog.markdown", "html")];
+    it("does not label `.md` / `.markdown` / `.mkdn` as the bare `html` tag (markdown source, not native HTML)", () => {
+      // The disclosure axis is orthogonal to AST language: `.md` /
+      // `.markdown` / `.mkdn` all route through the HTML parser per
+      // ADR 0025 Option B, but the source is not HTML — ATX/Setext
+      // headings are stripped before the residue reaches `parseHtml`,
+      // link text and prose readability are out-of-scope. A bare
+      // `"html"` value would silently mis-cue an agent into expecting
+      // full HTML coverage. Pin equality on the distinct token so the
+      // disclosure can't regress to the conflated shape. `.mkdn` is a
+      // common alternate Markdown extension (Vim, older static-site
+      // generators) and the parser dispatch in `src/mcp/session.ts`
+      // already routes it through `parseMarkdown`.
+      const files = [
+        fileWith("readme.md", "html"),
+        fileWith("changelog.markdown", "html"),
+        fileWith("post.mkdn", "html"),
+      ];
       const { analysisCoverage } = buildAnalysisCoverage(files, [], NO_RULES, false);
       const mode = analysisCoverage?.["parseModeByExtension"] as Record<string, string> | undefined;
       expect(mode?.[".md"]).not.toBe("html");
       expect(mode?.[".markdown"]).not.toBe("html");
+      expect(mode?.[".mkdn"]).not.toBe("html");
       expect(mode?.[".md"]).toBe("markdown-html-residue");
       expect(mode?.[".markdown"]).toBe("markdown-html-residue");
+      expect(mode?.[".mkdn"]).toBe("markdown-html-residue");
     });
 
     it("omits the field when no parseable files were scanned (present-when-meaningful)", () => {

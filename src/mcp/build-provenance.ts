@@ -44,8 +44,9 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
+import { posixDirname, posixJoin, posixResolve as resolvePath } from "../utils/path.ts";
 import { VERSION } from "../version.ts";
 import type { McpToolResult } from "./tools-helpers.ts";
 
@@ -95,14 +96,14 @@ function findDotGit(startDir: string): string | null {
   // Walk up until we either find `.git` or stop making progress
   // (`dirname` returns the same path at the root).
   for (;;) {
-    const candidate = join(dir, ".git");
+    const candidate = posixJoin(dir, ".git");
     try {
       statSync(candidate);
       return candidate;
     } catch {
       // not here, try parent
     }
-    const parent = dirname(dir);
+    const parent = posixDirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -139,14 +140,14 @@ function resolveGitDirs(dotGitPath: string): { gitDir: string; commonDir: string
   if (match === null) return null;
   const rawPath = match[1];
   if (rawPath === undefined) return null;
-  const gitDir = isAbsolute(rawPath) ? rawPath : resolvePath(dirname(dotGitPath), rawPath);
+  const gitDir = isAbsolute(rawPath) ? rawPath : resolvePath(posixDirname(dotGitPath), rawPath);
   // The per-worktree gitdir has a `commondir` file pointing back to
   // the main repo's .git. Without it, refs/heads/<branch> lookups
   // would miss because per-worktree gitdir has no refs/ tree of its
   // own beyond HEAD.
   let commonDir = gitDir;
   try {
-    const rawCommon = readFileSync(join(gitDir, "commondir"), "utf8").trim();
+    const rawCommon = readFileSync(posixJoin(gitDir, "commondir"), "utf8").trim();
     commonDir = isAbsolute(rawCommon) ? rawCommon : resolvePath(gitDir, rawCommon);
   } catch {
     // `commondir` absent → this is a regular repo with a file-form
@@ -168,7 +169,7 @@ function resolveGitDirs(dotGitPath: string): { gitDir: string; commonDir: string
 function readPackedRefSha(commonDir: string, ref: string): string | undefined {
   let packed: string;
   try {
-    packed = readFileSync(join(commonDir, "packed-refs"), "utf8");
+    packed = readFileSync(posixJoin(commonDir, "packed-refs"), "utf8");
   } catch {
     return undefined;
   }
@@ -193,7 +194,7 @@ function readPackedRefSha(commonDir: string, ref: string): string | undefined {
 function readHeadSha(gitDir: string, commonDir: string): string | undefined {
   let head: string;
   try {
-    head = readFileSync(join(gitDir, "HEAD"), "utf8").trim();
+    head = readFileSync(posixJoin(gitDir, "HEAD"), "utf8").trim();
   } catch {
     return undefined;
   }
@@ -206,7 +207,7 @@ function readHeadSha(gitDir: string, commonDir: string): string | undefined {
   if (ref === undefined) return undefined;
   // First try the loose ref file.
   try {
-    const sha = readFileSync(join(commonDir, ref), "utf8").trim();
+    const sha = readFileSync(posixJoin(commonDir, ref), "utf8").trim();
     if (/^[0-9a-f]{40,64}$/i.test(sha)) return sha;
   } catch {
     // fall through to packed-refs
@@ -225,7 +226,7 @@ function readHeadSha(gitDir: string, commonDir: string): string | undefined {
  */
 function resolveCommitHash(bundlePath: string | null): string | undefined {
   if (bundlePath === null) return undefined;
-  const dotGit = findDotGit(dirname(bundlePath));
+  const dotGit = findDotGit(posixDirname(bundlePath));
   if (dotGit === null) return undefined;
   const dirs = resolveGitDirs(dotGit);
   if (dirs === null) return undefined;

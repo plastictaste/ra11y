@@ -496,6 +496,36 @@ export interface FragmentClassification {
 }
 
 /**
+ * Result of {@link classifyHtmlFile}: the unified classification
+ * shape consumed by both the rule-emission surface
+ * (`semantics/landmark-main`'s "looks like a layout wrapper or
+ * template partial" enrichment) and the meta-channel surface
+ * (`analysisCoverage.fragmentFiles[]` builder). Carries BOTH the
+ * `isFragment` label (leaf-fragment shape: no envelope, no layout
+ * directive, not in layouts dir) AND the `isLayoutOrPartial` label
+ * (file participates in layout composition: asymmetric `<html>` /
+ * `<body>`, frontmatter `layout:`, or a composition directive
+ * `{% include %}` / `{{ content }}` / `<%= yield %>` / `@RenderBody`).
+ *
+ * The two flags are derived from a single signal-computation pass —
+ * structural drift between them is impossible by construction. Per
+ * `docs/kb/architecture/ai-first-consumer.md` "Per-tool lane and
+ * warning-set classification must agree": when the rule emits the
+ * "layout wrapper or template partial" message AND the file is also a
+ * leaf fragment, the meta surface lists it in
+ * `analysisCoverage.fragmentFiles[]`; when the rule emits on a
+ * non-fragment composed file (e.g. `_layouts/default.html` with
+ * `<html>` + `{{ content }}`), the meta surface honestly excludes it.
+ * The two surfaces consume the SAME helper, so any future change to
+ * the predicate definition reaches both consumers in one edit.
+ */
+export interface HtmlFileClassification {
+  readonly isFragment: boolean;
+  readonly isLayoutOrPartial: boolean;
+  readonly signals: FragmentClassificationSignals;
+}
+
+/**
  * Single source-of-truth fragment classifier consumed by both the rule-
  * side suppression gate (`isFragmentFile`) and the meta-side population
  * of `analysisCoverage.fragmentFiles[]` (`detectFragmentFiles`).
@@ -544,13 +574,93 @@ export function classifyFragment(
   source: string,
   filePath: string,
 ): FragmentClassification {
+  const { isFragment, signals } = classifyHtmlFile(doc, source, filePath);
+  return { isFragment, signals };
+}
+
+/**
+ * Single source-of-truth HTML-file classifier consumed by both the
+ * rule-emission surface and the meta-channel surface. Returns the
+ * unified {@link HtmlFileClassification} shape: `isFragment` (the
+ * leaf-fragment AND-conjunction described on {@link classifyFragment})
+ * AND `isLayoutOrPartial` (the layout-or-partial composition
+ * predicate previously named {@link isHtmlLayoutOrPartial}). Both
+ * labels derive from a single signal-computation pass so the two
+ * predicates can never drift apart.
+ *
+ * Per the Q15 closure and `docs/kb/architecture/ai-first-consumer.md`
+ * "Per-tool lane and warning-set classification must agree": the
+ * `semantics/landmark-main` rule ("looks like a layout wrapper or
+ * template partial" enrichment) and the
+ * `analysisCoverage.fragmentFiles[]` meta builder previously consulted
+ * three separate predicates — `isFragmentFile`, `isHtmlLayoutOrPartial`,
+ * and `classifyFragment` — each computing its own AST walks and
+ * regex passes over the same source. That duplication left room for
+ * silent drift: the rule's enrichment fired on a file whose
+ * `fragmentFiles[]` membership disagreed, leaving an agent reading
+ * the message and looking at the meta surface with a contradictory
+ * mental model. This unified helper is the single classifier both
+ * surfaces consume; legacy wrappers ({@link classifyFragment},
+ * {@link isFragmentFile}, {@link isHtmlLayoutOrPartial}) delegate
+ * here so existing callers see the same answer the unified surface
+ * sees.
+ *
+ * Predicate definitions (preserving existing semantics — Q15 is a
+ * structural unification, not a behavior shift):
+ *
+ *   isFragment        = !hasHtmlOpener AND !hasLayoutDirective AND !inLayoutsDir
+ *   isLayoutOrPartial = (hasHtml XOR hasBody) OR
+ *                       hasJekyllLayoutFrontMatter OR
+ *                       hasCompositionDirective
+ *
+ * The two predicates use partly overlapping but distinct evidence
+ * (asymmetric `<html>`/`<body>` and `{% include %}` are unique to
+ * `isLayoutOrPartial`; the `inLayoutsDir` path check is unique to
+ * `isFragment`). They're disjoint by construction in the canonical
+ * cases — a leaf fragment is `isFragment: true, isLayoutOrPartial:
+ * false`; a layout wrapper is `isFragment: false, isLayoutOrPartial:
+ * true` — but a Jekyll `_includes/header.html` containing
+ * `{% include 'logo' %}` (no envelope, no layout directive, not in
+ * layouts dir) AND a composition directive lands in BOTH predicates'
+ * positive set: a fragment that also looks like a partial.
+ *
+ * Pure function over the parsed document + raw source + file path.
+ * Cheap to call — structural lookups are O(n) over the AST (which
+ * the caller already walked); source regexes are bounded by document
+ * size.
+ *
+ * @param doc parsed HTML document
+ * @param source original file source text
+ * @param filePath the file's path (relative or absolute; both are
+ *   normalized for path-segment matching)
+ */
+export function classifyHtmlFile(
+  doc: HtmlDocument,
+  source: string,
+  filePath: string,
+): HtmlFileClassification {
+  // Single signal-computation pass — both predicates downstream read
+  // from the SAME values, so drift between them is impossible by
+  // construction.
+  const hasHtmlTag = findHtmlElementsByTag(doc, "html").length > 0;
+  const hasBodyTag = findHtmlElementsByTag(doc, "body").length > 0;
   const signals: FragmentClassificationSignals = {
     hasHtmlOpener: hasHtmlOpener(doc, source),
     hasLayoutDirective: hasLayoutDirective(source),
     inLayoutsDir: looksLikeLayoutsPath(filePath),
   };
   const isFragment = !(signals.hasHtmlOpener || signals.hasLayoutDirective || signals.inLayoutsDir);
-  return { isFragment, signals };
+  // isLayoutOrPartial: the previously-separate isHtmlLayoutOrPartial
+  // predicate, computed from the same signal pass.
+  //   Branch 1: asymmetric `<html>` XOR `<body>` (layout-opener /
+  //     layout-closer partials carry exactly one).
+  //   Branch 2: Jekyll / Eleventy front-matter with a `layout:` key
+  //     (parent-role declaration the file uses a parent layout).
+  //   Branch 3: any composition directive in the source.
+  const asymmetricRootTags = hasHtmlTag !== hasBodyTag;
+  const isLayoutOrPartial =
+    asymmetricRootTags || hasJekyllLayoutFrontMatter(source) || hasCompositionDirective(source);
+  return { isFragment, isLayoutOrPartial, signals };
 }
 
 /**
@@ -836,17 +946,15 @@ export function hasLeadingTemplateDirective(source: string): boolean {
  *   alone cannot see them)
  */
 export function isHtmlLayoutOrPartial(doc: HtmlDocument, source: string): boolean {
-  // Branch 1: asymmetric root shape — one of `<html>` / `<body>` present
-  // without the other. Full-document pages have both; true fragments
-  // have neither; layout-opener / layout-closer partials have exactly one.
-  const hasHtml = findHtmlElementsByTag(doc, "html").length > 0;
-  const hasBody = findHtmlElementsByTag(doc, "body").length > 0;
-  if (hasHtml !== hasBody) return true;
-  // Branch 2: Jekyll / Eleventy front-matter. The parser does not
-  // consume the `---`-delimited YAML header; we read the raw source.
-  if (hasJekyllLayoutFrontMatter(source)) return true;
-  // Branch 3: composition directive anywhere in the source.
-  return hasCompositionDirective(source);
+  // Thin wrapper that delegates to the unified classifier so the rule-
+  // emission and meta-channel surfaces never disagree on the same
+  // input (per Q15 closure). The `filePath` argument is empty here
+  // because the layout-or-partial predicate intentionally ignores
+  // path-segment evidence — the `inLayoutsDir` signal feeds only
+  // `isFragment`. Future callers needing both labels at once should
+  // call {@link classifyHtmlFile} directly to share the single
+  // signal-computation pass.
+  return classifyHtmlFile(doc, source, "").isLayoutOrPartial;
 }
 
 /**

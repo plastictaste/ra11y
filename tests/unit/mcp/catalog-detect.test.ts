@@ -27,7 +27,6 @@
 import { describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CATALOG_EXAMPLE_CAP,
   CATALOG_MIN_SIBLINGS,
@@ -37,9 +36,10 @@ import {
   detectCatalogShape,
   withCatalogHint,
 } from "../../../src/mcp/catalog-detect.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 async function withScratch<T>(fn: (dir: string) => T | Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-catalog-detect-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-catalog-detect-"));
   try {
     return await fn(dir);
   } finally {
@@ -53,10 +53,10 @@ async function withScratch<T>(fn: (dir: string) => T | Promise<T>): Promise<T> {
  * predicate fires.
  */
 async function makeSiteDir(root: string, name: string, assetDir = "css"): Promise<void> {
-  const dir = join(root, name);
+  const dir = posixJoin(root, name);
   await mkdir(dir, { recursive: true });
-  await writeFile(join(dir, "index.html"), "<html><body><h1>Hello</h1></body></html>\n");
-  await mkdir(join(dir, assetDir), { recursive: true });
+  await writeFile(posixJoin(dir, "index.html"), "<html><body><h1>Hello</h1></body></html>\n");
+  await mkdir(posixJoin(dir, assetDir), { recursive: true });
 }
 
 describe("detectCatalogShape: catalog regime", () => {
@@ -116,9 +116,9 @@ describe("detectCatalogShape: honest absence", () => {
       // Five subdirs each with only index.html — bare README-as-folder
       // shape; not enough corroboration for the catalog predicate.
       for (const name of ["a", "b", "c", "d", "e"]) {
-        const d = join(root, name);
+        const d = posixJoin(root, name);
         await mkdir(d, { recursive: true });
-        await writeFile(join(d, "index.html"), "<html></html>\n");
+        await writeFile(posixJoin(d, "index.html"), "<html></html>\n");
       }
       expect(detectCatalogShape(root)).toBeNull();
     });
@@ -134,9 +134,9 @@ describe("detectCatalogShape: honest absence", () => {
     await withScratch(async (root) => {
       // Single-site shape — index.html + asset directories — should not
       // be classified as a catalog (only one site dir at the root).
-      await writeFile(join(root, "index.html"), "<html></html>\n");
-      await mkdir(join(root, "css"), { recursive: true });
-      await mkdir(join(root, "src"), { recursive: true });
+      await writeFile(posixJoin(root, "index.html"), "<html></html>\n");
+      await mkdir(posixJoin(root, "css"), { recursive: true });
+      await mkdir(posixJoin(root, "src"), { recursive: true });
       expect(detectCatalogShape(root)).toBeNull();
     });
   });
@@ -147,7 +147,7 @@ describe("detectCatalogShape: honest absence", () => {
       // hypothetical `.git` were treated as qualifying, the count would
       // still be below the threshold. Add a `.git` directory anyway so
       // the assertion hits the `name.startsWith(".")` filter.
-      await mkdir(join(root, ".git"), { recursive: true });
+      await mkdir(posixJoin(root, ".git"), { recursive: true });
       for (const name of ["s1", "s2", "s3"]) await makeSiteDir(root, name);
       expect(detectCatalogShape(root)).toBeNull();
     });

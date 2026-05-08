@@ -28,10 +28,10 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
-const BAD_ALT_DIR = join(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
+const BAD_ALT_DIR = posixJoin(PROJECT_ROOT, "tests", "fixtures", "bad", "alt-text-missing");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -223,7 +223,7 @@ describe("MCP tool: vpat", () => {
   });
 
   it("emits scanned_zero_files warning on an empty directory", async () => {
-    const emptyDir = await mkdtemp(join(tmpdir(), "ra11y-vpat-empty-"));
+    const emptyDir = await mkdtemp(posixJoin(tmpdir(), "ra11y-vpat-empty-"));
     try {
       const responses = await mcpSession([
         initMsg(1),
@@ -292,7 +292,7 @@ describe("MCP tool: vpat", () => {
     // signal that no row carries a positive conformance verdict, so an
     // agent doesn't ship an all-fail VPAT thinking it represents real
     // evaluated coverage..
-    const emptyDir = await mkdtemp(join(tmpdir(), "ra11y-vpat-allfail-"));
+    const emptyDir = await mkdtemp(posixJoin(tmpdir(), "ra11y-vpat-allfail-"));
     try {
       const responses = await mcpSession([
         initMsg(1),

@@ -7,10 +7,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { chdir, cwd } from "node:process";
 import { parseCliArgs } from "../../../../src/cli/args.ts";
 import { runCoverage } from "../../../../src/cli/commands/coverage.ts";
+import { posixJoin } from "../../../helpers/path.ts";
 
 const originalCwd = cwd();
 const scratchDirs: string[] = [];
@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-cov-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-cov-"));
   scratchDirs.push(dir);
   return dir;
 }
@@ -33,7 +33,7 @@ describe("runCoverage", () => {
   it("renders a coverage summary for a clean project at exit 0", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -49,7 +49,7 @@ describe("runCoverage", () => {
   it("lists each built-in standard in the summary", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -63,7 +63,7 @@ describe("runCoverage", () => {
   it("renders failing criteria preview when violations exist", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "bad.html"),
+      posixJoin(dir, "bad.html"),
       '<!doctype html><html><body><img src="x"></body></html>',
     );
     chdir(dir);
@@ -78,7 +78,7 @@ describe("runCoverage", () => {
   it("respects --standard wcag21 when filtering the coverage table", async () => {
     const dir = await scratch();
     await writeFile(
-      join(dir, "page.html"),
+      posixJoin(dir, "page.html"),
       '<!doctype html><html lang="en"><head><title>Ok</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -91,14 +91,14 @@ describe("runCoverage", () => {
 
   it("uses the positional directory when provided", async () => {
     const dir = await scratch();
-    const sub = join(dir, "src");
+    const sub = posixJoin(dir, "src");
     await writeFile(
-      join(dir, "outer.html"),
+      posixJoin(dir, "outer.html"),
       '<!doctype html><html lang="en"><head><title>Outer</title></head><body><img src="x"></body></html>',
     );
     await (await import("node:fs/promises")).mkdir(sub, { recursive: true });
     await writeFile(
-      join(sub, "inner.html"),
+      posixJoin(sub, "inner.html"),
       '<!doctype html><html lang="en"><head><title>Inner</title></head><body><p>hi</p></body></html>',
     );
     chdir(dir);
@@ -115,7 +115,7 @@ describe("runCoverage", () => {
     const dir = await scratch();
     // Multiple distinct violations with enough diversity to likely cross the cap.
     await writeFile(
-      join(dir, "a.html"),
+      posixJoin(dir, "a.html"),
       '<!doctype html><html><body><img src="x"><input type="text"></body></html>',
     );
     chdir(dir);

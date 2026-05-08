@@ -32,9 +32,9 @@
 import { describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -94,11 +94,11 @@ function bodyOf(response: JsonRpcResponse): Record<string, unknown> {
 function makeFiveSiblingSites(root: string, withParseableHtml: boolean): readonly string[] {
   const names = ["template-a", "template-b", "template-c", "template-d", "template-e"];
   for (const name of names) {
-    const dir = join(root, name);
+    const dir = posixJoin(root, name);
     mkdirSync(dir);
-    mkdirSync(join(dir, "css"));
+    mkdirSync(posixJoin(dir, "css"));
     writeFileSync(
-      join(dir, "index.html"),
+      posixJoin(dir, "index.html"),
       withParseableHtml
         ? `<!DOCTYPE html><html lang="en"><head><title>${name}</title></head><body><main><h1>${name}</h1></main></body></html>\n`
         : "",
@@ -109,7 +109,7 @@ function makeFiveSiblingSites(root: string, withParseableHtml: boolean): readonl
 
 describe("scan_project:", () => {
   it("surfaces catalogHint + analysisCoverage hint on a 5-sibling catalog with parseable content", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ra11y-catalog-populated-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-catalog-populated-"));
     try {
       makeFiveSiblingSites(root, true);
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -142,7 +142,7 @@ describe("scan_project:", () => {
     // Empty `index.html` files in each sibling — the detector still
     // qualifies them (existsSync passes) but discovery yields no
     // parseable AST content, exercising the zero-files response shape.
-    const root = mkdtempSync(join(tmpdir(), "ra11y-catalog-empty-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-catalog-empty-"));
     try {
       makeFiveSiblingSites(root, false);
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
@@ -164,11 +164,14 @@ describe("scan_project:", () => {
   it("omits catalogHint entirely on a single-app repo", async () => {
     // Honest absence per CLAUDE.md §1 "Ambiguous field shapes are
     // dishonest" — no catalog → field absent, not `null`.
-    const root = mkdtempSync(join(tmpdir(), "ra11y-catalog-none-"));
+    const root = mkdtempSync(posixJoin(tmpdir(), "ra11y-catalog-none-"));
     try {
-      writeFileSync(join(root, "package.json"), '{"name":"x","version":"0.0.0"}\n');
-      writeFileSync(join(root, "index.html"), '<html><body><img src="/hero.png"></body></html>\n');
-      mkdirSync(join(root, "css"));
+      writeFileSync(posixJoin(root, "package.json"), '{"name":"x","version":"0.0.0"}\n');
+      writeFileSync(
+        posixJoin(root, "index.html"),
+        '<html><body><img src="/hero.png"></body></html>\n',
+      );
+      mkdirSync(posixJoin(root, "css"));
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_project", { cwd: root })]);
       const scan = responses.find((r) => r.id === 2);
       const body = bodyOf(scan as JsonRpcResponse);

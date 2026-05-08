@@ -24,7 +24,7 @@
  *     `scanned_minified_file`, `bulk_catalog_detected`,
  *     `scss_unresolved_variables`, `vendor_css_dominates_findings`,
  *     `animation_library_without_reduced_motion_guard`,
- *     `dist_only_scan_detected`, `js_innerhtml_template_literal_unparsed`,
+ *     `build_artifact_only_scan_detected`, `js_innerhtml_template_literal_unparsed`,
  *     etc.
  *
  *   - **response-instance warnings** — predicate is a function of the
@@ -57,10 +57,18 @@ import {
 } from "./build-artifacts.ts";
 import { type BulkCatalogDetection, detectBulkCatalog } from "./bulk-catalog.ts";
 import {
+  type DynamicContentContainerEntry,
+  detectDynamicContentContainers,
+} from "./dynamic-content-container.ts";
+import {
   detectLinkedStylesheetsNotResolvedForContrast,
   detectScssUnresolvedVariableFiles,
   type LinkedStylesheetsUnresolvedForContrast,
 } from "./scan-assembly.ts";
+import {
+  computePerStyleTemplateLiteralFiles,
+  perStyleLiteralFilesField,
+} from "./template-literal-per-style.ts";
 import {
   ANIMATION_LIB_GUARD_FINDING_FLOOR,
   computeTemplateDirectiveOverlap,
@@ -92,7 +100,13 @@ export interface ScanTimeWarningInputs {
   readonly parsedFiles: readonly ParsedFile[];
   /** Violations from `runScan`. Used to derive per-file findings + total. */
   readonly violations: readonly Violation[];
-  /** Resolved scan root — drives `no_config_found.searchedFrom`. */
+  /**
+   * Resolved scan root — drives `no_config_found.searchedFrom` and
+   * the present-when-meaningful gate (the warning-channel sibling of
+   * `meta.scanned.root`): when the loader walked from this path, the
+   * rich payload drops to the empty record because `scanned.root`
+   * already carries the search base.
+   */
   readonly root: string;
   /**
    * `null` when the loader walked the project tree and found nothing;
@@ -244,6 +258,9 @@ interface DerivedBuildArtifactSignals {
   readonly bulkCatalogDetection: BulkCatalogDetection | undefined;
   readonly templateDirectivesOverlap: boolean;
   readonly templateLiteralFiles: readonly string[];
+  readonly liquidLiteralFiles: readonly string[];
+  readonly erbLiteralFiles: readonly string[];
+  readonly curlyDoubleLiteralFiles: readonly string[];
   readonly filesScanned: number;
   readonly totalFindings: number;
   readonly jsInnerHtmlFileSamples: readonly {
@@ -253,6 +270,7 @@ interface DerivedBuildArtifactSignals {
   }[];
   readonly linkedStylesheetsUnresolvedForContrast: LinkedStylesheetsUnresolvedForContrast;
   readonly parserBailedJsTsxRouteFiles: readonly string[];
+  readonly dynamicContentContainerEntries: readonly DynamicContentContainerEntry[];
 }
 
 /**
@@ -365,6 +383,15 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     inputs.analysisCoverage,
     overlapResult.overlapFiles,
   );
+  // Per-style splits of `templateLiteralFiles` — drives the
+  // `liquid_directives_unparsed` / `erb_directives_unparsed` /
+  // `curly_double_directives_unparsed` codes. Shared helper so all
+  // three call sites (here, response-assembler, tool-scan-project)
+  // compute the predicate identically.
+  const perStyleFiles = computePerStyleTemplateLiteralFiles(
+    inputs.analysisCoverage,
+    overlapResult.overlapByStyle,
+  );
 
   // Per-file inline-HTML pattern samples are surfaced only for files
   // where the routed parser produced zero findings — the routing-skip
@@ -409,6 +436,19 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     findingBearingPaths,
   );
 
+  // Detect canonical vanilla-JS demo shell shapes — body has ≤3
+  // non-script visible children, contains an empty `<div id>` (or
+  // landmark-tagged equivalent), and has a sibling `<script src>`
+  // referencing an external JS file. Drives
+  // `dynamic_content_container_detected` per AI-first doctrine
+  // "Zero-output success is ambiguous failure": without this code,
+  // a runtime-render shell page returns zero findings and reads as
+  // "clean page" when the truthful answer is "static scan cannot
+  // evaluate runtime-generated DOM." The detector is pure over the
+  // parsed-file list; the warnings module fires the code when the
+  // list is non-empty.
+  const dynamicContentContainerEntries = detectDynamicContentContainers(inputs.parsedFiles);
+
   return {
     buildArtifactEntries,
     buildArtifactsMetaField,
@@ -422,11 +462,15 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     bulkCatalogDetection,
     templateDirectivesOverlap,
     templateLiteralFiles,
+    liquidLiteralFiles: perStyleFiles.liquid,
+    erbLiteralFiles: perStyleFiles.erb,
+    curlyDoubleLiteralFiles: perStyleFiles.curlyDouble,
     filesScanned,
     totalFindings,
     jsInnerHtmlFileSamples,
     linkedStylesheetsUnresolvedForContrast,
     parserBailedJsTsxRouteFiles,
+    dynamicContentContainerEntries,
   };
 }
 
@@ -623,6 +667,12 @@ function buildWarningsFieldInputs(
     rootSource: inputs.rootSource,
     configSource: inputs.configSource,
     configSearchedFromForWarning: inputs.root,
+    // Present-when-meaningful gate on `no_config_found.searchedFrom`:
+    // `inputs.root` is the loader's walk-up base AND the resolved
+    // `scanned.root` shipped on the response, so the rich payload
+    // would just echo a value the agent already has — drop it to
+    // the empty record via the shared helper.
+    noConfigFoundScannedRoot: inputs.root,
     analysisCoverage: inputs.analysisCoverage,
     filesByExtension: inputs.filesByExtension,
     scannedBuildArtifactsPresent: derived.buildArtifactEntries.length > 0,
@@ -634,6 +684,11 @@ function buildWarningsFieldInputs(
     ...(inputs.sessionWrappersMismatchCwd ? { sessionWrappersMismatchCwd: true } : {}),
     templateDirectivesOverlap: derived.templateDirectivesOverlap,
     ...templateLiteralInputs(derived.templateLiteralFiles),
+    ...perStyleLiteralFilesField({
+      liquid: derived.liquidLiteralFiles,
+      erb: derived.erbLiteralFiles,
+      curlyDouble: derived.curlyDoubleLiteralFiles,
+    }),
     ...(inputs.additionalPathsRedundant ? { additionalPathsRedundant: true } : {}),
     ...(inputs.restrictToPathsEmpty ? { restrictToPathsEmpty: true } : {}),
     configSearchSawProjectMarker: inputs.configSearchSawProjectMarker,
@@ -662,6 +717,9 @@ function buildWarningsFieldInputs(
     ...(derived.parserBailedJsTsxRouteFiles.length === 0
       ? {}
       : { parserBailedJsTsxRouteFiles: derived.parserBailedJsTsxRouteFiles }),
+    ...(derived.dynamicContentContainerEntries.length === 0
+      ? {}
+      : { dynamicContentContainerEntries: derived.dynamicContentContainerEntries }),
     ...uniformlyHighInput(inputs.perRuleCoverageUniformlyHighWithParseErrors),
     ...scanFileParserBailInput(inputs.scanFileParserBailNoFindings),
   };

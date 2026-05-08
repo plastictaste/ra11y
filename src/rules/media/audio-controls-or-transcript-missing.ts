@@ -52,7 +52,22 @@ import type {
 export const rule = defineRule({
   id: "media/audio-controls-or-transcript-missing",
   satisfies: ["wcag22:1.1.1", "wcag21:1.1.1", "section508:1.1.1", "en301549:9.1.1.1"],
-  severity: "error",
+  // Severity downgraded from `error` to `warning` because the rule's
+  // fix.description hedges with "If the audio is purely decorative or
+  // supplemental and a text alternative already exists in the
+  // surrounding prose, suppress... once you have verified the
+  // in-prose alternative is equivalent." Per
+  // docs/kb/architecture/ai-first-consumer.md "Reason / priority /
+  // fix-description must agree across all three channels," a
+  // fix.description that concedes the predicate may not hold (an
+  // in-prose text alternative may already serve as the equivalent
+  // purpose) cannot ship at `error`. Static analysis cannot read the
+  // surrounding prose to verify the alternative, and per "Don't
+  // duplicate capability the agent already has" the consuming agent
+  // reading the file can verify in one Read. Severity drops a notch
+  // so the attention-budget signal matches the predicate strength;
+  // the finding stays surfaced (surface-don't-suppress).
+  severity: "warning",
   scope: "node",
   fixClass: "verify-in-source",
   appliesTo: {
@@ -366,7 +381,7 @@ function emitViolation(
   emit: Emit,
 ): void {
   emit({
-    severity: "error",
+    severity: "warning",
     location: { filePath: "", line: loc.line, column: loc.column },
     message: buildMessage(src),
     suggestion: buildSuggestion(src),

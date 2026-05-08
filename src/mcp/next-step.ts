@@ -254,8 +254,18 @@ export function buildNextStep(
     violations: violationsCount,
     fixable:
       fixesByClassLane(formatted.plan, "mechanical") + fixesByClassLane(formatted.plan, "guidance"),
-    actionableManual: numFromPlan(formatted.plan, "actionableManualItems"),
-    notes: numFromPlan(formatted.plan, "notes"),
+    // Sum the per-scan-kind `actionableManualItemsBySource` lanes to
+    // recover the flat actionable count this branching predicate
+    // budgets against. The bare `actionableManualItems` headline was
+    // dropped because on a `scan_file` of `dist/*.min.css` it read 1
+    // while every contributing candidate sat on the buildArtifact
+    // lane; the per-lane structured sibling is the honest source. A
+    // clean scan with all manual-review evidence in build artifacts
+    // legitimately routes the agent to `checklist` next so it sees
+    // the same per-criterion grounded candidates — summing both lanes
+    // matches that intent.
+    actionableManual: actionableManualSum(formatted.plan),
+    notes: numFromPlan(formatted.plan, "infoSeverityFindings"),
     first: firstPick.finding,
     iterativeTip: options.iterativeTip ?? "",
     // Conditional-spread per CLAUDE.md §1 — omit entirely when the
@@ -472,6 +482,29 @@ function manualTail(inputs: NextStepInputs): string {
 function numFromPlan(plan: Record<string, unknown>, key: string): number {
   const raw = plan[key];
   return typeof raw === "number" ? raw : 0;
+}
+
+/**
+ * Sums the per-scan-kind `plan.actionableManualItemsBySource` lanes
+ * (`source + buildArtifact`) into the flat actionable-manual count
+ * this builder's branching predicates use. Mirrors {@link sumFixesByClass}
+ * on the manual-review axis: the bare `plan.actionableManualItems`
+ * headline was dropped because on a `scan_file` of `dist/*.min.css`
+ * it read 1 while every contributing candidate sat on the build-
+ * artifact lane (per `docs/kb/architecture/ai-first-consumer.md`
+ * "Composite headline counts are dishonest"). Defensive: a missing
+ * or malformed `actionableManualItemsBySource` parent yields zero,
+ * matching the "no actionable manual review" semantics the caller
+ * expects.
+ */
+function actionableManualSum(plan: Record<string, unknown>): number {
+  const raw = plan["actionableManualItemsBySource"];
+  if (!raw || typeof raw !== "object") return 0;
+  const pair = raw as Record<string, unknown>;
+  const source = typeof pair["source"] === "number" ? (pair["source"] as number) : 0;
+  const buildArtifact =
+    typeof pair["buildArtifact"] === "number" ? (pair["buildArtifact"] as number) : 0;
+  return source + buildArtifact;
 }
 
 /**
@@ -753,22 +786,16 @@ function findSameRuleIdNonVendorFinding(
 }
 
 /**
- * Tallies finding counts per `ruleId` over non-vendor files only,
- * picks the rule with the highest count, then returns that rule's
- * first non-vendor finding (file, line, ruleId). Used by the dominant-
- * rule reroute lane in {@link pickFirstFinding} when no same-`ruleId`
- * non-vendor sibling exists.
- *
- * On a clean tie (two rules with equal max count), picks the one whose
- * first non-vendor finding appears earliest in `files[]` order. The
- * `pickTopRuleByCount` helper used by the per-rule narrowing reroute
- * returns `undefined` on ties (honest "we couldn't pick" for the
- * `explain_rule` reroute), but here a tie-break IS available: file
- * order is deterministic and the tie-break aligns with the same
- * "earliest in the page" intuition the default first-callable picker
- * already uses. Returns `null` only when every finding on every file
- * sits in `vendorPaths` (the all-vendor signal — caller routes to
- * scope-down).
+ * Picks the dominant non-vendor rule and returns the densest non-
+ * vendor file for that rule (file, line, ruleId) — matching
+ * `topRules[0].topFile` semantics from `src/mcp/scan-assembly.ts`.
+ * Per AI-first doctrine "NextStep prioritization on truncated/bulk
+ * responses must avoid first-by-filename routing": pre-fix the
+ * picker walked files alphabetically and landed on the first sibling
+ * containing the dominant rule (1 fire) instead of the densest file
+ * (43 fires). Rule tie-break = alphabetical ruleId; file tie-break =
+ * alphabetical path; both mirror `withTopRules` / `pickDensestFile`.
+ * Returns `null` only when every finding sits in `vendorPaths`.
  */
 function pickHighestFiringNonVendorFinding(
   files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
@@ -776,8 +803,90 @@ function pickHighestFiringNonVendorFinding(
 ): FirstFinding | null {
   const counts = countNonVendorFindingsByRuleId(files, vendorPaths);
   if (counts.size === 0) return null;
-  const topCount = maxValue(counts);
-  return firstNonVendorFindingMatchingCount(files, vendorPaths, counts, topCount);
+  const topRuleId = pickDominantRuleId(counts);
+  return densestFileFindingForRule(files, vendorPaths, topRuleId);
+}
+
+/**
+ * Picks the dominant ruleId from a non-empty count map: highest
+ * count wins; alphabetical ruleId tiebreak. Mirrors `withTopRules`'s
+ * sort in `src/mcp/scan-assembly.ts` so the reroute target equals
+ * `topRules[0]` on the same input.
+ */
+function pickDominantRuleId(counts: ReadonlyMap<string, number>): string {
+  let topRuleId = "";
+  let topCount = -1;
+  for (const [ruleId, count] of counts) {
+    if (count > topCount || (count === topCount && ruleId < topRuleId)) {
+      topRuleId = ruleId;
+      topCount = count;
+    }
+  }
+  return topRuleId;
+}
+
+/**
+ * Picks the densest non-vendor file for `targetRuleId` (alphabetical
+ * tiebreak matching `pickDensestFile` in `src/mcp/scan-assembly.ts`),
+ * tracking the first matching line in one pass. Returns `null` when
+ * no non-vendor file carries the rule.
+ */
+function densestFileFindingForRule(
+  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
+  vendorPaths: ReadonlySet<string>,
+  targetRuleId: string,
+): FirstFinding | null {
+  let densest: { path: string; line: number; count: number } | undefined;
+  for (const file of files) {
+    if (vendorPaths.has(file.path)) continue;
+    const tally = tallyRuleFindingsInFile(file.findings, targetRuleId);
+    if (tally === undefined) continue;
+    if (densestPickWins(tally.count, densest?.count ?? -1, file.path, densest?.path)) {
+      densest = { path: file.path, line: tally.firstLine, count: tally.count };
+    }
+  }
+  return densest === undefined
+    ? null
+    : { path: densest.path, line: densest.line, ruleId: targetRuleId };
+}
+
+/**
+ * Tallies `targetRuleId` findings on a single file's findings array
+ * and returns `{ count, firstLine }` or `undefined` when no match.
+ * Skips findings whose shape doesn't expose a string `ruleId` (same
+ * defensive narrowing as {@link readFindingRuleIdAndLine}).
+ */
+function tallyRuleFindingsInFile(
+  findings: readonly unknown[],
+  targetRuleId: string,
+): { readonly count: number; readonly firstLine: number } | undefined {
+  let count = 0;
+  let firstLine = -1;
+  for (const raw of findings) {
+    const extracted = readFindingRuleIdAndLine(raw);
+    if (extracted === null) continue;
+    if (extracted.ruleId !== targetRuleId) continue;
+    if (firstLine < 0) firstLine = extracted.line;
+    count += 1;
+  }
+  if (count === 0) return undefined;
+  return { count, firstLine };
+}
+
+/**
+ * Returns true when `count` is strictly higher than `currentCount`,
+ * OR equal-but-alphabetically-earlier path. Mirrors `pickDensestFile`
+ * in `src/mcp/scan-assembly.ts`.
+ */
+function densestPickWins(
+  count: number,
+  currentCount: number,
+  path: string,
+  currentPath: string | undefined,
+): boolean {
+  if (count > currentCount) return true;
+  if (count !== currentCount) return false;
+  return currentPath !== undefined && path < currentPath;
 }
 
 /**
@@ -801,46 +910,6 @@ function countNonVendorFindingsByRuleId(
     }
   }
   return counts;
-}
-
-/**
- * Returns the maximum value across a non-empty `Map<string, number>`.
- * Caller has already checked `counts.size > 0`; returns 0 on the
- * unreachable empty-map case for type safety.
- */
-function maxValue(counts: ReadonlyMap<string, number>): number {
-  let top = 0;
-  for (const c of counts.values()) {
-    if (c > top) top = c;
-  }
-  return top;
-}
-
-/**
- * Walks `files` in order, returning the first non-vendor finding whose
- * `ruleId` hits `topCount`. File order resolves dominant-rule ties
- * deterministically — when two rules tie at the top, the one whose
- * first non-vendor finding appears earliest on the page wins. Returns
- * `null` when no such finding exists (the caller short-circuits before
- * this point on empty `counts`, so this is defensive only).
- */
-function firstNonVendorFindingMatchingCount(
-  files: readonly { readonly path: string; readonly findings: readonly unknown[] }[],
-  vendorPaths: ReadonlySet<string>,
-  counts: ReadonlyMap<string, number>,
-  topCount: number,
-): FirstFinding | null {
-  for (const file of files) {
-    if (vendorPaths.has(file.path)) continue;
-    for (const raw of file.findings) {
-      const extracted = readFindingRuleIdAndLine(raw);
-      if (extracted === null) continue;
-      if ((counts.get(extracted.ruleId) ?? 0) === topCount) {
-        return { path: file.path, ...extracted };
-      }
-    }
-  }
-  return null;
 }
 
 /**
@@ -1212,3 +1281,53 @@ const BULK_VENDOR_MIN_INVENTORY = 50;
  * grouped list ships in meta regardless.
  */
 const BULK_VENDOR_GLOB_HINT_LIMIT = 5;
+
+/**
+ * Builds the `groupBy: "firstChildDir"` proposal `nextStep` for the
+ * `small_demo_catalog` regime: the bulk-catalog detector found ≥30
+ * sibling subdirs sharing the same per-dir basename signature (e.g.
+ * each `<sibling>/` carrying `index.html` + `style.css` + `script.js`),
+ * but no vendor-classified files — so the bulk-vendor scope-down lane
+ * doesn't fire. The catalog shape IS the canonical case for the
+ * existing `groupBy: "firstChildDir"` aggregator: one whole-tree scan
+ * answers the per-sub-project question without paging through
+ * `files[]` and re-aggregating by directory, and without N round-trips
+ * with `additionalPaths` per sub-project.
+ *
+ * Reroute target: the existing `scan_project` `groupBy` parameter.
+ * Per the AI-first doctrine "Don't duplicate capability the agent
+ * already has," this routes the agent at an existing capability —
+ * the `byGroup` rollup already handles per-sub-project aggregation,
+ * and the override only ensures the agent discovers it on the canonical
+ * corpus shape rather than paging file-by-file. Per "One tool call
+ * should answer 'what next?'", the `nextStepStructured` field names
+ * the alternative narrowing path explicitly so an agent reading the
+ * paginated default never has to know about the `groupBy` capability
+ * out-of-band.
+ *
+ * Prose names the sibling shape (count + signature) as concrete
+ * evidence the agent can verify before committing to the re-scan,
+ * plus the example sub-project basenames the detector already
+ * surfaces on `warningsDetails.bulk_catalog_detected.siblingShape`,
+ * so the response carries the "why this proposal" alongside the
+ * proposal itself. The structured args carry `cwd` when supplied so
+ * the re-scan stays scoped to the same root the agent already
+ * targeted (avoiding the silent drift where the second call resolves
+ * to a different `cwd` than the first).
+ */
+export function smallDemoCatalogGroupByNextStep(args: {
+  readonly siblingCount: number;
+  readonly signature: readonly string[];
+  readonly exampleSiblings: readonly string[];
+  readonly cwd?: string;
+}): NextStepResult {
+  const { siblingCount, signature, exampleSiblings, cwd } = args;
+  const signatureList = signature.map((s) => `\`${s}\``).join(", ");
+  const examplePreview = exampleSiblings.slice(0, 3).join(", ");
+  const callArgs: Record<string, unknown> = { groupBy: "firstChildDir" };
+  if (cwd !== undefined) callArgs["cwd"] = cwd;
+  return {
+    prose: `${siblingCount} sibling sub-project subdirs share the same per-dir file shape (${signatureList}); examples: ${examplePreview}. Re-call \`scan_project\` with \`groupBy: "firstChildDir"\` for one response that aggregates findings per sub-project (\`plan.byGroup\`) instead of paging through every file. Alternative: \`additionalPaths: ["${exampleSiblings[0] ?? ""}"]\` to scope to one example sub-project.`,
+    structured: { tool: "scan_project", args: callArgs },
+  };
+}

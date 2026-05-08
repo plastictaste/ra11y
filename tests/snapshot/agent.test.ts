@@ -94,7 +94,7 @@ function parse(result: ScanResult = RESULT, report: ReportData = REPORT) {
       // error+warning total sum the four `fixesByClass` lanes
       // themselves. The shape declared here matches the wire surface;
       // tests that need the flat count derive it from `fixesByClass`.
-      notes: number;
+      infoSeverityFindings: number;
       fixesByClass: {
         mechanical: { source: number; buildArtifact: number };
         guidance: { source: number; buildArtifact: number };
@@ -176,16 +176,17 @@ describe("formatter: agent — output shape", () => {
 });
 
 describe("formatter: agent — plan", () => {
-  it("plan exposes notes split from violations (no composite totalFindings or violations headline)", () => {
+  it("plan exposes infoSeverityFindings split from violations (no composite totalFindings or violations headline)", () => {
     // The flat top-level `violations`
     // headline was deleted alongside the earlier `totalFindings`
     // composite — both summed categorically different lanes under
-    // one name. The honest shape carries `plan.notes` (severity-info,
-    // single kind) + `plan.fixesByClass` (per-lane structured tally).
-    // RESULT carries 3 errors + 1 warning + 0 info, so the four
-    // `fixesByClass` lanes sum to 4 and notes is 0.
+    // one name. The honest shape carries `plan.infoSeverityFindings`
+    // (severity-info, single kind) + `plan.fixesByClass` (per-lane
+    // structured tally). RESULT carries 3 errors + 1 warning + 0 info,
+    // so the four `fixesByClass` lanes sum to 4 and
+    // infoSeverityFindings is 0.
     const { plan } = parse();
-    expect(plan.notes).toBe(0);
+    expect(plan.infoSeverityFindings).toBe(0);
     const laneSum = (l: { source: number; buildArtifact: number }): number =>
       l.source + l.buildArtifact;
     const violationsTotal =
@@ -326,16 +327,16 @@ describe("formatter: agent — plan", () => {
     expect(runtimeIdx).toBeLessThan(verifyIdx);
   });
 
-  it("zero violations produces plan.notes: 0, fixesByClass all-zero, and trivial effort", () => {
+  it("zero violations produces plan.infoSeverityFindings: 0, fixesByClass all-zero, and trivial effort", () => {
     // the flat `plan.violations`
-    // headline is gone; the empty-scan case carries `plan.notes: 0`
-    // + an all-zero `fixesByClass` (or omits the per-lane field per
-    // present-when-meaningful — either is honest because every lane
-    // would be 0 and the agent reads "no violations" from the
-    // absence/zero-tally pair).
+    // headline is gone; the empty-scan case carries
+    // `plan.infoSeverityFindings: 0` + an all-zero `fixesByClass` (or
+    // omits the per-lane field per present-when-meaningful — either is
+    // honest because every lane would be 0 and the agent reads "no
+    // violations" from the absence/zero-tally pair).
     const { plan } = parse(EMPTY_RESULT, EMPTY_REPORT);
     expect((plan as Record<string, unknown>)["violations"]).toBeUndefined();
-    expect(plan.notes).toBe(0);
+    expect(plan.infoSeverityFindings).toBe(0);
     expect(plan.estimatedEffort).toBe("trivial");
     expect(plan.summary).toBe("No accessibility violations found.");
   });

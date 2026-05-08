@@ -14,7 +14,7 @@
  * `configSource`, `configSearchedFrom`, `nextStep`).
  */
 
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { filterPerRuleCoverageForSingleFile } from "../engine/per-rule-coverage.ts";
 import type { ParsedFile } from "../engine/scanner.ts";
 import type { LoadedConfig } from "../types/config.ts";
@@ -24,6 +24,8 @@ import {
   extension as fileExtension,
   naturalParserFor,
   parseableExtensions,
+  posixDirname,
+  posixResolve,
 } from "../utils/path.ts";
 import { collectBuildArtifacts } from "./build-artifacts.ts";
 import { sawProjectMarkerInWalk } from "./config-search-marker.ts";
@@ -35,7 +37,7 @@ import { pathExists } from "./path-exists.ts";
 import { resolveInsideCwd } from "./resolve-inside-cwd.ts";
 import { assembleScanFamilyResponse, type ScanFamilyResponse } from "./response-assembler.ts";
 import { buildCriterionLevelMap } from "./review-candidate-priority.ts";
-import { withViolationsByScanKind } from "./scan-assembly.ts";
+import { withActionableManualItemsBySource, withViolationsByScanKind } from "./scan-assembly.ts";
 import { runScanAndCollect, type ScanCollected } from "./scan-collect.ts";
 import { applyScanFileBudget } from "./scan-file-budget.ts";
 import { buildScanTimeWarnings } from "./scan-time-warnings.ts";
@@ -111,6 +113,11 @@ export const scanFileTool: McpTool = {
           description:
             "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset.",
         },
+        includeReferenceGuide: {
+          type: "boolean",
+          description:
+            "When true, include the top-level `referenceGuide` object containing `suppressPlacement` (per-file-extension prose explaining where to drop `<!-- ra11y-disable -->` / `{/* ra11y-disable */}` pragmas) and `fixDescriptions` (per-rule deduplicated fix prose, referenced from individual findings via `fix.descriptionRef.hash`). Default false omits the block entirely and keeps full `fix.description` prose inline on every finding — typical responses save ~30-40 KB and stay under tighter MCP host token ceilings, the canonical motivating regression for this flag (dense HTML files crossing the host cap on the per-file fix-verify loop). Recommended workflow: enable on the FIRST `scan_file` / `scan_project` call of a session to learn the suppression-placement convention and fix-description prose layout for the rules you'll be triaging; subsequent calls within the same session can leave it off (the conventions don't change between calls). Inline `fix.description` is always honest — the opt-in only controls whether the duplicates get hoisted to a top-level lookup table.",
+        },
         metaMode: metaModeSchema,
       },
       required: ["path"],
@@ -124,6 +131,8 @@ export const scanFileTool: McpTool = {
     // for this handler.
     const verboseMetaCheck = requireBooleanParam(params, "verboseMeta");
     if (!verboseMetaCheck.ok) return errorResult(verboseMetaCheck.error);
+    const includeReferenceGuideCheck = requireBooleanParam(params, "includeReferenceGuide");
+    if (!includeReferenceGuideCheck.ok) return errorResult(includeReferenceGuideCheck.error);
     const filePath = strParam(params, "path");
     if (!filePath || filePath.length === 0) {
       return errorResult({
@@ -180,9 +189,11 @@ export const scanFileTool: McpTool = {
     // can still find a project config when the agent didn't pass cwd.
     const absFilePath = isAbsolute(filePath)
       ? filePath
-      : resolve(scanFileCwd ?? process.cwd(), filePath);
-    const configSearchBase =
-      scanFileCwd ?? (absFilePath.slice(0, absFilePath.lastIndexOf("/")) || process.cwd());
+      : posixResolve(scanFileCwd ?? process.cwd(), filePath);
+    // Compute the directory name from the absolute path. `dirname`
+    // handles both POSIX and Windows separators, so this works
+    // regardless of which separator `absFilePath` uses.
+    const configSearchBase = scanFileCwd ?? posixDirname(absFilePath) ?? process.cwd();
     const projectConfig = await session.loadProjectConfig(configSearchBase);
     // Q-SHARED-NO-CONFIG-WARNING-TINY-REPO: probe the walk-up range the
     // config loader searched so the warning gate distinguishes
@@ -225,12 +236,39 @@ export const scanFileTool: McpTool = {
         preset: projectConfig.preset,
         configSource: projectConfig.sourcePath,
         rootSource: null,
+        // `scan_file` is per-file in scope — the untargeted-criteria
+        // scalar is "criteria the finders couldn't ground in *this
+        // file*," NOT a project-walk total. The discriminator selects
+        // `untargetedCriteriaForFile` on the wire so consumers
+        // reading the scalar can't conflate it with a `scan_project`
+        // project-rooted total. See `buildScanPlan` docblock in
+        // `scan-assembly.ts` for the cross-surface rationale.
+        scope: "file" as const,
         configSearchSawProjectMarker,
         // Surface the loader's search root on
         // `warningsDetails.no_config_found.searchedFrom` so an agent
         // calling scan_file gets the same canonical "where was the
         // search?" answer scan / scan_project surface.
         configSearchedFromForWarning: configSearchBase,
+        // Per-emission `findingId` path normalization: the scan root
+        // here MUST agree with the root that `checklist` /
+        // `scan_project` would use on the same canonical project
+        // (typically the user-supplied `cwd`), so the same conceptual
+        // candidate produces ONE id across surfaces. When the caller
+        // omitted `cwd`, fall back to omitting `scanRoot` entirely
+        // rather than substituting the file's parent directory — the
+        // parent-dir fallback `configSearchBase` uses for config
+        // resolution would relativize the path differently from the
+        // project-root walk other surfaces use, re-introducing the
+        // very cross-surface drift the closure fixes. Per
+        // `docs/kb/architecture/ai-first-consumer.md` "Per-finding
+        // identifiers must be addressable, not collision-prone" +
+        // "Per-tool review-candidate shape must agree across
+        // surfaces." Without `scanRoot`, the helper falls back to
+        // path-shape normalization in place (backslashes → slashes,
+        // `./` strip) — so absolute paths still produce stable ids
+        // across machines.
+        ...(scanFileCwd === undefined ? {} : { scanRoot: scanFileCwd }),
         // Thread the criterion-level lookup through to the
         // review-candidate dedup helper so per-candidate `priority`
         // resolves against the strongest-attention level among each
@@ -241,7 +279,21 @@ export const scanFileTool: McpTool = {
         // candidate; scan_file's deduped surface must match.
         criterionLevels: buildCriterionLevelMap(session.registry.standards),
       },
-      { tokenBudget: 0, includeReviewCandidates: true },
+      {
+        tokenBudget: 0,
+        includeReviewCandidates: true,
+        // opt-in default-false for the `referenceGuide` block.
+        // Omitting it skips the `fix.description` hoist entirely so
+        // prose stays inline on every finding (no dangling
+        // `descriptionRef` pointers) and the top-level guide block is
+        // dropped from the response — saves ~30-40 KB on dense HTML
+        // scans crossing the MCP host token ceiling on the per-file
+        // fix-verify loop. Per AI-first doctrine "Verbose meta is
+        // signal, not clutter" the guide is valuable scan-context —
+        // the opt-in framing keeps it discoverable via tool
+        // description rather than permanently stripping it.
+        hoistReferenceGuide: params["includeReferenceGuide"] === true,
+      },
     );
 
     // Cross-surface warning-channel parity: route through the shared
@@ -404,8 +456,28 @@ function applyCrossSurfaceWarnings(args: {
   const buildArtifactPaths = new Set<string>(
     collectBuildArtifacts([parsed]).map((entry) => entry.path),
   );
-  const planWithLane = withViolationsByScanKind(
+  // Cross-surface lane parity (manual-review axis): same shape as the
+  // {@link withViolationsByScanKind} rewrite above, on the per-criterion
+  // actionable axis. Pre-rewrite, the assembler stamped
+  // `plan.actionableManualItemsBySource: { source: N, buildArtifact: 0 }`
+  // because vendor classification hadn't run yet. With
+  // `buildArtifactPaths` resolved, `withActionableManualItemsBySource`
+  // intersects the per-criterion path index against the vendor set so a
+  // `scan_file` on `dist/*.min.css` honestly reads
+  // `{ source: 0, buildArtifact: N }` — the same dishonest-composite
+  // shape Q15-MIN-CSS surfaced when the bare `actionableManualItems`
+  // headline read 1 while every contributing candidate sat on the
+  // build-artifact lane (per `docs/kb/architecture/ai-first-consumer.md`
+  // "Composite headline counts are dishonest"). Identity-stable when
+  // the file is not a build artifact (helper short-circuits on empty
+  // vendor paths).
+  const planWithActionableLane = withActionableManualItemsBySource(
     assembled.plan,
+    collected.actionableCriteriaPaths,
+    buildArtifactPaths,
+  );
+  const planWithLane = withViolationsByScanKind(
+    planWithActionableLane,
     assembled.files,
     buildArtifactPaths,
   );
@@ -638,10 +710,10 @@ function buildScanFileResponse(args: {
   // for multi-file scan-family tools is dropped on `scan_file` — the
   // single-file filter subsumes it with cleaner semantics; carrying
   // both would surface two counters with overlapping signal.
-  const metaSpread = applySingleFileExtensionFilterToMeta(
-    assembled.meta,
-    activeRules,
+  const metaSpread = applySingleFileScopeFilterToMeta(
+    applySingleFileExtensionFilterToMeta(assembled.meta, activeRules, parsed.filePath),
     parsed.filePath,
+    configSearchBase,
   );
   const fullMeta: Record<string, unknown> = {
     ...metaSpread,
@@ -654,7 +726,7 @@ function buildScanFileResponse(args: {
     // shared {@link configSearchedFromField} helper widens the omit
     // predicate uniformly across every MCP surface: omit when the
     // value would echo (a) the caller-supplied `cwd`, (b) the
-    // `scanned.root` of a project-mode scan, or (c) `dirname(scanned.file)`
+    // `scanned.root` of a project-mode scan, or (c) `posixDirname(scanned.file)`
     // of a file-mode scan. The Q6 closure used (a) only — `dirname`
     // matches kept slipping through on `scan_file` and on docs-site
     // fragment scans, so the helper folds (c) in too. `configNote`
@@ -840,4 +912,228 @@ function readPartitionCount(value: unknown): number {
   if (typeof value !== "object" || value === null) return 0;
   const count = (value as { readonly count?: unknown }).count;
   return typeof count === "number" ? count : 0;
+}
+
+/**
+ * Defensive per-file scope filter — guarantees the assembled meta block
+ * contains only evidence about the single scanned file. Walks every
+ * known path-keyed sub-array on `meta.analysisCoverage` (parse-error
+ * buckets, fragment files, frontmatter / php / erb / astro evidence
+ * lists, default-excluded-artifact entries, sourcemap files) plus
+ * `meta.scannedBuildArtifacts.{grouped, classified}` and drops any
+ * entry whose `path` does not equal `scannedFilePath`.
+ *
+ * Most of the time this is a no-op: the analysis-coverage accumulator
+ * walks `[parsed]` only on the scan_file path so per-file and
+ * cross-file evidence are already aligned. The filter is a defensive
+ * guard against any future regression where a project-shaped
+ * accumulator state (build-artifact classifier carry-over, prior-scan
+ * cache, cross-file resolution) silently leaks into a per-file
+ * response. Per the AI-first doctrine "Per-tool lane and warning-set
+ * classification must agree" extended downward: a per-file response
+ * must carry only per-file evidence; an entry mentioning a sibling
+ * file forces the agent to re-read and disambiguate whether that
+ * file was actually involved in evaluating the scanned one.
+ *
+ * The filter mutates a fresh shallow copy of the input; the original
+ * `meta` object is left untouched so any reference held by the
+ * caller's earlier slot (e.g. the assembler's internal cache) stays
+ * intact. Companion count fields (`parseErrorFileCount`,
+ * `partialParseFileCount`, `fragmentFileCount`) are recomputed off
+ * the filtered list lengths so they reconcile with the array sizes;
+ * empty buckets are dropped entirely (present-when-meaningful per
+ * CLAUDE.md §1) so the response shape stays honest.
+ */
+export function applySingleFileScopeFilterToMeta(
+  meta: Record<string, unknown>,
+  scannedFilePath: string,
+  configSearchBase?: string,
+): Record<string, unknown> {
+  const acceptablePaths = collectAcceptablePathForms(scannedFilePath, configSearchBase);
+  const out: Record<string, unknown> = { ...meta };
+  const coverage = out["analysisCoverage"];
+  if (typeof coverage === "object" && coverage !== null) {
+    out["analysisCoverage"] = filterAnalysisCoverageToScannedFile(
+      coverage as Record<string, unknown>,
+      acceptablePaths,
+    );
+  }
+  const buildArtifacts = out["scannedBuildArtifacts"];
+  if (typeof buildArtifacts === "object" && buildArtifacts !== null) {
+    const filtered = filterScannedBuildArtifactsToScannedFile(
+      buildArtifacts as Record<string, unknown>,
+      acceptablePaths,
+    );
+    if (filtered === undefined) {
+      delete out["scannedBuildArtifacts"];
+    } else {
+      out["scannedBuildArtifacts"] = filtered;
+    }
+  }
+  return out;
+}
+
+/**
+ * Builds the set of path forms that are equivalent to the scanned
+ * file. Different sub-systems on the meta block may store the scanned
+ * file's path in different normalizations:
+ *
+ *   - the analysis-coverage accumulator records `file.filePath`
+ *     verbatim (the user-supplied path), so the entry-shaped
+ *     parse-error / fragment / php / erb buckets match by exact
+ *     equality.
+ *   - `meta.scannedBuildArtifacts.classified[]` carries paths
+ *     relativized against the scan root (configSearchBase), so the
+ *     filter must also accept that form.
+ *
+ * Producing the union once at the top of the filter keeps each
+ * sub-array filter a simple `Set.has()` check — predicate match
+ * stays O(1) per entry and the path-shape variance is centralized.
+ */
+function collectAcceptablePathForms(
+  scannedFilePath: string,
+  configSearchBase: string | undefined,
+): ReadonlySet<string> {
+  const out = new Set<string>();
+  out.add(scannedFilePath);
+  // POSIX-normalized form so `\\`-separated Windows paths align with
+  // the relativized POSIX entries downstream.
+  const posix = scannedFilePath.replace(/\\/g, "/");
+  out.add(posix);
+  if (configSearchBase !== undefined) {
+    const rootPosix = configSearchBase.replace(/\\/g, "/");
+    const rootTrimmed = rootPosix.endsWith("/") ? rootPosix.slice(0, -1) : rootPosix;
+    if (posix.startsWith(`${rootTrimmed}/`)) {
+      const rel = posix.slice(rootTrimmed.length + 1);
+      if (rel.length > 0 && !rel.startsWith("../")) out.add(rel);
+    }
+  }
+  return out;
+}
+
+/**
+ * Per-file scope filter for `meta.analysisCoverage`. Drops every
+ * entry whose `path` (entry-shaped) or string element (string-list-
+ * shaped) does not equal `scannedFilePath`, then re-emits the
+ * surviving entries with companion count fields recomputed and
+ * empty buckets omitted entirely.
+ */
+function filterAnalysisCoverageToScannedFile(
+  coverage: Record<string, unknown>,
+  acceptablePaths: ReadonlySet<string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...coverage };
+  // Entry-shaped path-keyed arrays — `{ path, ... }`.
+  filterEntryListField(out, "parseErrorFiles", acceptablePaths, "parseErrorFileCount");
+  filterEntryListField(out, "partialParseFiles", acceptablePaths, "partialParseFileCount");
+  filterEntryListField(out, "fragmentFiles", acceptablePaths, "fragmentFileCount");
+  filterEntryListField(out, "defaultExcludedArtifactPaths", acceptablePaths);
+  // String-list path-keyed arrays — `string[]`.
+  filterStringListField(out, "phpIslandsStrippedFiles", acceptablePaths);
+  filterStringListField(out, "erbIslandsUnrenderedFiles", acceptablePaths);
+  filterStringListField(out, "astroIslandsUnrenderedFiles", acceptablePaths);
+  filterStringListField(out, "frontmatterFenceFiles", acceptablePaths);
+  filterStringListField(out, "sourcemapFiles", acceptablePaths);
+  return out;
+}
+
+/**
+ * Filters an entry-shaped list field on a coverage block down to
+ * entries whose `path` equals `scannedFilePath`. Drops the field
+ * entirely when nothing survives so the wire shape stays
+ * present-when-meaningful. Optionally rewrites a companion count
+ * scalar so it reconciles with the filtered array length; the
+ * count is also dropped on empty so an absent array never ships
+ * alongside a `0` scalar twin.
+ */
+function filterEntryListField(
+  coverage: Record<string, unknown>,
+  listKey: string,
+  acceptablePaths: ReadonlySet<string>,
+  countKey?: string,
+): void {
+  const value = coverage[listKey];
+  if (!Array.isArray(value)) return;
+  const retained = value.filter(
+    (entry): entry is { readonly path: string } =>
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { readonly path?: unknown }).path === "string" &&
+      acceptablePaths.has((entry as { readonly path: string }).path),
+  );
+  if (retained.length === 0) {
+    delete coverage[listKey];
+    if (countKey !== undefined) delete coverage[countKey];
+    return;
+  }
+  if (retained.length === value.length) return;
+  coverage[listKey] = retained;
+  if (countKey !== undefined) coverage[countKey] = retained.length;
+}
+
+/**
+ * Filters a string-list path-keyed field on a coverage block down
+ * to entries equal to `scannedFilePath`. Drops the field entirely
+ * when nothing survives so the wire shape stays
+ * present-when-meaningful.
+ */
+function filterStringListField(
+  coverage: Record<string, unknown>,
+  listKey: string,
+  acceptablePaths: ReadonlySet<string>,
+): void {
+  const value = coverage[listKey];
+  if (!Array.isArray(value)) return;
+  const retained = value.filter(
+    (entry): entry is string => typeof entry === "string" && acceptablePaths.has(entry),
+  );
+  if (retained.length === 0) {
+    delete coverage[listKey];
+    return;
+  }
+  if (retained.length === value.length) return;
+  coverage[listKey] = retained;
+}
+
+/**
+ * Per-file scope filter for `meta.scannedBuildArtifacts`. Drops
+ * every `classified[]` entry whose `path` does not equal
+ * `scannedFilePath`. Grouped rows aggregate same-basename clusters
+ * across the corpus — on a per-file response a grouped row could
+ * only honestly represent a single file (count 1), which is the
+ * sub-threshold case the grouper would ship under `classified[]`
+ * anyway, so any grouped rows that survive on a single-file scan
+ * are already a sign of cross-file leak; drop them.
+ *
+ * Returns `undefined` when both the filtered `classified[]` and
+ * `grouped[]` arrays are empty — the caller drops the whole
+ * `scannedBuildArtifacts` field so an empty container doesn't ride
+ * alongside a populated peer.
+ */
+function filterScannedBuildArtifactsToScannedFile(
+  buildArtifacts: Record<string, unknown>,
+  acceptablePaths: ReadonlySet<string>,
+): Record<string, unknown> | undefined {
+  const classifiedRaw = buildArtifacts["classified"];
+  const classified = Array.isArray(classifiedRaw)
+    ? classifiedRaw.filter(
+        (entry): entry is { readonly path: string } =>
+          typeof entry === "object" &&
+          entry !== null &&
+          typeof (entry as { readonly path?: unknown }).path === "string" &&
+          acceptablePaths.has((entry as { readonly path: string }).path),
+      )
+    : [];
+  // Grouped rows aggregate same-basename clusters of >=3 paths; on
+  // a single-file scan no honest grouped row can survive. Treat any
+  // surviving grouped[] entries as cross-file leakage and drop them.
+  const grouped: readonly unknown[] = [];
+  if (classified.length === 0 && grouped.length === 0) return undefined;
+  const out: Record<string, unknown> = { ...buildArtifacts, grouped, classified };
+  // `classifiedTruncated` describes the pre-cap classified[]
+  // length on bulk-corpus scans; on a per-file scope it can never
+  // honestly fire, so drop the sentinel if present so the agent
+  // doesn't read a truncation tag against a one-entry list.
+  if ("classifiedTruncated" in out) delete out["classifiedTruncated"];
+  return out;
 }

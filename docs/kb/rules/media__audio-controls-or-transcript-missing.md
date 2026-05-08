@@ -1,11 +1,11 @@
 ---
 title: "media/audio-controls-or-transcript-missing"
-severity: "error"
+severity: "warning"
 scope: "node"
 satisfies: ["wcag22:1.1.1", "wcag21:1.1.1", "section508:1.1.1", "en301549:9.1.1.1"]
 ---
 # `media/audio-controls-or-transcript-missing`
-- **Severity:** error
+- **Severity:** warning
 - **Scope:** node
 - **Satisfies:** `wcag22:1.1.1`, `wcag21:1.1.1`, `section508:1.1.1`, `en301549:9.1.1.1`
 - **Applies to:** .html, .htm, .tsx, .jsx

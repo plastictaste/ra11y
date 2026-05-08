@@ -57,8 +57,15 @@ function readDropPayload(response: Record<string, unknown>): SlimWarningPayload 
 
 function buildOversizeChecklistResponse(): Record<string, unknown> {
   return {
-    summary: { actionable: { criteria: 1, candidatesUncapped: 1, candidatesReturned: 1 } },
-    items: [{ criterionId: "wcag22:1.1.1", candidates: [{ path: "x.tsx", line: 1 }] }],
+    summary: {
+      actionable: {
+        criteria: 1,
+        emissionsTotal: 1,
+        emissionsAfterCollapse: 1,
+        emissionsReturnedAfterClip: 1,
+      },
+    },
+    items: [{ criteria: ["wcag22:1.1.1"], candidates: [{ path: "x.tsx", line: 1 }] }],
     totalCandidates: 1,
     nextStep: "Iterate items[].",
     nextStepStructured: { tool: "scan_project", args: { cwd: "/tmp/x" } },
@@ -76,14 +83,18 @@ function buildOversizeChecklistResponse(): Record<string, unknown> {
 function buildOversizeCoverageResponse(): Record<string, unknown> {
   return {
     standardId: "wcag22",
-    actionableManualItems: 1,
-    untargetedCriteria: 0,
+    // `actionableManualItems` and `criteriaUntestable` scalars were
+    // dropped from the coverage entry (each duplicated its array-
+    // form sibling) — the criteria-axis count rides via
+    // `summary.actionable.criteria` and the array form
+    // `manualWithCandidates`.
+    untargetedCriteriaForProject: 0,
     // Structured `summary` dict mirrors `checklist.summary`'s shape.
     // The slim envelope spreads `original` first, so the dict rides
     // through unchanged.
     summary: {
       actionable: { criteria: 1 },
-      untargetedCriteria: 0,
+      untargetedCriteriaForProject: 0,
       likelyIrrelevant: 0,
       automatedCoverage: {
         standardId: "wcag22",
@@ -112,7 +123,7 @@ function buildOversizeScanFileResponse(): Record<string, unknown> {
   return {
     findings: [{ findingId: "x@1", ruleId: "test/rule", severity: "error", line: 1, column: 1 }],
     plan: {
-      notes: 0,
+      infoSeverityFindings: 0,
       fixesByClass: {
         mechanical: { source: 1, buildArtifact: 0 },
         guidance: { source: 0, buildArtifact: 0 },
@@ -155,9 +166,49 @@ describe("oversize-envelope cross-surface parity — checklist / coverage / scan
     expect(payload.hardCeilingBytes).toBe(HARD_CEILING);
     expect(payload.metaFieldsDropped).toContain("bloatedField");
     expect(slim.truncated).toBe(true);
-    // nextStep cross-routes — never re-issues `checklist`.
+    // Cycle-break invariant per
+    // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+    // must terminate at a narrowing tool, never form a cycle between
+    // transport-failing siblings": nextStep must not route to either
+    // project-rooted sibling tool that ships from the same scope-
+    // classifier (the previous routing pointed at `coverage`, which
+    // would transport-fail the same way on the same corpus).
     const ns = slim.nextStepStructured as { tool: string };
     expect(ns.tool).not.toBe("checklist");
+    expect(ns.tool).not.toBe("coverage");
+  });
+
+  it("checklist slim envelope renames items[] to itemsTruncated[] (per truncated-containers doctrine)", () => {
+    // Pins the field-rename so an agent reading just `response.items`
+    // gets `undefined` instead of the misleading `[]` that used to
+    // ship under the original field name. Mirrors the
+    // `meta.perRuleCoverageTruncated` / `fragmentFilesTruncated`
+    // precedent — the field name itself signals that contents were
+    // stripped. Per `docs/kb/architecture/ai-first-consumer.md`
+    // "Truncated containers must rename or sentinel, not retain".
+    const result = applyChecklistBudget({
+      response: buildOversizeChecklistResponse(),
+      hardCeilingChars: HARD_CEILING,
+    });
+    expect(result.truncated).toBe(true);
+    const slim = result.response as Record<string, unknown>;
+    // The original `items` key MUST be absent from the wire — the
+    // canonical regression case the doctrine bullet documents:
+    // shipping `items: []` alongside `truncated: true` makes an agent
+    // reading just `items` unable to distinguish "no actionable
+    // items" from "items array was stripped to fit."
+    expect(slim).not.toHaveProperty("items");
+    // The renamed field carries the empty array — the rename itself
+    // is the field-level signal.
+    expect(slim.itemsTruncated).toEqual([]);
+    // The companion `truncationReason` names the warning code that
+    // owns the byte-arithmetic payload, so an agent has a single
+    // string identifier to cross-reference `warningsDetails.<reason>`.
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
+    // The legacy redundant boolean flag was dropped — the field-rename
+    // already signals the same fact at the field level. Per "Sibling
+    // fields naming the same concept must use one shape".
+    expect(slim).not.toHaveProperty("itemsArrayDropped");
   });
 
   it("coverage slim envelope ships the canonical warning code + payload schema", () => {
@@ -178,9 +229,16 @@ describe("oversize-envelope cross-surface parity — checklist / coverage / scan
     // perRuleCoverage row count carries on the dropped counter — the
     // canonical bloat surface for this tool.
     expect(payload.droppedFileCountFromRequestedLimit).toBe(5);
-    // nextStep cross-routes — never re-issues `coverage`.
+    // Cycle-break invariant per
+    // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+    // must terminate at a narrowing tool, never form a cycle between
+    // transport-failing siblings": nextStep must not route to either
+    // project-rooted sibling tool that ships from the same scope-
+    // classifier (the previous routing pointed at `checklist`, which
+    // would transport-fail the same way on the same corpus).
     const ns = slim.nextStepStructured as { tool: string };
     expect(ns.tool).not.toBe("coverage");
+    expect(ns.tool).not.toBe("checklist");
   });
 
   it("scan_file slim envelope ships the canonical warning code + payload schema", () => {
@@ -249,5 +307,68 @@ describe("oversize-envelope cross-surface parity — checklist / coverage / scan
     expect(typeof checklistPayload.totalFilesWithFindings).toBe("number");
     expect(typeof coveragePayload.totalFilesWithFindings).toBe("number");
     expect(typeof scanFilePayload.totalFilesWithFindings).toBe("number");
+  });
+
+  it("checklist + coverage slim envelopes both terminate at a scope-narrowing tool, never at each other (cycle-break invariant)", () => {
+    // Cycle-break property test per
+    // `docs/kb/architecture/ai-first-consumer.md` "NextStep handoffs
+    // must terminate at a narrowing tool, never form a cycle between
+    // transport-failing siblings."
+    //
+    // The canonical regression: on a bulk-vendor corpus,
+    // `checklist.nextStepStructured.tool: "coverage"` while
+    // `coverage.nextStepStructured.tool: "checklist"` — both surfaces
+    // ship oversize on the same scope, and neither cycle exit
+    // narrows scope. The agent following `nextStep` is stuck
+    // alternating round trips with no narrowing path in the cycle.
+    //
+    // Property pinned: when both project-rooted tools' slim guards
+    // fire on the same corpus, the structured `nextStep` recommendation
+    // — traced one hop further on the same cwd — must reduce input
+    // scope (route to `propose_config` / `scan_project` with narrowing
+    // args), never echo the parameters that just produced the
+    // truncation by pointing at a sibling project-rooted full-scan
+    // tool.
+    const checklistSlim = applyChecklistBudget({
+      response: buildOversizeChecklistResponse(),
+      hardCeilingChars: HARD_CEILING,
+    }).response as Record<string, unknown>;
+    const coverageSlim = applyCoverageBudget({
+      response: buildOversizeCoverageResponse(),
+      hardCeilingChars: HARD_CEILING,
+    }).response as Record<string, unknown>;
+
+    // Set of project-rooted, full-scan tools that ship from the same
+    // scope-classifier as `checklist` and `coverage` — routing the
+    // slim envelope at one of these on the same cwd recreates the
+    // circular handoff. The slim envelopes must route to a different
+    // narrowing surface (`propose_config`, `scan_project` with
+    // `restrictToPaths`).
+    const SIBLING_PROJECT_ROOTED_TOOLS = new Set(["checklist", "coverage"]);
+
+    const checklistNs = checklistSlim.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+    const coverageNs = coverageSlim.nextStepStructured as {
+      tool: string;
+      args: Record<string, unknown>;
+    };
+
+    // Neither surface routes to a sibling project-rooted tool that
+    // ships from the same scope-classifier. The cycle is broken at
+    // both halves: trace `checklist.nextStep` → must NOT be `coverage`,
+    // trace `coverage.nextStep` → must NOT be `checklist`.
+    expect(SIBLING_PROJECT_ROOTED_TOOLS.has(checklistNs.tool)).toBe(false);
+    expect(SIBLING_PROJECT_ROOTED_TOOLS.has(coverageNs.tool)).toBe(false);
+
+    // Both terminate at the same narrowing recovery surface
+    // (`propose_config`) — keeps the doctrine recovery vocabulary
+    // consistent across surfaces (see also the `allFindingsVendor`
+    // and `bulkVendorScopeDownNextStep` branches in
+    // `src/mcp/next-step.ts`, which already route here for the
+    // adjacent vendor-saturation regimes).
+    expect(checklistNs.tool).toBe("propose_config");
+    expect(coverageNs.tool).toBe("propose_config");
   });
 });

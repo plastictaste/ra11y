@@ -8,13 +8,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { DEFAULT_CONFIG } from "../../../src/config/defaults.ts";
 import { loadConfig } from "../../../src/config/loader.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 function makeTmpDir(): string {
-  return mkdtempSync(join(tmpdir(), "ra11y-config-"));
+  return mkdtempSync(posixJoin(tmpdir(), "ra11y-config-"));
 }
 
 describe("loadConfig precedence", () => {
@@ -50,7 +49,7 @@ describe("loadConfig precedence", () => {
 
   it("loads a ra11y.config.json in cwd", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ standards: ["wcag21"], level: "AA" }),
     );
     const loaded = await loadConfig({ cwd: dir });
@@ -60,10 +59,10 @@ describe("loadConfig precedence", () => {
 
   it("walks up the directory tree to find a config", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ standards: ["wcag22"], level: "AAA" }),
     );
-    const nested = join(dir, "packages", "app");
+    const nested = posixJoin(dir, "packages", "app");
     mkdirSync(nested, { recursive: true });
     const loaded = await loadConfig({ cwd: nested });
     expect(loaded.level).toBe("AAA");
@@ -71,10 +70,10 @@ describe("loadConfig precedence", () => {
 
   it("explicit configPath wins over the walk-up result", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ standards: ["wcag22"], level: "A" }),
     );
-    const explicit = join(dir, "other.json");
+    const explicit = posixJoin(dir, "other.json");
     writeFileSync(explicit, JSON.stringify({ standards: ["wcag21"], level: "AAA" }));
     const loaded = await loadConfig({ cwd: dir, configPath: explicit });
     expect(loaded.level).toBe("AAA");
@@ -83,10 +82,10 @@ describe("loadConfig precedence", () => {
 
   it("RA11Y_CONFIG env var wins over walk-up", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ standards: ["wcag22"], level: "A" }),
     );
-    const alt = join(dir, "env.json");
+    const alt = posixJoin(dir, "env.json");
     writeFileSync(alt, JSON.stringify({ standards: ["wcag21"], level: "AA" }));
     (process.env as Record<string, string>)["RA11Y_CONFIG"] = alt;
     const loaded = await loadConfig({ cwd: dir });
@@ -95,8 +94,8 @@ describe("loadConfig precedence", () => {
   });
 
   it("explicit configPath wins over RA11Y_CONFIG", async () => {
-    const envPath = join(dir, "env.json");
-    const explicitPath = join(dir, "explicit.json");
+    const envPath = posixJoin(dir, "env.json");
+    const explicitPath = posixJoin(dir, "explicit.json");
     writeFileSync(envPath, JSON.stringify({ level: "A" }));
     writeFileSync(explicitPath, JSON.stringify({ level: "AAA" }));
     (process.env as Record<string, string>)["RA11Y_CONFIG"] = envPath;
@@ -105,7 +104,7 @@ describe("loadConfig precedence", () => {
   });
 
   it("falls back to defaults when config file is malformed", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), "{ not valid json");
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), "{ not valid json");
     const loaded = await loadConfig({ cwd: dir });
     // sourcePath is set even on parse failure — signals "we tried".
     expect(loaded.sourcePath).toContain("ra11y.config.json");
@@ -114,7 +113,7 @@ describe("loadConfig precedence", () => {
 
   it("accepts nativeWrappers as a string array (legacy shape)", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({ nativeWrappers: ["Button", "Link"] }),
     );
     const loaded = await loadConfig({ cwd: dir });
@@ -124,7 +123,7 @@ describe("loadConfig precedence", () => {
 
   it("accepts nativeWrappers as an object map and surfaces the element mapping", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         nativeWrappers: { Button: "button", Link: "a", Image: "img" },
       }),
@@ -139,7 +138,7 @@ describe("loadConfig precedence", () => {
   });
 
   it("omitted nativeWrappers yields empty name list and empty element map", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({}));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({}));
     const loaded = await loadConfig({ cwd: dir });
     expect(loaded.nativeWrappers).toEqual([]);
     expect(loaded.nativeWrapperElements).toEqual({});
@@ -147,7 +146,7 @@ describe("loadConfig precedence", () => {
 
   it("flattens nested nativeWrappers to dotted-path compound names", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         nativeWrappers: {
           Card: { Header: "div", Body: "div" },
@@ -170,7 +169,7 @@ describe("loadConfig precedence", () => {
 
   it("accepts mixed flat + nested nativeWrappers in one object", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         nativeWrappers: {
           Button: "button",
@@ -188,7 +187,7 @@ describe("loadConfig precedence", () => {
 
   it("supports deeper nesting (3+ levels) via repeated dotted-path flattening", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         nativeWrappers: {
           Table: {
@@ -206,7 +205,7 @@ describe("loadConfig precedence", () => {
 
   it("preserves glob patterns inside nested keys without munging the dotted path", async () => {
     writeFileSync(
-      join(dir, "ra11y.config.json"),
+      posixJoin(dir, "ra11y.config.json"),
       JSON.stringify({
         nativeWrappers: {
           Card: { "*Section": "div" },
@@ -219,19 +218,19 @@ describe("loadConfig precedence", () => {
   });
 
   it("omits preset when the config file does not supply one", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({}));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({}));
     const loaded = await loadConfig({ cwd: dir });
     expect(loaded.preset).toBeUndefined();
   });
 
   it("accepts preset: 'storybook' and surfaces it on LoadedConfig", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({ preset: "storybook" }));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({ preset: "storybook" }));
     const loaded = await loadConfig({ cwd: dir });
     expect(loaded.preset).toBe("storybook");
   });
 
   it("rejects an unknown preset by omitting it from the loaded config", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({ preset: "storyBook" }));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({ preset: "storyBook" }));
     const loaded = await loadConfig({ cwd: dir });
     // Invalid value is silently dropped (with a stderr warning, per
     // the loader's "fall back, don't crash" policy). The field is
@@ -240,7 +239,7 @@ describe("loadConfig precedence", () => {
   });
 
   it("rejects a non-string preset value without crashing the loader", async () => {
-    writeFileSync(join(dir, "ra11y.config.json"), JSON.stringify({ preset: 42 }));
+    writeFileSync(posixJoin(dir, "ra11y.config.json"), JSON.stringify({ preset: 42 }));
     const loaded = await loadConfig({ cwd: dir });
     expect(loaded.preset).toBeUndefined();
     // Loader still completed — other fields reach their defaults.

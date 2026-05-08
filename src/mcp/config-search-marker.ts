@@ -32,8 +32,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-
+import { posixDirname, posixJoin, posixResolve } from "../utils/path.ts";
 /**
  * Files-scanned threshold below which `no_config_found` is considered
  * duplicative with `configSource: null` in `meta`. Tiny repos and
@@ -122,13 +121,13 @@ const PROJECT_MARKER_FILENAMES = [
  *            marker, which is the honest "no project here" shape.
  */
 export function sawProjectMarkerInWalk(cwd: string): boolean {
-  let dir = resolve(cwd);
+  let dir = posixResolve(cwd);
   while (true) {
     for (const filename of PROJECT_MARKER_FILENAMES) {
-      if (existsSync(join(dir, filename))) return true;
+      if (existsSync(posixJoin(dir, filename))) return true;
     }
-    if (existsSync(join(dir, ".git"))) return false;
-    const parent = dirname(dir);
+    if (existsSync(posixJoin(dir, ".git"))) return false;
+    const parent = posixDirname(dir);
     if (parent === dir) return false;
     dir = parent;
   }
@@ -163,17 +162,17 @@ export function sawProjectMarkerInWalk(cwd: string): boolean {
  *            walk.
  */
 export function nearestConfigAncestorPath(cwd: string): string | undefined {
-  let dir = resolve(cwd);
+  let dir = posixResolve(cwd);
   // Skip the starting dir itself — strict-ancestor semantics.
-  const parent = dirname(dir);
+  const parent = posixDirname(dir);
   if (parent === dir) return undefined;
   dir = parent;
   while (true) {
     for (const filename of PROJECT_MARKER_FILENAMES) {
-      if (existsSync(join(dir, filename))) return dir;
+      if (existsSync(posixJoin(dir, filename))) return dir;
     }
-    if (existsSync(join(dir, ".git"))) return undefined;
-    const next = dirname(dir);
+    if (existsSync(posixJoin(dir, ".git"))) return undefined;
+    const next = posixDirname(dir);
     if (next === dir) return undefined;
     dir = next;
   }

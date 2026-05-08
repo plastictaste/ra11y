@@ -19,9 +19,9 @@ import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { posixJoin } from "../helpers/path.ts";
 
-const PROJECT_ROOT = join(import.meta.dir, "..", "..");
+const PROJECT_ROOT = posixJoin(import.meta.dir, "..", "..");
 
 type JsonRpcResponse = Record<string, unknown>;
 
@@ -78,13 +78,16 @@ function isError(response: JsonRpcResponse): boolean {
 }
 
 async function scratchDirWithBadFixture(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-diff-"));
-  await writeFile(join(dir, "index.html"), '<html><body><img src="/logo.png"></body></html>\n');
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-diff-"));
+  await writeFile(
+    posixJoin(dir, "index.html"),
+    '<html><body><img src="/logo.png"></body></html>\n',
+  );
   return dir;
 }
 
 async function addSecondBadFile(dir: string): Promise<void> {
-  await writeFile(join(dir, "page.html"), '<html><body><img src="/hero.jpg"></body></html>\n');
+  await writeFile(posixJoin(dir, "page.html"), '<html><body><img src="/hero.jpg"></body></html>\n');
 }
 
 describe("MCP scan_diff tool: new-findings-only deltas", () => {
@@ -170,7 +173,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
   it("returns a structured error envelope for malformed JSON", async () => {
     const dir = await scratchDirWithBadFixture();
     try {
-      await writeFile(join(dir, ".ra11y-baseline.json"), "{ not valid json");
+      await writeFile(posixJoin(dir, ".ra11y-baseline.json"), "{ not valid json");
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_diff", { cwd: dir })]);
       expect(isError(responses[1])).toBe(true);
       const result = responses[1].result as { structuredContent?: { code?: string } };
@@ -186,7 +189,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
     const dir = await scratchDirWithBadFixture();
     try {
       await writeFile(
-        join(dir, ".ra11y-baseline.json"),
+        posixJoin(dir, ".ra11y-baseline.json"),
         JSON.stringify({
           version: 999,
           generatedAt: new Date().toISOString(),
@@ -222,7 +225,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
         baselinePath: string;
         newCount: number;
       };
-      expect(body.baselinePath).toBe(join(dir, "custom-baseline.json"));
+      expect(body.baselinePath).toBe(posixJoin(dir, "custom-baseline.json"));
       expect(body.newCount).toBe(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -253,7 +256,7 @@ describe("MCP scan_diff tool: new-findings-only deltas", () => {
       await addSecondBadFile(dir);
       await mcpSession([initMsg(1), toolCall(2, "baseline", { mode: "create", cwd: dir })]);
       // Fix one of the two flagged files by removing it entirely.
-      await unlink(join(dir, "page.html"));
+      await unlink(posixJoin(dir, "page.html"));
       const responses = await mcpSession([initMsg(1), toolCall(2, "scan_diff", { cwd: dir })]);
       const body = bodyOf(responses[1]) as {
         newCount: number;

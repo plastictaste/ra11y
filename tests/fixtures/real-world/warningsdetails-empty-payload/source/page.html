@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sanitized partial-parse fixture</title>
+</head>
+<body>
+  <main>
+    <h1>Heading One</h1>
+    <p>The image below is missing alt text — a clean static finding the
+       AST will emit before the parser bails on the malformed tail.</p>
+    <img src="/asset.png">
+  </main>
+  <!-- Malformed tail forces the HTML parser into recovery mode and
+       lands the file in `analysisCoverage.partialParseFiles[]`. The
+       findings above still surface; the recovery flag tags the file
+       as partially-parsed so an agent reads "rules fired but the tail
+       may have hidden additional violations" rather than "clean file." -->
+  <section><div><span><a href="/x"></section>
+</body>
+</html>

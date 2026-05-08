@@ -90,7 +90,32 @@ if (tsc.status !== 0) {
   process.exit(1);
 }
 
-// 5. Sanity-check the artifacts the `exports` map promises.
+// 5. Drop internal .d.ts trees. tsc emits declarations for every src/
+//    file, but the exports map only promises types reachable from
+//    dist/index.d.ts (→ dist/types/) and dist/api/plugin.d.ts. Every
+//    other .d.ts is internal and just bloats the tarball — the runtime
+//    code those declarations describe is already bundled into the entry
+//    .js files. Stripping them takes the tarball from ~1.5 MB to ~0.9 MB.
+const INTERNAL_DTS_DIRS = [
+  "cli",
+  "config",
+  "engine",
+  "input",
+  "mcp",
+  "output",
+  "reports",
+  "review",
+  "rules",
+  "standards",
+  "utils",
+];
+for (const dir of INTERNAL_DTS_DIRS) {
+  rmSync(join(DIST, dir), { recursive: true, force: true });
+}
+rmSync(join(DIST, "cli.d.ts"), { force: true });
+rmSync(join(DIST, "api", "index.d.ts"), { force: true });
+
+// 6. Sanity-check the artifacts the `exports` map promises.
 const required = ["index.js", "index.d.ts", "cli.js", "api/plugin.js", "api/plugin.d.ts"];
 for (const rel of required) {
   const p = join(DIST, rel);

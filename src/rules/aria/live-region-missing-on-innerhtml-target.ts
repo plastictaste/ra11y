@@ -50,21 +50,31 @@
  * actually mutating the right thing — surface, point at both files, let
  * the agent investigate.
  *
- * crossFileCapable: true — this rule's design DOES attempt cross-file
- * resolution between JS and HTML in the same scan. Per
+ * crossFileCapable: false — though this rule's `afterProject` lifecycle
+ * walks both halves when both are present in `ctx.files`, the rule's
+ * evidence model is structurally cross-file (HTML host element +
+ * sibling JS mutation site). Single-file substrates — `scan_file` on the
+ * HTML alone, or on the JS alone — render the rule unable to fire even
+ * when both halves exist on disk. Per
  * docs/kb/architecture/ai-first-consumer.md "Reason-token suffixes must
- * name the actual predicate, not an input-specific hiccup": a partial
- * scan (HTML present, JS absent — or vice versa) bounds the evidence on
- * THIS input, so when only one side reaches the scan we record the
- * limitation as `_limited_on_this_input`, NOT `_not_attempted_by_rule`.
+ * name the actual predicate": the rule's design does not attempt
+ * cross-file innerHTML target resolution outside the scoped file set
+ * the scanner happens to surface, so the limitation is named
+ * `_not_attempted_by_rule` (not `_limited_on_this_input`, which would
+ * imply a different input would resolve the limitation when in fact
+ * the rule structurally never resolves the JS half from an HTML-only
+ * scan, or the HTML half from a JS-only scan).
  *
  * Per-finding confidence: `"medium"` with `couldBeWrongBecause:
- * ["cross_file_html_target_resolution_limited_on_this_input"]`. Even
- * with both halves of the pair in scope, the static-analysis trace can
- * be misled by reassignment of the captured variable, conditional
- * execution paths, or framework lifecycle (the timer might be cleared
- * before the user sees an update). The `medium` label matches the
- * predicate strength the rule can honestly express.
+ * ["cross_file_innerhtml_target_resolution_not_attempted_by_rule"]`.
+ * Even with both halves of the pair in scope, the static-analysis
+ * trace can be misled by reassignment of the captured variable,
+ * conditional execution paths, or framework lifecycle (the timer
+ * might be cleared before the user sees an update). The `medium`
+ * label matches the predicate strength the rule can honestly express,
+ * and the `_not_attempted_by_rule` reason mirrors the per-rule
+ * `coverageConfidence: "medium"` the engine records via
+ * `CROSS_FILE_BOUND_REASONS` for this rule.
  *
  * Severity: `warning`. The conceded uncertainty in the suggestion text
  * ("verify the JS at <site> actually mutates this element at runtime")
@@ -95,15 +105,29 @@ import type { Language, ProjectRuleFile } from "../../types/rule.ts";
 import { findInnerHtmlAssignmentSites } from "./live-region-missing-on-innerhtml-target-js-targets.ts";
 
 /**
- * Structured `couldBeWrongBecause` code. Suffix `_limited_on_this_input`
+ * Structured `couldBeWrongBecause` code. Suffix `_not_attempted_by_rule`
  * is correct here per docs/kb/architecture/ai-first-consumer.md
- * "Reason-token suffixes must name the actual predicate" — the rule's
- * design DOES attempt cross-file resolution; the limitation is on THIS
- * input where the static trace cannot rule out runtime variation
- * (variable reassignment, conditional paths, timer-cleared-before-update).
+ * "Reason-token suffixes must name the actual predicate": the rule's
+ * design does not attempt cross-file innerHTML target resolution beyond
+ * the scoped file set the scanner surfaces. On `scan_file` (HTML or JS
+ * alone), the rule cannot resolve the other half of the pair, and the
+ * earlier `_limited_on_this_input` framing read as "we tried this input
+ * and were limited" — agents could mis-interpret as "maybe a different
+ * input would resolve it" and waste a re-scan. The `_not_attempted_by_rule`
+ * suffix names the permanent rule-design limitation honestly.
+ *
+ * The code value here intentionally matches the per-rule reason in
+ * `src/engine/per-rule-coverage.ts` `CROSS_FILE_BOUND_REASONS` for
+ * `aria/live-region-missing-on-innerhtml-target`. The MCP per-finding
+ * propagation helper (`src/mcp/per-finding-confidence-parity.ts`) uses
+ * the per-rule reason for findings on degraded rules; matching the
+ * value here means the propagation helper's dedup gate
+ * (`existing?.includes(code)`) collapses the two paths to a single
+ * code rather than shipping two contradictory variants on the same
+ * finding.
  */
-const CROSS_FILE_HTML_TARGET_RESOLUTION_LIMITED =
-  "cross_file_html_target_resolution_limited_on_this_input";
+const CROSS_FILE_INNERHTML_TARGET_RESOLUTION_NOT_ATTEMPTED =
+  "cross_file_innerhtml_target_resolution_not_attempted_by_rule";
 
 /**
  * Roles that declare a live region per WAI-ARIA 1.2 §5.3.5. Either the
@@ -131,16 +155,21 @@ export const rule = defineRule({
   severity: "warning",
   scope: "project",
   fixClass: "verify-in-source",
-  // crossFileCapable: true. The rule's design DOES attempt cross-file
-  // resolution (JS mutation sites → HTML host elements) in the same
-  // scan. Per ADR 0026 and docs/kb/architecture/ai-first-consumer.md
-  // "Reason-token suffixes must name the actual predicate", a rule
-  // declaring `crossFileCapable: true` does NOT downgrade per-rule
-  // coverage to `"medium"` by default — the scanner trusts the rule
-  // ran with full evidence. Per-finding `confidence: "medium"` is
-  // stamped on individual findings whose static trace cannot rule out
-  // runtime variation.
-  crossFileCapable: true,
+  // crossFileCapable: false. Although `afterProject` walks both halves
+  // when both are present in `ctx.files`, single-file substrates
+  // (`scan_file` on the HTML alone, or the JS alone) leave the rule
+  // structurally unable to fire — silent-miss when the rule reports
+  // `coverageConfidence: "high"` on a half-input scan. Per ADR 0026
+  // and docs/kb/architecture/ai-first-consumer.md "Per-finding
+  // confidence must reflect per-rule coverage limitations", declaring
+  // `crossFileCapable: false` routes the per-rule coverage row to
+  // `coverageConfidence: "medium"` with reason
+  // `cross_file_innerhtml_target_resolution_not_attempted_by_rule`,
+  // honestly naming the bound the rule's design carries. Per-finding
+  // `confidence: "medium"` mirrors the per-rule degradation on every
+  // emission, with the same structured reason in
+  // `couldBeWrongBecause`.
+  crossFileCapable: false,
   appliesTo: {
     // The rule walks both halves; the engine's eligibility gate is
     // satisfied when either extension is present. We list every JS-like
@@ -171,13 +200,54 @@ export const rule = defineRule({
   },
   afterProject(ctx) {
     const targets = collectMutatedTargetIds(ctx.files);
-    if (targets.size === 0) return;
+    // Cross-file-candidate signal: any JS innerHTML/textContent/innerText
+    // mutation site is a token whose host element may live in a sibling
+    // HTML file — `scan_file` on the JS alone cannot verify the host. Any
+    // id-bearing HTML element is the symmetric token: its mutating JS may
+    // live in a sibling file. Either presence flips the per-rule
+    // coverage downgrade gate (the engine collapses the count to ≥1 vs 0
+    // at consumption time, so a single bump per kind is sufficient). When
+    // neither half is observed, the rule had nothing cross-file to miss
+    // and `coverageConfidence: "high"` is honest. See the per-rule
+    // coverage logic in `src/engine/per-rule-coverage.ts`
+    // `buildExtensionGatedEntry`.
+    if (targets.size > 0) ctx.markCrossFileCandidate?.();
+    if (targets.size === 0) {
+      if (anyHtmlIdBearingElement(ctx.files)) ctx.markCrossFileCandidate?.();
+      return;
+    }
     for (const file of ctx.files) {
       if (file.language !== "html") continue;
       checkHtmlForUnannouncedTargets(file, targets, (v) => ctx.emit(v));
     }
   },
 });
+
+/**
+ * Returns `true` when at least one scanned HTML file contains an element
+ * with an `id` attribute. Used by the `afterProject` hook as the
+ * candidate-token gate when no JS-side mutation sites were observed —
+ * an HTML-only `scan_file` over a page declaring `<div id="status">`
+ * still has a cross-file question (a sibling JS may mutate `#status`),
+ * and reporting `coverageConfidence: "high"` on that substrate would
+ * silently mis-state the evidence the rule had access to.
+ */
+function anyHtmlIdBearingElement(files: ReadonlyArray<ProjectRuleFile>): boolean {
+  for (const file of files) {
+    if (file.language !== "html") continue;
+    if (htmlHasIdBearingElement(file.ast as HtmlDocument)) return true;
+  }
+  return false;
+}
+
+function htmlHasIdBearingElement(doc: HtmlDocument): boolean {
+  let found = false;
+  visitHtmlNodes(doc.children, false, (el) => {
+    if (found) return;
+    if (getHtmlAttribute(el, "id") !== null) found = true;
+  });
+  return found;
+}
 
 interface MutationSite {
   /** Source-file path of the JS site driving this mutation. */
@@ -312,7 +382,7 @@ function buildHtmlFinding(
     message: `<${el.tagName} id="${id}"> is rewritten by recurring JS (.innerHTML / .textContent assignment inside a callback)${sampleLabel}${moreClause}, but the host has no aria-live, no role="status"/"alert"/"log", and isn't an <output> — screen-reader users won't hear the update.`,
     suggestion: buildHtmlSuggestion(id, sites),
     confidence: "medium",
-    couldBeWrongBecause: [CROSS_FILE_HTML_TARGET_RESOLUTION_LIMITED],
+    couldBeWrongBecause: [CROSS_FILE_INNERHTML_TARGET_RESOLUTION_NOT_ATTEMPTED],
   };
 }
 

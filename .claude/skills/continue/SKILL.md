@@ -67,6 +67,8 @@ For each turn in `plan.turns` (up to `$1` or 10, whichever is smaller):
 
 Pull `plan.turns[n]` — the picks are already selected, classified, sequencing-audited, and collision-annotated. Skip picks whose `item` appears in your in-memory "already dispatched this invocation" set (rare — only matters if a turn was reattempted).
 
+**Pre-dispatch freshness check.** For each pick, grep `.claude/backlog.md` for `- [ ] **<pick.item>**`. If absent, the line was deleted between plan-cache time and now (concurrent `/continue` run, out-of-band commit, or sibling `Closes:` trailer earlier in this run). Skip without dispatching — log as `already_shipped` in the turn summary and move on. A cheap grep beats paying 100k+ tokens for a specialist to discover the same fact and return `blocked`.
+
 If a pick's `collisionWith` is populated, note it for step 2's dispatch prompt.
 
 ### 2. Build dispatch prompts (rule-file auto-load + one-sentence fallback)
@@ -214,63 +216,28 @@ The integrator returns a tight `{ integrated, skipped, blocked, verifyOk, backlo
 
 ### 4a. Post-turn meta-review
 
-After the integrator returns and before looping, dispatch the `meta-reviewer` subagent **once** with the turn artifact. Its job is to compare what the planner predicted to what actually happened, extract signals from the structured returns, and write durable lessons back — to memory for single-incident observations or to a small allowlist of harness files for recurring patterns (gated by N≥2 occurrences within the last 20 turns plus a portability test).
+After the integrator returns and before looping, dispatch the `meta-reviewer` subagent **once** with the turn artifact. Foreground, not background — the agent auto-commits `chore(meta):` patches and a backgrounded run would race the next turn's specialist worktrees.
 
-**Foreground, not background.** The meta-reviewer auto-commits harness patches as `chore(meta):` commits on `main`. Dispatching it in the background would race the next turn's specialist worktrees against an in-flight commit; foreground keeps the turn ordering clean. The agent is fast (read ledger, extract signals, decide, write 0–1 commits, return).
+**Input artifact:** see `.claude/agents/meta-reviewer.md` §3 (Inputs) for the field shape. Cache `main_sha_before` before step 3; pass `main_sha_after` from the integrator's last commit. `total_tokens` and `turn_cost` are **present-when-meaningful** — forward when the harness reports them, omit otherwise.
 
-**Input you pass to the meta-reviewer:**
+**Return shape:** see `meta-reviewer.md` §11. The orchestrator's only mechanical reactions are:
 
-```json
-{
-  "turn_n": <N>,
-  "invocation_id": "<uuid for this /continue run>",
-  "ts_start": "<ISO timestamp at turn start>",
-  "ts_end":   "<ISO timestamp now>",
-  "main_sha_before": "<sha at turn start>",
-  "main_sha_after":  "<sha after integrator's closure tidy commit (or last cherry-pick if no tidy was needed)>",
-  "harness_sha": "<sha of HEAD at turn start — same as main_sha_before in the common case>",
-  "planner_picks": <plan.turns[N-1].picks verbatim>,
-  "specialist_returns": [
-    { "branch_assigned": "<worktree-agent-X>",
-      "branch_returned": "<the branch the specialist actually returned>",
-      "wall_time_seconds": <int>,
-      "total_tokens": <int — from the agent return envelope when present>,
-      "return": <the specialist's JSON return verbatim> }
-  ],
-  "integrator_return": <the integrator's JSON return verbatim>,
-  "turn_cost": { "total_tokens": <sum across all dispatched agents>, "wall_seconds": <ts_end - ts_start> }
-}
-```
+- `writes.harness[]` non-empty → log patch SHAs in the turn summary.
+- `writes.memory_retirement_proposed[]` non-empty → surface verbatim in the final `/continue` report under "memory retirement — user review needed". Never auto-delete memory.
+- `findings[].kind` of `structural_flag` or `skill_patch_proposal` → surface in the final report.
+- `patch_effects[]` containing `verdict: "no_effect"` → log the `no_effect_commit` and original `patch_sha` so the user sees which auto-patches earned a `git revert` review.
+- `writes.backlog_reopens[]` non-empty → treat reopened picks like `blocked` for the dispatched-set.
+- `ledger_appended: false` → log as warning; next turn's occurrence counts will be off.
+- All other fields: informational. Never block the loop on the meta-reviewer.
 
-`main_sha_before` is the SHA on `main` when this turn started (cache it before step 3); `main_sha_after` is the SHA after the integrator's last commit on this turn (the closure tidy commit if one was needed, else the final cherry-pick). The agent uses the range to detect cherry-pick drops and coverage-regen misses. `harness_sha` is `main_sha_before` in the common case (every harness file is committed); the meta-reviewer persists it on each ledger entry so `scripts/ab-compare-harness.ts` can group runs by harness state for token-cost A/B comparison.
+**Skip the meta-reviewer when:**
 
-`total_tokens` per specialist and `turn_cost` are **present-when-meaningful**: forward them when the agent harness reported `total_tokens` in the return envelope (Bun harness does — look for `<usage>total_tokens: ...</usage>` or the equivalent structured field on each Agent return). Omit the keys entirely when unavailable — the meta-reviewer's cost-aware signals (`high_cost_uneventful_turn`, `slow_specialist`) skip cleanly when fields are absent.
+- `integrator.verifyOk === false` and main is in a partial state (loop is stopping; signals unreliable).
+- All of: `verifyOk: true`, `skipped` empty, `blocked` empty, no specialist `signals[]` outside the lock-out set, no `branch_returned !== branch_assigned`, no stall, AND turn count since last meta-review is `< 5`. Force a review on the 5th turn regardless.
 
-**Orchestrator handling of the meta-reviewer's return:**
+**On skip, append a no-signal ledger entry** to `.claude/turn-history.jsonl` so the meta-reviewer's denominator stays honest. The append is one `echo`-redirect — see `meta-reviewer.md` §10 for the JSONL line shape; orchestrator-authored skips set `skipped_reason: "uneventful_turn"`.
 
-The agent returns `{ turn_n, signals_observed, writes: { memory, harness, memory_retired, backlog_reopens }, correlations?, patch_effects?, findings, ledger_appended }`.
-
-| Return | Orchestrator action |
-|---|---|
-| `signals_observed: 0`, `writes: { all empty }`, `findings: []` | Nothing to do. Append nothing to the user-facing turn summary. |
-| `writes.harness[]` non-empty | Note the patch SHA(s) in the turn summary so the user sees the auto-edit landed. Continue. |
-| `writes.memory[]` non-empty | No action — memory is silent by design. |
-| `writes.memory_retired[]` non-empty | No action — informational. The retired memory files are recorded per-machine in the ledger; the durable cross-machine reference is the harness patch SHA in the same turn. |
-| `writes.backlog_reopens[]` non-empty | The pick was reopened. Treat as if it had returned `blocked` for purposes of the "picks dispatched this invocation" set so it can be re-picked next invocation. |
-| `correlations[]` non-empty | No action — informational. The pair is recorded in the ledger so next turn's meta-reviewer can decide whether to bundle a patch or escalate the unaddressed half. |
-| `patch_effects[]` contains `verdict: "no_effect"` | Note the no-effect commit SHA and the original patch SHA in the turn summary. Surface in the final `/continue` report so the user sees which auto-patches earned a `git revert` review. |
-| `patch_effects[]` only carries `"too_early"` / `"effective"` / `"inconclusive"` / `"aged_out"` / `"user_reverted"` | No action — informational; the verdicts live in the ledger and shape next-turn routing. |
-| `findings[].kind: "structural_flag"` | Surface in the final `/continue` report (not the per-turn summary) so the user sees the structural concern at end-of-run. |
-| `findings[].kind: "skill_patch_proposal"` | Surface in the final `/continue` report verbatim — including the `target`, `rationale`, `proposed_change` diff text, and `rule_patch_sha`. Frame as "user approval needed: a rule-file patch (sha X) earned `no_effect`; the meta-reviewer proposes promoting enforcement to `<target>`." Do NOT auto-apply — the meta-reviewer's allowlist explicitly forbids skill-file edits, and the orchestrator must respect that boundary. The user reviews and decides whether to apply manually. |
-| `ledger_appended: false` | Surface in the per-turn summary as a warning. The next turn's occurrence counts will be off until the ledger is repaired. |
-
-**Do not block the loop on the meta-reviewer.** If the agent returns `findings[]` with structural concerns or `ledger_appended: false`, log them and continue to the next turn. The meta-reviewer is advisory; only an explicit user-blocking item from a structural flag (rare) stops the loop.
-
-**Skip the meta-reviewer when** the integrator returned `verifyOk: false` and main is in a partial state — the loop is stopping anyway, signals from a half-integrated turn are unreliable, and the orchestrator should prioritize surfacing the integrator's error to the user.
-
-**Skip the meta-reviewer on uneventful turns to control invocation token cost.** Skip when ALL of these hold: `integrator.verifyOk === true`, `integrator.skipped` and `integrator.blocked` are both empty, every specialist's `signals[]` array is either empty OR contains only codes from the **lock-out set** (defined below), no specialist returned `branch_returned !== branch_assigned`, no agent stalled (per §3a), and the turn count since the last meta-review is `< 3`. **Force a meta-review every 3rd turn regardless** so slow-burn correlated patterns still surface in the ledger. This early-out only suppresses the call when the turn carried no observation worth correlating — the value of the agent is its cross-turn pattern detection, and three clean turns in a row carry exactly zero new evidence per turn. Track the "turns since last meta-review" counter in main-session memory alongside the dispatched-picks set.
-
-**Lock-out set** (signals whose harness patches have already earned `no_effect` and where re-running the meta-reviewer cannot produce a new patch): currently empty. When the only signals on a turn are from this set, the meta-reviewer would re-issue the same structural flag with no new action — its overhead (~80–100k tokens) is wasted. Removal from the lock-out set requires either (a) the meta-reviewer's own log marking the structural flag resolved, or (b) a successful source-level fix (e.g. ADR-driven test deflake) that returns the signal's recurrence rate to baseline. Until then, treat the lock-out as authoritative — the lesson is durable in the ledger; the agent is paged only when something new is observable.
+**Lock-out set** (signals where re-running the meta-reviewer cannot produce a new patch — currently empty). Removal requires the meta-reviewer's own log marking the flag resolved, or a source-level fix returning the signal's recurrence rate to baseline.
 
 ### 5. Loop
 

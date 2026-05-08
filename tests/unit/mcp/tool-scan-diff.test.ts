@@ -20,10 +20,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { writeBaseline } from "../../../src/engine/baseline.ts";
 import { McpSession } from "../../../src/mcp/session.ts";
 import { scanDiffTool } from "../../../src/mcp/tool-scan-diff.ts";
+import { posixJoin } from "../../helpers/path.ts";
 
 interface ErrorBody {
   readonly error: string;
@@ -57,7 +57,7 @@ interface BaselineBody {
 }
 
 async function withScratch<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "ra11y-scan-diff-unit-"));
+  const dir = await mkdtemp(posixJoin(tmpdir(), "ra11y-scan-diff-unit-"));
   try {
     return await fn(dir);
   } finally {
@@ -95,7 +95,7 @@ function git(cwd: string, args: readonly string[]): void {
 }
 
 async function writeBadImg(dir: string, name = "index.html"): Promise<void> {
-  await writeFile(join(dir, name), '<html><body><img src="/logo.png"></body></html>\n');
+  await writeFile(posixJoin(dir, name), '<html><body><img src="/logo.png"></body></html>\n');
 }
 
 async function writeEmptyBaseline(path: string): Promise<void> {
@@ -119,7 +119,7 @@ async function writeEmptyBaseline(path: string): Promise<void> {
  */
 async function seedBaseline(
   dir: string,
-  baselineFile: string = join(dir, ".ra11y-baseline.json"),
+  baselineFile: string = posixJoin(dir, ".ra11y-baseline.json"),
 ): Promise<void> {
   await writeEmptyBaseline(baselineFile);
   const fresh = await callHandler(new McpSession(), { cwd: dir, baselinePath: baselineFile });
@@ -163,7 +163,7 @@ describe("scan_diff baseline mode: missing + malformed", () => {
   it("returns `baseline-load-failed` when the baseline JSON is malformed", async () => {
     await withScratch(async (dir) => {
       await writeBadImg(dir);
-      await writeFile(join(dir, ".ra11y-baseline.json"), "{ not valid json");
+      await writeFile(posixJoin(dir, ".ra11y-baseline.json"), "{ not valid json");
       const { isError, code, body } = await callHandler(new McpSession(), { cwd: dir });
       expect(isError).toBe(true);
       expect(code).toBe("baseline-load-failed");
@@ -175,7 +175,7 @@ describe("scan_diff baseline mode: missing + malformed", () => {
     await withScratch(async (dir) => {
       await writeBadImg(dir);
       await writeFile(
-        join(dir, ".ra11y-baseline.json"),
+        posixJoin(dir, ".ra11y-baseline.json"),
         JSON.stringify({
           version: 999,
           generatedAt: new Date().toISOString(),
@@ -194,7 +194,7 @@ describe("scan_diff baseline mode: missing + malformed", () => {
   it("resolves absolute `baselinePath` without rewriting it against cwd", async () => {
     await withScratch(async (dir) => {
       await writeBadImg(dir);
-      const absolute = join(dir, "deep", "custom.json");
+      const absolute = posixJoin(dir, "deep", "custom.json");
       const { code, body } = await callHandler(new McpSession(), {
         cwd: dir,
         baselinePath: absolute,
@@ -240,7 +240,7 @@ describe("scan_diff baseline mode: happy path + resolved", () => {
       await writeBadImg(dir);
       await writeBadImg(dir, "page.html");
       await seedBaseline(dir);
-      await unlink(join(dir, "page.html"));
+      await unlink(posixJoin(dir, "page.html"));
       const { body } = await callHandler(new McpSession(), { cwd: dir });
       const success = body as BaselineBody;
       expect(success.resolvedCount).toBeGreaterThan(0);
@@ -252,7 +252,7 @@ describe("scan_diff baseline mode: happy path + resolved", () => {
   it("emits stable `findingId` across repeated baseline-mode scans", async () => {
     await withScratch(async (dir) => {
       await writeBadImg(dir);
-      await writeEmptyBaseline(join(dir, ".ra11y-baseline.json"));
+      await writeEmptyBaseline(posixJoin(dir, ".ra11y-baseline.json"));
       const run1 = (await callHandler(new McpSession(), { cwd: dir })).body as BaselineBody;
       const run2 = (await callHandler(new McpSession(), { cwd: dir })).body as BaselineBody;
       const ids1 = run1.newViolations.flatMap((f) => f.findings.map((x) => x.findingId));
@@ -265,20 +265,20 @@ describe("scan_diff baseline mode: happy path + resolved", () => {
   it("honors `baselinePath` relative to cwd", async () => {
     await withScratch(async (dir) => {
       await writeBadImg(dir);
-      await seedBaseline(dir, join(dir, "custom-baseline.json"));
+      await seedBaseline(dir, posixJoin(dir, "custom-baseline.json"));
       const { body } = await callHandler(new McpSession(), {
         cwd: dir,
         baselinePath: "custom-baseline.json",
       });
       const success = body as BaselineBody;
-      expect(success.baselinePath).toBe(join(dir, "custom-baseline.json"));
+      expect(success.baselinePath).toBe(posixJoin(dir, "custom-baseline.json"));
       expect(success.newCount).toBe(0);
     });
   });
 
   it("returns the empty-files response when nothing parseable is in scope", async () => {
     await withScratch(async (dir) => {
-      await writeBaseline(join(dir, ".ra11y-baseline.json"), {
+      await writeBaseline(posixJoin(dir, ".ra11y-baseline.json"), {
         version: 1,
         generatedAt: new Date().toISOString(),
         ra11yVersion: "0.0.0",
@@ -341,13 +341,13 @@ describe("scan_diff baseline mode: scope selectors", () => {
 describe("scan_diff baseline mode: additionalPaths widens scope", () => {
   it("scans paths listed under `additionalPaths` that the auto-discovery would skip", async () => {
     await withScratch(async (dir) => {
-      const distDir = join(dir, "dist");
+      const distDir = posixJoin(dir, "dist");
       await mkdir(distDir, { recursive: true });
       await writeFile(
-        join(distDir, "built.html"),
+        posixJoin(distDir, "built.html"),
         '<html><body><img src="/ship.png"></body></html>\n',
       );
-      await writeEmptyBaseline(join(dir, ".ra11y-baseline.json"));
+      await writeEmptyBaseline(posixJoin(dir, ".ra11y-baseline.json"));
       const { body } = await callHandler(new McpSession(), {
         cwd: dir,
         additionalPaths: ["dist"],
