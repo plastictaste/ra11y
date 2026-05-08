@@ -171,8 +171,7 @@ async function gatherCounts(cwd: string): Promise<{
     // total", just computed from the honest parts everywhere.
     scan: scanActionableFlat + scanBody.plan.untargetedCriteriaForProject,
     coverage:
-      coverageBody.summary.actionable.criteria +
-      coverageBody.summary.untargetedCriteriaForProject,
+      coverageBody.summary.actionable.criteria + coverageBody.summary.untargetedCriteriaForProject,
     checklist:
       checklistBody.summary.actionable.criteria +
       checklistBody.summary.untargetedCriteriaForProject,
@@ -455,7 +454,7 @@ describe("MCP invariant: emissionsTotal agrees across coverage and checklist (ra
     expect(coverageEmissionsSummary).toBe(checklistEmissionsTotal);
     // Top-level twin must NOT appear — the cross-field-redundancy axis
     // closure landed.
-    expect(coverageEnvelope as Record<string, unknown>).not.toHaveProperty(
+    expect(coverageEnvelope as unknown as Record<string, unknown>).not.toHaveProperty(
       "manualCandidateEmissionsTotal",
     );
   });

@@ -263,7 +263,9 @@ describe("ADR 0010 — coverage and checklist stay consistent across the shared 
     // coverage was deleted per "Sibling fields naming the same concept
     // must use one shape" — the canonical access path is the nested
     // `summary.*` slot.
-    expect((coverage as Record<string, unknown>).untargetedCriteriaForProject).toBeUndefined();
+    expect(
+      (coverage as unknown as Record<string, unknown>).untargetedCriteriaForProject,
+    ).toBeUndefined();
 
     // `summary.likelyIrrelevant` (count) mirrors across tools.
     expect(coverage.summary.likelyIrrelevant).toBe(checklist.summary.likelyIrrelevant);

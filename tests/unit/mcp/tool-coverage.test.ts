@@ -323,7 +323,7 @@ describe("coverage tool: analysisCoverage + warnings envelope", () => {
     expect(coverage.meta?.scanned).toEqual(scan.meta?.scanned);
     // Top-level twin must NOT appear — only the nested location is
     // canonical.
-    expect(coverage as Record<string, unknown>).not.toHaveProperty("scanned");
+    expect(coverage as unknown as Record<string, unknown>).not.toHaveProperty("scanned");
   });
 
   it("mirrors scan_project's analysisCoverage + warnings on the same cwd (cross-tool parity)", async () => {
