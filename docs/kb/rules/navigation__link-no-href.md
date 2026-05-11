@@ -10,7 +10,7 @@ satisfies: ["wcag22:2.1.1", "wcag21:2.1.1", "wcag22:4.1.2", "wcag21:4.1.2"]
 - **Satisfies:** `wcag22:2.1.1`, `wcag21:2.1.1`, `wcag22:4.1.2`, `wcag21:4.1.2`
 - **Applies to:** .html, .htm, .tsx, .jsx
 ## What it checks
-<a> elements with onClick but missing, empty, or placeholder (#) href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href.
+<a> elements with onClick but a genuinely absent href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href. Placeholder hrefs (`#`, ``, `javascript:…`) are owned by `navigation/href-empty-fragment` and `navigation/href-javascript-scheme`.
 ## Why it matters
 An anchor without an href is a dead link. It's not in the tab order, Enter doesn't activate it, and screen readers announce it as a generic container with no role. The common pattern <a onclick='…'>Click me</a> breaks keyboard and screen-reader users completely.
 ## Normative quote
