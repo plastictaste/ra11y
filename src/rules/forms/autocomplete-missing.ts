@@ -33,6 +33,7 @@ import {
 } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement, JsxElement, TsxModule } from "../../types/ast.ts";
 import type { FixPaths } from "../../types/violation.ts";
+import { containsSearchToken, labelTextMatchesPurpose } from "./_label-purpose-tokens.ts";
 import {
   collectFailingHtmlControls,
   computeHtmlCollapseDecisions,
@@ -60,18 +61,12 @@ const EXPECTED_BY_TYPE: ReadonlyMap<string, string> = new Map([
   ["password", "current-password"],
 ]);
 
-/**
- * Tokens (post-normalization — lowercased, camelCase split, non-letters
- * collapsed to delimiters) that identify a free-form site-search input.
- * WCAG 1.3.5 Input Purposes enumerates 53 autocomplete tokens and
- * "search" is not one of them: a site-search box is out of scope for
- * the criterion, so the rule must not fire on it. This is
- * spec-correctness, not heuristic suppression — see
- * docs/kb/architecture/ai-first-consumer.md ("No heuristic suppression"
- * applies when the criterion DOES apply and evidence is thin; here the
- * criterion does not apply at all).
- */
-const SEARCH_TOKENS: ReadonlySet<string> = new Set(["search", "searchbox", "query", "q"]);
+// SEARCH_TOKENS, LABEL_PURPOSE_TOKENS, tokenizeIdentifier,
+// containsSearchToken, and labelTextMatchesPurpose live in
+// `_label-purpose-tokens.ts` — the token sets are large enough that
+// inlining them pushes this file over the 500-effective-line limits
+// guard. Doctrine notes (why the label-purpose gate is not heuristic
+// suppression) live in that file.
 
 /**
  * Fallback: when `type` is text/empty, infer purpose from the name or
@@ -156,7 +151,10 @@ function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   // recipe collapses bytes-identical line text by design — collapse at
   // emit time keeps the per-cluster id unique and surfaces the per-
   // sibling trail).
-  const isFailingHtml = (el: HtmlElement): boolean => htmlInputViolates(el);
+  //
+  // Predicate closes over `doc` so the label-purpose-rejection gate
+  // can resolve cross-element labels — collapse and emit must agree.
+  const isFailingHtml = (el: HtmlElement): boolean => htmlInputViolates(doc, el);
   const failingByParent = collectFailingHtmlControls(
     doc,
     COLLAPSIBLE_TAGS,
@@ -166,7 +164,7 @@ function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
   const { primary, consumed } = computeHtmlCollapseDecisions(failingByParent);
 
   for (const input of findHtmlElementsByTag(doc, "input")) {
-    if (!htmlInputViolates(input)) continue;
+    if (!htmlInputViolates(doc, input)) continue;
     if (consumed.has(input)) continue;
     // Re-derive the trigger + edit + label at emit time. Cheap on
     // realistic forms (one regex slice + one descendant scan per input)
@@ -186,9 +184,11 @@ function checkHtml(doc: HtmlDocument, source: string, emit: Emit): void {
  * Predicate the sibling-collapse helper consumes: would the rule emit a
  * finding on this HTML `<input>`? Mirrors the per-element gating in
  * {@link checkHtml} exactly so the collapse pass and the emit pass agree
- * on which inputs are "failing."
+ * on which inputs are "failing." Closes over `doc` so the label-
+ * purpose-rejection gate can resolve `<label for>` and wrapping
+ * `<label>` the same way the emit pass does.
  */
-function htmlInputViolates(el: HtmlElement): boolean {
+function htmlInputViolates(doc: HtmlDocument, el: HtmlElement): boolean {
   if (el.tagName.toLowerCase() !== "input") return false;
   if (hasHtmlAttribute(el, "autocomplete")) return false;
   const type = (getHtmlAttribute(el, "type") ?? "text").toLowerCase();
@@ -197,7 +197,18 @@ function htmlInputViolates(el: HtmlElement): boolean {
   const roleAttr = getHtmlAttribute(el, "role");
   const ariaLabel = getHtmlAttribute(el, "aria-label");
   if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return false;
-  return matchPurpose(type, nameAttr, idAttr) !== null;
+  const match = matchPurpose(type, nameAttr, idAttr);
+  if (match === null) return false;
+  // Label-purpose rejection: when the trigger is type-derived AND a
+  // label was resolved AND the label text contains zero purpose-
+  // related token, the label is direct in-file contrary evidence
+  // against the "appears-to-collect-user-info" predicate. See
+  // {@link labelTextMatchesPurpose} for the doctrine note.
+  if (match.trigger.kind === "type") {
+    const label = resolveHtmlInputLabel(doc, el);
+    if (label !== null && !labelTextMatchesPurpose(label.text)) return false;
+  }
+  return true;
 }
 
 function checkJsx(module: TsxModule, source: string, emit: Emit): void {
@@ -239,9 +250,12 @@ function checkJsxInput(
 
 /**
  * Predicate the sibling-collapse helper consumes: would the rule emit a
- * finding on this JSX `<input>`? Mirrors {@link htmlInputViolates} on the
- * JSX attribute shape (camelCase `autoComplete` accepted alongside the
- * HTML-spec lowercase `autocomplete`).
+ * finding on this JSX `<input>`? Mirrors {@link htmlInputViolates} on
+ * the JSX attribute shape (camelCase `autoComplete` accepted alongside
+ * the HTML-spec lowercase `autocomplete`). Label resolution here is
+ * self-contained (aria-label literal, placeholder literal); the
+ * cross-element `<label for>` resolution the HTML branch performs
+ * requires module-level state.
  */
 function jsxInputViolates(el: JsxElement): boolean {
   if (el.tagName.toLowerCase() !== "input") return false;
@@ -252,7 +266,13 @@ function jsxInputViolates(el: JsxElement): boolean {
   const roleAttr = getJsxAttributeString(el, "role");
   const ariaLabel = getJsxAttributeString(el, "aria-label");
   if (isSearchInput(type, roleAttr, nameAttr, idAttr, ariaLabel)) return false;
-  return matchPurpose(type, nameAttr, idAttr) !== null;
+  const match = matchPurpose(type, nameAttr, idAttr);
+  if (match === null) return false;
+  if (match.trigger.kind === "type") {
+    const label = resolveJsxInputLabel(el);
+    if (label !== null && !labelTextMatchesPurpose(label.text)) return false;
+  }
+  return true;
 }
 
 /**
@@ -546,27 +566,8 @@ function isSearchInput(
   return false;
 }
 
-function containsSearchToken(value: string | null | undefined): boolean {
-  if (!value) return false;
-  for (const token of tokenizeIdentifier(value)) {
-    if (SEARCH_TOKENS.has(token)) return true;
-  }
-  return false;
-}
-
-/**
- * Splits `value` into lowercased alphabetic tokens, treating camelCase
- * transitions (`searchBox` → `search`, `box`), non-letters
- * (`search-input`, `search_input`, `search input`), and digits as
- * token boundaries. The output never contains empty tokens.
- */
-function tokenizeIdentifier(value: string): readonly string[] {
-  const camelSplit = value.replace(/([a-z])([A-Z])/g, "$1 $2");
-  return camelSplit
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((tok) => tok.length > 0);
-}
+// containsSearchToken + tokenizeIdentifier live in
+// `_label-purpose-tokens.ts` to keep this file under the limits guard.
 
 function describeTrigger(trigger: TriggerEvidence): string {
   if (trigger.kind === "type") {

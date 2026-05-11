@@ -243,6 +243,202 @@ describe("rule forms/autocomplete-missing", () => {
     });
   });
 
+  // Label-purpose-rejection gate: when the trigger is type-derived
+  // (`type=email`, `type=tel`, `type=password`, `type=url`) AND a label
+  // was resolved on the input AND the label text contains zero
+  // purpose-related token, the label is direct in-file contrary
+  // evidence against the "appears-to-collect-user-info" predicate. The
+  // rule suppresses emission rather than emit at `severity:warning` on
+  // a label that semantically rejects the inference.
+  //
+  // See LABEL_PURPOSE_TOKENS in src/rules/forms/autocomplete-missing.ts
+  // for the visible-language vocabulary corresponding to WCAG 2.1's 53
+  // input-purpose tokens.
+  describe("HTML: label-purpose-rejection gate (type-derived triggers)", () => {
+    it("type=email with Latin-filler label — no fire (contrary evidence)", () => {
+      // The canonical case from the field report: a `<input type=email>`
+      // whose surrounding `<label>` carries Latin filler text. The
+      // label is direct in-file rejection of the "user-info" inference;
+      // emitting at warning would contradict the resolved evidence.
+      const violations = runRule(
+        rule,
+        `<label for="x">Lorem ipsum dolor sit amet, consectetur adipiscing elit.</label>` +
+          `<input id="x" type="email" name="email">`,
+        { filePath: "filler.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=email with aria-label of Latin filler — no fire", () => {
+      const violations = runRule(
+        rule,
+        `<input type="email" name="email" aria-label="Lorem ipsum dolor">`,
+        { filePath: "filler.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=email with placeholder of Latin filler — no fire", () => {
+      const violations = runRule(rule, `<input type="email" placeholder="Lorem ipsum">`, {
+        filePath: "filler.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=email with no label resolved — still fires (no contrary evidence)", () => {
+      // Backlog test case 3: when no label channel resolves at all,
+      // there is no in-file contrary evidence; the rule continues to
+      // surface so the agent reading the file (which has more context
+      // than the scanner) can decide.
+      const violations = runRule(rule, `<input type="email" name="email">`, {
+        filePath: "no-label.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain(`autocomplete="email"`);
+    });
+
+    it("type=email with label containing a purpose token — still fires", () => {
+      // Backlog test case 1: the label "Email address" contains the
+      // "email" purpose token, so the rule's inference is corroborated
+      // and emission stays.
+      const violations = runRule(
+        rule,
+        `<label for="e">Email address</label><input id="e" type="email" name="email">`,
+        { filePath: "labelled.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain(`autocomplete="email"`);
+    });
+
+    it("type=tel with Latin-filler label — no fire", () => {
+      // Gate covers all type-derived matches, not just email.
+      const violations = runRule(
+        rule,
+        `<label for="t">Lorem ipsum</label><input id="t" type="tel" name="phone">`,
+        { filePath: "filler-tel.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=password with non-purpose label — no fire", () => {
+      const violations = runRule(rule, `<input type="password" aria-label="Verification value">`, {
+        filePath: "filler-pw.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=password with purpose-bearing label — still fires", () => {
+      const violations = runRule(rule, `<input type="password" aria-label="Choose a password">`, {
+        filePath: "labelled-pw.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("current-password");
+    });
+
+    it("name-derived match (type=text, name='firstName') is NOT gated by label", () => {
+      // The gate scope is type-derived matches only — when the trigger
+      // is the attribute name itself (the strong positive signal), a
+      // non-purpose label is not contrary evidence (the input clearly
+      // collects a first name regardless of how the label reads).
+      const violations = runRule(
+        rule,
+        `<label for="fn">Lorem ipsum</label><input id="fn" type="text" name="firstName">`,
+        { filePath: "name-trigger.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.suggestion).toContain("given-name");
+    });
+
+    it("type=email with wrapping <label> containing a purpose token — still fires", () => {
+      const violations = runRule(
+        rule,
+        `<label>Email address<input type="email" name="email"></label>`,
+        { filePath: "wrapping.html" },
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("type=email with wrapping <label> of Latin filler — no fire", () => {
+      const violations = runRule(
+        rule,
+        `<label>Lorem ipsum dolor<input type="email" name="email"></label>`,
+        { filePath: "wrapping-filler.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=url with non-purpose label — no fire", () => {
+      const violations = runRule(rule, `<input type="url" aria-label="Lorem ipsum">`, {
+        filePath: "filler-url.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=url with website label — still fires", () => {
+      const violations = runRule(rule, `<input type="url" aria-label="Company website">`, {
+        filePath: "labelled-url.html",
+      });
+      expect(violations).toHaveLength(1);
+    });
+
+    it("sibling cluster of type=email with non-purpose labels — no collapsed finding", () => {
+      // Predicate-level rejection means the collapse helper sees zero
+      // failing siblings under the parent, so no rollup finding ships.
+      // Surface-don't-suppress doctrine is preserved: the agent reading
+      // the file would reach the same conclusion the gate did (label
+      // semantically rejects the inference).
+      const source = `<form>
+        <label for="a">Lorem ipsum</label><input id="a" type="email" placeholder="Lorem">
+        <label for="b">Lorem ipsum</label><input id="b" type="email" placeholder="Lorem">
+        <label for="c">Lorem ipsum</label><input id="c" type="email" placeholder="Lorem">
+        <label for="d">Lorem ipsum</label><input id="d" type="email" placeholder="Lorem">
+      </form>`;
+      const violations = runRule(rule, source, { filePath: "filler-cluster.html" });
+      expect(violations).toHaveLength(0);
+    });
+  });
+
+  describe("JSX: label-purpose-rejection gate (type-derived triggers)", () => {
+    it("type=email with aria-label of Latin filler — no fire", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="email" name="email" aria-label="Lorem ipsum dolor" />;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=email with placeholder of Latin filler — no fire", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="email" name="email" placeholder="Lorem ipsum" />;`,
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("type=email with no label resolved — still fires", () => {
+      // ContactForm.tsx-style: type=email, no aria-label, no placeholder.
+      // Resolution returns null and the gate stays inert.
+      const violations = runRule(rule, `const X = <input type="email" name="email" />;`);
+      expect(violations).toHaveLength(1);
+    });
+
+    it("type=email with purpose-token aria-label — still fires", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="email" name="email" aria-label="Your email" />;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+
+    it("name-derived JSX match is NOT gated by label", () => {
+      const violations = runRule(
+        rule,
+        `const X = <input type="text" name="firstName" aria-label="Lorem ipsum" />;`,
+      );
+      expect(violations).toHaveLength(1);
+    });
+  });
+
   // Sibling-collapse: when ≥3 direct-child <input> siblings under one
   // parent share the same `(tagName, attributes-modulo-id)` fingerprint
   // and all fail the purpose-vs-autocomplete predicate, collapse the N
