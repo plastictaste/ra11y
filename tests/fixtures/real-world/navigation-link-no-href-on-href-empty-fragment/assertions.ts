@@ -23,11 +23,12 @@
  * `href=""`, and `href="javascript:…"` cases. The two rules become
  * non-overlapping and the message text matches the evidence.
  *
- * Fixture is RED (`todo: true`) until the predicate is tightened.
- * The first six anchors carry `href="#"` (or a real fragment / URL);
- * only the last one has the `href` attribute genuinely absent.
- * `navigation/link-no-href` must fire for the last anchor and stay
- * silent on the rest.
+ * Fixture went GREEN once the predicate was tightened. The first five
+ * anchors carry `href="#"` (or a real fragment / URL); only the last
+ * one has the `href` attribute genuinely absent.
+ * `navigation/link-no-href` fires for the last anchor and stays silent
+ * on the rest. The first three (`href="#"` placeholders) are now owned
+ * by `navigation/href-empty-fragment`.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -36,8 +37,8 @@ export const assertions: FixtureAssertions = {
   description:
     "navigation/link-no-href must fire only when the href attribute is genuinely " +
     'absent. Anchors carrying href="#" are owned by navigation/href-empty-fragment; ' +
-    "the two rules must be non-overlapping. Today's emission contradicts its own " +
-    "message text on the empty-fragment cases.",
+    "the two rules must be non-overlapping. The rule's emission text now matches " +
+    "the evidence on every case it fires on.",
   origin: {
     notes:
       "Multi-corpus AI-first sweep on a vanilla-stack component-demo HTML page " +
@@ -46,11 +47,6 @@ export const assertions: FixtureAssertions = {
       'message read "with no href" while the snippet showed href="#" — message ' +
       "and evidence contradicted on the same line.",
   },
-  // Intentionally RED — until the predicate is tightened, the rule fires on every
-  // href="#" anchor and the no-violation assertion below fails. The
-  // `violation-present` row pinned to the genuinely-missing-href anchor is the
-  // load-bearing baseline that confirms the rule still fires when it should.
-  todo: true,
   expectations: [
     { kind: "zero-parse-errors" },
 

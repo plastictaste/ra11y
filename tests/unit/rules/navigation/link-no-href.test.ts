@@ -55,41 +55,41 @@ describe("rule navigation/link-no-href", () => {
     });
   });
 
-  describe("HTML: fires on placeholder href", () => {
-    // From a screen-reader and keyboard perspective, href="" and
-    // href="#" are indistinguishable from a missing href — both are
-    // non-navigating placeholders. Bootstrap's docs use href="#" in
-    // dropdown/modal/carousel examples; treat those like missing href.
+  describe("HTML: stays silent on placeholder href (owned by navigation/href-empty-fragment)", () => {
+    // The placeholder shapes (`href=""`, `href="#"`, `href="  #  "`,
+    // `href="   "`) are the conceptual property of
+    // `navigation/href-empty-fragment` — that rule frames the same
+    // anchor honestly, since its message text names the placeholder
+    // value the snippet shows. Letting both rules fire on the same line
+    // produced the dishonest double-emit captured by
+    // `tests/fixtures/real-world/navigation-link-no-href-on-href-empty-fragment/`.
 
-    it("href is empty string with onclick", () => {
+    it('href="" with onclick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `<a href="" onclick="doThing()">Go</a>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/link-no-href");
-      expect(violations[0]?.severity).toBe("error");
+      expect(violations).toHaveLength(0);
     });
 
-    it("href is '#' with onclick (Bootstrap dropdown pattern)", () => {
+    it('href="#" with onclick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `<a href="#" onclick="toggle()">Menu</a>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/link-no-href");
+      expect(violations).toHaveLength(0);
     });
 
-    it("href is '  #  ' (whitespace trimmed before comparison)", () => {
+    it('href="  #  " with onclick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `<a href="  #  " onclick="doThing()">Click</a>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
+      expect(violations).toHaveLength(0);
     });
 
-    it("href is all-whitespace (treated as empty placeholder)", () => {
+    it('href="   " (all whitespace) with onclick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `<a href="   " onclick="doThing()">Click</a>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
+      expect(violations).toHaveLength(0);
     });
   });
 
@@ -133,33 +133,20 @@ describe("rule navigation/link-no-href", () => {
     });
   });
 
-  describe("JSX: fires on placeholder href", () => {
-    it("href is empty string with onClick", () => {
+  describe("JSX: stays silent on placeholder href (owned by navigation/href-empty-fragment)", () => {
+    it('href="" with onClick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `const X = <a href="" onClick={handle}>Go</a>;`);
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.ruleId).toBe("navigation/link-no-href");
+      expect(violations).toHaveLength(0);
     });
 
-    it("href='#' with onClick (dropdown-style placeholder)", () => {
+    it('href="#" with onClick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `const X = <a href="#" onClick={handle}>Menu</a>;`);
-      expect(violations).toHaveLength(1);
+      expect(violations).toHaveLength(0);
     });
 
-    it("href=' # ' (whitespace trimmed before comparison)", () => {
+    it('href=" # " (whitespace) with onClick — silent (href-empty-fragment owns this)', () => {
       const violations = runRule(rule, `const X = <a href=" # " onClick={handle}>X</a>;`);
-      expect(violations).toHaveLength(1);
-    });
-
-    it("navigation-intent suggestion still routes through onClick body", () => {
-      // href="#" doesn't affect the intent probe — that probe reads
-      // the onClick expression, not the href. Placeholder href +
-      // navigating handler still lands on the navigation suggestion.
-      const violations = runRule(
-        rule,
-        `const X = <a href="#" onClick={() => navigate("/x")}>Go</a>;`,
-      );
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.suggestion).toContain("navigation");
+      expect(violations).toHaveLength(0);
     });
   });
 
@@ -292,12 +279,17 @@ describe("rule navigation/link-no-href", () => {
       expect(violations).toHaveLength(1);
     });
 
-    it("class signal with placeholder href='#' still fires", () => {
+    it("class signal with placeholder href='#' is silent here (owned by navigation/href-empty-fragment)", () => {
+      // Even with a strong interactive-class signal (`class="prev"`),
+      // the presence of `href="#"` routes ownership to
+      // `navigation/href-empty-fragment` — that rule's message text
+      // matches the evidence (the snippet shows `href="#"`). The two
+      // rules are non-overlapping by design; suppressing one no longer
+      // silently double-suppresses the other.
       const violations = runRule(rule, `<a class="prev" href="#"><i class="fa-arrow"></i></a>`, {
         filePath: "index.html",
       });
-      expect(violations).toHaveLength(1);
-      expect(violations[0]?.message).toContain("prev");
+      expect(violations).toHaveLength(0);
     });
 
     it("class signal with real href stays silent (link is keyboard-operable)", () => {

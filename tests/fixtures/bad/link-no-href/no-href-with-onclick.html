@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Anchor with onclick but genuinely no href</title>
+  </head>
+  <body>
+    <!-- The href attribute is genuinely absent. The element is wired
+         to act as a control via the onclick handler but is not in the
+         keyboard tab order and Enter cannot activate it. -->
+    <a onclick="doThing()">Click me</a>
+  </body>
+</html>

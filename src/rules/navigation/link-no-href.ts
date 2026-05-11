@@ -24,10 +24,19 @@
  * `prev`/`next`, Bootstrap `dropdown-toggle`, plugin tabs/accordions,
  * `btn`/`nav-link` styled anchors). The agent reading the file can see
  * the intent the static handler-only check misses; we extend the rule
- * to fire on absent / placeholder `href` plus an interactive *class*
- * signal so those silent-miss cases reach the agent too. A bare
- * `<a id="anchor">` with no class signal stays silent — that's a
- * legitimate fragment target, not a control.
+ * to fire on absent `href` plus an interactive *class* signal so those
+ * silent-miss cases reach the agent too. A bare `<a id="anchor">` with
+ * no class signal stays silent — that's a legitimate fragment target,
+ * not a control.
+ *
+ * Scope split: this rule fires only when the `href` attribute is
+ * GENUINELY ABSENT. Placeholder shapes (`href="#"`, `href=""`,
+ * `href="  #  "`, `href="javascript:…"`) are owned by companion rules
+ * `navigation/href-empty-fragment` and `navigation/href-javascript-scheme`.
+ * The split keeps each rule's message text honest about the evidence
+ * the snippet shows — emitting "with no href" on a line carrying
+ * `href="#"` was the dishonest double-emit captured by
+ * `tests/fixtures/real-world/navigation-link-no-href-on-href-empty-fragment/`.
  *
  * The fix depends on intent:
  *   - A link that navigates → add href
@@ -54,16 +63,35 @@ import type {
 } from "../../types/ast.ts";
 
 /**
- * `href=""` and `href="#"` are non-navigating placeholders — from a
- * screen-reader and keyboard perspective they are indistinguishable
- * from a missing href. Fragment navigation (`href="#section-id"`) is
- * legitimate and stays silent. Whitespace-only values collapse to the
- * same placeholder shape once trimmed (`" # "` → `"#"`).
+ * Extracts the trimmed inline text content of an element by joining its
+ * direct `HtmlText` children. Used only for additive context in the
+ * emission message — the agent reads the file for the full picture.
+ * Returns `null` if no text content is present, and clamps long strings
+ * to keep the message scannable.
  */
-function isNonNavigatingHref(value: string | null): boolean {
-  if (value === null) return false;
-  const trimmed = value.trim();
-  return trimmed === "" || trimmed === "#";
+function htmlElementText(element: HtmlElement): string | null {
+  const parts: string[] = [];
+  for (const child of element.children) {
+    if (child.kind === "HtmlText") parts.push(child.value);
+  }
+  const joined = parts.join(" ").trim().replace(/\s+/g, " ");
+  if (joined.length === 0) return null;
+  return joined.length > 60 ? `${joined.slice(0, 60)}…` : joined;
+}
+
+/**
+ * JSX equivalent of {@link htmlElementText}. Joins direct `JsxText`
+ * children (string literals); JSX expression children are opaque and
+ * intentionally skipped — the agent reads the file when they matter.
+ */
+function jsxElementText(element: JsxElement): string | null {
+  const parts: string[] = [];
+  for (const child of element.children) {
+    if (child.kind === "JsxText") parts.push(child.value);
+  }
+  const joined = parts.join(" ").trim().replace(/\s+/g, " ");
+  if (joined.length === 0) return null;
+  return joined.length > 60 ? `${joined.slice(0, 60)}…` : joined;
 }
 
 /**
@@ -392,7 +420,7 @@ export const rule = defineRule({
   },
   docs: {
     description:
-      "<a> elements with onClick but missing, empty, or placeholder (#) href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href.",
+      "<a> elements with onClick but a genuinely absent href are not keyboard-operable and are announced as generic containers. Use <button> instead, or add a real href. Placeholder hrefs (`#`, ``, `javascript:…`) are owned by `navigation/href-empty-fragment` and `navigation/href-javascript-scheme`.",
     rationale:
       "An anchor without an href is a dead link. It's not in the tab order, Enter doesn't activate it, and screen readers announce it as a generic container with no role. The common pattern <a onclick='…'>Click me</a> breaks keyboard and screen-reader users completely.",
     goodExample: `<button type="button" onClick={handleClick}>Toggle menu</button>`,
@@ -429,15 +457,17 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
   // is found. Keeps the no-finding fast path free of an extra walk.
   const parentRef: { value: Map<HtmlElement, HtmlElement> | null } = { value: null };
   for (const anchor of findHtmlElementsByTag(doc, "a")) {
-    // href="" and href="#" (with optional surrounding whitespace) are
-    // non-navigating placeholders — indistinguishable from missing href
-    // to screen readers and the keyboard tab order. Treat them the same.
-    if (
-      hasHtmlAttribute(anchor, "href") &&
-      !isNonNavigatingHref(getHtmlAttribute(anchor, "href"))
-    ) {
-      continue;
-    }
+    // Predicate: this rule only fires when the `href` attribute is
+    // genuinely absent. Placeholder shapes (`href="#"`, `href=""`,
+    // `href="javascript:…"`, `href="  #  "`) are owned by the companion
+    // rules `navigation/href-empty-fragment` and
+    // `navigation/href-javascript-scheme` — they share the same WCAG
+    // criteria but frame the wrong-role-for-runtime-behavior question
+    // honestly (the message text matches the evidence: the snippet
+    // shows the placeholder href, the message names it). Letting both
+    // rules fire on the same line produced the dishonest double-emit
+    // captured by `tests/fixtures/real-world/navigation-link-no-href-on-href-empty-fragment/`.
+    if (hasHtmlAttribute(anchor, "href")) continue;
     const hasHandler = hasClickHandlerHtml(anchor);
     const classToken = hasInteractiveClassSignal(getHtmlAttribute(anchor, "class"));
     if (!hasHandler && classToken === null) continue;
@@ -445,7 +475,7 @@ function checkHtml(doc: HtmlDocument, emit: Emit): void {
     const intent = describeJsxExpressionIntent(getHtmlAttribute(anchor, "onclick"));
     parentRef.value ??= buildHtmlParentMap(doc);
     const constraint = findHtmlConstraintAncestor(anchor, parentRef.value);
-    emit(buildViolation(anchor.loc.start, intent, trigger, constraint));
+    emit(buildViolation(anchor.loc.start, intent, trigger, constraint, htmlElementText(anchor)));
   }
 }
 
@@ -457,7 +487,14 @@ function hasClickHandlerHtml(element: HtmlElement): boolean {
 function checkJsx(module: TsxModule, emit: Emit): void {
   const parentRef: { value: Map<JsxElement, JsxElement> | null } = { value: null };
   for (const anchor of findJsxElementsByTag(module, "a")) {
-    if (hasJsxAttribute(anchor, "href") && !hasNonNavigatingHrefJsx(anchor)) continue;
+    // Predicate: see the parallel comment in `checkHtml` — this rule
+    // fires only when the `href` attribute is genuinely absent. JSX
+    // placeholder shapes (`href="#"`, `href=""`) are owned by
+    // `navigation/href-empty-fragment`. Expression-form `href={…}` is
+    // opaque at static-analysis time and is also assumed to resolve to
+    // real navigation; the agent reads the file when the expression is
+    // suspicious.
+    if (hasJsxAttribute(anchor, "href")) continue;
     const hasHandler = hasClickHandlerJsx(anchor);
     const classToken = hasInteractiveClassSignal(jsxClassNameLiteral(anchor));
     if (!hasHandler && classToken === null) continue;
@@ -465,7 +502,7 @@ function checkJsx(module: TsxModule, emit: Emit): void {
     const intent = describeJsxExpressionIntent(jsxOnClickExpressionText(anchor));
     parentRef.value ??= buildJsxParentMap(module);
     const constraint = findJsxConstraintAncestor(anchor, parentRef.value);
-    emit(buildViolation(anchor.loc.start, intent, trigger, constraint));
+    emit(buildViolation(anchor.loc.start, intent, trigger, constraint, jsxElementText(anchor)));
   }
 }
 
@@ -481,19 +518,6 @@ function jsxClassNameLiteral(element: JsxElement): string | null {
   if (!attr?.value) return null;
   if (attr.value.kind !== "StringLiteral") return null;
   return attr.value.value;
-}
-
-/**
- * True when the JSX element's `href` is a string-literal equal to `""`
- * or `"#"` (trimmed). Expression-form `href={…}` is opaque — we assume
- * it resolves to real navigation and leave the element alone (the
- * consuming agent can investigate if the expression is suspicious).
- */
-function hasNonNavigatingHrefJsx(element: JsxElement): boolean {
-  const attr = getJsxAttribute(element, "href");
-  if (!attr?.value) return false;
-  if (attr.value.kind !== "StringLiteral") return false;
-  return isNonNavigatingHref(attr.value.value);
 }
 
 function hasClickHandlerJsx(element: JsxElement): boolean {
@@ -520,16 +544,23 @@ function buildViolation(
   intent: Intent,
   trigger: Trigger,
   constraint: StructuralConstraint | null,
+  elementText: string | null,
 ): {
   severity: "error";
   location: { filePath: string; line: number; column: number };
   message: string;
   suggestion: string;
 } {
+  // Inline text is included as additive context — the agent reading the
+  // file already knows the line; the inline text disambiguates which
+  // anchor in a list of similar-looking placeholders the rule fired on
+  // (the canonical case is a row of `<a class="nav-link">…</a>`
+  // navigation placeholders sharing the same class).
+  const textClause = elementText === null ? "" : ` (text: "${elementText}")`;
   const message =
     trigger === "handler"
-      ? `<a> with a click handler but no href is not keyboard-operable — it's not in the tab order and Enter won't activate it.`
-      : `<a class="${trigger.token}"> with no href is styled or wired as an interactive control (likely with a runtime-attached click handler) but is not keyboard-operable — it's not in the tab order and Enter won't activate it.`;
+      ? `<a> with a click handler but no href${textClause} is not keyboard-operable — it's not in the tab order and Enter won't activate it.`
+      : `<a class="${trigger.token}"> with no href${textClause} is styled or wired as an interactive control (likely with a runtime-attached click handler) but is not keyboard-operable — it's not in the tab order and Enter won't activate it.`;
   return {
     severity: "error",
     location: { filePath: "", line: loc.line, column: loc.column },
