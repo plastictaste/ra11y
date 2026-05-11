@@ -155,6 +155,7 @@ function checkHtml(
     : findInlineHtmlSvgElements(doc);
   for (const svg of candidates) {
     if (isDecorativeHtmlElement(svg)) continue;
+    if (isSvgWebfontDefinition(svg)) continue;
     if (hasAccessibleNameSvg(svg)) continue;
     if (!isStandaloneSvgFile && hasHtmlRoleImg(svg)) continue;
     ctx.emit({
@@ -268,6 +269,111 @@ function findInlineHtmlSvgElements(doc: HtmlDocument): readonly HtmlElement[] {
   }
   return out;
 }
+
+/**
+ * True when this `<svg>` is a font-definition resource (an SVG
+ * webfont) rather than a UI graphic. SVG 1.1 lets authors embed an
+ * entire bitmap font inside an `<svg>` element via the `<font>` /
+ * `<font-face>` / `<glyph>` / `<missing-glyph>` family — the
+ * resulting file is consumed by `@font-face src=url(…) format("svg")`
+ * (or as a glyph reference target), never `<img>`-rendered or
+ * inlined as a UI image. WCAG 1.1.1's "non-text content presented
+ * to the user" predicate does not apply: the agent renders the
+ * glyphs through the font pipeline, not as a picture.
+ *
+ * Two static-evidence axes, either sufficient on its own:
+ *
+ *   1. The `<svg>` (or its `<defs>` child) has a direct-child
+ *      `<font>` element. SVG fonts are the only legitimate
+ *      construction that puts `<font>` here, and exporters
+ *      (FontForge, batik) emit exactly this shape.
+ *   2. The `<svg>` has children but none of them — at any depth —
+ *      are drawing primitives (`<path>`, `<rect>`, `<circle>`,
+ *      `<ellipse>`, `<line>`, `<polyline>`, `<polygon>`, `<g>`,
+ *      `<use>`, `<image>`, `<text>`, `<foreignObject>`). A genuine
+ *      UI graphic always contains at least one drawing primitive at
+ *      some depth; a webfont SVG has only `<defs>` / `<font>` /
+ *      `<font-face>` / `<missing-glyph>` / `<glyph>` (the `<glyph>`
+ *      `d="…"` attribute is a font-pipeline path, not a rendered
+ *      `<path>` element).
+ *
+ * Both checks operate on in-file evidence only — sibling-file
+ * evidence (`.ttf`/`.eot`/`.woff` in the same directory) is
+ * supplementary and not required for the predicate to fire.
+ */
+function isSvgWebfontDefinition(svg: HtmlElement): boolean {
+  if (hasDirectFontChild(svg)) return true;
+  return hasOnlyFontFamilyDescendants(svg);
+}
+
+/**
+ * True when `svg` has a direct-child `<font>` element, OR a direct-
+ * child `<defs>` whose children include a `<font>`. Both shapes are
+ * the canonical SVG webfont layout.
+ */
+function hasDirectFontChild(svg: HtmlElement): boolean {
+  for (const child of directHtmlChildren(svg)) {
+    if (child.kind !== "HtmlElement") continue;
+    const tag = child.tagName.toLowerCase();
+    if (tag === "font") return true;
+    if (tag === "defs") {
+      for (const inner of directHtmlChildren(child)) {
+        if (inner.kind !== "HtmlElement") continue;
+        if (inner.tagName.toLowerCase() === "font") return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * True when the `<svg>` has at least one element child AND none of
+ * its descendants are drawing primitives. The drawing-primitive set
+ * is the subset of SVG-rendering elements that produce visible
+ * output when the SVG is rendered as a picture; a webfont SVG
+ * legitimately contains zero of them. An empty `<svg>` (no element
+ * children at all) is NOT classified as a webfont — the existing
+ * "no accessible name" emission for an empty asset is honest.
+ */
+function hasOnlyFontFamilyDescendants(svg: HtmlElement): boolean {
+  let sawElement = false;
+  const stack: HtmlElement[] = [svg];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === undefined) break;
+    for (const child of node.children) {
+      if (child.kind !== "HtmlElement") continue;
+      sawElement = true;
+      if (DRAWING_PRIMITIVE_TAGS.has(child.tagName.toLowerCase())) return false;
+      stack.push(child);
+    }
+  }
+  return sawElement;
+}
+
+/**
+ * SVG elements that produce visible rendered output when the asset
+ * is consumed as an image. Presence of any one at any depth
+ * disqualifies the file from the webfont classification. Excludes
+ * `<glyph>` / `<missing-glyph>` (font-pipeline targets, never
+ * rendered directly), `<font>` / `<font-face>` (font metadata),
+ * `<defs>` / `<symbol>` / `<title>` / `<desc>` / `<metadata>`
+ * (containers / metadata that themselves render nothing).
+ */
+const DRAWING_PRIMITIVE_TAGS: ReadonlySet<string> = new Set([
+  "path",
+  "rect",
+  "circle",
+  "ellipse",
+  "line",
+  "polyline",
+  "polygon",
+  "g",
+  "use",
+  "image",
+  "text",
+  "foreignobject",
+]);
 
 /**
  * True when the `<svg>` exposes an accessible name via any of the

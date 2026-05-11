@@ -24,10 +24,9 @@
  * picture). Sibling `.ttf` / `.eot` / `.woff` files in the same
  * directory are an additional confirmation signal.
  *
- * Fixture is RED (`todo: true`) until the classifier exists. The
- * `no-violation` predicate is the load-bearing assertion; once the
- * classifier ships, `todo: true` is removed and the fixture goes
- * green.
+ * Once the classifier ships, the `no-violation` predicate is the
+ * load-bearing assertion: scanning the fixture must produce zero
+ * `semantics/svg-title-missing` findings.
  */
 
 import type { FixtureAssertions } from "../runner.ts";
@@ -45,10 +44,6 @@ export const assertions: FixtureAssertions = {
       "on SVG webfont source files (root <font> element with 200+ <glyph> children, " +
       "no UI drawing primitives, sibling .ttf/.eot/.woff files in same directory).",
   },
-  // Intentionally RED — until the SVG classifier learns to detect the
-  // font-glyph-svg shape, the rule fires on this fixture and the
-  // no-violation assertion below fails.
-  todo: true,
   expectations: [
     { kind: "zero-parse-errors" },
 
