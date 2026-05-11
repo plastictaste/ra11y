@@ -310,6 +310,43 @@ function blankRange(state: PreprocessState, start: number, end: number): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Mutable state threaded through the flatten walk. `out` is the
+ * synthesized output buffer; `outLine` is the 1-based line counter of
+ * `out` so far (incremented per `\n` written). `lineStarts` is the
+ * precomputed source line-offset table powering O(log n)
+ * source-line-of-offset lookups.
+ *
+ * Line preservation: synthesized fragments (the `parent { … }` envelope
+ * around flushed declarations and the selector header reconstructed
+ * for nested-`&` rules) carry no inherent source line. The flatten
+ * phase otherwise preserves line numbers by passing source slices —
+ * including their `\n` chars — through to the output. To keep emitted
+ * rules at their *source* line, every selector-emit site pads `out`
+ * with `\n` chars until `outLine` matches the source line of the
+ * selector that produced this rule. The pad is one-way (only ever
+ * adds newlines); we never collapse output lines because that would
+ * conflict with the inner body's own preserved newlines.
+ *
+ * Why this matters: `cssRule.loc.start.line` is the address that
+ * `suggest_fix(file, line)`, the source-level disable pragma, and
+ * `findingId` (which hashes location) all depend on. Without this
+ * preservation, two state-class selectors in the same parent block
+ * collide on `findingId` because they read at the same wrong line, and
+ * `suggest_fix(line)` resolves to a sibling block tens of lines off
+ * the actual selector.
+ *
+ * Doctrine reference: "Per-finding identifiers must be addressable,
+ * not collision-prone" (`docs/kb/architecture/ai-first-consumer.md`).
+ */
+interface FlattenState {
+  readonly source: string;
+  readonly out: string[];
+  readonly errors: ParseError[];
+  readonly lineStarts: readonly number[];
+  outLine: number;
+}
+
+/**
  * Walks the preprocessed source block-by-block and rewrites nested
  * selectors into flat, parent-concatenated CSS. By this stage
  * Sass-only constructs are already stripped; what remains is selector
@@ -317,42 +354,62 @@ function blankRange(state: PreprocessState, start: number, end: number): void {
  */
 function flattenNesting(source: string, errors: ParseError[]): string {
   const cursor = { pos: 0 };
-  const out: string[] = [];
-  flattenBlockBody(source, cursor, [], out, errors);
-  if (cursor.pos < source.length) out.push(source.slice(cursor.pos));
-  return out.join("");
+  const state: FlattenState = {
+    source,
+    out: [],
+    errors,
+    lineStarts: computeLineStarts(source),
+    outLine: 1,
+  };
+  flattenBlockBody(state, cursor, [], -1);
+  if (cursor.pos < source.length) pushSourceSlice(state, source.slice(cursor.pos));
+  return state.out.join("");
 }
 
 /**
  * Recursive body-walker. Emits flattened CSS from `cursor.pos` until
  * either EOF or a `}` at the caller's nesting depth (which the
  * caller consumes).
+ *
+ * `parentSelectorOffset` is the source byte offset of the parent
+ * block's selector header start (the `&.active,` token's first char
+ * for nested-`&` rules; the bare selector for top-level rules). Used
+ * by `flushDecls` to pad the output to the parent's source line
+ * before emitting `parent { decls }`. Pass `-1` for top-level callers
+ * (`parentSelectors === []`) where there is no parent envelope to
+ * emit; the call still flushes any straggling top-level whitespace.
  */
 function flattenBlockBody(
-  source: string,
+  state: FlattenState,
   cursor: { pos: number },
   parentSelectors: readonly string[],
-  out: string[],
-  errors: ParseError[],
+  parentSelectorOffset: number,
 ): void {
+  const { source } = state;
   const declBuffer: string[] = [];
   const hasDecls = { value: false };
   const flushDecls = () => {
     if (!hasDecls.value) return;
     if (parentSelectors.length > 0) {
-      out.push(parentSelectors.join(" "));
-      out.push(" {");
-      out.push(declBuffer.join(""));
-      out.push("}\n");
+      // Pad `out` so the synthesized `parent { … }` envelope lands at
+      // the parent's source line. Without this, the envelope is
+      // emitted AFTER all inner blocks have written their bodies, so
+      // its line is whatever line the previous inner block ended at —
+      // which can be tens of lines past the parent's actual position.
+      padOutToSourceLine(state, parentSelectorOffset);
+      pushSynthetic(state, parentSelectors.join(" "));
+      pushSynthetic(state, " {");
+      pushSourceSlice(state, declBuffer.join(""));
+      pushSynthetic(state, "}\n");
     } else {
-      out.push(declBuffer.join(""));
+      pushSourceSlice(state, declBuffer.join(""));
     }
     declBuffer.length = 0;
     hasDecls.value = false;
   };
   while (cursor.pos < source.length) {
     const before = cursor.pos;
-    if (processBlockChar(source, cursor, parentSelectors, declBuffer, hasDecls, out, errors)) {
+    if (processBlockChar(state, cursor, parentSelectors, declBuffer, hasDecls)) {
       flushDecls();
       return;
     }
@@ -367,42 +424,41 @@ function flattenBlockBody(
  * loop).
  */
 function processBlockChar(
-  source: string,
+  state: FlattenState,
   cursor: { pos: number },
   parentSelectors: readonly string[],
   declBuffer: string[],
   hasDecls: { value: boolean },
-  out: string[],
-  errors: ParseError[],
 ): boolean {
+  const { source } = state;
   const c = source[cursor.pos];
   if (c === '"' || c === "'") {
     const end = skipStringFrom(source, cursor.pos, c);
-    appendFragment(source, cursor.pos, end, parentSelectors, declBuffer, hasDecls, out);
+    appendFragment(state, cursor.pos, end, parentSelectors, declBuffer, hasDecls);
     cursor.pos = end;
     return false;
   }
   if (c === "/" && source[cursor.pos + 1] === "*") {
     const end = skipBlockCommentFrom(source, cursor.pos);
-    appendFragment(source, cursor.pos, end, parentSelectors, declBuffer, hasDecls, out);
+    appendFragment(state, cursor.pos, end, parentSelectors, declBuffer, hasDecls);
     cursor.pos = end;
     return false;
   }
   if (c === "}") return true;
   const classify = classifyStatement(source, cursor.pos);
   if (classify.kind === "block") {
-    handleNestedBlock(source, cursor, parentSelectors, classify.braceAt, out, errors);
+    handleNestedBlock(state, cursor, parentSelectors, classify.braceAt);
     return false;
   }
   if (classify.kind === "decl") {
-    appendFragment(source, cursor.pos, classify.end, parentSelectors, declBuffer, hasDecls, out);
+    appendFragment(state, cursor.pos, classify.end, parentSelectors, declBuffer, hasDecls);
     cursor.pos = classify.end;
     return false;
   }
   // `none` — whitespace or a stray close. Advance one char, passing
   // any whitespace through to declBuffer / output.
   if (parentSelectors.length > 0 && hasDecls.value) declBuffer.push(c ?? "");
-  else if (parentSelectors.length === 0) out.push(c ?? "");
+  else if (parentSelectors.length === 0) pushSourceSlice(state, c ?? "");
   cursor.pos += 1;
   return false;
 }
@@ -412,20 +468,19 @@ function processBlockChar(
  * parented block) or directly to the output.
  */
 function appendFragment(
-  source: string,
+  state: FlattenState,
   start: number,
   end: number,
   parentSelectors: readonly string[],
   declBuffer: string[],
   hasDecls: { value: boolean },
-  out: string[],
 ): void {
-  const slice = source.slice(start, end);
+  const slice = state.source.slice(start, end);
   if (parentSelectors.length > 0) {
     declBuffer.push(slice);
     hasDecls.value = true;
   } else {
-    out.push(slice);
+    pushSourceSlice(state, slice);
   }
 }
 
@@ -435,36 +490,159 @@ function appendFragment(
  * and recursed into with the *current* parent stack; selector blocks
  * have their selector resolved against the parent stack and
  * recursively flattened.
+ *
+ * Pads `out` to the source line of `cursor.pos` (the block's selector
+ * header start) before emitting either an at-rule header or a
+ * synthesized `parent { … }` envelope. Without the pad, the inner
+ * body would be emitted at whatever line the previous sibling block
+ * ended at — drifting the reported line of every nested rule by the
+ * cumulative span of its prior siblings.
  */
 function handleNestedBlock(
-  source: string,
+  state: FlattenState,
   cursor: { pos: number },
   parentSelectors: readonly string[],
   braceAt: number,
-  out: string[],
-  errors: ParseError[],
 ): void {
-  const headRaw = source.slice(cursor.pos, braceAt);
+  const { source, errors } = state;
+  // `classifyStatement` skipped any whitespace between the prior token
+  // and the selector head, so `cursor.pos` may point at a `\n` or run
+  // of spaces preceding the selector's first real char. For line
+  // attribution, we want the *selector's* source line, not the
+  // separator whitespace's line — `&.active,` on its own line should
+  // report that line, not the line of the trailing `\n` that closed
+  // the previous block.
+  const headStart = firstNonSpaceOffset(source, cursor.pos, braceAt);
+  const headRaw = source.slice(headStart, braceAt);
   const head = headRaw.trim();
   if (head.startsWith("@")) {
-    out.push(source.slice(cursor.pos, braceAt + 1));
+    padOutToSourceLine(state, headStart);
+    pushSourceSlice(state, source.slice(headStart, braceAt + 1));
     cursor.pos = braceAt + 1;
-    flattenBlockBody(source, cursor, parentSelectors, out, errors);
+    // For at-rules the parent envelope (if any) is the at-rule body
+    // itself, not a synthesized one — so pass -1 to suppress the
+    // envelope-pad on the recursive flush.
+    flattenBlockBody(state, cursor, parentSelectors, -1);
     if (source[cursor.pos] === "}") {
-      out.push("}\n");
+      pushSynthetic(state, "}\n");
       cursor.pos += 1;
     }
     return;
   }
-  const resolved = resolveSelector(head, parentSelectors, errors, cursor.pos);
+  const resolved = resolveSelector(head, parentSelectors, errors, headStart);
   if (resolved === null) {
     const braceEnd = findMatchingBrace(source, braceAt);
     cursor.pos = braceEnd === -1 ? source.length : braceEnd + 1;
     return;
   }
   cursor.pos = braceAt + 1;
-  flattenBlockBody(source, cursor, resolved, out, errors);
+  // The selector header (`headStart`) is the source line we want this
+  // flattened rule to land on. flushDecls inside the recursive call
+  // will pad to it before emitting `parent { decls }`.
+  flattenBlockBody(state, cursor, resolved, headStart);
   if (source[cursor.pos] === "}") cursor.pos += 1;
+}
+
+/**
+ * Scans `[from, to)` for the first non-whitespace character and
+ * returns its offset, or `from` when the range is all whitespace (so
+ * the caller still has a usable anchor). Used to attribute a nested
+ * block's source line to the *selector* — `&.active,` on its own line
+ * — rather than to the trailing `\n` of the previous sibling that
+ * `classifyStatement` happened to leave cursor parked on.
+ */
+function firstNonSpaceOffset(source: string, from: number, to: number): number {
+  let p = from;
+  while (p < to && isSpace(source[p])) p += 1;
+  return p === to ? from : p;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — line-preservation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Precomputes the source byte offset of every line start (offset of
+ * the char after each `\n`). `lineStarts[0] = 0`; `lineStarts[k]` is
+ * the offset of the first char on line `k+1`. Lookup via binary
+ * search in `sourceLineOf` is O(log n); building the array is O(n)
+ * once per flatten call.
+ */
+function computeLineStarts(source: string): number[] {
+  const out: number[] = [0];
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "\n") out.push(i + 1);
+  }
+  return out;
+}
+
+/**
+ * Returns the 1-based source line that contains the byte at `offset`.
+ * Binary search over the precomputed `lineStarts` table. Out-of-range
+ * offsets clamp to line 1 (`offset < 0`) or the last line
+ * (`offset >= source.length`).
+ */
+function sourceLineOf(state: FlattenState, offset: number): number {
+  const { lineStarts } = state;
+  if (offset <= 0) return 1;
+  let lo = 0;
+  let hi = lineStarts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const start = lineStarts[mid] ?? 0;
+    if (start <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo + 1;
+}
+
+/**
+ * Pads `out` with `\n` chars until `outLine` reaches the source line
+ * of `srcOffset`. One-way: never collapses output lines. Skips when
+ * `srcOffset < 0` (top-level callers pass `-1` to suppress the pad).
+ *
+ * The pad is a no-op when the output is already at-or-past the
+ * target — sometimes inner-block bodies consume more newlines than
+ * the source had between the last emit and this one, in which case
+ * the new rule lands at the body's natural line. That over-shoot is
+ * the rare case and only happens when the source's nested-block body
+ * is shorter than the synthesized output's body would be (typically
+ * because of `@include` blanking shrinking the body); the alternative
+ * (emitting at the wrong line) is strictly worse.
+ */
+function padOutToSourceLine(state: FlattenState, srcOffset: number): void {
+  if (srcOffset < 0) return;
+  const target = sourceLineOf(state, srcOffset);
+  while (state.outLine < target) {
+    state.out.push("\n");
+    state.outLine += 1;
+  }
+}
+
+/**
+ * Pushes a source-derived slice (which may contain `\n` chars from
+ * the original source) and updates `outLine` to reflect the newlines
+ * carried in. Used for declaration buffers, comment passthroughs, and
+ * top-level whitespace fall-through.
+ */
+function pushSourceSlice(state: FlattenState, slice: string): void {
+  if (slice.length === 0) return;
+  state.out.push(slice);
+  for (let i = 0; i < slice.length; i += 1) if (slice[i] === "\n") state.outLine += 1;
+}
+
+/**
+ * Pushes a synthesized fragment (selector envelope, trailing `}\n`)
+ * and updates `outLine` for any embedded newlines. Distinguished from
+ * `pushSourceSlice` only by call-site intent — both update line
+ * counts the same way; the separate names make the flatten body
+ * easier to audit for which fragments are source-derived vs.
+ * synthesized.
+ */
+function pushSynthetic(state: FlattenState, fragment: string): void {
+  if (fragment.length === 0) return;
+  state.out.push(fragment);
+  for (let i = 0; i < fragment.length; i += 1) if (fragment[i] === "\n") state.outLine += 1;
 }
 
 type Classification =
