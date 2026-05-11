@@ -316,12 +316,16 @@ function hasDirectFontChild(svg: HtmlElement): boolean {
     if (child.kind !== "HtmlElement") continue;
     const tag = child.tagName.toLowerCase();
     if (tag === "font") return true;
-    if (tag === "defs") {
-      for (const inner of directHtmlChildren(child)) {
-        if (inner.kind !== "HtmlElement") continue;
-        if (inner.tagName.toLowerCase() === "font") return true;
-      }
-    }
+    if (tag === "defs" && defsContainsFont(child)) return true;
+  }
+  return false;
+}
+
+/** True when a `<defs>` element has a direct-child `<font>`. */
+function defsContainsFont(defs: HtmlElement): boolean {
+  for (const inner of directHtmlChildren(defs)) {
+    if (inner.kind !== "HtmlElement") continue;
+    if (inner.tagName.toLowerCase() === "font") return true;
   }
   return false;
 }
