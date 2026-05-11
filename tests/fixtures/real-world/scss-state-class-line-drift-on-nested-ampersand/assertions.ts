@@ -52,16 +52,6 @@ export const assertions: FixtureAssertions = {
   toolInput: {
     verboseMeta: true,
   },
-  // Intentionally RED — pinned via `violation-present` as a baseline
-  // (the rule must fire on this shape), but the load-bearing
-  // line-position assertion is deferred until the runner exposes a
-  // `violation-at-line` predicate analogous to `candidate-at-line`.
-  // The bug is line-position drift, not emit absence — once the
-  // runner gains a position-aware violation predicate, this fixture
-  // gains a `kind: "violation-at-line"` row pointing at line 81 (the
-  // `&.active,` selector inside `.widget-item`) and `todo: true` is
-  // removed.
-  todo: true,
   expectations: [
     // Source must parse cleanly; a parse error would mask the line-drift
     // signal and turn the assertion into a false-pass.
@@ -69,13 +59,28 @@ export const assertions: FixtureAssertions = {
 
     // Sanity: the rule fires at all on the `.widget-item { &.active }`
     // selector. If the rule's predicate stops matching this shape, the
-    // (future) line-drift assertion would silently pass vacuously —
-    // pin the emission first so a regression that drops the finding
-    // is caught.
+    // line-drift assertion would silently pass vacuously — pin the
+    // emission first so a regression that drops the finding is caught.
     {
       kind: "violation-present",
       ruleId: "color/state-class-color-only",
       inFile: "_widget-list.scss",
+    },
+
+    // Load-bearing: the cited line for the `&.active, &:active`
+    // ruleset inside `.widget-item` must match its source position
+    // (line 82 — the `&.active,` selector token). Drift between the
+    // reported line and the source line breaks finding addressability:
+    // `suggest_fix(ruleId, file, line)` resolves to the wrong selector,
+    // and `findingId` (which encodes line) is non-addressable across
+    // sibling state-class selectors in the same file. Per the
+    // AI-first doctrine "Per-finding identifiers must be addressable,
+    // not collision-prone."
+    {
+      kind: "violation-at-line",
+      ruleId: "color/state-class-color-only",
+      path: "_widget-list.scss",
+      line: 82,
     },
   ],
 };

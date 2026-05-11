@@ -157,6 +157,38 @@ export type FixtureExpectation =
       readonly reasonIncludes?: string;
     }
   /**
+   * Assert that at least one violation for the rule is anchored at the
+   * given file:line. The violation-axis mirror of `candidate-at-line`:
+   * locks finder positional honesty for hard-emit rules. Use this when
+   * the invariant under test is "the cited line is the source line of
+   * the structural anchor" (e.g. the opening line of a CSS ruleset
+   * whose declarations triggered the rule), NOT "some violation exists
+   * at this line."
+   *
+   * Match shape: ANY violation for `ruleId` whose `location.filePath`
+   * equals `path` AND whose `location.line` equals `line`. `path` is
+   * root-relative POSIX under the fixture's `source/` directory,
+   * matching the form `Violation.location.filePath` carries inside the
+   * harness. When `reasonIncludes` is set, the matching violation's
+   * message must also contain the substring — locks "the right
+   * violation is at the right line" rather than "some violation is at
+   * this line."
+   *
+   * Failure modes (distinguished in the message so a regression is
+   * triagable without re-running the harness):
+   *   - no violation for the rule at all (silent miss)
+   *   - violation(s) for the rule exist but none on the named file
+   *   - violations exist on the named file but at the wrong line(s)
+   *   - matching file:line found but `reasonIncludes` substring absent
+   */
+  | {
+      readonly kind: "violation-at-line";
+      readonly ruleId: string;
+      readonly path: string;
+      readonly line: number;
+      readonly reasonIncludes?: string;
+    }
+  /**
    * Assert the number of review candidates surfaced for a criterion
    * falls within the given bounds. Used to lock aggregation invariants
    * — e.g. "ten adjacent sibling <img> patterns yield ONE consolidated
@@ -798,6 +830,8 @@ function evaluateOne(ctx: FixtureScanContext, exp: FixtureExpectation): Expectat
       return evalCandidatePresentWithout(fixtureId, exp, ctx.report.candidates ?? []);
     case "candidate-at-line":
       return evalCandidateAtLine(fixtureId, exp, ctx.report.candidates ?? []);
+    case "violation-at-line":
+      return evalViolationAtLine(fixtureId, exp, ctx.result.violations);
     case "candidate-count":
       return evalCandidateCount(fixtureId, exp, ctx.report.candidates ?? []);
     case "meta-hint-includes":
@@ -1163,6 +1197,77 @@ function evalCandidateAtLine(
     expectation: exp,
     pass: true,
     message: `real-world/${fixtureId}: candidate '${exp.criterionId}' present at ${exp.path}:${exp.line} (${sameLine.length} match${sameLine.length === 1 ? "" : "es"})`,
+  };
+}
+
+// ─── violation-at-line ──────────────────────────────────────────────────────
+
+/**
+ * Asserts that a violation for `ruleId` is anchored at the declared
+ * file:line. Guards finder positional honesty on the hard-emit
+ * (rule-violation) axis — the cited line must point at the structural
+ * anchor an agent reads (e.g. the opening line of a CSS ruleset whose
+ * declarations triggered the rule), NOT at a deeper sub-node or a
+ * sibling block many lines off the anchor. Without this predicate, a
+ * regression that drifts the reported line silently passes
+ * `violation-present` because the rule still surfaces.
+ *
+ * Failure modes (distinguished in the message so a regression is
+ * triagable without re-running the harness):
+ *   - no violation for the rule at all (silent miss)
+ *   - violation(s) for the rule exist but none on the named file
+ *   - violations exist on the named file but at the wrong line(s)
+ *   - matching file:line found but `reasonIncludes` substring absent
+ */
+function evalViolationAtLine(
+  fixtureId: string,
+  exp: FixtureExpectation & { kind: "violation-at-line" },
+  violations: readonly Violation[],
+): ExpectationResult {
+  const sameRule = violations.filter((v) => v.ruleId === exp.ruleId);
+  if (sameRule.length === 0) {
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected violation '${exp.ruleId}' at ${exp.path}:${exp.line}, got ${summariseRuleIds(violations)}`,
+    };
+  }
+  const sameFile = sameRule.filter((v) => v.location.filePath === exp.path);
+  if (sameFile.length === 0) {
+    const seen = [...new Set(sameRule.map((v) => v.location.filePath))].sort().join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected violation '${exp.ruleId}' on file '${exp.path}', got matches on [${seen}] instead`,
+    };
+  }
+  const sameLine = sameFile.filter((v) => v.location.line === exp.line);
+  if (sameLine.length === 0) {
+    const seen = sameFile
+      .map((v) => v.location.line)
+      .sort((a, b) => a - b)
+      .join(", ");
+    return {
+      expectation: exp,
+      pass: false,
+      message: `real-world/${fixtureId}: expected violation '${exp.ruleId}' at ${exp.path}:${exp.line}, got line(s) [${seen}] on that file`,
+    };
+  }
+  if (exp.reasonIncludes !== undefined) {
+    const hit = sameLine.find((v) => v.message.includes(exp.reasonIncludes ?? ""));
+    if (!hit) {
+      const seen = sameLine.map((v) => JSON.stringify(v.message)).join(", ");
+      return {
+        expectation: exp,
+        pass: false,
+        message: `real-world/${fixtureId}: violation '${exp.ruleId}' present at ${exp.path}:${exp.line} but no message included '${exp.reasonIncludes}'. Saw: ${seen}`,
+      };
+    }
+  }
+  return {
+    expectation: exp,
+    pass: true,
+    message: `real-world/${fixtureId}: violation '${exp.ruleId}' present at ${exp.path}:${exp.line} (${sameLine.length} match${sameLine.length === 1 ? "" : "es"})`,
   };
 }
 
