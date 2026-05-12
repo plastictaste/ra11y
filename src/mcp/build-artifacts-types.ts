@@ -56,6 +56,12 @@ export type BuildArtifactSignal =
     }
   | { readonly kind: "sibling-map-file"; readonly value: string }
   | { readonly kind: "sibling-min-file"; readonly value: string }
+  | {
+      readonly kind: "known-vendor-library-with-min-sibling";
+      readonly value: string;
+      readonly library: string;
+      readonly siblingPath: string;
+    }
   | { readonly kind: "sourcemap-pointer-min"; readonly value: string }
   | { readonly kind: "vendor-banner-version"; readonly value: string }
   | { readonly kind: "vendor-copyright-banner"; readonly value: string };

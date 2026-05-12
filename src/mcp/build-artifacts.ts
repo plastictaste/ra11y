@@ -225,6 +225,7 @@ import type {
 import {
   detectSourcemapPointerToMin,
   detectVendorCopyrightBanner,
+  findKnownVendorLibraryWithMinSibling,
   findSiblingMinFile,
   findSiblingSourcemap,
   formatVendorBannerSignal,
@@ -858,12 +859,21 @@ export function collectBuildArtifacts(
 }
 
 /**
- * Two sibling-set predicates compete; both deterministic. Map-pair
+ * Three sibling-set predicates compete; all deterministic. Map-pair
  * wins on ties because it's narrower (one map per source) and signals
- * the bundler-pipeline triage explicitly. Min-pair labels the
- * readable source paired with a minified twin as a release artifact
- * (not as minified bytes — the twin separately picks up
- * `definite-min-infix` upstream of this branch).
+ * the bundler-pipeline triage explicitly. Exact-stem min-pair
+ * (`bootstrap.css` ↔ `bootstrap.min.css`) labels the readable source
+ * paired with its minified twin as a release artifact (not as
+ * minified bytes — the twin separately picks up `definite-min-infix`
+ * upstream of this branch). The known-vendor-library fallback closes
+ * the gap when the bundled `.min.<ext>` companion's stem differs from
+ * the basename (`bootstrap.css` alongside `bootstrap.bundle.min.js`
+ * + `popper.min.js`): the basename gate restricts the predicate to
+ * curated vendor library stems and the same-directory `.min.<ext>`
+ * co-occurrence corroborates the verdict. All three predicates emit
+ * `definite-vendor-distribution`; the paired signal kind names which
+ * sibling-set evidence fired so an agent re-deriving the verdict
+ * reads the right corroborator.
  */
 function detectSiblingArtifact(
   filePath: string,
@@ -881,6 +891,13 @@ function detectSiblingArtifact(
     return {
       classification: "definite-vendor-distribution",
       signal: { kind: "sibling-min-file", value: siblingMin },
+    };
+  }
+  const knownVendorSignal = findKnownVendorLibraryWithMinSibling(filePath, pathsInSet);
+  if (knownVendorSignal !== null) {
+    return {
+      classification: "definite-vendor-distribution",
+      signal: knownVendorSignal,
     };
   }
   return null;

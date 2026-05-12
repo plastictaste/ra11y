@@ -1375,6 +1375,181 @@ describe("collectBuildArtifacts — sibling `.min.<ext>` vendor-distribution sig
     const wow = labeled.find((e) => e.path === "dist/wow.js");
     expect(wow?.classification).toBe("likely-bundler-output-dir");
   });
+
+  it("labels both `bootstrap.css` and `bootstrap.min.css` in the same directory as buildArtifact", () => {
+    // Canonical field-report shape: a vendor library shipped as a
+    // canonical + minified pair under the same directory. Both files
+    // must land in the buildArtifact lane so downstream surfaces
+    // (per-finding confidence downgrade, `vendorPathSet`) treat both
+    // copies identically. The minified twin is labelled via the
+    // per-file `.min.` infix; the readable copy is labelled via the
+    // exact-stem sibling-min predicate.
+    const files = [
+      { filePath: "vendor/bootstrap.css", source: ".btn { padding: 1rem; }" },
+      { filePath: "vendor/bootstrap.min.css", source: ".btn{padding:1rem}" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    expect(labeled.map((e) => e.path).sort()).toEqual([
+      "vendor/bootstrap.css",
+      "vendor/bootstrap.min.css",
+    ]);
+    expect(labeled.find((e) => e.path === "vendor/bootstrap.css")?.classification).toBe(
+      "definite-vendor-distribution",
+    );
+    expect(labeled.find((e) => e.path === "vendor/bootstrap.min.css")?.classification).toBe(
+      "definite-min-infix",
+    );
+  });
+});
+
+describe("collectBuildArtifacts — known-vendor-library + same-dir `.min.<ext>` fallback", () => {
+  it("labels a known-vendor-library readable copy as `definite-vendor-distribution` when any `.min.<ext>` sibling lives in the same directory", () => {
+    // Field-report shape this closes: a vendor library ships its
+    // readable copy (e.g. `bootstrap.css`) alongside a bundled /
+    // multi-file minified companion whose stem DIFFERS from the
+    // readable file's basename (e.g. `bootstrap.bundle.min.js` and
+    // `popper.min.js` next to `bootstrap.css`). The exact-stem
+    // sibling-min predicate (`findSiblingMinFile`) cannot match
+    // because no `bootstrap.min.css` exists; the per-file predicates
+    // miss because the file is not under `dist/`, has no banner, no
+    // hex segment, no Tailwind escape, and no long-line corroborator.
+    // Without the fallback, findings on the readable copy emit at
+    // source-budget severity. The basename gate (`bootstrap` is in
+    // the curated `KNOWN_VENDOR_LIBRARY_BASENAMES` set) + the same-
+    // directory `.min.<ext>` co-occurrence corroborates the verdict.
+    const files = [
+      { filePath: "vendor/bootstrap.css", source: ".btn { padding: 1rem; }" },
+      { filePath: "vendor/bootstrap.bundle.min.js", source: "!function(){}();" },
+      { filePath: "vendor/popper.min.js", source: "!function(){}();" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const bootstrap = labeled.find((e) => e.path === "vendor/bootstrap.css");
+    expect(bootstrap?.classification).toBe("definite-vendor-distribution");
+    expect(bootstrap?.signal.kind).toBe("known-vendor-library-with-min-sibling");
+    if (bootstrap?.signal.kind === "known-vendor-library-with-min-sibling") {
+      expect(bootstrap.signal.library).toBe("bootstrap");
+      // The sibling path is one of the `.min.<ext>` files in the same dir.
+      expect(["vendor/bootstrap.bundle.min.js", "vendor/popper.min.js"]).toContain(
+        bootstrap.signal.siblingPath,
+      );
+    }
+  });
+
+  it("labels a known-vendor-library readable copy even when no exact-stem `.min.<ext>` companion exists, as long as ANY `.min.<ext>` sibling lives in the same dir", () => {
+    // Same predicate, narrower fixture: `jquery.js` next to a
+    // sibling `.min.<ext>` from a different library (adminlte). The
+    // jquery basename matches the curated set; the sibling-min
+    // co-occurrence in the same directory corroborates the
+    // vendor-distribution verdict. The exact-stem `findSiblingMinFile`
+    // probe misses because no `jquery.min.js` exists; the new
+    // fallback covers this bundled-vendor-drop shape.
+    const files = [
+      { filePath: "lib/jquery.js", source: "window.jQuery = function(){};" },
+      { filePath: "lib/adminlte.min.css", source: ".adminlte{}" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const jquery = labeled.find((e) => e.path === "lib/jquery.js");
+    expect(jquery?.classification).toBe("definite-vendor-distribution");
+    expect(jquery?.signal.kind).toBe("known-vendor-library-with-min-sibling");
+    if (jquery?.signal.kind === "known-vendor-library-with-min-sibling") {
+      expect(jquery.signal.library).toBe("jquery");
+      expect(jquery.signal.siblingPath).toBe("lib/adminlte.min.css");
+    }
+  });
+
+  it("does NOT fire on a non-curated basename even when a `.min.<ext>` sibling exists in the same directory", () => {
+    // The basename gate is what makes the predicate doctrine-honest
+    // (per AI-first "Heuristic-mislabeled meta sub-fields are
+    // dishonest"). A hand-authored project file (`my-button.css`)
+    // next to an unrelated `.min.<ext>` sibling must NOT mis-classify
+    // — the readable file is authored source the agent must budget
+    // findings against. Basename-alone would be the suppression-in-
+    // disguise predicate the doctrine warns against; gating on the
+    // curated `KNOWN_VENDOR_LIBRARY_BASENAMES` set prevents that.
+    const files = [
+      { filePath: "src/my-button.css", source: ".btn{}" },
+      { filePath: "src/admin.min.js", source: "!function(){}();" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    expect(labeled.map((e) => e.path).sort()).toEqual(["src/admin.min.js"]);
+  });
+
+  it("does NOT fire when the known-vendor-library basename has no `.min.<ext>` sibling in the same directory", () => {
+    // The same-directory `.min.<ext>` co-occurrence is the
+    // corroborator that makes the predicate provable from the path
+    // tree. Without it, the basename alone is not enough — an
+    // authored `bootstrap.css` for a design system unrelated to the
+    // Twitter library is plausible. The agent must still budget
+    // findings; the absence of corroboration keeps the file out of
+    // the buildArtifact lane.
+    const files = [{ filePath: "vendor/bootstrap.css", source: ".btn{}" }];
+    expect(collectBuildArtifacts(files)).toEqual([]);
+  });
+
+  it("does NOT fire when the `.min.<ext>` sibling lives in a different directory", () => {
+    // Same-directory check is strict: a `.min.<ext>` file under a
+    // sibling subdir does NOT corroborate. Pairing by directory
+    // prefix prevents the predicate from over-firing across
+    // unrelated vendor trees.
+    const files = [
+      { filePath: "src/bootstrap.css", source: ".btn{}" },
+      { filePath: "vendor/popper.min.js", source: "!function(){}();" },
+    ];
+    expect(
+      collectBuildArtifacts(files)
+        .map((e) => e.path)
+        .sort(),
+    ).toEqual(["vendor/popper.min.js"]);
+  });
+
+  it("does NOT fire on a `.min.<ext>` file itself — `definite-min-infix` already labels it upstream", () => {
+    // The readable-copy predicate is for the readable companion only;
+    // a file already carrying `.min.` in its basename is itself the
+    // minified twin and lands under `definite-min-infix` at the
+    // per-file layer, upstream of the sibling-set checks.
+    const files = [{ filePath: "vendor/bootstrap.min.css", source: ".btn{padding:1rem}" }];
+    expect(collectBuildArtifacts(files)).toEqual([
+      {
+        path: "vendor/bootstrap.min.css",
+        classification: "definite-min-infix",
+        signal: { kind: "min-infix", value: "bootstrap.min.css" },
+      },
+    ]);
+  });
+
+  it("matches a curated vendor library basename case-insensitively", () => {
+    // Windows-authored repos can ship upper-cased basenames
+    // (`BOOTSTRAP.CSS`). The lookup lowercases the basename stem
+    // before consulting `KNOWN_VENDOR_LIBRARY_BASENAMES` so the
+    // verdict is consistent across host filesystems.
+    const files = [
+      { filePath: "vendor/BOOTSTRAP.CSS", source: ".btn{}" },
+      { filePath: "vendor/popper.min.js", source: "!function(){}();" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const upper = labeled.find((e) => e.path === "vendor/BOOTSTRAP.CSS");
+    expect(upper?.classification).toBe("definite-vendor-distribution");
+    expect(upper?.signal.kind).toBe("known-vendor-library-with-min-sibling");
+  });
+
+  it("yields precedence to the exact-stem sibling-min predicate when both would match", () => {
+    // When `bootstrap.css` sits next to `bootstrap.min.css` (exact-
+    // stem pair) AND `popper.min.js` (fallback corroborator), the
+    // exact-stem predicate fires first in `detectSiblingArtifact`
+    // ordering — `sibling-min-file` is the narrower, more specific
+    // signal. The fallback never executes for that file; ordering
+    // discipline keeps the signal slot informative.
+    const files = [
+      { filePath: "vendor/bootstrap.css", source: ".btn{}" },
+      { filePath: "vendor/bootstrap.min.css", source: ".btn{padding:1rem}" },
+      { filePath: "vendor/popper.min.js", source: "!function(){}();" },
+    ];
+    const labeled = collectBuildArtifacts(files);
+    const bootstrap = labeled.find((e) => e.path === "vendor/bootstrap.css");
+    expect(bootstrap?.classification).toBe("definite-vendor-distribution");
+    // Exact-stem wins over the fallback.
+    expect(bootstrap?.signal.kind).toBe("sibling-min-file");
+  });
 });
 
 describe("collectBuildArtifacts", () => {
