@@ -45,8 +45,8 @@
 
 import { describe, expect, it } from "bun:test";
 import { applyScanFileBudget } from "../../src/mcp/scan-file-budget.ts";
-import { applySummaryOnlyBudget } from "../../src/mcp/scan-project-summary-only.ts";
 import { buildSlimNextStepStructured as buildScanProjectSlimNextStep } from "../../src/mcp/scan-project-slim-next-step.ts";
+import { applySummaryOnlyBudget } from "../../src/mcp/scan-project-summary-only.ts";
 import type { ScanFormatted } from "../../src/mcp/tools-helpers.ts";
 
 const HARD_CEILING = 500;
@@ -433,16 +433,18 @@ describe("nextStep prose <-> structured agreement — every slim envelope's stru
       {
         source: "scan_project summary-slim",
         prose: (summaryResult.response as Record<string, unknown>)["nextStep"] as string,
-        structured: (summaryResult.response as Record<string, unknown>)[
-          "nextStepStructured"
-        ] as { tool: string; args: Record<string, unknown> },
+        structured: (summaryResult.response as Record<string, unknown>)["nextStepStructured"] as {
+          tool: string;
+          args: Record<string, unknown>;
+        },
       },
       {
         source: "scan_file slim",
         prose: (scanFileResult.response as Record<string, unknown>)["nextStep"] as string,
-        structured: (scanFileResult.response as Record<string, unknown>)[
-          "nextStepStructured"
-        ] as { tool: string; args: Record<string, unknown> },
+        structured: (scanFileResult.response as Record<string, unknown>)["nextStepStructured"] as {
+          tool: string;
+          args: Record<string, unknown>;
+        },
       },
       {
         // The standard scan_project slim builder's prose lives at the
