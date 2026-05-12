@@ -119,10 +119,6 @@ export const VERIFY_IN_SOURCE_TOKENS: ReadonlySet<string> = new Set<string>([
   // matches an isolated component demo page; rendered page may be
   // composed by a parent layout supplying <main>.
   "isolated_component_demo_page",
-  // semantics/landmark-main — probable-main candidate plus zero sibling
-  // landmarks; the largest-non-landmark-block ranking depends on
-  // rendered layout the static AST cannot observe.
-  "largest_block_guess_unobservable",
   // semantics/landmark-main, semantics/heading-hierarchy — scanned file
   // looks like a layout wrapper or template partial; composed page
   // may carry the landmark/heading from a sibling file.

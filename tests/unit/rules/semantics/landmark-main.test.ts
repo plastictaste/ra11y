@@ -1237,16 +1237,18 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
     });
 
-    it("does NOT attach the isolated-demo qualifier on a full-page chrome shape (largest-block-guess takes over)", () => {
+    it("does NOT attach the isolated-demo qualifier on a full-page chrome shape (canonical warning emit)", () => {
       // counter-style page: h1 + p + 2 buttons + script = 5 visible
       // body children. Real authored content with multiple sibling
       // elements — the demo-page heuristic must not fire so the agent
       // does not mis-route a real page as "probably composed elsewhere."
-      // The page also has no sibling landmarks (no <header> / <nav> /
-      // <footer> / <aside>) so the largest-block-guess downgrade fires
-      // instead — without sibling landmarks we lack positive in-file
-      // evidence the page is multi-landmark, and the probable-candidate
-      // ranking is unobservable from static AST.
+      // The page also has no sibling landmarks but the rule's
+      // canonical severity is `warning`: the missing <main> is the
+      // real defect on an empty-structural-shell shape; surfacing at
+      // `warning` matches the "Reason text and severity must agree"
+      // invariant (the message no longer concedes the predicate is
+      // unobservable). The probable-candidate hint still rides on the
+      // emit as additive `evidence`.
       const v = runRule(
         rule,
         [
@@ -1263,8 +1265,8 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "counter.html" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
-      expect(v[0]?.severity).toBe("info");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+      expect(v[0]?.severity).toBe("warning");
     });
 
     it("does NOT attach the qualifier when body has 3+ element children", () => {
@@ -1341,34 +1343,46 @@ describe("rule semantics/landmark-main", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Largest-block-guess downgrade qualifier.
+  // Empty-structural-shell emission shape (Q20 closure).
   //
-  // When the missing-<main> emission rests on the probable-main candidate
-  // ranking AND the document carries no sibling <header>/<nav>/<footer>/
-  // <aside> landmarks anywhere, the predicate "this page genuinely needs
-  // <main>" depends on a largest-non-landmark-block guess unobservable
-  // from static AST. Without sibling landmarks we lack any positive
-  // in-file evidence the page is multi-landmark. The candidate still
-  // surfaces (surface-don't-suppress) but severity downgrades to `info`
-  // and the message frames the question rather than asserting the
-  // predicate — per docs/kb/architecture/ai-first-consumer.md "Reason
-  // text and severity must agree" + "Heuristic emission is the symmetric
-  // twin of heuristic suppression."
+  // The earlier `largest_block_guess_unobservable` downgrade (severity
+  // `info` whenever a probable candidate existed and no sibling
+  // landmarks were present) was retired per Q20 closure path (c):
+  // rewrite the reason so it does not concede the predicate.
+  //
+  // The reason text used to read "verify whether this page intends
+  // multiple landmarks (the largest-non-landmark-block ranking is
+  // unobservable from static analysis)" — a "Reason text and severity
+  // must agree" violation, since the rule asserted a missing-landmark
+  // defect while conceding the predicate was unobservable. The
+  // conceded-uncertainty framing also collided with the
+  // `tests/fixtures/real-world/empty-shell-page/` invariant that pins
+  // landmark-main as the strongest available 1.3.1 signal on vanilla
+  // HTML demo shells (decorative <div>/<img> body, no headings, no
+  // landmarks). Under-surfacing on those shells is silent and non-
+  // reversible — landmark-main IS the defect on an empty structural
+  // shell.
+  //
+  // Post-closure: pages with no sibling landmarks and >2 element body
+  // children fire at the rule's canonical `warning` severity with the
+  // canonical headline. The probable-candidate hint still rides on the
+  // emit as additive `evidence` so the agent reads a concrete wrap
+  // target. The isolated-component-demo downgrade (≤2 element body
+  // children with ≤1 non-`<script>`) is unchanged — that branch's
+  // narrative is "this looks like a single-component demo composed
+  // elsewhere," which is observably stronger than just "no sibling
+  // landmarks."
   // ─────────────────────────────────────────────────────────────────────────
-  describe("largest-block-guess qualifier", () => {
-    it("downgrades to info on a single-<div class='container'> page with no other landmarks", () => {
-      // The canonical regression fixture from the backlog item: a
-      // single wrapping container with three sibling sections inside
-      // and no other landmarks at the document level. Pre-fix this
-      // emitted at warning severity claiming the largest-block ranking
-      // identified the page's main content; the predicate is
-      // unobservable from static AST and the absence of sibling
-      // landmarks denies any positive evidence the page is intended
-      // multi-landmark. Body has 1 visible direct child (the container)
-      // — but the isolated-demo predicate matches at ≤2 element
-      // children with ≤1 non-script. Use a body with 3+ direct children
-      // so the largest-block-guess downgrade fires instead of the
-      // isolated-demo branch.
+  describe("empty-structural-shell emission", () => {
+    it("emits at warning on a single-<div class='container'> page with no other landmarks (no downgrade)", () => {
+      // The empty-shell-page canonical shape: a single wrapping
+      // container with three children, sibling paragraphs, and no
+      // header/nav/footer/aside anywhere. Body has 3 visible direct
+      // children — above the isolated-demo threshold of ≤2. Pre-Q20
+      // this emitted at `info` with `largest_block_guess_unobservable`;
+      // post-Q20 it surfaces at the rule's canonical `warning` because
+      // the missing landmark is the real defect on an empty structural
+      // shell.
       const v = runRule(
         rule,
         [
@@ -1387,17 +1401,21 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "single-container.html" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("info");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
-      expect(v[0]?.message).toContain("verify whether this page intends multiple landmarks");
-      expect(v[0]?.message).toContain("largest-non-landmark-block ranking is unobservable");
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+      // Canonical headline — does NOT concede the predicate.
+      expect(v[0]?.message).toContain(
+        "Document has no <main> landmark. Screen-reader users expect exactly one main landmark per page.",
+      );
+      // No conceding tokens.
+      expect(v[0]?.message).not.toContain("verify whether this page intends multiple landmarks");
+      expect(v[0]?.message).not.toContain("largest-non-landmark-block ranking is unobservable");
     });
 
-    it("does NOT downgrade when a sibling <header> is present (positive multi-landmark evidence)", () => {
+    it("emits at warning when a sibling <header> is present (canonical multi-landmark page)", () => {
       // header sibling is positive in-file evidence the page intends
-      // multi-landmark structure. With that, the missing-<main>
-      // emission is observable from in-file evidence alone and severity
-      // stays at `warning`.
+      // multi-landmark structure. Severity stays at the rule's
+      // canonical `warning`.
       const v = runRule(
         rule,
         [
@@ -1419,10 +1437,10 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
 
-    it("does NOT downgrade when a sibling <nav> is present", () => {
+    it("emits at warning when a sibling <nav> is present", () => {
       // nav alone (without header/footer) is also positive multi-
-      // landmark evidence — guards that the predicate is presence-OR-of
-      // any landmark, not a header-only check.
+      // landmark evidence — guards that the canonical severity holds
+      // regardless of which sibling landmark anchors the page-shape.
       const v = runRule(
         rule,
         [
@@ -1444,13 +1462,13 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
 
-    it("isolated-demo precedence: single-wrapper body uses isolated_component_demo_page, not largest-block-guess", () => {
-      // Both predicates match the demo-shape fixture: ≤2 element
-      // children with ≤1 non-script (isolated-demo TRUE) AND a probable
-      // candidate exists with no sibling landmarks (largest-block-guess
-      // would also be TRUE in isolation). Per the precedence rule,
-      // isolated-demo wins because the single-wrapper narrative carries
-      // more triage signal than "largest block of unknown nature."
+    it("isolated-demo still downgrades: single-wrapper body uses isolated_component_demo_page", () => {
+      // The isolated-demo predicate is unchanged by Q20 — its
+      // narrative ("single-component demo composed elsewhere") is
+      // stronger than just "no sibling landmarks" and the downgrade
+      // continues to fire at `info`. Body has 1 visible direct child
+      // (the container wraps two needle divs), matching ≤2 element
+      // children with ≤1 non-script.
       const v = runRule(
         rule,
         [
@@ -1470,12 +1488,11 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["isolated_component_demo_page"]);
     });
 
-    it("does NOT downgrade when the body has only landmark children (no probable candidate)", () => {
+    it("emits at warning when the body has only landmark children (no probable candidate)", () => {
       // Every direct child is a landmark; findProbableMainCandidate
-      // returns undefined. With no probable candidate the largest-
-      // block-guess predicate cannot fire — there's no guess to
-      // concede. The all-landmarks case is observably "real
-      // multi-landmark page just missing main" and stays at warning.
+      // returns undefined. Always emitted at warning. The all-
+      // landmarks case is observably "real multi-landmark page just
+      // missing main."
       const v = runRule(
         rule,
         [
@@ -1494,15 +1511,12 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toBeUndefined();
     });
 
-    it("does NOT downgrade on the layout-partial branch (composition directive carries stronger code)", () => {
-      // Layout / partial files already carry the
-      // partial_or_layout_file_requires_composed_check code. Stacking
-      // largest-block-guess on top would dilute the per-finding signal
-      // the agent reads first; the layout-partial branch is provably a
-      // composition site, not a single-region page that needs landmark
-      // wrapping. Body must clear `looksLikeFullPage`; pair the
-      // `{{ content }}` directive with an h1 + ≥5 visible descendants
-      // (branch B) so the page-shape predicate resolves true.
+    it("layout-partial branch still carries its composition code at warning", () => {
+      // Layout / partial files carry the
+      // partial_or_layout_file_requires_composed_check code at warning
+      // severity (HTML inputs — markdown residue is the only branch
+      // that downgrades to `info`). Q20 closure does not affect this
+      // branch.
       const v = runRule(
         rule,
         [
@@ -1527,12 +1541,10 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
     });
 
-    it("evidence still carries the probable-candidate hint on downgraded emissions", () => {
-      // Per "surface, don't suppress" the per-finding evidence stays
-      // populated even when severity downgrades — the agent still
-      // reads the candidate hint to decide where to wrap. The downgrade
-      // is on the attention-budgeting signal (severity), not on the
-      // descriptive payload.
+    it("evidence still carries the probable-candidate hint on the canonical warning emit", () => {
+      // Per "surface, don't suppress" the per-finding evidence rides
+      // on the emit even when there's no severity downgrade — the
+      // agent reads the candidate hint to decide where to wrap.
       const v = runRule(
         rule,
         [
@@ -1551,8 +1563,8 @@ describe("rule semantics/landmark-main", () => {
         { filePath: "article-only.html" },
       );
       expect(v).toHaveLength(1);
-      expect(v[0]?.severity).toBe("info");
-      expect(v[0]?.couldBeWrongBecause).toEqual(["largest_block_guess_unobservable"]);
+      expect(v[0]?.severity).toBe("warning");
+      expect(v[0]?.couldBeWrongBecause).toBeUndefined();
       const evidence = v[0]?.evidence;
       expect(evidence?.kind).toBe("landmark-main-probable-candidate");
       if (evidence?.kind === "landmark-main-probable-candidate") {
