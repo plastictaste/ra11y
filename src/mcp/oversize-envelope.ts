@@ -398,7 +398,9 @@ export function narrowSlimEnvelopeIfStillOver(
     return stampSentinel(current, steps);
   }
   // Tier 3: drop verbose warningsDetails payloads beyond top-N.
-  if (tryStep("warningsDetails_payloads_dropped_beyond_top_n", dropLargestWarningsDetailsPayloads)) {
+  if (
+    tryStep("warningsDetails_payloads_dropped_beyond_top_n", dropLargestWarningsDetailsPayloads)
+  ) {
     return stampSentinel(current, steps);
   }
   // Tier 4: drop verbose meta sub-fields.
