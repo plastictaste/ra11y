@@ -29,14 +29,20 @@ export const CHARS_PER_TOKEN_PROXY = 4;
 /**
  * Default soft ceiling for a scan-family response, in serialized-JSON
  * characters. Calibrated to leave headroom under the ~25k token MCP
- * host ceiling: 88000 chars / {@link CHARS_PER_TOKEN_PROXY} ≈ 22000
- * tokens, about 3k below the host limit so final-pass serialization
- * overhead and host-side envelope growth don't push the response past
- * the ceiling. Secondary cap: the file-count `limit` remains the
- * primary guard; this triggers only when per-file density pushes the
- * response above the threshold after `limit` has been applied.
+ * host ceiling: at the empirical ~3.4 chars/token rate for dense JSON
+ * (see the docblock on
+ * {@link import("./oversize-envelope.ts").RESPONSE_OVERSIZE_HARD_CEILING_CHARS}),
+ * 72000 chars / 3.4 ≈ 21176 tokens, about 4k below the host limit so
+ * final-pass serialization overhead and host-side envelope growth
+ * don't push the response past the ceiling. Secondary cap: the file-
+ * count `limit` remains the primary guard; this triggers only when
+ * per-file density pushes the response above the threshold after
+ * `limit` has been applied. Sits 8000 chars below the hard ceiling
+ * ({@link import("./oversize-envelope.ts").RESPONSE_OVERSIZE_HARD_CEILING_CHARS},
+ * 80000) so the density helper has room to settle the response below
+ * the hard ceiling before the oversize guard fallback fires.
  */
-export const DEFAULT_TOKEN_BUDGET_CHARS = 88000;
+export const DEFAULT_TOKEN_BUDGET_CHARS = 72000;
 
 /**
  * Descriptor handed to {@link applyTokenBudget} naming the mutable

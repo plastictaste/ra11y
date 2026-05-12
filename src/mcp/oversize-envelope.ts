@@ -40,25 +40,42 @@ import {
 
 /**
  * Hard ceiling on the assembled response, in serialized-JSON
- * characters. The MCP host's token wall is ~25k tokens; using the
- * standard `Math.ceil(bytes / 4)` proxy (see
- * {@link import("./token-budget.ts").CHARS_PER_TOKEN_PROXY}) that's
- * ~100,000 characters. We sit a hair under at 96000 chars so envelope
- * growth between this measurement and the final wire serialization
- * (host-side wrapping, JSON-RPC framing) doesn't spill the response
- * past the wall.
+ * characters. The MCP host's token wall is ~25k tokens; the
+ * `Math.ceil(bytes / 4)` proxy (see
+ * {@link import("./token-budget.ts").CHARS_PER_TOKEN_PROXY}) assumes
+ * 4 chars/token, which holds for English prose but overestimates
+ * density on JSON. Empirical observation on a 50-sibling vanilla-demo
+ * corpus: a checklist response measuring 86260 serialized chars was
+ * rejected by the MCP host transport even though it sat under the
+ * prior 96000-char ceiling — the BPE tokenizer on dense JSON
+ * identifiers runs closer to ~3.4 chars/token, so 86260 chars / 3.4
+ * ≈ 25371 tokens, crossing the host wall. Per the AI-first doctrine
+ * "Per-tool lane and warning-set classification must agree", the
+ * host rejection forced `checklist` to transport-fail while
+ * `coverage` on identical cwd slimmed (its natural envelope crossed
+ * 96000 and engaged the fallback). Tightening the ceiling to 80000
+ * chars empirically clears the host wall on every observed
+ * JSON-dense corpus: 80000 / 3.4 ≈ 23529 tokens leaves ~1500 tokens
+ * of headroom for host-side wrapping and JSON-RPC framing.
  *
  * Distinct from {@link import("./token-budget.ts").DEFAULT_TOKEN_BUDGET_CHARS}
- * (88000): that's the SOFT cap the density helper aims for as it
+ * (72000): that's the SOFT cap the density helper aims for as it
  * trims trailing files; this is the HARD ceiling the post-trim
  * envelope must clear or be replaced. The 8000-char gap is
- * deliberate — the soft cap leaves the density helper room to
- * settle below this ceiling without bouncing into the fallback.
+ * deliberate — the soft cap leaves the density helper room to settle
+ * below this ceiling without bouncing into the fallback. The two-stage
+ * clip-then-slim cascade is the doctrine's intended path; when the
+ * density helper cannot get the response under the soft cap (single
+ * file payload, dense verbose-meta), the oversize guard's slim
+ * fallback fires next and downgrades to the minimum-honest envelope
+ * rather than letting the host drop the response. Both constants
+ * tightened in tandem after the empirical host rejection on the
+ * prior 96000-char ceiling was documented.
  *
  * Constant is exported so unit tests pin the ceiling and can detect
  * silent drift if it ever moves.
  */
-export const RESPONSE_OVERSIZE_HARD_CEILING_CHARS = 96000;
+export const RESPONSE_OVERSIZE_HARD_CEILING_CHARS = 80000;
 
 /**
  * Target for the minimum-honest envelope itself. The doctrine names

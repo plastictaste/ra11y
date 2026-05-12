@@ -1144,7 +1144,7 @@ export const checklistTool: McpTool = {
         maxBytes: {
           type: "number",
           description:
-            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~80000 chars (~23k tokens at the empirical ~3.4 chars/token rate for dense JSON, leaving ~1500-token headroom under the ~25k MCP host wall). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset; mirrors `scan_file`'s knob of the same name so the cross-surface override pattern stays consistent.",
         },
         metaMode: metaModeSchema,
       },
@@ -1755,7 +1755,7 @@ export const checklistTool: McpTool = {
     // drive the slim envelope on tractable response sizes. Mirrors
     // `scan_file`'s `maxBytes` → `applyScanFileBudget.maxBytes` wiring.
     // Without this seam, an integration test would need to assemble a
-    // 100+ KB corpus to hit the natural 96000-char ceiling on this
+    // 100+ KB corpus to hit the natural 80000-char ceiling on this
     // tool — brittle and slow. Per AI-first doctrine "Per-tool lane
     // and warning-set classification must agree": same override knob
     // shape across every project-rooted tool that runs the slim guard.

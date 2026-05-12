@@ -259,3 +259,47 @@ describe("applyChecklistBudget — custom hardCeilingChars (test ergonomics)", (
     expect(warnings).toContain("response_dropped_files_oversize");
   });
 });
+
+describe("applyChecklistBudget — engages on empirically-rejected envelope sizes", () => {
+  it("slims when the natural envelope crosses the empirical host wall (~86260 chars)", () => {
+    // Regression for Q20-CHECKLIST-NO-MIN-ENVELOPE-FALLBACK: field
+    // observation reported that a checklist response measuring 86260
+    // serialized chars was transport-rejected by the MCP host on a
+    // 50-sibling vanilla-demo corpus, while `coverage` on identical
+    // cwd correctly slimmed. The host rejection sat BELOW the prior
+    // 96000-char in-tree ceiling because the BPE tokenizer on dense
+    // JSON identifiers runs closer to ~3.4 chars/token (86260 / 3.4
+    // ≈ 25371 tokens, over the ~25k host wall) than the 4
+    // chars/token proxy our gate assumed.
+    //
+    // Per the AI-first doctrine "Per-tool lane and warning-set
+    // classification must agree": with the ceiling lowered to 80000
+    // chars, an 86260-char natural envelope MUST engage the slim
+    // guard — not slip through and transport-fail. The test exercises
+    // the helper at the DEFAULT ceiling (no `hardCeilingChars`
+    // override) so it pins production behavior on the field-report
+    // size, not a synthetic test-only knob.
+    const itemCount = 18;
+    // ~4800 chars per item gets us to ~86260 chars overall (matched
+    // empirically against the synthetic builder's wrapper bytes).
+    const response = buildSyntheticChecklistResponse(itemCount, {
+      itemBloatChars: 4800,
+      cwd: "/tmp/example-project",
+    });
+    // Anchor on the empirical floor: the synthetic envelope must be
+    // at least as large as the field-observed rejected size so the
+    // regression check is honest. If the synthetic builder ever
+    // changes shape and falls below 86260, the assertion below would
+    // start passing even with a too-generous ceiling — that's the
+    // exact silent-miss this floor catches.
+    expect(JSON.stringify(response).length).toBeGreaterThanOrEqual(86_260);
+    const result = applyChecklistBudget({ response });
+    expect(result.truncated).toBe(true);
+    const slim = result.response as Record<string, unknown>;
+    expect(slim.items).toBeUndefined();
+    expect(slim.itemsTruncated).toEqual([]);
+    expect(slim.truncationReason).toBe("response_dropped_files_oversize");
+    const warnings = slim.warnings as readonly string[];
+    expect(warnings).toContain("response_dropped_files_oversize");
+  });
+});

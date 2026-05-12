@@ -40,7 +40,7 @@
  * existing `oversize-envelope-cross-surface.test.ts` and
  * `truncation-reporters-reconcile.test.ts` patterns — full MCP
  * subprocess spawn would require fabricating a 100+ KB bulk-vendor
- * corpus to trigger the natural 96000-char ceiling, which is brittle
+ * corpus to trigger the natural 80000-char ceiling, which is brittle
  * and slow. The helpers' contract IS the pinned surface; the wiring
  * at each tool's textResult callsite is exercised by their respective
  * `tool-*.ts` integration tests.

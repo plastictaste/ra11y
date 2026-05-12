@@ -20,7 +20,7 @@
  *   1. The `maxBytes` override is plumbed end-to-end through the MCP
  *      handler (mirroring `scan_file`'s knob). Without this seam, an
  *      integration test would need to assemble a 100+ KB corpus to hit
- *      the natural 96000-char ceiling — brittle and slow on CI.
+ *      the natural 80000-char ceiling — brittle and slow on CI.
  *   2. A SINGLE bulk-vendor cwd, fed through both handlers in sequence,
  *      triggers the slim envelope on BOTH tools. The cross-surface
  *      sweep observed simultaneous transport-failure on the same scope;

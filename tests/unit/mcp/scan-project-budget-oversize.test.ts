@@ -620,7 +620,7 @@ describe("assembleScanProjectResponse — Q8 oversize-envelope guard", () => {
     // so the agent reads the truncation gap.
     //
     // Assertion: the post-slim envelope JSON.stringify length is
-    // ≤ 50000 chars — well under the MCP host's ~25k-token (~96000
+    // ≤ 50000 chars — well under the MCP host's ~25k-token (~80000
     // char) wall, and under the minimum-envelope target the doctrine
     // names. Without the trim, the same fixture serializes past the
     // target on the verbose-array tail.

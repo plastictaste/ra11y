@@ -31,7 +31,7 @@
  *
  * Tests the helpers directly with a small synthetic ceiling — full
  * MCP subprocess spawn would require building a 100+ KB corpus to
- * trigger the natural 96000-char ceiling, which is brittle and slow.
+ * trigger the natural 80000-char ceiling, which is brittle and slow.
  * The helpers' contract is the pinned surface; the wiring at each
  * tool's textResult callsite is exercised by their respective
  * `tool-*.ts` integration tests.

@@ -368,7 +368,7 @@ describe("applyScanFileBudget — oversize-envelope slim fallback", () => {
 
   it("does not engage the slim envelope when the response fits under the host ceiling", () => {
     // No synthetic bloat and no maxBytes override → the natural response
-    // is well under the host ceiling (~96000 chars). The slim guard
+    // is well under the host ceiling (~80000 chars). The slim guard
     // must NOT fire.
     const response = buildSyntheticScanFileResponse(20);
     const result = applyScanFileBudget({

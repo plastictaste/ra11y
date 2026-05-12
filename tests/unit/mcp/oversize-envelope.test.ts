@@ -28,11 +28,17 @@ import {
 } from "../../../src/mcp/oversize-envelope.ts";
 
 describe("guardOversizeEnvelope", () => {
-  it("exposes a hard ceiling under the ~25k-token MCP host wall", () => {
-    // Headroom rationale lives on the constant's TSDoc: ~96000 chars
-    // sits below the ~100000-char (~25k-token) host wall by a margin
-    // wide enough to absorb final-pass envelope growth.
-    expect(RESPONSE_OVERSIZE_HARD_CEILING_CHARS).toBeLessThan(100_000);
+  it("exposes a hard ceiling tight enough to stay under the empirical MCP host wall", () => {
+    // Headroom rationale lives on the constant's TSDoc. The historical
+    // 96000 ceiling assumed the 4-chars/token proxy held on JSON; field
+    // observation showed dense-JSON BPE tokenization runs closer to ~3.4
+    // chars/token, and an 86260-char checklist response was rejected by
+    // the host transport. The ceiling must sit BELOW that empirical
+    // rejection point so the slim guard fires before the host drops the
+    // envelope — per "Per-tool lane and warning-set classification must
+    // agree." 86260 is the floor of "observed rejected"; the ceiling
+    // must be strictly below it.
+    expect(RESPONSE_OVERSIZE_HARD_CEILING_CHARS).toBeLessThan(86_260);
     expect(RESPONSE_OVERSIZE_HARD_CEILING_CHARS).toBeGreaterThan(0);
   });
 

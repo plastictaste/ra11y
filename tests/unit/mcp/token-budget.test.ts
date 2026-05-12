@@ -43,10 +43,14 @@ describe("applyTokenBudget", () => {
   });
 
   it("exposes a default budget under the 25k-token MCP host ceiling", () => {
-    // Headroom rationale documented in the ADR amendment: 88000 chars
-    // / 4 chars-per-token ≈ 22000 tokens, ~3k under the 25k ceiling so
-    // final-pass serialization overhead and host-envelope growth don't
-    // push past the limit.
+    // Headroom rationale documented on the constant's docblock and
+    // {@link RESPONSE_OVERSIZE_HARD_CEILING_CHARS} (80000): the soft
+    // cap stays 8000 chars below the hard ceiling so the density
+    // helper can settle responses below the oversize-envelope guard
+    // without bouncing into the slim fallback. 72000 chars / 3.4
+    // chars-per-token ≈ 21176 tokens leaves ~4k tokens of headroom
+    // under the 25k host wall for final-pass serialization overhead
+    // and host-envelope growth.
     expect(DEFAULT_TOKEN_BUDGET_CHARS).toBeLessThan(25000 * CHARS_PER_TOKEN_PROXY);
     expect(DEFAULT_TOKEN_BUDGET_CHARS).toBeGreaterThan(0);
   });

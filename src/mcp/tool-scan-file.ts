@@ -112,7 +112,7 @@ export const scanFileTool: McpTool = {
         maxBytes: {
           type: "number",
           description:
-            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~96000 chars (~25k tokens). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset.",
+            "Override the host-ceiling sentinel that triggers the minimum-honest envelope fallback (`response_dropped_files_oversize`). Defaults to ~80000 chars (~23k tokens at the empirical ~3.4 chars/token rate for dense JSON, leaving ~1500-token headroom under the ~25k MCP host wall). Lower values force the slim envelope earlier — useful for hosts with tighter token walls or for testing the fallback shape on tractable fixtures. Most callers should leave this unset.",
         },
         includeReferenceGuide: {
           type: "boolean",

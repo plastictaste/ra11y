@@ -200,7 +200,7 @@ describe("scan_project token-density budget (ADR 0021 amendment)", () => {
     // `<img>` emits ~100 findings per file with multiple long fix-
     // description paragraphs. With `limit: 50` the file-count cap
     // doesn't fire (50 ≤ 50) — the density cap is the sole guard.
-    // The 88000-char default forces the tail to drop so the response
+    // The 72000-char default forces the tail to drop so the response
     // fits under the ~25k-token MCP ceiling.
     const root = buildDenseFixture(50);
     try {
