@@ -17,15 +17,15 @@ Native HTML5 drag-and-drop (`draggable="true"`) is mouse/touch only — the plat
 > All functionality of the content is operable through a keyboard interface without requiring specific timings for individual keystrokes.
 ## Good example
 ```tsx
-<div draggable="true" onKeyDown={handleArrows}>
+<a href="#" draggable="true" onKeyDown={handleArrows}>
   Drag me — or use Arrow keys to move
-</div>
+</a>
 ```
 ## Bad example
 ```tsx
-<div draggable="true">
+<a href="#" draggable="true">
   Drag me
-</div>
+</a>
 ```
 ## References
 - <https://www.w3.org/TR/WCAG22/#keyboard>
