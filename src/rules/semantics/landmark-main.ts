@@ -278,7 +278,9 @@ function emitMissingMain(
   const probable = body ? findProbableMainCandidate(body) : undefined;
   const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
   if (layoutOrPartial) {
-    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable, markdownResidue, body !== undefined));
+    ctx.emit(
+      buildLayoutPartialEmit(line, column, shape, probable, markdownResidue, body !== undefined),
+    );
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
