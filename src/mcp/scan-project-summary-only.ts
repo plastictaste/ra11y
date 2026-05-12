@@ -460,22 +460,76 @@ function buildSummarySlimEnvelope(args: {
     ...(metaFieldsDropped.length > 0 ? { metaFieldsDropped } : {}),
     ...(planTruncations.length > 0 ? { slimTruncations: planTruncations } : {}),
   });
-  // Pass through the small load-bearing top-level fields. The
-  // discriminator pair (`summaryOnly`, `filesArrayDropped`) MUST
-  // survive so the agent can still tell summary-only from a clean
-  // scan of zero files.
-  const nextStepStructured = readNextStepStructured(original);
+  // Derive a fresh `nextStepStructured` aligned with the slim prose's
+  // "Scope down further" action verb — do NOT propagate the upstream
+  // summary-only response's structured hint (commonly
+  // `explain_rule({ ruleId: plan.topRules[0].ruleId })`). Propagating
+  // the upstream verbatim is the canonical "NextStep prose and
+  // structured channels must agree" doctrine miss
+  // (`docs/kb/architecture/ai-first-consumer.md`): the prose tells the
+  // agent to scope down via `restrictToPaths` or `propose_config`, but
+  // the structured channel hands the agent `explain_rule` to call
+  // instead — two channels, two contradictory next moves. The
+  // structured field MUST encode the same scope-narrowing call the
+  // prose names so the agent's executed handoff matches the
+  // prose-stated intent.
+  const nextStepStructured = buildSummarySlimNextStepStructured(slimPlan);
   return {
     plan: slimPlan,
     summaryOnly: true as const,
     filesArrayDropped: true as const,
     totalFilesWithFindings,
     nextStep: SUMMARY_SLIM_NEXT_STEP_PROSE,
-    ...(nextStepStructured === undefined ? {} : { nextStepStructured }),
+    nextStepStructured,
     warnings: merged.warnings,
     warningsDetails: merged.warningsDetails,
     meta: slimMeta,
   };
+}
+
+/**
+ * Builds the structured `nextStepStructured` for the summary-slim
+ * envelope. Derived from the same predicate as
+ * {@link SUMMARY_SLIM_NEXT_STEP_PROSE}'s "Scope down further" action
+ * verb so the prose and structured channels can never silently
+ * disagree on the agent's next move. Two arms, in priority order:
+ *
+ *   1. **`plan.findingsByFile[0].path` exists** → `scan_project`
+ *      with `restrictToPaths: [<head path>]`. This is the prose's
+ *      primary recommendation verbatim — the agent re-issues
+ *      `scan_project` against the densest single sub-tree, which
+ *      narrows scope by construction (per the
+ *      `nextstep-cycle-avoidance` walk-one-hop predicate, a non-empty
+ *      `restrictToPaths` is the narrowing signature).
+ *   2. **No addressable head path** (slim plan dropped
+ *      `findingsByFile` entirely, or the head entry lacks a `path`
+ *      string) → `propose_config({})`. The deterministic
+ *      exclude-emission tool is the documented narrowing-recovery
+ *      surface — calling it materially narrows the next
+ *      `scan_project` scope by emitting an `exclude` block from the
+ *      build-artifact classifier. Same fallback the standard slim
+ *      envelope uses on its all-vendor branch.
+ *
+ * Per the AI-first doctrine "NextStep prose and structured channels
+ * must agree": when prose advises a scope-narrowing call, the
+ * structured field MUST encode that same call's tool + args. The
+ * cycle-avoidance invariant (every recommendation must narrow scope or
+ * route to a deterministic narrowing tool) is upheld on both arms by
+ * construction.
+ *
+ * Pure: derives entirely from the slim plan; never reads the upstream
+ * structured hint (intentional — propagating the upstream is the
+ * specific regression this helper closes).
+ */
+function buildSummarySlimNextStepStructured(slimPlan: Record<string, unknown>): NextStepStructured {
+  const findingsByFile = slimPlan["findingsByFile"];
+  if (Array.isArray(findingsByFile) && findingsByFile.length > 0) {
+    const head = findingsByFile[0] as { readonly path?: unknown };
+    if (typeof head.path === "string" && head.path.length > 0) {
+      return { tool: "scan_project", args: { restrictToPaths: [head.path] } };
+    }
+  }
+  return { tool: "propose_config", args: {} };
 }
 
 /**
@@ -581,12 +635,6 @@ function readWarningsDetails(response: Record<string, unknown>): ScanWarningDeta
   const d = response["warningsDetails"];
   if (d === undefined || d === null || typeof d !== "object") return undefined;
   return d as ScanWarningDetails;
-}
-
-function readNextStepStructured(response: Record<string, unknown>): NextStepStructured | undefined {
-  const n = response["nextStepStructured"];
-  if (n === undefined || n === null || typeof n !== "object") return undefined;
-  return n as NextStepStructured;
 }
 
 function readStringArray(
