@@ -323,6 +323,22 @@ export const rule = defineRule({
       // doctrine: "Per-finding confidence must reflect per-rule
       // coverage limitations" in docs/kb/architecture/ai-first-
       // consumer.md.
+      //
+      // Bump `markCrossFileCandidate` on this branch so the per-rule
+      // coverage cascade sees the candidate token and downgrades the
+      // aggregate row to `coverageConfidence: "medium"` with reason
+      // `cross_file_listener_resolution_not_attempted_by_rule` — the
+      // same code the per-finding emission carries on
+      // `couldBeWrongBecause`. Without this bump a vanilla-JS-only
+      // corpus (no JSX `import` from a sibling module, no HTML
+      // `<script src>`) emits findings at `confidence: "medium"` while
+      // the rule's per-rule row stays at `"high"` — the contradictory
+      // shape doctrine "Per-finding confidence must reflect per-rule
+      // coverage limitations" warns against. The per-element branch
+      // (HTML `<script src>` + JSX sibling-module import) already bumps;
+      // this bump closes the parallel gap on the external-JS
+      // afterFile-emission branch.
+      ctx.markCrossFileCandidate?.();
       ctx.emit(enrichExternalJsFinding(base, siblingImport));
     }
   },
