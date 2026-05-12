@@ -3,7 +3,11 @@
  * (`coverage`, `checklist`). Threads `nativeWrapperElements` and
  * `processes` from `projectConfig` onto {@link runScan} so the
  * `result.violations` / `report.candidates` outputs match the shape
- * `scan_project` produces on identical input.
+ * `scan_project` produces on identical input, and runs the same
+ * {@link coupleSeverityToVerifyTokens} pass that `scan-collect.ts` /
+ * `tools-helpers.ts` apply on the scan-family path so the
+ * coupled-severity stream is the single canonical view every project-
+ * rooted assembler tallies against.
  *
  * Without this seam, `coverage` and `checklist` previously called
  * {@link runScan} with neither input wired up — a real-corpus scan
@@ -14,6 +18,16 @@
  * fed by that set then disagreed across surfaces (totals matched
  * because the parse-error entries are derived from `files` not from
  * scan output, but bucket assignment depends on `findingFilePaths`).
+ * The verify-token severity coupling is the same shape one rung
+ * deeper: a finding emitted at `warning` with a
+ * {@link VERIFY_IN_SOURCE_TOKENS} entry on `couldBeWrongBecause`
+ * (canonical case: `semantics/landmark-main` emitting
+ * `partial_or_layout_file_requires_composed_check` on a layout-partial
+ * HTML page) sat at `warning` on coverage/checklist while
+ * `scan_project` saw it at `info` — coverage's `indexFailingCriteria`
+ * then routed the criterion into `failingCriteria` and dropped it from
+ * the manual-actionable union, producing a silent 1-count drift on
+ * every fixture exercising that branch.
  *
  * Doctrine: see `docs/kb/architecture/ai-first-consumer.md`
  * "Cross-surface count invariant" — every shared cross-tool counter
@@ -27,6 +41,7 @@ import type { AttestationRecord } from "../types/evidence.ts";
 import type { Rule } from "../types/rule.ts";
 import { outputFilePathSet } from "./scan-assembly.ts";
 import type { McpSession } from "./session.ts";
+import { coupleSeverityToVerifyTokens } from "./violation-severity-coupling.ts";
 
 /**
  * Inputs every project-rooted derivative tool already has at the
@@ -78,7 +93,12 @@ export function runScanForCrossSurfaceParity(args: RunScanForCrossSurfaceParityA
     args;
   const wrapperElements = projectConfig.nativeWrapperElements;
   const processes = projectConfig.processes;
-  const { result, report, perRuleCoverage, filesWithAnyRuleEvaluated } = runScan({
+  const {
+    result: rawResult,
+    report,
+    perRuleCoverage,
+    filesWithAnyRuleEvaluated,
+  } = runScan({
     standards: session.registry.standards,
     rules: activeRules,
     enabled,
@@ -90,6 +110,25 @@ export function runScanForCrossSurfaceParity(args: RunScanForCrossSurfaceParityA
     ...(processes.length > 0 && { processes }),
     ...(scanRoot === undefined ? {} : { scanRoot }),
   });
+  // Couple severity to verify-in-source tokens BEFORE returning the
+  // result, mirroring the same pass `scan-collect.ts` and
+  // `tools-helpers.ts` apply on the scan-family path. Without this,
+  // `coverage` / `checklist` consume a raw violation stream where a
+  // verify-token finding (e.g. `landmark-main` emitting
+  // `couldBeWrongBecause: ["partial_or_layout_file_requires_composed_check"]`)
+  // still rides at severity `warning`, so:
+  //   - `buildCoverageReport`'s `indexFailingCriteria` (which only
+  //     excludes `info`-severity) routes the criterion into
+  //     `failingCriteria` and removes it from `manualCriteria`; and
+  //   - `collectVerifyTokenViolationCriteria` (gated on severity
+  //     `info`) never picks the criterion up via the verify-token
+  //     branch.
+  // The cross-surface count invariant
+  // (`docs/kb/architecture/ai-first-consumer.md`) requires every
+  // project-rooted tool to tally off the same coupled stream — pinned
+  // by the warning-severity verify-token case in
+  // `tests/integration/mcp-counts-agree.test.ts`.
+  const result = { ...rawResult, violations: coupleSeverityToVerifyTokens(rawResult.violations) };
   // Derived from the SAME `result.violations` / `report.candidates`
   // the caller will route into other consumers. Per the
   // "Cross-surface count invariant" doctrine: when the helper owns
