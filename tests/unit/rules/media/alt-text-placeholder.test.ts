@@ -186,6 +186,89 @@ describe("rule media/alt-text-placeholder", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toMatch(/"hero banner"/);
     });
+
+    it("src points at placehold.it (http) — alt='banner' still flags on host evidence", () => {
+      const violations = runRule(rule, `<img src="http://placehold.it/700x400" alt="banner">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/placeholder image service "placehold\.it"/);
+      expect(violations[0]?.suggestion).toMatch(/Swap the src for the real image/);
+    });
+
+    it("src points at via.placeholder.com (https)", () => {
+      const violations = runRule(
+        rule,
+        `<img src="https://via.placeholder.com/300" alt="placeholder image">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"via\.placeholder\.com"/);
+    });
+
+    it("src points at picsum.photos (lorem-ipsum image service)", () => {
+      const violations = runRule(rule, `<img src="https://picsum.photos/200/300" alt="hero">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"picsum\.photos"/);
+    });
+
+    it("src points at dummyimage.com", () => {
+      const violations = runRule(
+        rule,
+        `<img src="https://dummyimage.com/600x400/cccccc/000000" alt="600 by 400">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"dummyimage\.com"/);
+    });
+
+    it("src points at placekitten.com (kitten placeholder service)", () => {
+      const violations = runRule(rule, `<img src="https://placekitten.com/400/300" alt="kitten">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"placekitten\.com"/);
+    });
+
+    it("src is protocol-relative ('//placehold.co/300')", () => {
+      const violations = runRule(rule, `<img src="//placehold.co/300" alt="hero">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"placehold\.co"/);
+    });
+
+    it("src is a subdomain of a placeholder host ('cdn.placehold.co')", () => {
+      const violations = runRule(rule, `<img src="https://cdn.placehold.co/300" alt="hero">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      // Message names the canonical service host, not the subdomain.
+      expect(violations[0]?.message).toMatch(/"placehold\.co"/);
+    });
+
+    it("placeholder-host emission wins over content-category match (alt='image' on placehold.co)", () => {
+      // Without the host check, this would emit as `medium` (alt is
+      // the medium word "image"). The host check fires first because
+      // the host is the more diagnostic finding — the image itself
+      // is a placeholder regardless of what the author typed.
+      const violations = runRule(rule, `<img src="https://placehold.co/300" alt="image">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/placeholder image service/);
+      expect(violations[0]?.message).not.toMatch(/restates the medium/);
+    });
+
+    it("src host is case-insensitive ('PLACEHOLD.CO')", () => {
+      const violations = runRule(rule, `<img src="https://PLACEHOLD.CO/300" alt="hero">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"placehold\.co"/);
+    });
   });
 
   describe("HTML: does not fire when", () => {
@@ -313,6 +396,48 @@ describe("rule media/alt-text-placeholder", () => {
       });
       expect(violations).toHaveLength(0);
     });
+
+    it("non-placeholder host that happens to contain 'placeholder' in the path", () => {
+      // Path contains the word but the host is unrelated; only host
+      // identity counts.
+      const violations = runRule(
+        rule,
+        `<img src="https://cdn.example.com/images/placeholder/hero.jpg" alt="Hero banner">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("unsplash.com (real stock photography service) does not match", () => {
+      // Unsplash is a stock-image library, not a scaffold-only
+      // placeholder service. Real authors deliberately ship unsplash
+      // URLs to production.
+      const violations = runRule(
+        rule,
+        `<img src="https://images.unsplash.com/photo-1234" alt="Mountain at sunset">`,
+        { filePath: "index.html" },
+      );
+      expect(violations).toHaveLength(0);
+    });
+
+    it("placeholder host with empty alt is still decorative (missing rule owns this)", () => {
+      // Even on a placeholder host, alt="" is honest decorative
+      // signaling; alt-text-missing owns the absent/empty cases. The
+      // host-based placeholder finding only fires when an alt was
+      // typed.
+      const violations = runRule(rule, `<img src="https://placehold.co/300" alt="">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
+
+    it("relative src with no host does not falsely match", () => {
+      // No host means no host-match. Other rule paths still own this.
+      const violations = runRule(rule, `<img src="/assets/placeholder.png" alt="hero">`, {
+        filePath: "index.html",
+      });
+      expect(violations).toHaveLength(0);
+    });
   });
 
   describe("JSX: fires a violation when", () => {
@@ -379,6 +504,24 @@ describe("rule media/alt-text-placeholder", () => {
       );
       expect(violations).toHaveLength(1);
       expect(violations[0]?.message).toMatch(/"team photo"/);
+    });
+
+    it("src points at a placeholder host (placehold.it) in JSX", () => {
+      const violations = runRule(
+        rule,
+        `const X = <img src="http://placehold.it/700x400" alt="Hero banner" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/placeholder image service "placehold\.it"/);
+    });
+
+    it("src points at picsum.photos in JSX", () => {
+      const violations = runRule(
+        rule,
+        `const X = <img src="https://picsum.photos/200" alt="random image" />;`,
+      );
+      expect(violations).toHaveLength(1);
+      expect(violations[0]?.message).toMatch(/"picsum\.photos"/);
     });
   });
 

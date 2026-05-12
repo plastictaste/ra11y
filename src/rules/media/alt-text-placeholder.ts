@@ -74,6 +74,26 @@
  *      short alt text. Dynamic `src` (JSX expression value) is not
  *      checked because the parser only exposes string-literal
  *      attribute values.
+ *   8. Src points at a known placeholder image host —
+ *      `<img src="http://placehold.it/700x400">` /
+ *      `<img src="https://via.placeholder.com/300">` /
+ *      `<img src="https://picsum.photos/200">` /
+ *      `<img src="https://dummyimage.com/600x400">`. These hosts
+ *      exist exclusively to serve scaffold / mockup imagery — there
+ *      is no real-world product photograph or chart hosted there.
+ *      The host carries the placeholder evidence directly, independent
+ *      of what the author typed in `alt`: a non-empty alt against a
+ *      placeholder host is at best the dimensions ("700x400") and at
+ *      worst literal "placeholder"; the underlying image is by
+ *      construction not the content the page eventually ships. The
+ *      check fires regardless of alt category — even an alt that
+ *      would otherwise pass ("Hero banner") is dishonest when the
+ *      image it labels is a colored rectangle from placehold.co.
+ *      The host list is exact-match (host or any subdomain),
+ *      protocol-agnostic (http/https/protocol-relative), and resilient
+ *      to common author mistakes (no protocol, trailing slash). Empty
+ *      `alt=""` (decorative) still skips per the missing-rule
+ *      delegation. Dynamic `src` (JSX expression) is not checked.
  *
  * Matching is whole-alt-only outside of the bounded phrase form
  * above. `alt="Aerial image of Paris"` passes because the medium
@@ -257,6 +277,42 @@ const SEQUENTIAL_LABEL_PATTERNS: readonly RegExp[] = [
   /^(image|photo|picture)\s+\d+$/i,
 ];
 
+/**
+ * Known placeholder image hosts — services whose entire purpose is
+ * serving scaffold / mockup imagery during development. Any `<img>`
+ * pointing at one of these hosts is by construction not real content,
+ * regardless of what the author typed in `alt`. The list is exact-host
+ * or subdomain match (e.g. `cdn.placehold.co` counts as `placehold.co`).
+ *
+ * Sources: each entry is a well-known placeholder service that ships
+ * in starter themes, Bootstrap docs, design-system kits, and CMS
+ * lorem-ipsum scaffolding. The failure mode is identical to filename-
+ * based placeholder evidence (category 7): the image itself is
+ * placeholder content, so alt text describing "the image" describes
+ * a colored rectangle the user never sees in production.
+ *
+ * Not on this list: `unsplash.com`, `pexels.com`, `images.pexels.com`
+ * — those serve real stock photography that authors deliberately
+ * publish; flagging them would over-fire on real production content.
+ * The distinction is "scaffold-only service" vs "stock-image library."
+ */
+const PLACEHOLDER_IMAGE_HOSTS: ReadonlySet<string> = new Set([
+  "placehold.it",
+  "placehold.co",
+  "via.placeholder.com",
+  "placeholder.com",
+  "picsum.photos",
+  "lorempixel.com",
+  "dummyimage.com",
+  "placekitten.com",
+  "placebeard.it",
+  "fillmurray.com",
+  "placecage.com",
+  "loremflickr.com",
+  "baconmockup.com",
+  "stevensegallery.com",
+]);
+
 type PlaceholderKind =
   | "medium"
   | "authoring"
@@ -264,7 +320,8 @@ type PlaceholderKind =
   | "repetition"
   | "rolePhrase"
   | "sequentialLabel"
-  | "srcBasename";
+  | "srcBasename"
+  | "srcPlaceholderHost";
 
 interface PlaceholderMatch {
   readonly kind: PlaceholderKind;
@@ -276,6 +333,13 @@ interface PlaceholderMatch {
    * filename overlap explicit). Empty for other kinds.
    */
   readonly basenameStem?: string;
+  /**
+   * For `srcPlaceholderHost` matches, the recognized host that served
+   * the placeholder image (e.g. `placehold.co`, `via.placeholder.com`).
+   * Empty for other kinds. Surfaced in the message / suggestion so the
+   * agent can see WHICH placeholder service the src points at.
+   */
+  readonly placeholderHost?: string;
 }
 
 /**
@@ -294,6 +358,15 @@ interface PlaceholderMatch {
 function classifyAlt(alt: string, src: string | null = null): PlaceholderMatch | null {
   const collapsed = alt.replace(/\s+/g, " ").trim();
   if (collapsed.length === 0) return null;
+  // Placeholder image host — the URL itself is the placeholder
+  // evidence, independent of what alt says. Checked first so the
+  // emission carries the host-source signal even when the alt would
+  // also have matched a content category (e.g. `alt="image"` against
+  // `placehold.co/300x200` — host is the more diagnostic finding).
+  const placeholderHost = extractPlaceholderHost(src);
+  if (placeholderHost !== null) {
+    return { kind: "srcPlaceholderHost", normalized: collapsed, placeholderHost };
+  }
   const lower = collapsed.toLowerCase();
   if (MEDIUM_WORDS.has(lower)) return { kind: "medium", normalized: collapsed };
   if (AUTHORING_WORDS.has(lower)) return { kind: "authoring", normalized: collapsed };
@@ -333,6 +406,21 @@ function classifyAlt(alt: string, src: string | null = null): PlaceholderMatch |
   // Alt restates the src basename: extract the basename-stem from
   // the URL (query / hash stripped, extension dropped), normalize
   // separators, and compare. See `matchesSrcBasename` for the rules.
+  return classifySrcBasename(tokens, src, collapsed);
+}
+
+/**
+ * Final-stage helper for the `srcBasename` category. Extracted from
+ * `classifyAlt` to keep that function's cyclomatic complexity under the
+ * project ceiling (15) — the addition of the placeholder-host branch
+ * pushed it past, and the basename branch is a small unit that lifts
+ * cleanly. Returns the match shape or null.
+ */
+function classifySrcBasename(
+  tokens: readonly string[],
+  src: string | null,
+  collapsed: string,
+): PlaceholderMatch | null {
   const stem = extractBasenameStem(src);
   if (stem !== null && matchesSrcBasename(tokens, stem)) {
     return { kind: "srcBasename", normalized: collapsed, basenameStem: stem };
@@ -361,6 +449,65 @@ function classifyAlt(alt: string, src: string | null = null): PlaceholderMatch |
  *   `x.jpg`                        → null (too short)
  *   `/foo/`                        → null (no filename)
  */
+/**
+ * Returns the recognized placeholder host when `src` points at one
+ * (exact host or any subdomain), or null otherwise. Resilient to the
+ * common author shapes:
+ *  - `http://placehold.it/700x400`
+ *  - `https://via.placeholder.com/300`
+ *  - `https://picsum.photos/200/300`
+ *  - `//dummyimage.com/600x400` (protocol-relative)
+ *  - `placehold.co/300` (no protocol — author error, parsed by stripping
+ *    the path on first `/`)
+ *  - trailing slashes / paths / query strings are ignored
+ *  - case-insensitive
+ *
+ * Subdomain match: `cdn.placehold.co` matches `placehold.co` because
+ * a subdomain of a placeholder service is still a placeholder service.
+ *
+ * Dynamic `src` (JSX expression value) arrives as null and skips,
+ * mirroring the `extractBasenameStem` contract.
+ */
+function extractPlaceholderHost(src: string | null): string | null {
+  if (src === null) return null;
+  const trimmed = src.trim();
+  if (trimmed.length === 0) return null;
+  // Strip protocol if present. Handle `http://`, `https://`,
+  // protocol-relative `//`, and the no-protocol author-error case.
+  let rest = trimmed;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rest)) {
+    rest = rest.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+  } else if (rest.startsWith("//")) {
+    rest = rest.slice(2);
+  }
+  // The host runs from the start to the first `/`, `?`, or `#`.
+  // Strip a leading `@` (userinfo) and a port suffix `:8080` if present.
+  const hostEnd = rest.search(/[/?#]/);
+  let host = hostEnd === -1 ? rest : rest.slice(0, hostEnd);
+  const at = host.lastIndexOf("@");
+  if (at !== -1) host = host.slice(at + 1);
+  const colon = host.lastIndexOf(":");
+  if (colon !== -1) host = host.slice(0, colon);
+  host = host.toLowerCase().trim();
+  if (host.length === 0) return null;
+  // Reject anything without a dot — bare path segments like `images`
+  // are not hosts. Combined with the no-protocol fallback, this means
+  // a relative path like `images/balloons.gif` correctly returns null
+  // (the basename check still owns that case).
+  if (!host.includes(".")) return null;
+  if (PLACEHOLDER_IMAGE_HOSTS.has(host)) return host;
+  // Subdomain match: walk up the host's labels. `cdn.placehold.co` →
+  // try `placehold.co`. The longest matching suffix wins (return the
+  // listed canonical host, not the agent's subdomain, so the message
+  // names the service consistently).
+  const labels = host.split(".");
+  for (let i = 1; i < labels.length - 1; i += 1) {
+    const suffix = labels.slice(i).join(".");
+    if (PLACEHOLDER_IMAGE_HOSTS.has(suffix)) return suffix;
+  }
+  return null;
+}
+
 function extractBasenameStem(src: string | null): string | null {
   if (src === null) return null;
   // Strip query and hash. URL fragments / query strings are not
@@ -511,7 +658,10 @@ function emitJsx(element: JsxElement, match: PlaceholderMatch, emit: Emit): void
 // Message / suggestion builders
 // ---------------------------------------------------------------------------
 
-const REASONS_BY_KIND: Record<Exclude<PlaceholderKind, "srcBasename">, string> = {
+const REASONS_BY_KIND: Record<
+  Exclude<PlaceholderKind, "srcBasename" | "srcPlaceholderHost">,
+  string
+> = {
   medium: "restates the medium instead of describing the content",
   authoring: "is an authoring placeholder, not a description",
   meta: "names the attribute instead of describing the content",
@@ -523,6 +673,10 @@ const REASONS_BY_KIND: Record<Exclude<PlaceholderKind, "srcBasename">, string> =
 };
 
 function buildMessage(tag: string, match: PlaceholderMatch): string {
+  if (match.kind === "srcPlaceholderHost") {
+    const host = match.placeholderHost ?? "";
+    return `<${tag} src="…${host}…" alt="${match.normalized}"> points at the placeholder image service "${host}", which exists only to serve scaffold / mockup imagery; the rendered image is by construction not real content, so any alt text describes a placeholder rather than what the page eventually ships.`;
+  }
   const reason =
     match.kind === "srcBasename"
       ? `restates the src filename ("${match.basenameStem ?? ""}") instead of describing the content`
@@ -538,6 +692,8 @@ function buildSuggestion(tag: string, match: PlaceholderMatch): string {
         ? `Replace alt="${match.normalized}" with a description of what THIS slide / image actually shows (its subject, headline, or caption text). Positional labels like "First slide" or "Image 3" are the carousel-doc default but ship as production placeholder; the slide's content is what the screen-reader user needs.`
         : match.kind === "srcBasename"
           ? `Replace alt="${match.normalized}" with a description of what the image communicates — the filename "${match.basenameStem ?? ""}" is already in the src attribute, so repeating it as alt text adds no information for screen-reader users.`
-          : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
+          : match.kind === "srcPlaceholderHost"
+            ? `Swap the src for the real image this <${tag}> is meant to show (then write alt text that describes that real image). Placeholder services like "${match.placeholderHost ?? ""}" ship in design-system scaffolding and Bootstrap docs but should not survive into production — neither the image nor the alt text carries any information for screen-reader users. If the slot is decorative and there is no real image to swap in, remove the <${tag}> rather than ship a placeholder.`
+            : `Replace alt="${match.normalized}" with a description of what the image communicates — not the fact that it is an image.`;
   return `${hint} If the image is purely decorative and the surrounding text already carries the same information, set alt="" so assistive tech skips it. If the <${tag}> is inside a link or button, the alt should describe the destination or action, not the picture.`;
 }
