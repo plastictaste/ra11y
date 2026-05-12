@@ -475,11 +475,9 @@ describe("rule document/page-titled", () => {
     // axis from `yield :title` (which is the content_for :title
     // bucket). Same negative-guard rationale as the {% include %}
     // case above.
-    const v = runRule(
-      rule,
-      `<!DOCTYPE html><html><head></head><body><%= yield %></body></html>`,
-      { filePath: "application.html.erb" },
-    );
+    const v = runRule(rule, `<!DOCTYPE html><html><head></head><body><%= yield %></body></html>`, {
+      filePath: "application.html.erb",
+    });
     expect(v).toHaveLength(1);
     expect(v[0]?.severity).toBe("error");
     expect(v[0]?.couldBeWrongBecause).toBeUndefined();

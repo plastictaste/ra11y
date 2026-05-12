@@ -22,6 +22,7 @@ import {
 } from "../../engine/ast-helpers.ts";
 import { htmlSubtreeHasStrippedDirective } from "../../input/parsers/html-template-directives.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
+import type { FileContext } from "../../types/rule.ts";
 
 export const rule = defineRule({
   id: "document/page-titled",
@@ -102,48 +103,8 @@ export const rule = defineRule({
     // case was already accounted for.
     const delegation = findHeadDelegationComponent(doc);
 
-    // Title-injecting template directive detection. Layout / include
-    // partials in Liquid (Jekyll's jekyll-seo-tag plugin: `{% seo %}`)
-    // and ERB (Rails' `<%= yield :title %>` / `<% content_for :title
-    // do %>`) emit the document `<title>` at render time. The literal
-    // directive token is in the scanned source — its presence is
-    // provable from the code in this file alone (no composition guess),
-    // matching the same evidence model as the delegation-component
-    // carve-out above. Per docs/kb/architecture/ai-first-consumer.md
-    // §"Heuristic emission is the symmetric twin of heuristic
-    // suppression," emitting at full `error` severity when the
-    // directive is observed concedes uncertainty its severity
-    // contradicts. The closure path (b): emit at `info` severity with
-    // the structured `template_directive_provides_title` code so the
-    // finding still surfaces (surface, don't suppress) but the
-    // attention-budgeting signal matches the conceded evidence. The
-    // agent reading the file decides whether the plugin's title=false
-    // flag is set, the plugin is actually wired up, etc.
-    const titleDirective = findTitleInjectingDirective(ctx.source);
-
     if (docTitles.length === 0) {
-      if (delegation !== null) return;
-      const htmlEl = htmlElements[0];
-      if (titleDirective !== null) {
-        ctx.emit(
-          buildTitleDirectiveEmit(
-            doc,
-            htmlEl?.loc.start.line ?? 1,
-            htmlEl?.loc.start.column ?? 1,
-            titleDirective,
-          ),
-        );
-        return;
-      }
-      ctx.emit(
-        buildEmit(
-          doc,
-          fragmentShape,
-          htmlEl?.loc.start.line ?? 1,
-          htmlEl?.loc.start.column ?? 1,
-          MESSAGE_MISSING,
-        ),
-      );
+      emitMissingTitle(ctx, doc, htmlElements[0], fragmentShape, delegation);
       return;
     }
 
@@ -195,6 +156,46 @@ const MESSAGE_EMPTY =
 const FRAGMENT_SUFFIX =
   " This file has no <body> so it may be a template partial whose <title> is template-injected" +
   " (e.g. Jekyll {% seo %} / Hugo partials / Eleventy includes) — verify against the parent layout before acting.";
+
+/**
+ * Routes the no-`<title>` branch to its appropriate emit. Three
+ * sub-branches, ordered by predicate strength:
+ *
+ *   1. `delegation` non-null — a head-rendering component is in the
+ *      tree (`<Head />` / `<Helmet>` / `<DocumentHead>` / …). The
+ *      title WILL be supplied at render time; suppress emission per
+ *      the deterministic carve-out documented on
+ *      {@link findHeadDelegationComponent}.
+ *   2. Title-injecting template directive observed in raw source
+ *      ({% seo %} / `<%= yield :title %>` / `<% content_for :title
+ *      do %>`). Emit at `info` severity with
+ *      {@link TEMPLATE_DIRECTIVE_PROVIDES_TITLE} so the finding still
+ *      surfaces but the attention-budget signal agrees with the
+ *      conceded evidence.
+ *   3. Otherwise — emit the canonical missing-title finding, enriched
+ *      with the fragment-shape suffix when no `<body>` is present.
+ *
+ * Extracted from `afterFile` to keep the lifecycle hook under the
+ * cognitive-complexity budget — the three-way branching with two
+ * post-check enrichments pushed the inline form past the limit.
+ */
+function emitMissingTitle(
+  ctx: FileContext,
+  doc: HtmlDocument,
+  htmlEl: HtmlElement | undefined,
+  fragmentShape: boolean,
+  delegation: HtmlElement | null,
+): void {
+  if (delegation !== null) return;
+  const line = htmlEl?.loc.start.line ?? 1;
+  const column = htmlEl?.loc.start.column ?? 1;
+  const titleDirective = findTitleInjectingDirective(ctx.source);
+  if (titleDirective !== null) {
+    ctx.emit(buildTitleDirectiveEmit(doc, line, column, titleDirective));
+    return;
+  }
+  ctx.emit(buildEmit(doc, fragmentShape, line, column, MESSAGE_MISSING));
+}
 
 /**
  * Builds the emit object shared between the missing-title and
@@ -287,7 +288,10 @@ const TEMPLATE_DIRECTIVE_PROVIDES_TITLE = "template_directive_provides_title";
  * negatives on layouts whose included partials happen to not supply
  * a title.
  */
-const TITLE_INJECTING_DIRECTIVE_PATTERNS: readonly { readonly regex: RegExp; readonly label: string }[] = [
+const TITLE_INJECTING_DIRECTIVE_PATTERNS: readonly {
+  readonly regex: RegExp;
+  readonly label: string;
+}[] = [
   // Jekyll `jekyll-seo-tag` plugin entry point. Supports the bare
   // `{% seo %}` form and the parameterized `{% seo title=false %}`
   // form; whitespace-control variant `{%- seo -%}` is accepted via
