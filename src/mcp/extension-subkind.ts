@@ -116,6 +116,16 @@ export function collectExtensionsForSubkindProbe(
     if (row.coverageConfidence !== "low") continue;
     if (row.filesEligible !== 0) continue;
     if (row.subkind !== undefined) continue;
+    // Skip rows that already carry a `skipReason` discriminator — the
+    // row's zero tally is explained by an orthogonal axis (e.g.
+    // `"gated_by_level"`) and its `remediation` already names the
+    // matching fix (`re-run with level: 'AAA'`). The extension-presence
+    // subkind is for `reason`-only low-confidence rows; stamping it on
+    // a level-gated row would overwrite the level-correct remediation
+    // with the path-filter text, violating
+    // `docs/kb/architecture/ai-first-consumer.md` "Reason text and
+    // severity must agree" at the remediation channel.
+    if (row.skipReason !== undefined) continue;
     const rule = ruleById.get(row.ruleId);
     const extensions = rule?.appliesTo?.fileExtensions;
     if (!extensions || extensions.length === 0) continue;
@@ -218,6 +228,13 @@ function adjustRowForExtensionSubkind(
   if (row.coverageConfidence !== "low") return row;
   if (row.filesEligible !== 0) return row;
   if (row.subkind !== undefined) return row;
+  // Rows carrying a `skipReason` (e.g. `"gated_by_level"`) are explained
+  // by an orthogonal axis with its own matching `remediation` already in
+  // place. Stamping the extension-presence subkind here would clobber
+  // the level-correct remediation (`re-run with level: 'AAA'`) with the
+  // path-filter remediation, leaving the agent with a remediation that
+  // describes the wrong skip. The `skipReason` discriminator wins.
+  if (row.skipReason !== undefined) return row;
   const extensions = rule.appliesTo?.fileExtensions;
   if (!extensions || extensions.length === 0) return row;
   const present = anyExtensionPresent(extensions, extensionsPresentAtRoot);

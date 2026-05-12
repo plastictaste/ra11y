@@ -2093,6 +2093,32 @@ describe("collectExtensionsForSubkindProbe", () => {
     const out = collectExtensionsForSubkindProbe(rows, [cssRule]);
     expect(out.size).toBe(0);
   });
+
+  it("skips rows that already carry a `skipReason` (level-gated rows own their remediation)", () => {
+    // A level-gated row (e.g. an AAA-only rule under an AA scan) ships
+    // its own `remediation` ("re-run with level: 'AAA'") and the
+    // orthogonal `skipReason: "gated_by_level"` discriminator. Probing
+    // its extension here would set up the subkind adjuster to clobber
+    // that remediation with the path-filter text. Skip the extension
+    // entirely so the level-gated row stays internally consistent.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "low",
+        reason: "gated_by_level: rule requires level AAA; scan requested level AA",
+        remediation: "re-run with `level: 'AAA'` to evaluate this rule",
+        skipReason: "gated_by_level",
+        requiredLevel: "AAA",
+        requestedLevel: "AA",
+      },
+    ];
+    const out = collectExtensionsForSubkindProbe(rows, [cssRule]);
+    expect(out.size).toBe(0);
+  });
 });
 
 describe("applyExtensionPresentSubkindAdjustment", () => {
@@ -2235,6 +2261,39 @@ describe("applyExtensionPresentSubkindAdjustment", () => {
       },
     ];
     const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out).toBe(rows);
+  });
+
+  it("leaves level-gated rows untouched even when their gated extension is present at root", () => {
+    // Regression: an AAA-only rule under an AA scan ships a level-gated
+    // row with `coverageConfidence: "low"`, `filesEligible: 0`, and a
+    // matching `remediation: "re-run with level: 'AAA'"`. The extension-
+    // present probe sees `.css` on disk (very common — Tailwind, vendor
+    // CSS, anything) and previously stamped the row with
+    // `subkind: "extension-present-but-out-of-scope"` plus the path-
+    // filter remediation, clobbering the level-correct text. The row's
+    // `skipReason` discriminator is the orthogonal axis that owns the
+    // remediation here; the extension-presence subkind must defer.
+    const rows: readonly PerRuleCoverage[] = [
+      {
+        ruleId: "css/example",
+        filesEvaluated: 0,
+        filesEligible: 0,
+        findingsEmitted: 0,
+        fired: false,
+        coverageConfidence: "low",
+        reason: "gated_by_level: rule requires level AAA; scan requested level AA",
+        remediation: "re-run with `level: 'AAA'` to evaluate this rule",
+        skipReason: "gated_by_level",
+        requiredLevel: "AAA",
+        requestedLevel: "AA",
+      },
+    ];
+    const out = applyExtensionPresentSubkindAdjustment(rows, [cssRule], new Set([".css"]));
+    expect(out[0]?.subkind).toBeUndefined();
+    expect(out[0]?.skipReason).toBe("gated_by_level");
+    expect(out[0]?.remediation).toBe("re-run with `level: 'AAA'` to evaluate this rule");
+    // Object identity preserved when no row was adjusted.
     expect(out).toBe(rows);
   });
 });
