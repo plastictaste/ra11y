@@ -36,14 +36,12 @@ import { describe, expect, it } from "bun:test";
 import { buildNextStep } from "../../src/mcp/next-step.ts";
 import type { ScanFormatted } from "../../src/mcp/tools-helpers.ts";
 
-function infoOnlyScanFormatted(
-  args: {
-    readonly path: string;
-    readonly ruleId: string;
-    readonly line: number;
-    readonly actionableManualSource?: number;
-  },
-): ScanFormatted {
+function infoOnlyScanFormatted(args: {
+  readonly path: string;
+  readonly ruleId: string;
+  readonly line: number;
+  readonly actionableManualSource?: number;
+}): ScanFormatted {
   return {
     plan: {
       infoSeverityFindings: 1,

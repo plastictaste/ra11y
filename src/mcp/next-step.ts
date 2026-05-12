@@ -33,6 +33,7 @@
  *     Callers that don't have a single-file anchor omit this.
  */
 
+import { scanFileNotesNoSelfLoopResult } from "./next-step-notes-scan-file.ts";
 import type { ScanFormatted } from "./tools-helpers.ts";
 
 export interface NextStepOptions {
@@ -383,39 +384,26 @@ function violationNextStep(inputs: NextStepInputs, first: FirstFinding): NextSte
 
 function notesNextStep(inputs: NextStepInputs, first: FirstFinding): NextStepResult {
   const nPlural = inputs.notes === 1 ? "" : "s";
-  // scan_file caller (singleFilePath set) on a notes-only response —
-  // routing structured back to `scan_file` with the same path echoes
-  // the caller's exact arguments and forms a self-loop with no
-  // progression toward `suggest_fix`, `checklist`, or scope narrowing.
-  // Per docs/kb/architecture/ai-first-consumer.md "NextStep handoffs
-  // must terminate at a narrowing tool, never form a cycle." Route to
-  // `checklist` when review-candidates exist on this file (manual-
-  // review evidence is the next decision the agent can make); else
-  // route to `suggest_fix` on the first info-level finding so the
-  // agent inspects per-finding evidence directly rather than re-
-  // calling the same `scan_file` over the same path. Prose mirrors
-  // the structured channel per the AI-first doctrine "NextStep prose
-  // and structured channels must agree." The `scan` tool path (no
-  // `singleFilePath`) keeps the original scan_file-on-first-finding
-  // routing because that's a child-tool handoff, not a self-loop.
+  const head = `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify).`;
+  // scan_file caller (singleFilePath === first.path) on a notes-only
+  // response would route structured to `scan_file({ path })` — a
+  // self-loop echoing the caller's args. The no-self-loop branch
+  // lives in `next-step-notes-scan-file.ts` so the file stays under
+  // the limits budget; see that file's header for full rationale.
+  // `scan` (no singleFilePath) keeps scan_file-on-first-finding —
+  // child-tool handoff, not a loop.
   if (inputs.singleFilePath !== undefined && inputs.singleFilePath === first.path) {
-    if (inputs.actionableManual > 0) {
-      const mPlural = inputs.actionableManual === 1 ? "" : "s";
-      return {
-        prose: `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify). Call \`checklist\` for the ${inputs.actionableManual} grounded manual-review item${mPlural}, or read the source to resolve the info note${nPlural}.${inputs.iterativeTip}`,
-        structured: { tool: "checklist", args: {} },
-      };
-    }
-    return {
-      prose: `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify). Call \`suggest_fix\` on \`${first.ruleId}\` at ${first.path}:${first.line} for the inline fix surface, or read the source directly.${inputs.iterativeTip}`,
-      structured: {
-        tool: "suggest_fix",
-        args: { ruleId: first.ruleId, file: first.path, line: first.line },
-      },
-    };
+    return scanFileNotesNoSelfLoopResult({
+      first,
+      notes: inputs.notes,
+      actionableManual: inputs.actionableManual,
+      iterativeTip: inputs.iterativeTip,
+      head,
+      nPlural,
+    });
   }
   return {
-    prose: `No errors/warnings, ${inputs.notes} info-level note${nPlural} (scanner flagged things it can't fully verify). Open \`scan_file ${first.path}\` or read the source to resolve.${manualTail(inputs)}${inputs.iterativeTip}`,
+    prose: `${head} Open \`scan_file ${first.path}\` or read the source to resolve.${manualTail(inputs)}${inputs.iterativeTip}`,
     structured: { tool: "scan_file", args: { path: first.path } },
   };
 }
