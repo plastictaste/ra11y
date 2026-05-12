@@ -198,7 +198,7 @@ export const rule = defineRule({
     knownLimitations: [
       "single-file scope: keyboard handlers attached via addEventListener from a sibling module, parent-component prop, or hook are not resolved — a draggable element wired this way will be flagged.",
       "binary predicate: the rule does not inspect the body of the keyboard handler; an empty or no-op onKeyDown will satisfy the static check. The agent reads the handler body to verify it implements the move/pick-up/drop operation.",
-      "co-rule coalescing: bare structural tags (<div>, <span>, <li>, etc.) with draggable=\"true\" are intentionally not flagged here — keyboard/handler-missing covers SC 2.1.1 on those tags and pointer/drag-alternative covers SC 2.5.7. This rule fires only on natively interactive tags (e.g. <a draggable=\"true\">) and JSX PascalCase components, where neither co-rule covers SC 2.1.1 for the drag operation.",
+      'co-rule coalescing: bare structural tags (<div>, <span>, <li>, etc.) with draggable="true" are intentionally not flagged here — keyboard/handler-missing covers SC 2.1.1 on those tags and pointer/drag-alternative covers SC 2.5.7. This rule fires only on natively interactive tags (e.g. <a draggable="true">) and JSX PascalCase components, where neither co-rule covers SC 2.1.1 for the drag operation.',
     ],
   },
   afterFile(ctx) {
