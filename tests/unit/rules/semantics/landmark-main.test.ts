@@ -400,6 +400,63 @@ describe("rule semantics/landmark-main", () => {
       expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
     });
 
+    it("omits the `no <body>` parenthetical clause when <body> is genuinely present", () => {
+      // Reason templating honesty: the layout-partial suffix lists the
+      // evidence kinds that earn the classification. When `<body>` IS
+      // present (the canonical Jekyll `_layouts/default.html` shape:
+      // full envelope + composition directive), the boilerplate
+      // `(no <body>, ...)` clause must NOT appear in the message — it
+      // would mislead the agent into searching for an absent body tag
+      // that is on line 3 of the file. Per docs/kb/architecture/
+      // ai-first-consumer.md "Reason text and severity must agree"
+      // applied to reason templating: render the bodyless-fragment
+      // evidence only when `<body>` is genuinely missing.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          '  <body class="wrap">',
+          "    <header>site nav</header>",
+          "    {{ content }}",
+          "    <footer>site footer</footer>",
+          "  </body>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "default.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      expect(v[0]?.message).toContain("layout wrapper or template partial");
+      // The body-absent parenthetical clause MUST NOT appear when
+      // <body class="wrap"> is on line 3 of the source.
+      expect(v[0]?.message).not.toContain("no <body>");
+    });
+
+    it("retains the `no <body>` parenthetical on a bodyless partial where <body> is genuinely absent", () => {
+      // Counterpart to the body-present test above: when the file has
+      // no <body> at all (Jekyll `_includes/top.html` canonical shape
+      // — <html> + <head> only, sibling footer partial closes
+      // <body></html>), the bodyless-fragment evidence IS the honest
+      // signal and MUST appear in the parenthetical.
+      const v = runRule(
+        rule,
+        [
+          "<!DOCTYPE html>",
+          "<html>",
+          "  <head>",
+          "    <meta charset='utf-8'>",
+          "    {% seo %}",
+          "  </head>",
+          "</html>",
+        ].join("\n"),
+        { filePath: "top.html" },
+      );
+      expect(v).toHaveLength(1);
+      expect(v[0]?.couldBeWrongBecause).toEqual(["partial_or_layout_file_requires_composed_check"]);
+      expect(v[0]?.message).toContain("no <body>");
+    });
+
     it("downgrades to info on a markdown post with `layout:` frontmatter (no <main> visible in residue)", () => {
       // Jekyll-style markdown post: `---\nlayout: post\n---` frontmatter
       // declares the parent layout supplies the document envelope. The

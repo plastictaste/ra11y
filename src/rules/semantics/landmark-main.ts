@@ -214,6 +214,7 @@ function emitBodylessPartial(ctx: FileContext, doc: HtmlDocument, markdownResidu
       "",
       undefined,
       markdownResidue,
+      false,
     ),
   );
 }
@@ -277,7 +278,7 @@ function emitMissingMain(
   const probable = body ? findProbableMainCandidate(body) : undefined;
   const candidateSuffix = probable ? ` ${describeProbableCandidate(probable)}` : "";
   if (layoutOrPartial) {
-    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable, markdownResidue));
+    ctx.emit(buildLayoutPartialEmit(line, column, shape, probable, markdownResidue, body !== undefined));
     return;
   }
   const shapeSuffix = shape ? ` ${shape}` : "";
@@ -419,8 +420,28 @@ function emitDuplicateMains(ctx: FileContext, mains: readonly HtmlElement[]): vo
  */
 const PARTIAL_OR_LAYOUT_CODE = "partial_or_layout_file_requires_composed_check";
 
-const PARTIAL_OR_LAYOUT_SUFFIX =
+/**
+ * Suffix appended to the missing-`<main>` message on the layout-partial
+ * branch. The parenthetical lists the evidence kinds that earn the
+ * partial/layout classification — but `no <body>` ONLY applies when the
+ * scanned file genuinely has no `<body>` element. When `<body>` IS
+ * present (the ERB layout / Jekyll `_layouts/default.html` shape: full
+ * envelope plus a composition directive), prefixing the message with
+ * "no <body>, ..." misleads the agent into looking for a missing body
+ * tag that is in fact present on line 3.
+ *
+ * Per `docs/kb/architecture/ai-first-consumer.md` "Reason text and
+ * severity must agree" applied to reason templating: the parenthetical
+ * must list only the evidence kinds that hold for the file being
+ * described. Two suffixes — one for body-absent files (bodyless
+ * partials), one for body-present files (composition-directive layouts /
+ * frontmatter-tagged sources) — keep the reason honest per call.
+ */
+const PARTIAL_OR_LAYOUT_SUFFIX_BODY_ABSENT =
   " This file looks like a layout wrapper or template partial (no <body>, Jekyll layout: front-matter, or {% include %} / {{ content }} / <%= yield %> / @RenderBody directive) — the composed page may carry <main> from a sibling file. Verify against the parent/partial chain before acting, or add a source-level disable pragma if the composition is intentional.";
+
+const PARTIAL_OR_LAYOUT_SUFFIX_BODY_PRESENT =
+  " This file looks like a layout wrapper or template partial (Jekyll layout: front-matter, or {% include %} / {{ content }} / <%= yield %> / @RenderBody directive) — the composed page may carry <main> from a sibling file. Verify against the parent/partial chain before acting, or add a source-level disable pragma if the composition is intentional.";
 
 /**
  * Builds the layout-partial emit. Shared between the two branches that
@@ -456,6 +477,7 @@ function buildLayoutPartialEmit(
   bodyShape: string,
   probable: ProbableMainCandidate | undefined,
   markdownResidue: boolean,
+  bodyPresent: boolean,
 ): {
   severity: "warning" | "info";
   location: { filePath: string; line: number; column: number };
@@ -470,10 +492,13 @@ function buildLayoutPartialEmit(
   const codes = markdownResidue
     ? [PARTIAL_OR_LAYOUT_CODE, MARKDOWN_RESIDUE_NO_MAIN_VISIBLE]
     : [PARTIAL_OR_LAYOUT_CODE];
+  const partialSuffix = bodyPresent
+    ? PARTIAL_OR_LAYOUT_SUFFIX_BODY_PRESENT
+    : PARTIAL_OR_LAYOUT_SUFFIX_BODY_ABSENT;
   return {
     severity: markdownResidue ? "info" : "warning",
     location: { filePath: "", line, column },
-    message: `Document has no <main> landmark.${PARTIAL_OR_LAYOUT_SUFFIX}${residueSuffix}${shapeSuffix}${candidateSuffix}`,
+    message: `Document has no <main> landmark.${partialSuffix}${residueSuffix}${shapeSuffix}${candidateSuffix}`,
     suggestion:
       "Document has no <main> in this file, but it looks like a layout wrapper or template partial — the <main> may be authored in the included/yielded file. Verify against the parent layout or partial chain; if this file is the root layout, add <main> around the composition point (typically surrounding the {{ content }} / <%= yield %> / @RenderBody site). Use a <!-- ra11y-disable semantics/landmark-main --> pragma if the composition is deliberate and the <main> lives in sibling files.",
     couldBeWrongBecause: codes,
