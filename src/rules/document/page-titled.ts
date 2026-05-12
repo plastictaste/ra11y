@@ -102,9 +102,39 @@ export const rule = defineRule({
     // case was already accounted for.
     const delegation = findHeadDelegationComponent(doc);
 
+    // Title-injecting template directive detection. Layout / include
+    // partials in Liquid (Jekyll's jekyll-seo-tag plugin: `{% seo %}`)
+    // and ERB (Rails' `<%= yield :title %>` / `<% content_for :title
+    // do %>`) emit the document `<title>` at render time. The literal
+    // directive token is in the scanned source — its presence is
+    // provable from the code in this file alone (no composition guess),
+    // matching the same evidence model as the delegation-component
+    // carve-out above. Per docs/kb/architecture/ai-first-consumer.md
+    // §"Heuristic emission is the symmetric twin of heuristic
+    // suppression," emitting at full `error` severity when the
+    // directive is observed concedes uncertainty its severity
+    // contradicts. The closure path (b): emit at `info` severity with
+    // the structured `template_directive_provides_title` code so the
+    // finding still surfaces (surface, don't suppress) but the
+    // attention-budgeting signal matches the conceded evidence. The
+    // agent reading the file decides whether the plugin's title=false
+    // flag is set, the plugin is actually wired up, etc.
+    const titleDirective = findTitleInjectingDirective(ctx.source);
+
     if (docTitles.length === 0) {
       if (delegation !== null) return;
       const htmlEl = htmlElements[0];
+      if (titleDirective !== null) {
+        ctx.emit(
+          buildTitleDirectiveEmit(
+            doc,
+            htmlEl?.loc.start.line ?? 1,
+            htmlEl?.loc.start.column ?? 1,
+            titleDirective,
+          ),
+        );
+        return;
+      }
       ctx.emit(
         buildEmit(
           doc,
@@ -221,6 +251,107 @@ const TITLE_IS_TEMPLATE_INTERPOLATED = "title_is_template_interpolated";
 
 const MESSAGE_TEMPLATE_INTERPOLATED =
   "<title> is template-interpolated — verify the rendered output carries a non-empty title.";
+
+/**
+ * Structured `couldBeWrongBecause` code emitted when no literal
+ * `<title>` element is present in the scanned source but a
+ * title-injecting template directive (Jekyll `{% seo %}`, Rails ERB
+ * `<%= yield :title %>` / `<% content_for :title do %>`) is. The
+ * directive renders the document title at SSG / server-render time,
+ * so a confident "missing <title>" emit would be a false positive
+ * the agent dismisses in one read. Per docs/kb/architecture/
+ * ai-first-consumer.md "Heuristic emission is the symmetric twin of
+ * heuristic suppression" + "Reason text and severity must agree" the
+ * rule still surfaces (the directive could be misconfigured — `{%
+ * seo title=false %}`, plugin not wired up, etc.) but at `info`
+ * severity so attention-budgeting matches the conceded evidence.
+ * Mirrors the `partial_or_layout_file_requires_composed_check` shape
+ * on `semantics/landmark-main`.
+ */
+const TEMPLATE_DIRECTIVE_PROVIDES_TITLE = "template_directive_provides_title";
+
+/**
+ * Regex patterns for in-file template directives that emit the
+ * document `<title>` at render time. Each entry pairs a regex with a
+ * short human-readable label woven into the emit's message so the
+ * agent reading the finding sees the matched token in one read.
+ *
+ * Closed vocabulary — only directives whose documented behavior is
+ * "emit a `<title>` tag." Liquid's `{% seo %}` is the jekyll-seo-tag
+ * plugin's canonical entry point; ERB's `yield :title` /
+ * `content_for :title` are Rails layout idioms for delegating title
+ * rendering to view templates. We do NOT match generic `{% include
+ * head.html %}` / `{{ content }}` / `<%= yield %>` (no `:title`
+ * scope) — those compose head/body content broadly but don't
+ * specifically render a title, so suppressing on them risks false
+ * negatives on layouts whose included partials happen to not supply
+ * a title.
+ */
+const TITLE_INJECTING_DIRECTIVE_PATTERNS: readonly { readonly regex: RegExp; readonly label: string }[] = [
+  // Jekyll `jekyll-seo-tag` plugin entry point. Supports the bare
+  // `{% seo %}` form and the parameterized `{% seo title=false %}`
+  // form; whitespace-control variant `{%- seo -%}` is accepted via
+  // the optional dashes.
+  { regex: /\{%-?\s*seo\b[^%]*%\}/, label: "{% seo %}" },
+  // Rails ERB `<%= yield :title %>` and `<%= yield(:title) %>`. The
+  // `\(?\s*:?` segment accepts an optional paren and optional colon
+  // so both `yield :title` (idiomatic Rails) and `yield(:title)`
+  // (parenthesized form) match. The closing `\)?` accepts the paren
+  // when present.
+  { regex: /<%=\s*yield\s*\(?\s*:\s*title\b[^%]*%>/, label: "<%= yield :title %>" },
+  // Rails ERB `<% content_for :title do %>…<% end %>`. The
+  // `content_for(:title)` parenthesized form is accepted too via the
+  // optional paren in `\(?\s*:`.
+  { regex: /<%\s*content_for\s*\(?\s*:\s*title\b[^%]*%>/, label: "<% content_for :title %>" },
+];
+
+/**
+ * Returns the matched directive label when the raw source contains
+ * any of {@link TITLE_INJECTING_DIRECTIVE_PATTERNS}; otherwise null.
+ * Source-level (not AST) match because the in-house HTML parser
+ * strips template-directive spans from text nodes before this rule
+ * runs — by the time we reach the AST, `{% seo %}` is invisible.
+ */
+function findTitleInjectingDirective(source: string): string | null {
+  for (const { regex, label } of TITLE_INJECTING_DIRECTIVE_PATTERNS) {
+    if (regex.test(source)) return label;
+  }
+  return null;
+}
+
+const MESSAGE_TITLE_DIRECTIVE_INJECTS =
+  "Document has no literal <title>, but the source contains a template-injected title directive";
+
+/**
+ * Emit shape for the title-injecting-directive branch. Severity is
+ * `info` because the directive's runtime output is unobservable
+ * statically — `{% seo title=false %}` and a disabled jekyll-seo-tag
+ * plugin both produce no `<title>` despite the literal token being
+ * present. Surfaces with the structured code + label so an agent
+ * reading the finding routes to the directive site (or adds the
+ * source-level disable pragma if the title injection is intentional)
+ * in one read.
+ */
+function buildTitleDirectiveEmit(
+  doc: HtmlDocument,
+  line: number,
+  column: number,
+  directiveLabel: string,
+): {
+  severity: "info";
+  location: { filePath: string; line: number; column: number };
+  message: string;
+  suggestion: string;
+  couldBeWrongBecause: readonly string[];
+} {
+  return {
+    severity: "info",
+    location: { filePath: "", line, column },
+    message: `${MESSAGE_TITLE_DIRECTIVE_INJECTS} (${directiveLabel}) — verify the directive resolves to a non-empty <title> at render time, or suppress with <!-- ra11y-disable document/page-titled --> if the injection is intentional.`,
+    suggestion: buildSuggestion(doc),
+    couldBeWrongBecause: [TEMPLATE_DIRECTIVE_PROVIDES_TITLE],
+  };
+}
 
 /**
  * Emit for the template-interpolated-title branch.

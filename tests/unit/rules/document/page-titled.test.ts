@@ -381,4 +381,146 @@ describe("rule document/page-titled", () => {
     expect(v[0]?.suggestion).toContain("Pricing");
     expect(v[0]?.suggestion).toContain("existing <h1>");
   });
+
+  // Title-injecting template directives. Layout / include partials
+  // in Liquid (Jekyll's jekyll-seo-tag plugin: `{% seo %}`) and ERB
+  // (Rails' `<%= yield :title %>` / `<% content_for :title do %>`)
+  // emit the document `<title>` at render time. The literal directive
+  // token is in the source — its presence is provable from the code
+  // in this file alone, matching the same evidence model as the
+  // delegation-component carve-out. Per docs/kb/architecture/
+  // ai-first-consumer.md §"Heuristic emission is the symmetric twin
+  // of heuristic suppression" + "Reason text and severity must
+  // agree": the finding still surfaces (surface, don't suppress) but
+  // at `info` severity with the structured
+  // `template_directive_provides_title` code so the attention-
+  // budgeting signal matches the conceded evidence.
+  it("downgrades missing-<title> to info when {% seo %} is in the source (jekyll-seo-tag shape)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">{% seo %}</head><body><main><h1>Post</h1></main></body></html>`,
+      { filePath: "_layouts/default.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.message).toContain("template-injected title directive");
+    expect(v[0]?.message).toContain("{% seo %}");
+    expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+  });
+
+  it("downgrades missing-<title> to info when {% seo title=false %} is in the source (parameterized seo)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head>{% seo title=false %}</head><body><h1>About</h1></body></html>`,
+      { filePath: "_layouts/about.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+  });
+
+  it("downgrades missing-<title> to info on <%= yield :title %> (Rails layout shape)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head><%= yield :title %></head><body><h1>Index</h1></body></html>`,
+      { filePath: "app/views/layouts/application.html.erb" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.message).toContain("<%= yield :title %>");
+    expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+  });
+
+  it("downgrades missing-<title> to info on <%= yield(:title) %> (parenthesized yield)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head><%= yield(:title) %></head><body><p>x</p></body></html>`,
+      { filePath: "layout.html.erb" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+  });
+
+  it("downgrades missing-<title> to info on <% content_for :title do %> (Rails content_for shape)", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head><% content_for :title do %>Settings<% end %></head><body><h1>S</h1></body></html>`,
+      { filePath: "settings.html.erb" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("info");
+    expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+  });
+
+  it("does NOT downgrade on a generic {% include head.html %} that does not specifically inject <title>", () => {
+    // Negative guard: `{% include %}` and `{{ content }}` compose
+    // partials broadly but do not deterministically render a title —
+    // suppressing on them would risk silent false negatives on layouts
+    // whose includes happen not to supply a title. Only the closed
+    // vocabulary (`{% seo %}`, `<%= yield :title %>`, `<%
+    // content_for :title do %>`) qualifies.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head>{% include head.html %}</head><body><h1>Page</h1></body></html>`,
+      { filePath: "_layouts/page.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+
+  it("does NOT downgrade on a generic <%= yield %> with no :title scope", () => {
+    // `<%= yield %>` renders the action template body — a different
+    // axis from `yield :title` (which is the content_for :title
+    // bucket). Same negative-guard rationale as the {% include %}
+    // case above.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head></head><body><%= yield %></body></html>`,
+      { filePath: "application.html.erb" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+
+  it("does NOT downgrade when a literal <title> with content is present alongside {% seo %}", () => {
+    // If the file ships a real <title>, the literal IS the document
+    // title — the {% seo %} directive enriches metadata but doesn't
+    // change that the assertable artifact in this file is the literal.
+    // Surface-don't-suppress applies in both directions: don't
+    // downgrade a clean find just because a directive is around.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head><title>Real Title</title>{% seo %}</head><body><h1>x</h1></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it("DOES still fire (as error) on missing <title> with no directive and no delegation", () => {
+    // Sanity guard: the title-directive branch must not silently
+    // swallow every missing-title case — gated on a closed-vocabulary
+    // regex match against the raw source.
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html lang="en"><head></head><body><h1>x</h1></body></html>`,
+      { filePath: "index.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.severity).toBe("error");
+    expect(v[0]?.couldBeWrongBecause).toBeUndefined();
+  });
+
+  it("routes the title-directive branch through the same suggestion ladder", () => {
+    const v = runRule(
+      rule,
+      `<!DOCTYPE html><html><head>{% seo %}</head><body><h1>Posts</h1></body></html>`,
+      { filePath: "_layouts/default.html" },
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0]?.suggestion).toContain("Posts");
+    expect(v[0]?.suggestion).toContain("existing <h1>");
+  });
 });
