@@ -143,6 +143,56 @@ describe("buildNextStep", () => {
     expect(result.structured).toEqual({ tool: "scan_file", args: { path: "Sidebar.tsx" } });
   });
 
+  it("routes scan_file info-only response to suggest_fix on the first finding (no self-loop)", () => {
+    // scan_file caller (singleFilePath set, matching first.path)
+    // on a notes-only response previously routed structured back to
+    // `scan_file` with the same path — a self-loop with no
+    // progression. Per docs/kb/architecture/ai-first-consumer.md
+    // "NextStep handoffs must terminate at a narrowing tool, never
+    // form a cycle," the structured channel routes to `suggest_fix`
+    // on the first finding when no review-candidates exist.
+    const result = buildNextStep(
+      formatted({
+        plan: { infoSeverityFindings: 2 },
+        files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
+      }),
+      { singleFilePath: "Sidebar.tsx" },
+    );
+
+    expect(result.prose).toContain("suggest_fix");
+    expect(result.prose).toContain("aria/hidden-focus");
+    expect(result.prose).toContain("Sidebar.tsx:21");
+    expect(result.structured).toEqual({
+      tool: "suggest_fix",
+      args: { ruleId: "aria/hidden-focus", file: "Sidebar.tsx", line: 21 },
+    });
+    // Self-loop sanity guard: never echo the caller's exact args.
+    expect(result.structured).not.toEqual({
+      tool: "scan_file",
+      args: { path: "Sidebar.tsx" },
+    });
+  });
+
+  it("routes scan_file info-only response to checklist when review-candidates exist", () => {
+    // Same scan_file caller but actionable manual-review evidence is
+    // present — checklist is the next decision surface. Both prose
+    // and structured align.
+    const result = buildNextStep(
+      formatted({
+        plan: {
+          infoSeverityFindings: 1,
+          actionableManualItemsBySource: { source: 2, buildArtifact: 0 },
+        },
+        files: [{ path: "Sidebar.tsx", findings: [sampleFinding] }],
+      }),
+      { singleFilePath: "Sidebar.tsx" },
+    );
+
+    expect(result.prose).toContain("checklist");
+    expect(result.prose).toContain("2 grounded manual-review");
+    expect(result.structured).toEqual({ tool: "checklist", args: {} });
+  });
+
   it("returns checklist on a clean automated scan — both prose and structured point at the manual half", () => {
     const result = buildNextStep(
       formatted({
