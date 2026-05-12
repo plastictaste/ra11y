@@ -25,6 +25,7 @@ import {
   groupBuildArtifactsByBasename,
   type ScannedBuildArtifact,
 } from "./build-artifacts.ts";
+import { buildScannedMinifiedFilesSummary } from "./build-artifacts-summary.ts";
 import { type BulkCatalogDetection, detectBulkCatalog } from "./bulk-catalog.ts";
 import {
   catalogEmptyResultMetaFields,
@@ -79,7 +80,6 @@ import {
 } from "./scan-project-review-candidates.ts";
 import { buildSummaryOnlyResponse } from "./scan-project-summary-only.ts";
 import {
-  buildScannedMinifiedFilesSummary,
   combineTemplateLiteralFiles,
   computeAnimationLibraryGuardCandidates,
   computeVendorCssNoise,
@@ -1247,16 +1247,16 @@ function buildBaseWarningsForScanProject(args: {
         e.classification === "likely-minified-by-line-stats",
     )
     .map((e) => e.path);
-  // Trim the minified subset to the same `count + topPath + top: [10]`
-  // envelope shape the larger-population sibling
-  // `scanned_build_artifacts_present` already trims to. Without this
-  // trim, a bulk-vendor corpus's minified subset (767+ paths) would
-  // inflate the warnings channel by ~72KB relative to the 1.4KB the
-  // broader artifact code ships on a larger 1199-file population —
-  // an inconsistent ship policy across paired warnings. The full
-  // identity surface for per-file decisions lives on
+  // Inline trim to `{ count, topPath, top: [10] }` for the
+  // `warningsDetails.scanned_minified_file` wire payload — same envelope
+  // shape the larger-population sibling `scanned_build_artifacts_present`
+  // already trims to (see {@link buildScannedBuildArtifactsSummary} for
+  // the parallel summarizer). Closes the cross-warning ship-policy
+  // drift: the smaller-population code was the primary slim-envelope-
+  // pressure source until both codes shipped trimmed payloads. Full
+  // identity for per-file decisions rides on
   // `meta.scannedBuildArtifacts.classified[]` filtered by the two
-  // minified-shaped `BuildArtifactClassification` variants.
+  // minified-shaped classifications.
   const scannedMinifiedFilesSummary = buildScannedMinifiedFilesSummary(scannedMinifiedFiles);
   // cross-reference the
   // banner-detected vendor libraries with per-rule per-file finding
@@ -1352,8 +1352,7 @@ function buildBaseWarningsForScanProject(args: {
     }),
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
     ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
-    ...(scannedMinifiedFiles.length === 0 ? {} : { scannedMinifiedFiles }),
-    ...(scannedMinifiedFilesSummary === undefined ? {} : { scannedMinifiedFilesSummary }),
+    ...scannedMinifiedInputs(scannedMinifiedFiles, scannedMinifiedFilesSummary),
     // detector ran upstream at the
     // call site (it needs `meta.durationMs` + `meta.filesScanned` +
     // the build-artifact entries) and resolved to either an
@@ -1440,6 +1439,30 @@ function templateLiteralFilesField(files: readonly string[]): {
   templateLiteralFiles?: readonly string[];
 } {
   return files.length === 0 ? {} : { templateLiteralFiles: files };
+}
+
+/**
+ * Builds the spreadable `scannedMinifiedFiles` + `scannedMinifiedFilesSummary`
+ * subset for the `warningsFieldFromScanMeta` call. The two inputs ride
+ * together: the predicate-gating list fires the bare warning code, and
+ * the trimmed summary drives the `warningsDetails.scanned_minified_file`
+ * payload shape — both empty together (no minified files) means both
+ * fields drop from the spread. Extracted so
+ * {@link buildBaseWarningsForScanProject}'s cognitive complexity stays
+ * inside the lint budget.
+ */
+function scannedMinifiedInputs(
+  files: readonly string[],
+  summary: import("./warnings.ts").WarningInputs["scannedMinifiedFilesSummary"],
+): {
+  scannedMinifiedFiles?: readonly string[];
+  scannedMinifiedFilesSummary?: import("./warnings.ts").WarningInputs["scannedMinifiedFilesSummary"];
+} {
+  if (files.length === 0) return {};
+  return {
+    scannedMinifiedFiles: files,
+    ...(summary === undefined ? {} : { scannedMinifiedFilesSummary: summary }),
+  };
 }
 
 /**

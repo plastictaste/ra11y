@@ -4192,7 +4192,10 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
     // verbatim. The wire payload stays under 1.5KB regardless of input
     // count because `top` is capped at the same SCANNED_BUILD_ARTIFACTS_TOP_CAP
     // value (10) the sibling code uses.
-    const allFiles = Array.from({ length: 767 }, (_, i) => `vendor/${String(i).padStart(3, "0")}.min.js`);
+    const allFiles = Array.from(
+      { length: 767 },
+      (_, i) => `vendor/${String(i).padStart(3, "0")}.min.js`,
+    );
     const top10 = allFiles.slice(0, 10);
     const fields = warningsField({
       filesScanned: 800,

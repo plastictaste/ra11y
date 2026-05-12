@@ -293,10 +293,7 @@ describe("narrowSlimEnvelopeIfStillOver — second-pass narrow under ceiling", (
           // mirror of `scanned_build_artifacts_present`.
           count: 3000,
           topPath: "vendor/min/very/long/nested/path-0.min.js",
-          top: Array.from(
-            { length: 10 },
-            (_, i) => `vendor/min/very/long/nested/path-${i}.min.js`,
-          ),
+          top: Array.from({ length: 10 }, (_, i) => `vendor/min/very/long/nested/path-${i}.min.js`),
         },
         scss_unresolved_variables: {
           // 4000 vendor SCSS paths — ~210KB by itself; this is the
