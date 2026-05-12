@@ -242,14 +242,10 @@ describe("rule semantics/button-name-only-symbol", () => {
     });
 
     it("<IconButton>×</IconButton> mapped wrapper", () => {
-      const violations = runRule(
-        rule,
-        `export const Close = () => <IconButton>×</IconButton>;`,
-        {
-          filePath: "Close.tsx",
-          nativeWrapperElements: { IconButton: "button" },
-        },
-      );
+      const violations = runRule(rule, `export const Close = () => <IconButton>×</IconButton>;`, {
+        filePath: "Close.tsx",
+        nativeWrapperElements: { IconButton: "button" },
+      });
       expect(violations).toHaveLength(1);
     });
   });
@@ -279,11 +275,9 @@ describe("rule semantics/button-name-only-symbol", () => {
     });
 
     it("button has a literal text child with a real word", () => {
-      const violations = runRule(
-        rule,
-        `export const Save = () => <button>Save</button>;`,
-        { filePath: "Save.tsx" },
-      );
+      const violations = runRule(rule, `export const Save = () => <button>Save</button>;`, {
+        filePath: "Save.tsx",
+      });
       expect(violations).toHaveLength(0);
     });
 
