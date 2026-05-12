@@ -88,12 +88,17 @@ describe("deriveApproachFromProse — abbreviation handling", () => {
     expect(out).toBe("A short label without periods");
   });
 
-  it("trims and ellipsis-truncates when the first sentence exceeds 80 chars", () => {
+  it("returns the full first sentence when it exceeds 80 chars (no trailing ellipsis)", () => {
+    // Prior behavior capped at 80 chars and appended `…`. That made
+    // the field indistinguishable from authored ellipses (e.g. rule
+    // prose like `aria-label="…"` placeholders) — see doctrine
+    // "Ambiguous field shapes are dishonest." Closure: drop the cap;
+    // the full prose lives in `primary.explanation` alongside.
     const long =
       "This is a deliberately long single-sentence explanation that goes on past eighty characters total without a terminating period inside the threshold";
     const out = deriveApproachFromProse(long);
-    expect(out.length).toBeLessThanOrEqual(80);
-    expect(out.endsWith("…")).toBe(true);
+    expect(out).toBe(long);
+    expect(out.endsWith("…")).toBe(false);
   });
 
   it("strips a trailing terminator when the candidate fits", () => {
@@ -102,66 +107,99 @@ describe("deriveApproachFromProse — abbreviation handling", () => {
   });
 });
 
-describe("deriveApproachFromProse — word-boundary cap", () => {
-  it("does not split mid-word when the cap falls inside a token", () => {
-    // Canonical regression: aria/tab-controls-missing suggestion text
-    // had no terminator inside the 120-char horizon and capped at
-    // position 77 mid-word ("matches the id o…" → ends in "o" of "on").
+describe("deriveApproachFromProse — no trailing-ellipsis truncation", () => {
+  // Doctrine: trailing `…` without a sentinel is dishonest because
+  // authored ellipses appear in rule prose (e.g. `aria-label="…"`
+  // placeholders) and the agent cannot distinguish authored content
+  // from clipping. The function must NEVER append `…` to the shipped
+  // label — when the first sentence is too long, return it verbatim;
+  // `primary.explanation` carries the full prose alongside either way.
+
+  it("never appends an ellipsis suffix on long no-terminator prose", () => {
+    // Canonical regression input — used to truncate at 80 chars with
+    // a trailing `…`. The new contract: return the full prose as-is.
+    // Uses the `…` glyph (single char, authored placeholder) so the
+    // sentence-splitter sees no terminator within the horizon.
     const long =
       'Add aria-controls="<panel-id>" to <button>, where <panel-id> matches the id on the matching <… role="tabpanel" id="<panel-id>">';
     const out = deriveApproachFromProse(long);
-    expect(out.endsWith("…")).toBe(true);
-    // The output must end on a whole token, not mid-word. The bug
-    // produced "id o…"; word-boundary walk should produce "id…".
-    expect(out).not.toMatch(/\so…$/);
-    // Length budget remains ≤ 80 chars.
-    expect(out.length).toBeLessThanOrEqual(80);
+    // The result preserves the authored `…` mid-string but must NOT
+    // append a clipping `…` of its own.
+    expect(out.includes("matches the id on the matching <…")).toBe(true);
+    expect(out).toBe(long);
+    // The input does not end in `…`; the function must not add one.
+    expect(out.endsWith("…")).toBe(false);
+  });
+
+  it("never appends an ellipsis suffix on long single-token prose", () => {
+    // Single-token prose with no whitespace to walk back to. The old
+    // implementation appended `…`. New contract: return it verbatim.
+    const prose = "a".repeat(150);
+    const out = deriveApproachFromProse(prose);
+    expect(out.endsWith("…")).toBe(false);
+    expect(out).toBe(prose);
+  });
+
+  it("preserves authored ellipses inside prose but never adds a trailing one", () => {
+    // Authored ellipsis is a placeholder for content the author wants
+    // the reader to substitute (e.g. `aria-label="…"`). The function
+    // must not add another `…` on top, which would be indistinguishable
+    // from clipping.
+    const prose = 'Set aria-label="…" on the <button> element';
+    const out = deriveApproachFromProse(prose);
+    expect(out).toBe(prose);
+    // Authored ellipsis is preserved mid-string.
+    expect(out.includes('aria-label="…"')).toBe(true);
+    // No appended trailing ellipsis.
+    expect(out.endsWith("…")).toBe(false);
   });
 
   it("does not return a single backtick when the splitter lands on early punctuation", () => {
     // Canonical regression: prose like `?expr` ... had the splitter
     // return a 2-char candidate (`?), the trailing-terminator strip
-    // reduced it to one char (`), and that single backtick shipped as
-    // the user-facing approach.
+    // reduced it to one char (`). Falls back to the full prose now
+    // rather than emitting the degenerate single-char slice.
     const prose =
       "`?expression evaluates to true` is the substring the rule fires on; widen the test predicate to cover both branches and make the assertion explicit.";
     const out = deriveApproachFromProse(prose);
     expect(out).not.toBe("`");
     expect(out.length).toBeGreaterThan(1);
+    expect(out.endsWith("…")).toBe(false);
   });
 
-  it("does not split inside a backtick literal pair", () => {
-    // When the cap falls inside a `<button>` literal, the result must
-    // not leave a stray opening backtick. Walk back to before the
-    // opening backtick rather than ending mid-pair.
+  it("returns even backtick parity on long backtick-bearing prose", () => {
+    // The label must not leave a stray opening backtick. With no
+    // truncation in play, the full prose preserves the pair.
     const prose =
       "Promote this element to the canonical landmark via the `<button>` element so assistive tech announces it correctly across every supported screen reader and keyboard mode.";
     const out = deriveApproachFromProse(prose);
-    // Backtick count in the returned label must be even (no stray
-    // opener). Either zero backticks (cap walked before the literal)
-    // or a complete pair (cap landed past the closing backtick).
     const tickCount = (out.match(/`/g) ?? []).length;
     expect(tickCount % 2).toBe(0);
+    expect(out.endsWith("…")).toBe(false);
   });
 
-  it("falls back to the raw cap when word-boundary walk leaves too little", () => {
-    // Single-token prose far longer than the cap — no whitespace to
-    // walk back to. The MIN_MEANINGFUL_PREFIX guard should kick in and
-    // accept the raw cap rather than ship a 1-char approach.
-    const prose = `${"a".repeat(150)}`;
-    const out = deriveApproachFromProse(prose);
-    expect(out.length).toBeGreaterThanOrEqual(30);
-    expect(out.endsWith("…")).toBe(true);
-  });
-
-  it("words ending exactly at cap require no truncation walk", () => {
-    // Word boundary already aligned with the cap: should produce a
-    // clean ellipsis at the boundary with no walk-back.
-    const prose = `${"word ".repeat(15)}continues past the cap with more prose that exceeds eighty chars total`;
-    const out = deriveApproachFromProse(prose);
-    expect(out.endsWith("…")).toBe(true);
-    // Last visible char before the ellipsis must be a letter, not
-    // whitespace or punctuation.
-    expect(out).toMatch(/[A-Za-z]…$/);
+  it("invariant: no input produces a result that ends in a trailing ellipsis suffix", () => {
+    // The load-bearing assertion the doctrine pins. Sweep a range of
+    // inputs that previously hit the `…`-appending paths and confirm
+    // none of them ship a trailing ellipsis. Authored ellipses inside
+    // the prose are unaffected; the invariant is on the suffix only.
+    const inputs: readonly string[] = [
+      "Short.",
+      "Add aria-label to the link",
+      `${"word ".repeat(20)}continues past the cap without a terminator`,
+      "a".repeat(120),
+      'Set aria-label="…" on the <a> element to provide an accessible name for screen readers',
+      "Add an accessible name to the link: set aria-label, or add a visible text child to the anchor",
+      "Use semantic html vs. ARIA hacks etc. for the canonical pattern",
+    ];
+    for (const input of inputs) {
+      const out = deriveApproachFromProse(input);
+      // The invariant: result NEVER ends in a clipping ellipsis. If a
+      // future implementation reintroduces clipping, it must rename the
+      // field (e.g. `approachHeadline`) and pair with a `truncated`
+      // sentinel; emitting `…` on the wire without that pairing fails
+      // "Ambiguous field shapes are dishonest."
+      expect(out.endsWith("…")).toBe(false);
+    }
   });
 });
