@@ -317,13 +317,17 @@ describe("co-firing merge — end-to-end via runScan", () => {
     expect(only.criteria).toContain("wcag22:1.3.1");
   });
 
-  it("per-rule coverage still credits the secondary rule with its emission", () => {
-    // When the secondary fires and is folded, the agent-facing
-    // violation list drops it — but the secondary rule did run and
-    // emit, so its scan-confidence row should still show
-    // `findingsEmitted >= 1`. Otherwise the agent reading per-rule
-    // coverage would conclude the rule found nothing on this scan,
-    // contradicting the merged criteria visible on the primary.
+  it("per-rule coverage tallies post-merge so findingsEmitted agrees with visible findings", () => {
+    // Cross-surface count invariant
+    // (docs/kb/architecture/ai-first-consumer.md): when the secondary
+    // rule fires and is folded into the primary, the agent-facing
+    // violation list drops the secondary record. The per-rule
+    // coverage row must reflect that: `findingsEmitted` counts the
+    // visible findings on the response, not the pre-merge tally. The
+    // merged primary already carries the secondary's `criteria`
+    // union, so cross-criterion coverage stays preserved on the
+    // surviving record — no signal is lost, the tally just matches
+    // what the agent reads in `findings[]`.
     const file = htmlFile(
       "form.html",
       `<!doctype html><html lang="en"><head><title>x</title></head><body><form><input type="email" placeholder="Email"></form></body></html>`,
@@ -340,8 +344,24 @@ describe("co-firing merge — end-to-end via runScan", () => {
     const placeholderRow = products.perRuleCoverage.find(
       (r) => r.ruleId === "forms/placeholder-as-label",
     );
-    expect(labelsRequiredRow?.findingsEmitted).toBeGreaterThanOrEqual(1);
-    expect(placeholderRow?.findingsEmitted).toBeGreaterThanOrEqual(1);
+    // Primary (placeholder-as-label) survived the merge — its row
+    // reports the emission count that ships in `findings[]`.
+    const visiblePlaceholder = products.result.violations.filter(
+      (v) => v.ruleId === "forms/placeholder-as-label",
+    ).length;
+    expect(placeholderRow?.findingsEmitted).toBe(visiblePlaceholder);
+    expect(visiblePlaceholder).toBeGreaterThanOrEqual(1);
+    // Secondary (labels-required) was folded into the primary at the
+    // same `(file, line, column)`. The agent sees zero
+    // `forms/labels-required` entries on the response; the per-rule
+    // row honestly reports `findingsEmitted: 0`. The merged primary's
+    // `criteria` array still carries the wcag22:1.3.1 / 4.1.2 union
+    // (asserted in the test above).
+    const visibleLabels = products.result.violations.filter(
+      (v) => v.ruleId === "forms/labels-required",
+    ).length;
+    expect(labelsRequiredRow?.findingsEmitted).toBe(visibleLabels);
+    expect(visibleLabels).toBe(0);
   });
 
   it("does NOT fold when only one of the pair fires (real link with descriptive text)", () => {

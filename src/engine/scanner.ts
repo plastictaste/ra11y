@@ -211,11 +211,21 @@ export function runScan(inputs: ScanInputs): ScanProducts {
   // + `navigation/link-descriptive-text`; `<input placeholder="…">`
   // firing both `forms/labels-required` + `forms/placeholder-as-label`),
   // fold the secondary's criteria onto the primary and drop the
-  // secondary from the violation list. Per-rule coverage is built from
-  // the pre-merge `allViolations` below so the secondary rule still
-  // shows the emissions it actually produced — only the agent-facing
-  // violation list is folded; scan-confidence telemetry stays honest.
-  // See `src/engine/cofire-merge.ts` for the pair table and rationale.
+  // secondary from the violation list. The folded primary already
+  // carries the secondary's `criteria` union, so cross-criterion
+  // coverage is preserved on the agent-facing record. Per-rule coverage
+  // tallies the POST-merge `allViolations` below so
+  // `meta.perRuleCoverage[ruleId].findingsEmitted` agrees with the
+  // count of `findings[].ruleId === ruleId` entries the agent sees in
+  // the same response — the cross-surface count invariant in
+  // `docs/kb/architecture/ai-first-consumer.md`. The secondary rule's
+  // row honestly reports `findingsEmitted: 0` when folded; the merged
+  // primary's row reports the visible count. The pre-merge snapshot is
+  // load-bearing for `replaceContents`: when no pair fires,
+  // `mergeCoFiringRules` returns its input by reference, and the helper's
+  // `target.length = 0` would otherwise clear both the target and the
+  // source it's about to copy from. See `src/engine/cofire-merge.ts` for
+  // the pair table and rationale.
   const preMergeViolations: readonly Violation[] = [...allViolations];
   replaceContents(allViolations, mergeCoFiringRules(preMergeViolations));
   allViolations.sort(compareViolations);
@@ -245,11 +255,16 @@ export function runScan(inputs: ScanInputs): ScanProducts {
     tracker,
     inputs.rules,
     filter,
-    // Pre-merge so the secondary rule's `findingsEmitted` still
-    // counts the emissions it actually produced — the co-firing
-    // merger drops the secondary from the agent-facing list but the
-    // rule did fire and its scan-confidence row should reflect that.
-    preMergeViolations,
+    // Post-merge so `findingsEmitted` for each rule matches the count
+    // of `findings[].ruleId === <row.ruleId>` entries on the agent-
+    // facing response — the cross-surface count invariant in
+    // `docs/kb/architecture/ai-first-consumer.md`. A folded
+    // secondary's row reports `findingsEmitted: 0` honestly; the
+    // merged primary's row carries the visible-count emissions plus
+    // the secondary's criteria via the in-place criteria union, so
+    // cross-criterion coverage stays preserved on the surviving
+    // record.
+    allViolations,
     inputs.files.length,
   );
 

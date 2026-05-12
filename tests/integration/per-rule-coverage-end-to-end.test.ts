@@ -1414,6 +1414,93 @@ describe("per-rule coverage end-to-end", () => {
     expect(row!.coverageConfidence).toBe("high");
     expect(row!.coverageConfidenceReason).toBeUndefined();
   });
+
+  // Cross-surface count invariant: every `perRuleCoverage` row's
+  // `findingsEmitted` must equal the count of `findings[].ruleId ===
+  // row.ruleId` entries the agent sees in the SAME response.
+  // Co-firing rule pairs (cofire-merge.ts) drop the secondary's
+  // record from `findings[]`; per-rule coverage must tally the
+  // post-merge stream so the two reads agree. Pre-fix: per-rule
+  // coverage was built from the pre-merge violation list, so a
+  // folded secondary surfaced as `findingsEmitted: 1, fired: true`
+  // while the agent saw zero `findings[].ruleId === secondary`
+  // entries — the canonical "tally vs inventory" drift the
+  // doctrine "Cross-surface count invariant" rejects.
+  //
+  // Fixture exercises BOTH production co-fire pairs so a regression
+  // in either drops one of the two assertions:
+  //
+  //   - `<a href="#"><i/></a>` folds
+  //     `navigation/link-descriptive-text` into
+  //     `navigation/href-empty-fragment`.
+  //   - `<input placeholder="...">` folds `forms/labels-required`
+  //     into `forms/placeholder-as-label`.
+  it("findingsEmitted on every row equals visible findings count for that rule (cofire-merge included)", () => {
+    const source = `<!doctype html><html lang="en"><head><title>x</title></head><body>
+      <a href="#"><i class="fa fa-twitter"></i></a>
+      <form><input type="email" placeholder="Email"></form>
+    </body></html>`;
+    const files = [htmlFile("site/page.html", source)];
+    const { result, perRuleCoverage } = runScan({
+      standards: [wcag22],
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files,
+    });
+
+    // Sanity: both primary rules survived; both secondary rules
+    // were folded.
+    const visibleByRule = new Map<string, number>();
+    for (const v of result.violations) {
+      visibleByRule.set(v.ruleId, (visibleByRule.get(v.ruleId) ?? 0) + 1);
+    }
+    expect(visibleByRule.get("navigation/href-empty-fragment") ?? 0).toBeGreaterThanOrEqual(1);
+    expect(visibleByRule.get("forms/placeholder-as-label") ?? 0).toBeGreaterThanOrEqual(1);
+    expect(visibleByRule.get("navigation/link-descriptive-text") ?? 0).toBe(0);
+    expect(visibleByRule.get("forms/labels-required") ?? 0).toBe(0);
+
+    // Invariant: forEach row, findingsEmitted equals visible count.
+    // Iterates the full row set (not just the cofire pair) so any
+    // future drift between per-rule tally and findings inventory
+    // trips this test wherever it lands.
+    for (const row of perRuleCoverage) {
+      const visible = visibleByRule.get(row.ruleId) ?? 0;
+      expect(row.findingsEmitted).toBe(visible);
+      // The `fired` flag is derived from `findingsEmitted > 0`
+      // (engine), so it tracks the same predicate — pin both to
+      // guard the derivation.
+      expect(row.fired).toBe(visible > 0);
+    }
+
+    // Spot-check the secondaries: rows exist (no silent absence)
+    // and honestly report zero emissions + fired=false.
+    const linkDescriptive = perRuleCoverage.find(
+      (r) => r.ruleId === "navigation/link-descriptive-text",
+    );
+    expect(linkDescriptive).toBeDefined();
+    expect(linkDescriptive!.findingsEmitted).toBe(0);
+    expect(linkDescriptive!.fired).toBe(false);
+    const labelsRequired = perRuleCoverage.find((r) => r.ruleId === "forms/labels-required");
+    expect(labelsRequired).toBeDefined();
+    expect(labelsRequired!.findingsEmitted).toBe(0);
+    expect(labelsRequired!.fired).toBe(false);
+
+    // Cross-criterion coverage is preserved: the merged primaries
+    // carry the secondaries' criteria, so an agent reading the
+    // surviving record sees every WCAG criterion the folded rule
+    // would have cited.
+    const hrefEmpty = result.violations.find((v) => v.ruleId === "navigation/href-empty-fragment");
+    expect(hrefEmpty).toBeDefined();
+    expect(hrefEmpty!.criteria).toContain("wcag22:2.4.4");
+    const placeholderAsLabel = result.violations.find(
+      (v) => v.ruleId === "forms/placeholder-as-label",
+    );
+    expect(placeholderAsLabel).toBeDefined();
+    // forms/labels-required cites wcag22:1.3.1 + 4.1.2 — the
+    // merged primary inherits both via cofire-merge's criteria
+    // union.
+    expect(placeholderAsLabel!.criteria).toContain("wcag22:1.3.1");
+  });
 });
 
 /**
