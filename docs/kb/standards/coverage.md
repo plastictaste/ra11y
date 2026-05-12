@@ -1,7 +1,7 @@
 ---
 title: "Coverage Matrix"
 description: "Per-criterion rule and finder coverage across all built-in standards."
-generated: "2026-05-08"
+generated: "2026-05-12"
 ---
 
 # Coverage Matrix
@@ -116,7 +116,7 @@ Coverage: 43 rule · 30 finder · 13 attestation-only · 0 gap
 | `wcag22:3.3.7` | Redundant Entry | A | manual | — | redundant-entry | **finder** |
 | `wcag22:3.3.8` | Accessible Authentication (Minimum) | AA | manual | — | captcha, password-inputs | **finder** |
 | `wcag22:3.3.9` | Accessible Authentication (Enhanced) | AAA | manual | — | captcha | **finder** |
-| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
+| `wcag22:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +47 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `wcag22:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## WCAG 2.1
@@ -203,7 +203,7 @@ Coverage: 41 rule · 27 finder · 10 attestation-only · 0 gap
 | `wcag21:3.3.5` | Help | AAA | manual | — | — | **attestation-only** |
 | `wcag21:3.3.6` | Error Prevention (All) | AAA | manual | — | — | **attestation-only** |
 | `wcag21:4.1.1` | Parsing | A | manual | document/charset-first-1024-bytes, parsing/duplicate-id +2 | — | **rule** |
-| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
+| `wcag21:4.1.2` | Name, Role, Value | A | partial | aria/conflicting-role, aria/dialog-role-missing +47 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `wcag21:4.1.3` | Status Messages | AA | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
 
 ## Section 508 (2017 refresh)
@@ -251,7 +251,7 @@ Coverage: 24 rule · 13 finder · 1 attestation-only · 0 gap
 | `section508:3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `section508:3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `section508:4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
+| `section508:4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +47 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 
 ## EN 301 549
 
@@ -309,5 +309,5 @@ Coverage: 34 rule · 15 finder · 1 attestation-only · 0 gap
 | `en301549:9.3.3.3` | Error Suggestion | base | manual | forms/error-message-not-associated | error-suggestion, validation-timing | **rule** |
 | `en301549:9.3.3.4` | Error Prevention (Legal, Financial, Data) | base | manual | — | error-prevention, validation-timing | **finder** |
 | `en301549:9.4.1.1` | Parsing (Obsolete in WCAG 2.2) | base | manual | — | — | **attestation-only** |
-| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +46 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
+| `en301549:9.4.1.2` | Name, Role, Value | base | partial | aria/conflicting-role, aria/dialog-role-missing +47 | accessible-name-redundant-composition, cross-file-click-handler-on-non-interactive +2 | **rule** |
 | `en301549:9.4.1.3` | Status Messages | base | partial | aria/live-region-missing-on-innerhtml-target, aria/live-region-valid +1 | live-region-pre-existence, live-region-runtime-mutation-missing +1 | **rule** |
