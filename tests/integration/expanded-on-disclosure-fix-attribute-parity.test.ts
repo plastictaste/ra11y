@@ -163,21 +163,29 @@ const SAMPLES: readonly Sample[] = [
 ];
 
 /**
- * Read the suggest_fix `kind: "guidance"` payload's explanation prose
- * (the field the agent actually reads to compose the edit). The
+ * Read the suggest_fix payload's explanation prose (the field the
+ * agent actually reads to compose the edit). The
  * `aria/expanded-on-disclosure` rule does not emit `fixPaths`, so
- * suggest_fix always shapes a guidance-class response carrying the
- * rule's `suggestion` text under `primary.explanation`. Accepts both
- * `kind: "guidance"` and `kind: "suppress-recommended"` — the latter
- * fires when the rule's suggestion text mentions a `ra11y-disable`
- * pragma (the rule names a pragma fallback for "if this control is
- * not a disclosure trigger"). Both shapes nest the explanation
+ * suggest_fix routes through the prose-only fallback that mirrors
+ * the rule's declared `fixClass` lane (`verify-in-source`) under
+ * "Per-call shape must agree with per-class plan tally."
+ *
+ * Accepts `guidance`, `verify-in-source`, and `suppress-recommended`
+ * — the rule's suggestion leads with `"Add aria-controls=…"` or
+ * `"Add aria-expanded=…"` (positive-edit verbs), so the tightened
+ * suppress-recommended predicate routes these emissions onto their
+ * declared lane (`verify-in-source`) rather than to
+ * `suppress-recommended` despite the trailing pragma fallback. We
+ * still accept the legacy `"guidance"` kind in case the lane
+ * declaration shifts. All three shapes nest the explanation
  * identically, so the attribute-parity invariant the suite pins is
  * unaffected.
  */
 function explanationFromGuidance(payload: Record<string, unknown>): string {
   const kind = payload.kind;
-  expect(kind === "guidance" || kind === "suppress-recommended").toBe(true);
+  expect(
+    kind === "guidance" || kind === "verify-in-source" || kind === "suppress-recommended",
+  ).toBe(true);
   const primary = payload.primary as Record<string, unknown> | undefined;
   expect(primary).toBeDefined();
   const explanation = primary?.explanation;

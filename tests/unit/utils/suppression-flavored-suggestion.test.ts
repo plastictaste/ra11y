@@ -121,7 +121,7 @@ describe("isSuppressionFlavoredSuggestion — true suppression-flavored shapes",
   it("returns true when primary sentence is descriptive and prose names ra11y-disable", () => {
     const suggestion =
       "A document without an <h1> loses the single top-of-document landmark AT relies on; " +
-      "verify the page has a designated main heading via <h1> or role=\"heading\" aria-level=\"1\". " +
+      'verify the page has a designated main heading via <h1> or role="heading" aria-level="1". ' +
       "If this page is a fragment or layout intentionally rendered inside a parent with its own <h1>, " +
       "suppress with <!-- ra11y-disable wcag22:1.3.1 -->.";
     expect(isSuppressionFlavoredSuggestion(suggestion)).toBe(true);
