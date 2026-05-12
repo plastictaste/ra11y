@@ -21,11 +21,11 @@
 
 import { describe, expect, it } from "bun:test";
 import { CONFIG_FILENAMES } from "../../../src/config/loader.ts";
+import type { ScannedEnvelope } from "../../../src/mcp/scanned-envelope.ts";
 import {
   noConfigFoundSearchedPaths,
   noConfigFoundWarningDetail,
 } from "../../../src/mcp/scanner-meta.ts";
-import type { ScannedEnvelope } from "../../../src/mcp/scanned-envelope.ts";
 
 describe("noConfigFoundSearchedPaths", () => {
   it("enumerates the cross-product of ancestor dirs × CONFIG_FILENAMES with the search base first", () => {
