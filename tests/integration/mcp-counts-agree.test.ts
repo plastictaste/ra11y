@@ -985,5 +985,102 @@ describe("MCP invariant: meta.countsBySurface is absent on every project-rooted 
   });
 });
 
+// Cross-surface count invariant — verify-token-with-warning-severity
+// extension. The first describe blocks pin equality on grounded
+// candidates and untargeted criteria; the existing
+// `landmark-main-low-conf-actionable.test.ts` exercises an emit that
+// already arrives at severity `info` (matches the verify-token gate
+// directly). This block extends the invariant to verify-token emits
+// that arrive at severity `warning` — `coupleSeverityToVerifyTokens`
+// must run consistently across project-rooted surfaces so the count
+// agrees. Pre-fix, `scan_project` / `bootstrap` ran the coupling in
+// `scan-collect.ts` / `tools-helpers.ts`, but `coverage` / `checklist`
+// consumed the raw `runScan` output through
+// `runScanForCrossSurfaceParity` without the coupling — the
+// warning-severity verify-token violation then (a) entered
+// `failingCriteria` in `buildCoverageReport` (which only excludes
+// `info`-severity findings) and (b) failed
+// `collectVerifyTokenViolationCriteria`'s `info` severity gate,
+// dropping the criterion from the actionable union on those two
+// surfaces. Drift was 1 on a layout-partial fixture
+// (scan_project: 23, bootstrap: 23, checklist: 22, coverage: 22 on
+// the field-test corpus).
+/**
+ * Builds a fixture whose `<body>` clears `looksLikeFullPage` (branch B —
+ * `<h1>` plus ≥5 element descendants) AND clears
+ * `isHtmlLayoutOrPartial` via a `{{ content }}` composition directive,
+ * with NO `<main>`. The `semantics/landmark-main` rule fires at
+ * `severity: "warning"` with
+ * `couldBeWrongBecause: ["partial_or_layout_file_requires_composed_check"]`.
+ * `coupleSeverityToVerifyTokens` downgrades it to `info` once it reaches
+ * the project-rooted assemblers — the cross-surface invariant requires
+ * every project-rooted surface to see the post-coupling stream.
+ */
+async function makeLayoutPartialVerifyTokenFixture(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "ra11y-counts-layout-partial-"));
+  await writeFile(
+    join(dir, "page.html"),
+    `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Layout</title></head>
+<body>
+<h1>Welcome</h1>
+<p>Intro</p>
+<p>Body text</p>
+<p>More body text</p>
+<p>Trailing content</p>
+<div>{{ content }}</div>
+</body>
+</html>
+`,
+  );
+  return dir;
+}
+
+describe("MCP invariant: warning-severity verify-token criterion contributes to actionable on every project-rooted surface", () => {
+  it("scan_project / bootstrap / checklist / coverage all count the partial-or-layout verify-token criterion in actionable", async () => {
+    const dir = await makeLayoutPartialVerifyTokenFixture();
+    const responses = await mcpSession([
+      initMsg(1),
+      toolCall(2, "scan_project", { cwd: dir }),
+      toolCall(3, "coverage", { cwd: dir }),
+      toolCall(4, "checklist", { cwd: dir }),
+      toolCall(5, "bootstrap", { cwd: dir }),
+    ]);
+    const scanBody = body<ScanBody>(responses[1]);
+    const coverageEnvelope = body<FullCoverageEnvelope>(responses[2]);
+    const checklistBody = body<ChecklistBody>(responses[3]);
+    interface BootstrapBody {
+      readonly scan?: {
+        readonly actionableManualItemsBySource?: {
+          readonly source: number;
+          readonly buildArtifact: number;
+        };
+      };
+    }
+    const bootstrapBody = body<BootstrapBody>(responses[4]);
+    const scanActionable =
+      scanBody.plan.actionableManualItemsBySource.source +
+      scanBody.plan.actionableManualItemsBySource.buildArtifact;
+    const bootstrapActionable =
+      (bootstrapBody.scan?.actionableManualItemsBySource?.source ?? 0) +
+      (bootstrapBody.scan?.actionableManualItemsBySource?.buildArtifact ?? 0);
+    // Sanity floor — the fixture must trip the layout-partial branch
+    // and produce a verify-token finding that contributes to the
+    // actionable count somewhere. A 0/0/0/0 result would mean the
+    // rule's predicate stopped firing on this fixture shape and the
+    // equality check below would pass vacuously.
+    expect(scanActionable).toBeGreaterThan(0);
+    // All four surfaces must agree on the same count. Pre-fix,
+    // scan_project/bootstrap counted the verify-token criterion while
+    // coverage/checklist missed it — the canonical
+    // Cross-surface-count-invariant violation the helper closure was
+    // written to prevent.
+    expect(scanActionable).toBe(coverageEnvelope.summary.actionable.criteria);
+    expect(scanActionable).toBe(checklistBody.summary.actionable.criteria);
+    expect(scanActionable).toBe(bootstrapActionable);
+  });
+});
+
 // Silence the unused warning on the helper used implicitly above.
 void mkdir;
