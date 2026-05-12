@@ -115,12 +115,16 @@ const CODE_DEMO_PROP_NAME_SET: ReadonlySet<string> = new Set<string>(CODE_DEMO_P
  * `jsx_code_demo_prop_parsed_as_live_dom` warning the scan-time helper
  * surfaces from the same evidence set: the warning names "this corpus
  * carries code-demo descents," the per-finding reason names "this
- * specific finding fired inside one." Surface, don't suppress per
- * `docs/kb/architecture/ai-first-consumer.md` — the rule still emits
- * (the markup is structurally what the rule's predicate names); the
- * triage signal is additive so the agent decides whether the finding
- * is rhetorical (a bad-pattern preview the docs page intentionally
- * shows) or real (a paste-into-your-app example that's silently broken).
+ * specific finding fired inside one." Per AI-first doctrine
+ * "Reason text and severity must agree," the per-finding
+ * propagation also downgrades `severity` to `"info"` and `confidence`
+ * to `"low"` (see `src/mcp/per-finding-code-demo-prop-confidence.ts`)
+ * so the attention-budget signal points the same direction as this
+ * reason text — the finding stays on the wire (no suppression), the
+ * agent reads it through the verify-in-source manual-criteria lane.
+ * Listed in {@link import("../../mcp/manual-criteria-tally.ts").VERIFY_IN_SOURCE_TOKENS}
+ * so the cross-surface `actionableManualItems` invariant picks up the
+ * downgraded findings.
  */
 export const CODE_DEMO_PROP_REASON_CODE = "template_literal_in_code_demo_prop";
 

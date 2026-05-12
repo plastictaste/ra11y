@@ -342,11 +342,13 @@ export const scanProjectTool: McpTool = {
     // finding's `(filePath, line)` falls inside a recorded
     // `<Example|Demo|Playground>` code-demo prop body the parser
     // descended into, append `template_literal_in_code_demo_prop` to
-    // `couldBeWrongBecause` so the per-finding channel and the
-    // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning
-    // ship consistent attention-budget signals. Surface, don't
-    // suppress — severity stays the rule's choice. No-op fast path
-    // when the matches map is empty (object identity stable on the
+    // `couldBeWrongBecause` AND downgrade severity to `info` + confidence
+    // to `low` so the per-finding channel and the corpus-level
+    // `jsx_code_demo_prop_parsed_as_live_dom` warning ship consistent
+    // attention-budget signals per AI-first doctrine "Reason text and
+    // severity must agree." Surface, don't suppress — the finding stays
+    // on the wire; only the attention-budget signal moves. No-op fast
+    // path when the matches map is empty (object identity stable on the
     // common case — non-MDX repos pay no walk).
     const codeDemoEnrichedFiles = enrichFindingsWithCodeDemoPropMatch(
       scanRunResult.formatted.files,

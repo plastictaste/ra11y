@@ -151,6 +151,14 @@ export const VERIFY_IN_SOURCE_TOKENS: ReadonlySet<string> = new Set<string>([
   // tooltip/dismissable — JS enhancer may attach the dismissal
   // handler at runtime.
   "tooltip_js_enhancer_present",
+  // every rule firing inside an MDX docs-component code-demo prop's
+  // template-literal body — `enrichFindingsWithCodeDemoPropMatch` in
+  // `per-finding-code-demo-prop-confidence.ts` downgrades the finding's
+  // severity to `info` + confidence to `low` and appends this token so
+  // the attention-budget signal agrees with the conceded uncertainty
+  // (rhetorical-preview substrate, agent must verify in the surrounding
+  // MDX source before fixing).
+  "template_literal_in_code_demo_prop",
 ]);
 
 /**

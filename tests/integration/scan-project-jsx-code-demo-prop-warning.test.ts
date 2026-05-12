@@ -15,9 +15,11 @@
  * the agent's triage budget vanishes into rendered illustrations.
  *
  * Surface, don't suppress (per `docs/kb/architecture/ai-first-consumer.md`):
- * the rule still emits at its full severity (the markup IS structurally
- * what the rule's predicate names); the warning + per-finding
- * propagation are additive triage signals.
+ * the finding stays on the wire (the markup IS structurally what the
+ * rule's predicate names) — but per "Reason text and severity must
+ * agree" the per-finding `severity` downgrades to `"info"` and
+ * `confidence` to `"low"` so the attention-budget signal points the
+ * same direction as the appended `couldBeWrongBecause` token.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -92,6 +94,8 @@ interface ScanProjectBody {
     readonly findings: readonly {
       readonly ruleId: string;
       readonly line: number;
+      readonly severity?: string;
+      readonly confidence?: string;
       readonly couldBeWrongBecause?: readonly string[];
     }[];
   }[];
@@ -157,5 +161,20 @@ describe("scan_project — jsx_code_demo_prop_parsed_as_live_dom warning + per-f
       (f) => f.couldBeWrongBecause?.includes("template_literal_in_code_demo_prop") === true,
     );
     expect(findingInBody).toBeDefined();
+
+    // (d) Per "Reason text and severity must agree": every finding
+    // carrying the per-LOCATION token also rides at `severity: "info"`
+    // + `confidence: "low"`. The downgrade is uniform across rule
+    // families (the per-finding assembler stamps it; no per-rule guard
+    // needed), so any rule firing inside the descended body matches
+    // the verify-in-source attention-budget lane the doctrine names.
+    const inBodyFindings = (fileEntry?.findings ?? []).filter(
+      (f) => f.couldBeWrongBecause?.includes("template_literal_in_code_demo_prop") === true,
+    );
+    expect(inBodyFindings.length).toBeGreaterThan(0);
+    for (const f of inBodyFindings) {
+      expect(f.severity).toBe("info");
+      expect(f.confidence).toBe("low");
+    }
   }, 30000);
 });

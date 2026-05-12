@@ -1,7 +1,10 @@
 /**
- * Unit tests for the per-finding `couldBeWrongBecause` propagation
- * onto findings emitted inside MDX docs-component code-demo prop
- * bodies.
+ * Unit tests for the per-finding propagation onto findings emitted
+ * inside MDX docs-component code-demo prop bodies — appends the
+ * structured reason code AND downgrades `severity` to `"info"` +
+ * `confidence` to `"low"` so the attention-budget signal matches the
+ * conceded uncertainty per AI-first doctrine "Reason text and severity
+ * must agree."
  *
  * Companion of the corpus-level
  * `jsx_code_demo_prop_parsed_as_live_dom` warning — the warning names
@@ -13,10 +16,10 @@
  * per-finding channel.
  *
  * Surface, don't suppress per `docs/kb/architecture/ai-first-consumer.md`:
- * the rule still emits at its full severity (the markup IS structurally
- * what the rule's predicate names); the propagation only adds additive
- * triage context so the agent recognizes rhetorical-preview substrate
- * at the per-finding granularity.
+ * the finding stays on the wire (the markup IS structurally what the
+ * rule's predicate names); the downgrade moves attention-budget signal
+ * so the agent reads "please verify in source" rather than
+ * "deterministic failure."
  */
 
 import { describe, expect, it } from "bun:test";
@@ -231,7 +234,7 @@ describe("enrichFindingsWithCodeDemoPropMatch", () => {
     expect(out[0]?.findings[0]?.couldBeWrongBecause).toBeUndefined();
   });
 
-  it("does NOT downgrade severity or confidence — only appends the reason code (surface, don't suppress)", () => {
+  it("downgrades severity to info AND confidence to low for findings inside a recorded body range (attention-budget agrees with reason text)", () => {
     const fileEntries = [
       {
         path: "docs/forms.mdx",
@@ -253,9 +256,101 @@ describe("enrichFindingsWithCodeDemoPropMatch", () => {
       ],
     ]);
     const out = enrichFindingsWithCodeDemoPropMatch(fileEntries, matches);
-    // Confidence and severity unchanged — the propagation is additive
-    // triage context per AI-first doctrine "Surface, don't suppress."
-    expect(out[0]?.findings[0]?.confidence).toBe("high");
+    // Per AI-first doctrine "Reason text and severity must agree": when
+    // the per-LOCATION evidence concedes the substrate is rhetorical
+    // preview, severity slides to info AND confidence to low so the
+    // attention-budget signal points the same direction as the appended
+    // `couldBeWrongBecause` token.
+    expect(out[0]?.findings[0]?.severity).toBe("info");
+    expect(out[0]?.findings[0]?.confidence).toBe("low");
+  });
+
+  it("downgrades severity from `warning` to `info` (warning-rank case)", () => {
+    const fileEntries = [
+      {
+        path: "docs/forms.mdx",
+        findings: [fakeFinding(15, { severity: "warning", confidence: "medium" })],
+      },
+    ];
+    const matches = new Map([
+      [
+        "docs/forms.mdx",
+        [
+          {
+            propName: "code",
+            tagName: "Example",
+            propLine: 12,
+            bodyStartLine: 12,
+            bodyEndLine: 18,
+          },
+        ],
+      ],
+    ]);
+    const out = enrichFindingsWithCodeDemoPropMatch(fileEntries, matches);
+    expect(out[0]?.findings[0]?.severity).toBe("info");
+    expect(out[0]?.findings[0]?.confidence).toBe("low");
+  });
+
+  it("does NOT touch findings outside any recorded body range (severity / confidence preserved)", () => {
+    const fileEntries = [
+      {
+        path: "docs/forms.mdx",
+        findings: [fakeFinding(5), fakeFinding(40)],
+      },
+    ];
+    const matches = new Map([
+      [
+        "docs/forms.mdx",
+        [
+          {
+            propName: "code",
+            tagName: "Example",
+            propLine: 12,
+            bodyStartLine: 12,
+            bodyEndLine: 18,
+          },
+        ],
+      ],
+    ]);
+    const out = enrichFindingsWithCodeDemoPropMatch(fileEntries, matches);
     expect(out[0]?.findings[0]?.severity).toBe("error");
+    expect(out[0]?.findings[0]?.confidence).toBe("high");
+    expect(out[0]?.findings[1]?.severity).toBe("error");
+    expect(out[0]?.findings[1]?.confidence).toBe("high");
+  });
+
+  it("keeps severity at info when already info (idempotent re-application)", () => {
+    const fileEntries = [
+      {
+        path: "docs/forms.mdx",
+        findings: [
+          fakeFinding(15, {
+            severity: "info",
+            confidence: "low",
+            couldBeWrongBecause: [CODE_DEMO_PROP_REASON_CODE],
+          }),
+        ],
+      },
+    ];
+    const matches = new Map([
+      [
+        "docs/forms.mdx",
+        [
+          {
+            propName: "code",
+            tagName: "Example",
+            propLine: 12,
+            bodyStartLine: 12,
+            bodyEndLine: 18,
+          },
+        ],
+      ],
+    ]);
+    const out = enrichFindingsWithCodeDemoPropMatch(fileEntries, matches);
+    // Fully no-op: input reference returned unchanged when nothing
+    // actually needs to mutate.
+    expect(out).toBe(fileEntries);
+    expect(out[0]?.findings[0]?.severity).toBe("info");
+    expect(out[0]?.findings[0]?.confidence).toBe("low");
   });
 });
