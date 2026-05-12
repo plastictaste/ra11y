@@ -45,7 +45,16 @@ import { validateProfiles } from "./schema.ts";
  */
 const ACCEPTED_PRESETS: ReadonlySet<ConfigPreset> = new Set<ConfigPreset>(["storybook"]);
 
-const CONFIG_FILENAMES = [
+/**
+ * Filenames the loader walk-up consults at each directory, in
+ * precedence order. Exported so the warning-detail summarizer for
+ * `no_config_found` can enumerate the candidate paths the loader
+ * actually consulted (see `src/mcp/scanner-meta.ts` `noConfigFoundSearchedPaths`)
+ * without re-stating the list — drift between the loader's accepted
+ * filenames and the warning's reported candidates would silently
+ * mislead the triage agent.
+ */
+export const CONFIG_FILENAMES = [
   "ra11y.config.ts",
   "ra11y.config.js",
   "ra11y.config.mjs",

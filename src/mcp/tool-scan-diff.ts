@@ -325,7 +325,9 @@ function computeNoConfigWarningField(args: {
 }): {
   readonly warnings?: readonly ["no_config_found"];
   readonly warningsDetails?: {
-    readonly no_config_found: { readonly searchedFrom: string } | Record<string, never>;
+    readonly no_config_found:
+      | { readonly searchedFrom: string; readonly searchedPaths: readonly string[] }
+      | { readonly searchedPaths: readonly string[] };
   };
 } {
   const configSearchSawProjectMarker =

@@ -704,23 +704,18 @@ describe("bootstrap: warningsDetails membership invariant", () => {
   });
 
   // Cross-surface forwarding: the upstream scan_project response
-  // carries the `no_config_found` warning with the present-when-
-  // meaningful empty-record payload on identical `cwd`. Bootstrap
-  // must forward that payload verbatim — the per-tool warning-set
-  // classification rule requires the same warning-payload set to
-  // reach every consumer of the corpus.
+  // carries the `no_config_found` warning with `searchedPaths`
+  // populated (the candidate file paths the config loader walked
+  // through). Bootstrap must forward that payload verbatim — the
+  // per-tool warning-set classification rule requires the same
+  // warning-payload set to reach every consumer of the corpus.
   //
-  // Per `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
-  // signal, not clutter — `configSearchedFrom` is present-when-
-  // meaningful, omitted when it would just echo the caller's `cwd` or
-  // a `scanned.root` already in the response," the
-  // `warningsDetails.no_config_found.searchedFrom` payload drops to
-  // the empty record when the loader's walk-up base equals
-  // `meta.scanned.root` (the common case for bootstrap, since
-  // `cwd === scanned.root === searchedFrom`). The bare warning code
-  // is the canonical signal; the agent reads `meta.scanned.root` for
-  // the search base.
-  it("forwards the no_config_found warning detail from the upstream scan_project leg verbatim (empty-record payload when search base echoes cwd)", async () => {
+  // Per `docs/kb/architecture/ai-first-consumer.md` "Empty
+  // `warningsDetails.<code>: {}` is dishonest," the payload always
+  // ships `searchedPaths`; the `searchedFrom` scalar is present-when-
+  // meaningful (omitted when it would echo `cwd` / `scanned.root` /
+  // `dirname(scanned.file)` already on the response).
+  it("forwards the no_config_found warning detail from the upstream scan_project leg verbatim (searchedPaths populated; searchedFrom omitted when redundant)", async () => {
     await withScratch(async (dir) => {
       // No ra11y.config.ts at this scratch root → scan_project may
       // emit `no_config_found`. The clean index.html keeps
@@ -735,18 +730,16 @@ describe("bootstrap: warningsDetails membership invariant", () => {
       // tree (per the tiny-repo gate documented in
       // `shouldEmitNoConfigFound`), so this assertion is conditional:
       // when the code is present in `warnings[]`, its forwarded
-      // payload must be the present-when-meaningful empty record (the
-      // search base equals `cwd === scanned.root` and would just
-      // echo a value the agent already has).
+      // payload must always carry `searchedPaths`; `searchedFrom` is
+      // dropped because it would echo `cwd === scanned.root` already
+      // on the response.
       if ((response.warnings ?? []).includes("no_config_found")) {
         const detail = response.warningsDetails?.["no_config_found"] as
-          | { searchedFrom?: string }
+          | { searchedFrom?: string; searchedPaths?: readonly string[] }
           | undefined;
         expect(detail).toBeDefined();
-        // The `searchedFrom` field is dropped because it would echo
-        // `cwd` / `scanned.root` already on the response. The
-        // remaining shape is the empty record.
-        expect(detail).toEqual({});
+        expect(detail?.searchedFrom).toBeUndefined();
+        expect((detail?.searchedPaths ?? []).length).toBeGreaterThan(0);
       }
     });
   });

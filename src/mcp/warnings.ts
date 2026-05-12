@@ -1026,20 +1026,22 @@ export interface WarningInputs {
   readonly configSource: string | null | undefined;
   /**
    * Absolute path the config loader walked from. Drives the
-   * `warningsDetails.no_config_found.searchedFrom` payload so an agent
-   * reading the code has one canonical answer regardless of which tool
-   * emitted it. Pass the same `cwd`/`root` the loader was handed; pass
-   * `undefined` when the tool did not resolve a search root (in which
-   * case the payload drops conservatively and the bare code stays the
-   * only signal). The value is surfaced on the warning channel
-   * deterministically — no second filesystem walk.
+   * `warningsDetails.no_config_found.searchedPaths` payload — the
+   * candidate file paths the loader would have consulted on its
+   * walk-up, derived purely from this value via
+   * {@link import("./scanner-meta.ts").noConfigFoundSearchedPaths}.
+   * Pass the same `cwd`/`root` the loader was handed; pass `undefined`
+   * when the tool did not resolve a search root (in which case the
+   * dispatch falls through to the truncation sentinel and the bare
+   * warning code stays the signal). The value is surfaced on the
+   * warning channel deterministically — no second filesystem walk.
    *
    * Pairs with {@link noConfigFoundCallerCwd} / {@link noConfigFoundScannedRoot}
-   * for the present-when-meaningful predicate: when the search base
-   * equals either of those (the common case — `searchedFrom` would
-   * just echo the caller's `cwd` or a `scanned.root` already on the
-   * response), the payload drops to the {@link BinaryPresenceMarker}
-   * `{}` shape and the bare warning code carries the signal.
+   * for the present-when-meaningful predicate on the `searchedFrom`
+   * scalar: when the search base equals either of those (the common
+   * case — `searchedFrom` would just echo the caller's `cwd` or a
+   * `scanned.root` already on the response), the scalar drops while
+   * `searchedPaths` continues to carry the actionable triage signal.
    */
   readonly configSearchedFromForWarning?: string;
   /**
@@ -2939,38 +2941,43 @@ export interface ScanWarningDetails {
   readonly scanned_zero_files?: BinaryPresenceMarker;
   readonly root_source_defaulted?: BinaryPresenceMarker;
   /**
-   * Payload for `no_config_found`. Carries the absolute path the config
-   * loader walked from when no `ra11y.config.*` resolved — the
-   * deterministic answer to "where did the search start?". Without the
-   * path, an agent reading the bare code learns "no config found" but
-   * has to re-derive the search root from the response's other fields
-   * (`scanned.root`, `cwd`, etc.), and the cross-tool drift on which
-   * field carries the root makes that derivation noisy. With
-   * `searchedFrom`, the agent has one canonical answer regardless of
-   * which tool emitted the warning — closing the cross-surface
-   * inconsistency where some emitters paired the warning with `cwd` on
-   * the meta block and others with `scanned.root`. Pure shape-builder;
-   * the value is the same `cwd`/`root` the loader was handed.
+   * Payload for `no_config_found`. Always carries `searchedPaths` — the
+   * candidate file paths the config loader's walk-up consulted (the
+   * cross-product of every ancestor dir × `ra11y.config.{ts,js,mjs,json}`)
+   * so an agent reading the warning has actionable triage info: "did
+   * the loader miss an existing config at an unexpected name, or
+   * should I bootstrap a new one?" The list is bounded (depth-capped
+   * per {@link import("./scanner-meta.ts").noConfigFoundSearchedPaths})
+   * and ordered shallowest-first; the per-dir slice follows
+   * `CONFIG_FILENAMES` precedence (`.ts` → `.js` → `.mjs` → `.json`).
    *
-   * Dual-shaped slot: when the loader's walk-up base equals the caller-
-   * supplied `cwd` OR the resolved `scanned.root` (the common case —
-   * an agent reading the response already has the value on the meta
-   * block), the warning-detail drops to the
-   * {@link BinaryPresenceMarker} shape `{}`. Same present-when-
-   * meaningful contract as the meta-channel `configSearchedFrom` field
-   * (see `scanner-meta.ts`'s {@link import("./scanner-meta.ts").configSearchedFromField}):
-   * the warning code itself fully specifies the condition, and an
-   * agent has the canonical search base on `meta.scanned.root` /
-   * `cwd`. Per `docs/kb/architecture/ai-first-consumer.md` "Verbose
+   * `searchedFrom` (the search base) is present-when-meaningful: when
+   * the loader's walk-up base equals the caller-supplied `cwd`, the
+   * resolved `scanned.root`, or `posixDirname(scanned.file)` (already
+   * on the response), the scalar drops and `searchedPaths` carries the
+   * load-bearing context. Same predicate as the meta-channel sibling
+   * {@link import("./scanner-meta.ts").configSearchedFromField}; the
+   * warning code itself fully specifies the condition, and `meta.scanned.root` /
+   * `cwd` carry the redundant scalar for any agent that wants the
+   * canonical search base directly.
+   *
+   * Closes the "Empty `warningsDetails.<code>: {}` is dishonest"
+   * doctrine bullet for `no_config_found` — the prior shape returned
+   * the empty record whenever the search base would echo a sibling
+   * field, leaving an agent reading the warning name with zero
+   * specifics. Per `docs/kb/architecture/ai-first-consumer.md` "Verbose
    * meta is signal, not clutter — `configSearchedFrom` is
-   * present-when-meaningful — omitted when it would just echo the
+   * present-when-meaningful, omitted when it would just echo the
    * caller's `cwd` or a `scanned.root` already in the response."
    */
   readonly no_config_found?:
     | {
         readonly searchedFrom: string;
+        readonly searchedPaths: readonly string[];
       }
-    | BinaryPresenceMarker;
+    | {
+        readonly searchedPaths: readonly string[];
+      };
   readonly tailwind_detected_css_undercounted?: BinaryPresenceMarker;
   /**
    * Payload for `template_files_parsed_as_literal`. Names the files whose

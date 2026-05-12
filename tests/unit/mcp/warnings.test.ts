@@ -3741,26 +3741,28 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
     });
   });
 
-  it("warnings-details schema discipline — `no_config_found` ships `{ searchedFrom }` only when the value adds signal; drops to `{}` when redundant; falls through to the truncation sentinel when no input was threaded", () => {
-    // `no_config_found` is dual-shaped in the schema — the
-    // `searchedFrom: <path>` field gives the agent one canonical
-    // answer to "where did the loader walk from" WHEN the value is
-    // not already on the response. When the loader's walk-up base
-    // equals the caller-supplied `cwd` OR the resolved `scanned.root`
-    // (the common case — the agent already has the value), the
-    // payload drops to `{}` (the binary-presence shape) so the bare
-    // warning code carries the signal. Per
-    // `docs/kb/architecture/ai-first-consumer.md` "Verbose meta is
-    // signal, not clutter — `configSearchedFrom` is present-when-
-    // meaningful, omitted when it would just echo the caller's `cwd`
-    // or a `scanned.root` already in the response."
+  it("warnings-details schema discipline — `no_config_found` always ships `searchedPaths`; `searchedFrom` is present-when-meaningful; falls through to the truncation sentinel when no input was threaded", () => {
+    // `no_config_found` always carries `searchedPaths` — the candidate
+    // file paths the loader's walk-up would have consulted (cross-
+    // product of every ancestor dir × `ra11y.config.{ts,js,mjs,json}`).
+    // The previous shape returned `{}` whenever the search base would
+    // echo cwd/scannedRoot, leaving an agent reading the warning name
+    // with zero specifics. Per
+    // `docs/kb/architecture/ai-first-consumer.md` "Empty
+    // `warningsDetails.<code>: {}` is dishonest" — the payload is
+    // always populated when the summarizer has an input.
+    //
+    // `searchedFrom` (the search base scalar) is folded in only when
+    // it adds signal beyond the response's existing root / cwd / file
+    // echoes — same present-when-meaningful predicate as the meta-
+    // channel sibling `configSearchedFromField`.
     const withMeaningfulPayload = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
       configSource: null,
       configSearchedFromForWarning: "/proj/root",
-      // Neither callerCwd nor scannedRoot match — the payload adds
-      // signal, so the rich shape rides.
+      // Neither callerCwd nor scannedRoot match — the search base
+      // adds signal, so `searchedFrom` rides alongside `searchedPaths`.
       noConfigFoundCallerCwd: "/elsewhere",
       noConfigFoundScannedRoot: "/elsewhere/tree",
       analysisCoverage: undefined,
@@ -3768,13 +3770,20 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       configSearchSawProjectMarker: true,
     });
     expect(withMeaningfulPayload.warnings).toContain("no_config_found");
-    expect(withMeaningfulPayload.warningsDetails?.no_config_found).toEqual({
-      searchedFrom: "/proj/root",
-    });
+    const meaningfulSlot = withMeaningfulPayload.warningsDetails?.no_config_found as
+      | { readonly searchedFrom?: string; readonly searchedPaths?: readonly string[] }
+      | undefined;
+    expect(meaningfulSlot?.searchedFrom).toBe("/proj/root");
+    expect(meaningfulSlot?.searchedPaths).toBeDefined();
+    expect((meaningfulSlot?.searchedPaths ?? []).length).toBeGreaterThan(0);
+    // The leading candidate is the loader's first-precedence filename
+    // at the search base — `ra11y.config.ts` at `/proj/root`.
+    expect(meaningfulSlot?.searchedPaths?.[0]).toBe("/proj/root/ra11y.config.ts");
 
-    // Echo case: the search base equals `scanned.root`. The payload
-    // drops to `{}` because `meta.scanned.root` already carries the
-    // search base.
+    // Echo case: the search base equals `scanned.root`. `searchedFrom`
+    // drops (the agent already has the value on `meta.scanned.root`),
+    // but `searchedPaths` stays — it carries the actionable triage
+    // signal the warning never had before.
     const echoesScannedRoot = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
@@ -3786,10 +3795,14 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       configSearchSawProjectMarker: true,
     });
     expect(echoesScannedRoot.warnings).toContain("no_config_found");
-    expect(echoesScannedRoot.warningsDetails?.no_config_found).toEqual({});
+    const echoScannedSlot = echoesScannedRoot.warningsDetails?.no_config_found as
+      | { readonly searchedFrom?: string; readonly searchedPaths?: readonly string[] }
+      | undefined;
+    expect(echoScannedSlot?.searchedFrom).toBeUndefined();
+    expect((echoScannedSlot?.searchedPaths ?? []).length).toBeGreaterThan(0);
 
     // Echo case: the search base equals the caller-supplied `cwd`.
-    // Same shape — the agent passed the value, no new signal.
+    // Same shape — `searchedFrom` drops, `searchedPaths` stays.
     const echoesCallerCwd = warningsField({
       filesScanned: 42,
       rootSource: "explicit",
@@ -3801,7 +3814,11 @@ describe("warningsDetails cross-surface regression — payload-vs-binary contrac
       configSearchSawProjectMarker: true,
     });
     expect(echoesCallerCwd.warnings).toContain("no_config_found");
-    expect(echoesCallerCwd.warningsDetails?.no_config_found).toEqual({});
+    const echoCwdSlot = echoesCallerCwd.warningsDetails?.no_config_found as
+      | { readonly searchedFrom?: string; readonly searchedPaths?: readonly string[] }
+      | undefined;
+    expect(echoCwdSlot?.searchedFrom).toBeUndefined();
+    expect((echoCwdSlot?.searchedPaths ?? []).length).toBeGreaterThan(0);
 
     // No `configSearchedFromForWarning` threaded at all → the dispatch
     // falls through to the disambiguating truncation sentinel, NOT to

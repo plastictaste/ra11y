@@ -319,13 +319,16 @@ export const scanTool: McpTool = {
 
 /**
  * Post-assembly gate on `warningsDetails.no_config_found.searchedFrom`:
- * when the assembler emitted the rich `{ searchedFrom }` payload but
- * the value equals the caller-supplied `cwd` (which `scan` ships on
- * its response by construction), drop the payload to `{}` per the
- * present-when-meaningful contract. Returns the input unchanged when
- * the warning didn't fire OR when the assembled payload was already
- * dual-shaped. Lives at the tool-scan seam to keep the assembler's
- * surface stable.
+ * when the assembler emitted the `{ searchedFrom, searchedPaths }`
+ * payload but `searchedFrom` equals the caller-supplied `cwd` (which
+ * `scan` ships on its response by construction), drop the scalar per
+ * the present-when-meaningful contract. The `searchedPaths` array
+ * stays — it's the actionable triage payload that lets the agent
+ * decide whether to bootstrap a config or whether the search missed
+ * one at an unexpected name (see scanner-meta `noConfigFoundWarningDetail`).
+ * Returns the input unchanged when the warning didn't fire OR when the
+ * assembled payload was already dual-shaped. Lives at the tool-scan
+ * seam to keep the assembler's surface stable.
  */
 function applyNoConfigFoundCallerCwdGate(
   details: ScanWarningDetails | undefined,

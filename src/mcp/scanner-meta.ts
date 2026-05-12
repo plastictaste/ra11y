@@ -25,8 +25,23 @@
  * Pure over its inputs; no I/O, no global state.
  */
 
-import { posixDirname } from "../utils/path.ts";
+import { CONFIG_FILENAMES } from "../config/loader.ts";
+import { posixDirname, posixJoin } from "../utils/path.ts";
 import type { ScannedEnvelope } from "./scanned-envelope.ts";
+
+/**
+ * Bound on the walk-up depth the {@link noConfigFoundSearchedPaths}
+ * helper enumerates from the loader's search base. The config loader
+ * walks until it hits a `.git` directory or the filesystem root —
+ * detecting `.git` would require I/O, which the warning-detail
+ * summarizer is pure-over-its-inputs by design. A cap on the
+ * enumeration keeps the candidate-paths list bounded for deeply nested
+ * search bases (a 12-segment path × 4 filenames = 48 entries, which
+ * dilutes the actionable signal). Eight levels covers the typical
+ * `/Users/<u>/projects/<repo>/<sub>...` shape without overflowing on
+ * pathological inputs.
+ */
+const SEARCHED_PATHS_MAX_DEPTH = 8;
 
 /**
  * Computes the conditional-spread `configSearchedFrom` field. The
@@ -66,45 +81,71 @@ export function configSearchedFromField(args: {
 }
 
 /**
- * Computes the `warningsDetails.no_config_found` payload, applying the
- * same present-when-meaningful predicate as {@link configSearchedFromField}
- * to the warning-channel sibling of `meta.configSearchedFrom`.
+ * Enumerates the candidate file paths the config loader would have
+ * consulted on its walk-up from {@link searchBase}, matching
+ * `src/config/loader.ts`'s `walkUpFrom` discovery semantics
+ * (`join(dir, filename)` for every `CONFIG_FILENAMES` entry at every
+ * ancestor dir). Bounded by {@link SEARCHED_PATHS_MAX_DEPTH} so deeply
+ * nested search bases don't overflow the candidate list — the loader's
+ * real stop conditions (`.git` directory present, or
+ * `posixDirname(dir) === dir` at the filesystem root) require I/O,
+ * which this helper avoids by design.
  *
- * The original warning detail shape — `{ searchedFrom: <cwd> }` shipped
- * unconditionally — duplicated context the agent already had on the
- * response. On `scan_project`, `searchedFrom` always equaled
- * `meta.scanned.root`; on `scan` and the other project-rooted tools
- * (`coverage`, `checklist`, `propose_baseline`, `propose_config`,
- * `list_suppressions`, `scan_diff`, `vpat`), it always equaled the
- * caller-supplied `cwd`. Per `docs/kb/architecture/ai-first-consumer.md`
- * "Verbose meta is signal, not clutter — `configSearchedFrom` is
- * present-when-meaningful, omitted when it would just echo the caller's
- * `cwd` or a `scanned.root` already in the response," the warning-
- * channel detail must apply the same omit predicate the meta-channel
- * field already does.
+ * Returns the cross-product as a POSIX-normalized array, ordered
+ * depth-shallowest-first (the search base, then each parent), with the
+ * per-dir slice ordered by {@link CONFIG_FILENAMES} precedence
+ * (`.ts` → `.js` → `.mjs` → `.json`). An agent reading the warning
+ * payload sees the most-likely-intended path first.
  *
- * Two return shapes:
+ * Empty / blank input returns the empty array — callers gate the
+ * summarizer on a non-empty search base before invoking, and the
+ * payload-builder downstream falls through to the truncation sentinel
+ * when this returns empty.
+ */
+export function noConfigFoundSearchedPaths(searchBase: string): readonly string[] {
+  if (typeof searchBase !== "string" || searchBase.length === 0) return [];
+  const out: string[] = [];
+  let dir = searchBase;
+  for (let depth = 0; depth < SEARCHED_PATHS_MAX_DEPTH; depth++) {
+    for (const filename of CONFIG_FILENAMES) {
+      out.push(posixJoin(dir, filename));
+    }
+    const parent = posixDirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return out;
+}
+
+/**
+ * Computes the `warningsDetails.no_config_found` payload. Always
+ * surfaces the {@link noConfigFoundSearchedPaths candidate paths the
+ * config loader walked through} — the actionable triage signal that
+ * lets the agent decide whether to bootstrap a config or whether the
+ * search missed an existing file at an unexpected name. The
+ * `searchedFrom` echo of the search base is folded in only when it
+ * carries new signal (same present-when-meaningful predicate as the
+ * meta-channel sibling {@link configSearchedFromField}): when the
+ * walk-up base equals the caller's `cwd`, the resolved `scanned.root`,
+ * or `posixDirname(scanned.file)` (all already on the response), the
+ * scalar drops and `searchedPaths` carries the load-bearing context.
  *
- *   - `{ searchedFrom: <path> }` when the value adds signal (the search
- *     base differs from `callerCwd`, `scannedRoot`, and any
- *     `posixDirname(scanned.file)` the file-mode scan-file surface
- *     would expose).
- *   - `{}` (empty record) when the value would echo an input already on
- *     the response. The schema slot for `no_config_found` is widened to
- *     `{ searchedFrom: string } | BinaryPresenceMarker` so the empty
- *     shape is honestly typed — the bare warning code stays the
- *     signal, and `meta.scanned.root` / the caller's `cwd` /
- *     `dirname(meta.scanned.file)` carry the search base for any
- *     agent that wants the canonical answer.
+ * Closes the "Empty `warningsDetails.<code>: {}` is dishonest" doctrine
+ * bullet for `no_config_found`: the prior shape returned
+ * `{}` whenever the search base would have echoed an existing field,
+ * leaving an agent reading the warning name with zero specifics
+ * (`searchedPaths` absent, no candidate filenames to triage against).
+ * The new shape ships `searchedPaths` on every fire — the bare warning
+ * code never carries an empty payload again.
  *
- * The empty record is NOT a "missing payload" sentinel — it's the
- * "no payload by design on this surface" shape that binary-presence
- * codes (`scanned_zero_files`, `tailwind_detected_css_undercounted`,
- * etc.) emit. The disambiguating fall-through truncation sentinel
- * applies only when the summarizer was called with `searchedFrom`
- * undefined (no input to compare); when the summarizer has a value but
- * elects to drop it as redundant, the empty record is the honest
- * shape.
+ * Two return shapes (both always carry `searchedPaths`):
+ *
+ *   - `{ searchedFrom, searchedPaths }` when the search base adds
+ *     signal beyond the response's existing root / cwd / file echoes.
+ *   - `{ searchedPaths }` when `searchedFrom` would just echo
+ *     `callerCwd` / `scannedRoot` / `posixDirname(scanned.file)`. The
+ *     payload is still actionable — the agent has the per-dir
+ *     candidate filenames the loader looked for.
  */
 export function noConfigFoundWarningDetail(args: {
   /** The absolute path the config loader walked from. */
@@ -122,15 +163,18 @@ export function noConfigFoundWarningDetail(args: {
    * for the file-mode echo case.
    */
   readonly scanned?: ScannedEnvelope;
-}): { readonly searchedFrom: string } | Record<string, never> {
+}):
+  | { readonly searchedFrom: string; readonly searchedPaths: readonly string[] }
+  | { readonly searchedPaths: readonly string[] } {
   const { searchedFrom, callerCwd, scannedRoot, scanned } = args;
-  if (callerCwd !== undefined && callerCwd === searchedFrom) return {};
-  if (scannedRoot !== undefined && scannedRoot === searchedFrom) return {};
+  const searchedPaths = noConfigFoundSearchedPaths(searchedFrom);
+  if (callerCwd !== undefined && callerCwd === searchedFrom) return { searchedPaths };
+  if (scannedRoot !== undefined && scannedRoot === searchedFrom) return { searchedPaths };
   if (scanned !== undefined) {
-    if (scanned.mode === "project" && scanned.root === searchedFrom) return {};
+    if (scanned.mode === "project" && scanned.root === searchedFrom) return { searchedPaths };
     if (scanned.mode === "file" && scanned.file !== undefined) {
-      if (posixDirname(scanned.file) === searchedFrom) return {};
+      if (posixDirname(scanned.file) === searchedFrom) return { searchedPaths };
     }
   }
-  return { searchedFrom };
+  return { searchedFrom, searchedPaths };
 }

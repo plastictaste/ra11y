@@ -240,25 +240,24 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
     }
   }, 30_000);
 
-  it("scan_project does NOT ship `warningsDetails.no_config_found.searchedFrom` when the search base echoes `cwd === scanned.root`", async () => {
+  it("scan_project drops `warningsDetails.no_config_found.searchedFrom` when the search base echoes `cwd === scanned.root`; keeps `searchedPaths` as the actionable triage payload", async () => {
     // Warning-channel sibling of the meta-channel rule above: the
-    // `warningsDetails.no_config_found.searchedFrom` payload is
+    // `warningsDetails.no_config_found.searchedFrom` scalar is
     // present-when-meaningful, omitted when its value would just
     // echo the caller's `cwd` or a `scanned.root` already in the
     // response. On `scan_project({cwd})`, the loader walks from
     // `cwd`, the resolved `scanned.root` equals `cwd`, and any
-    // `searchedFrom: <cwd>` payload would be a triple-echo (cwd =
+    // `searchedFrom: <cwd>` would be a triple-echo (cwd =
     // scanned.root = searchedFrom). The shared helper drops the
-    // rich payload to the empty record on every project-rooted tool
-    // — the bare warning code carries the signal; the agent reads
-    // `meta.scanned.root` for the canonical search base.
+    // scalar on every project-rooted tool; `searchedPaths` stays —
+    // the candidate file paths the loader walked through give the
+    // agent actionable triage info (per
+    // `docs/kb/architecture/ai-first-consumer.md` "Empty
+    // `warningsDetails.<code>: {}` is dishonest").
     //
-    // This test pins the closure on
-    // `Q17-CONFIGSEARCHEDFROM-ECHOES-CWD` against `scan_project`
-    // specifically; the cross-surface invariant for the same
-    // shape across `coverage`, `checklist`,
-    // `list_suppressions`, `propose_baseline`, `propose_config`,
-    // `scan_diff` lives in
+    // The cross-surface invariant for the same shape across
+    // `coverage`, `checklist`, `list_suppressions`,
+    // `propose_baseline`, `propose_config`, `scan_diff` lives in
     // `tests/integration/mcp-consistency/no-config-found-cross-surface.test.ts`.
     const responses = await mcpSession([
       initMsg(1),
@@ -276,10 +275,11 @@ describe("meta.configSearchedFrom is present-when-meaningful", () => {
       const detail = warningsDetails?.["no_config_found"];
       expect(detail).toBeDefined();
       expect(detail?.["searchedFrom"]).toBeUndefined();
-      // Strongest contract: the slot is the empty record (binary-
-      // presence shape) — no truncation sentinel, no rich payload,
-      // and definitely not a `cwd`-echoing one.
-      expect(detail).toEqual({});
+      // `searchedPaths` is the actionable triage payload — populated
+      // even when `searchedFrom` would be redundant.
+      const paths = detail?.["searchedPaths"] as readonly string[] | undefined;
+      expect(paths).toBeDefined();
+      expect((paths ?? []).length).toBeGreaterThan(0);
     }
   });
 });
