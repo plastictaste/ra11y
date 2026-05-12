@@ -10,10 +10,7 @@ describe("rule pointer/draggable-no-keyboard-alt", () => {
       // inoperable. `keyboard/handler-missing` exempts native
       // interactive tags, so this rule is the canonical 2.1.1 emitter
       // for the drag-on-native shape.
-      const violations = runRule(
-        rule,
-        `const X = <a href="#" draggable="true">Drag me</a>;`,
-      );
+      const violations = runRule(rule, `const X = <a href="#" draggable="true">Drag me</a>;`);
       expect(violations).toHaveLength(1);
       expect(violations[0]?.ruleId).toBe("pointer/draggable-no-keyboard-alt");
       expect(violations[0]?.severity).toBe("warning");
@@ -45,11 +42,9 @@ describe("rule pointer/draggable-no-keyboard-alt", () => {
     });
 
     it("flags an HTML <a> with draggable and no keyboard handler", () => {
-      const violations = runRule(
-        rule,
-        `<a href="#" draggable="true">Drag</a>`,
-        { filePath: "index.html" },
-      );
+      const violations = runRule(rule, `<a href="#" draggable="true">Drag</a>`, {
+        filePath: "index.html",
+      });
       expect(violations).toHaveLength(1);
       expect(violations[0]?.suggestion).toMatch(/onkeydown/);
     });
@@ -73,7 +68,7 @@ describe("rule pointer/draggable-no-keyboard-alt", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("the element does not opt into native drag (no draggable=\"true\")", () => {
+    it('the element does not opt into native drag (no draggable="true")', () => {
       const violations = runRule(rule, `const X = <a href="#">Static content</a>;`);
       expect(violations).toHaveLength(0);
     });
@@ -86,7 +81,7 @@ describe("rule pointer/draggable-no-keyboard-alt", () => {
       expect(violations).toHaveLength(0);
     });
 
-    it("draggable is explicitly set to \"false\"", () => {
+    it('draggable is explicitly set to "false"', () => {
       const violations = runRule(rule, `const X = <a href="#" draggable="false">Static</a>;`);
       expect(violations).toHaveLength(0);
     });
@@ -100,22 +95,22 @@ describe("rule pointer/draggable-no-keyboard-alt", () => {
     // would duplicate the agent's budget with overlapping criteria.
     // Per AI-first doctrine "Composite headline counts are dishonest"
     // and "Per-tool lane and warning-set classification must agree."
-    it("does not fire on a bare <div draggable=\"true\"> (co-rules cover it)", () => {
+    it('does not fire on a bare <div draggable="true"> (co-rules cover it)', () => {
       const violations = runRule(rule, `const X = <div draggable="true">Drag</div>;`);
       expect(violations).toHaveLength(0);
     });
 
-    it("does not fire on a bare <span draggable=\"true\"> (co-rules cover it)", () => {
+    it('does not fire on a bare <span draggable="true"> (co-rules cover it)', () => {
       const violations = runRule(rule, `const X = <span draggable="true">Drag</span>;`);
       expect(violations).toHaveLength(0);
     });
 
-    it("does not fire on a bare <li draggable=\"true\"> (co-rules cover it)", () => {
+    it('does not fire on a bare <li draggable="true"> (co-rules cover it)', () => {
       const violations = runRule(rule, `const X = <li draggable="true">Item</li>;`);
       expect(violations).toHaveLength(0);
     });
 
-    it("does not fire on HTML <div draggable=\"true\"> (co-rules cover it)", () => {
+    it('does not fire on HTML <div draggable="true"> (co-rules cover it)', () => {
       const violations = runRule(rule, `<div draggable="true">Drag</div>`, {
         filePath: "index.html",
       });
