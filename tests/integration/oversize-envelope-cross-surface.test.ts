@@ -151,9 +151,15 @@ function buildOversizeScanFileResponse(): Record<string, unknown> {
 }
 
 describe("oversize-envelope cross-surface parity — checklist / coverage / scan_file", () => {
-  // Small synthetic ceiling triggers the slim guard on a 2 KB bloat
-  // field — the assembled fixtures all serialize over 1000 chars.
-  const HARD_CEILING = 1000;
+  // Synthetic ceiling chosen to sit between the original oversize
+  // envelope (assembled fixture serializes >> ceiling, triggers the
+  // first-pass slim) and the first-pass slim itself (~1300-1600 chars
+  // on each surface, sized to fit under 2000). This pins the
+  // first-pass slim shape under the cross-surface invariant; the
+  // second-pass `narrowSlimEnvelopeIfStillOver` narrow is exercised
+  // by the unit tests on `oversize-envelope.test.ts` where the
+  // synthetic ceiling is small enough to force its tier-progression.
+  const HARD_CEILING = 2000;
 
   it("checklist slim envelope ships the canonical warning code + payload schema", () => {
     const result = applyChecklistBudget({

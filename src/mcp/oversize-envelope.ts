@@ -178,23 +178,40 @@ export interface OversizeEnvelopeReason {
  * Return value: either the original response (under ceiling, no
  * fallback) or the slim replacement (over ceiling, fallback fired).
  * `triggered` lets the call site decide whether to surface telemetry
- * — it's true iff the slim builder ran.
+ * — it's true iff the slim builder ran. `narrowed` is true iff the
+ * post-fallback re-measure determined the first-pass slim envelope
+ * was itself still over the host ceiling and the second-pass narrow
+ * dropped further sub-fields to fit.
  */
 export interface OversizeEnvelopeResult {
   readonly response: Record<string, unknown>;
   readonly triggered: boolean;
   readonly preDropBytes: number;
+  readonly narrowed?: boolean;
 }
 
 /**
  * Measures the original response. If under the ceiling, returns it
  * unchanged. If over, calls the caller's slim builder with the
- * byte-arithmetic reason and returns the replacement envelope.
+ * byte-arithmetic reason. The post-slim envelope is RE-MEASURED
+ * against the same ceiling — when the first-pass slim is itself still
+ * over (bulk-vendor catalogs where the surviving `warningsDetails`
+ * payloads, `slimTruncations` array, `metaFieldsDropped` list, or plan
+ * rollups continue to inflate beyond the host wall), a second-pass
+ * narrow drops progressively more disposable fields until the envelope
+ * clears or no further trim path remains. Per AI-first doctrine
+ * "Oversize-success is ambiguous failure": the slim envelope is the
+ * canonical recovery; if IT transport-fails too, the caller gets an
+ * even-slimmer payload rather than the host dropping the response
+ * entirely.
  *
  * Pure function: never mutates `input.original`. The slim builder
  * owns its own response shape — this helper does not enforce a slim
  * skeleton (the `scan_project` slim shape may differ from any future
- * `scan` slim shape).
+ * `scan` slim shape). The second-pass narrow operates on the slim
+ * builder's output via generic disposability heuristics that target
+ * common-shape fields shared across all slim envelopes (`warningsDetails`
+ * payload sub-arrays, `slimTruncations`, `metaFieldsDropped`).
  */
 export function guardOversizeEnvelope(input: OversizeEnvelopeInput): OversizeEnvelopeResult {
   const ceiling = input.hardCeilingChars ?? RESPONSE_OVERSIZE_HARD_CEILING_CHARS;
@@ -222,7 +239,375 @@ export function guardOversizeEnvelope(input: OversizeEnvelopeInput): OversizeEnv
     totalFilesWithFindings: input.totalFilesWithFindings,
   };
   const slim = input.buildSlim(reason);
-  return { response: slim, triggered: true, preDropBytes: measured };
+  // Post-fallback re-measure. The slim builder is responsible for
+  // staying under `MINIMUM_ENVELOPE_TARGET_CHARS` on the typical case,
+  // but bulk-vendor catalogs have produced first-pass slim envelopes
+  // 1.6x-2x over `hardCeilingBytes` (canonical regression: 161645 chars
+  // on a 4966-file vendor catalog where `hardCeilingBytes` was 96000).
+  // Per "Oversize-success is ambiguous failure" the slim path's own
+  // transport-fail is the same silent-miss as the original envelope's
+  // — the agent gets no `plan`, no `warnings`, no routable response.
+  // Narrow further if needed; if narrowing can't get under, ship the
+  // smallest honest envelope anyway (failing loud beats failing silent).
+  const slimMeasured = serializeLength(slim);
+  if (slimMeasured <= ceiling) {
+    return { response: slim, triggered: true, preDropBytes: measured };
+  }
+  const narrowed = narrowSlimEnvelopeIfStillOver(slim, ceiling);
+  return { response: narrowed, triggered: true, preDropBytes: measured, narrowed: true };
+}
+
+/**
+ * Disposable-surface heuristics for the second-pass narrow. Each
+ * heuristic targets a common-shape field shared across all slim
+ * envelopes shipped by the scan-family + checklist + coverage tools;
+ * the helper applies them in priority order (cheapest signal loss
+ * first) and re-measures after each, exiting as soon as the envelope
+ * fits under the ceiling. The order matches the doctrine's "Surface,
+ * don't suppress" preference for keeping load-bearing routing channels
+ * (plan, nextStep, warnings codes) intact for as long as possible.
+ *
+ * Tier 1 — strip array detail to a count sentinel:
+ *   - `warningsDetails.response_dropped_files_oversize.slimTruncations`
+ *     (envelope-level per-field truncation breakdown). Each entry
+ *     carries ~80 chars; on a slim envelope that head-sliced 5-10
+ *     fields the array alone is ~500-800 chars. Stripped to a count
+ *     sentinel `slimTruncationsCount` so the agent still knows trims
+ *     happened.
+ *   - `warningsDetails.response_dropped_files_oversize.metaFieldsDropped`
+ *     (envelope-level meta-key drop list). On bulk corpora can list
+ *     20+ keys at ~30 chars each. Stripped to `metaFieldsDroppedCount`.
+ *
+ * Tier 2 — trim verbose payload sub-arrays:
+ *   - Any `files: string[]` inside a `warningsDetails.<code>` payload
+ *     that survived the first-pass head-slice. Truncated to a
+ *     deterministic prefix length + `truncated: true` sentinel.
+ *
+ * Tier 3 — drop verbose `warningsDetails` payloads:
+ *   - Sort payloads by serialized size descending; drop the largest
+ *     payloads until the envelope fits OR only a single code's payload
+ *     remains. The bare `warnings[]` array preserves every code name
+ *     so an agent reading the slim envelope still sees the full clip
+ *     chain.
+ *
+ * Tier 4 — drop verbose meta sub-fields:
+ *   - `meta.perRuleCoverage[]` and `meta.scannedBuildArtifacts.*`
+ *     (these are normally dropped by the first-pass slim, but defensive
+ *     for callers whose first-pass slim retained them).
+ *
+ * Tier 5 — drop plan rollups:
+ *   - `plan.topRules`, `plan.findingsByFile`, `plan.topDirectories`,
+ *     `plan.findingsByRule`. Each kept by the first-pass slim at a
+ *     small head-slice; the second pass drops them so the headline
+ *     counters in `plan.summary` / `plan.fixesByClass` are all that
+ *     survive.
+ *
+ * Each tier sets sentinel fields on the response indicating the
+ * second-pass narrow fired (`postFallbackNarrowed: true`,
+ * `postFallbackNarrowSteps: string[]`) so an agent reading the
+ * envelope can distinguish "first-pass slim was enough" from "even
+ * the slim envelope had to be narrowed further" — same doctrine as
+ * `truncated: true` distinguishing density-cap clipped from clean.
+ */
+type NarrowStep = (response: Record<string, unknown>) => Record<string, unknown> | undefined;
+
+/**
+ * Cap on the number of `<code>.files[]` entries that survive the
+ * tier-2 sub-array trim. Each path averages ~50 chars; 3 entries
+ * leaves the agent a deterministic head-slice without paying the
+ * full long-tail cost.
+ */
+const NARROW_DETAIL_FILES_CAP = 3;
+
+/**
+ * Cap on the number of `warningsDetails.<code>` payloads that survive
+ * the tier-3 large-payload drop. The bare warning codes still ship in
+ * `warnings[]` so an agent reading the channel sees the full chain;
+ * only the verbose per-code payloads beyond the cap drop.
+ */
+const NARROW_DETAIL_PAYLOADS_CAP = 5;
+
+/**
+ * Progressive second-pass narrow over a first-pass slim envelope that
+ * itself crossed the host ceiling. Pure: returns a fresh response;
+ * never mutates the input. Sentinel fields on the returned response
+ * (`postFallbackNarrowed: true`, `postFallbackNarrowSteps: string[]`)
+ * surface which tiers fired so an agent reading the slim envelope can
+ * tell first-pass-was-enough from second-pass-was-needed.
+ *
+ * Exported so the call sites (`scan-project-budget.ts`,
+ * `checklist-budget.ts`, etc.) can drive the helper directly when
+ * their slim shape includes pre-known bloat surfaces the generic
+ * heuristics would miss.
+ *
+ * @param slim - The first-pass slim envelope the builder returned.
+ *   Must be a serializable object; this helper does not validate
+ *   shape beyond what the per-tier heuristics target.
+ * @param hardCeilingChars - Ceiling the envelope must clear. The
+ *   helper stops trimming as soon as the serialized length is <=
+ *   ceiling, even if subsequent tiers would have further reduced size.
+ * @returns A fresh response object stamped with the
+ *   `postFallbackNarrowed` / `postFallbackNarrowSteps` sentinel pair.
+ *   When no tier had anything to trim, returns the input unchanged
+ *   except for the sentinel fields (still informative for downstream
+ *   triage: the slim itself was over but no disposable surface
+ *   matched, signal for future heuristic additions).
+ */
+export function narrowSlimEnvelopeIfStillOver(
+  slim: Record<string, unknown>,
+  hardCeilingChars: number,
+): Record<string, unknown> {
+  // Defensive early-out: when the input is already under the ceiling,
+  // there's nothing to narrow. Return the input unchanged (no
+  // `postFallbackNarrowed` sentinel — narrow didn't fire). This guard
+  // exists for direct callers; the canonical entry via
+  // `guardOversizeEnvelope` only reaches here when the slim already
+  // crossed the ceiling.
+  if (serializeLength(slim) <= hardCeilingChars) {
+    return slim;
+  }
+  let current: Record<string, unknown> = { ...slim };
+  const steps: string[] = [];
+  // `measure` reflects the FINAL wire shape (current + the sentinel
+  // fields `stampSentinel` will add). Without the sentinel headroom,
+  // tryStep can declare "fits" mid-narrow when the post-stamp envelope
+  // still crosses the ceiling — observed regression: post-step-3
+  // current was 970 chars (~30 under a 1000 ceiling), but the stamped
+  // response landed at 1121 (~120 over) because the `postFallbackNarrowSteps`
+  // array (3 labels x ~30 chars) plus `postFallbackNarrowed: true`
+  // added ~150 chars on serialization. Measuring against the
+  // already-stamped shape keeps the narrow honest under the ceiling
+  // it advertises.
+  const measure = (): number => serializeLength(stampSentinel(current, steps));
+  const tryStep = (label: string, step: NarrowStep): boolean => {
+    const next = step(current);
+    if (next === undefined) return false;
+    current = next;
+    steps.push(label);
+    return measure() <= hardCeilingChars;
+  };
+  // Tier 1: strip slimTruncations and metaFieldsDropped detail to counts.
+  if (tryStep("slimTruncations_to_count", stripSlimTruncationsDetail)) {
+    return stampSentinel(current, steps);
+  }
+  if (tryStep("metaFieldsDropped_to_count", stripMetaFieldsDroppedDetail)) {
+    return stampSentinel(current, steps);
+  }
+  // Tier 2: trim per-payload `files[]` sub-arrays.
+  if (tryStep("warningsDetails_files_arrays_trimmed", trimWarningsDetailsFileArrays)) {
+    return stampSentinel(current, steps);
+  }
+  // Tier 3: drop verbose warningsDetails payloads beyond top-N.
+  if (tryStep("warningsDetails_payloads_dropped_beyond_top_n", dropLargestWarningsDetailsPayloads)) {
+    return stampSentinel(current, steps);
+  }
+  // Tier 4: drop verbose meta sub-fields.
+  if (tryStep("meta_perRuleCoverage_dropped", dropMetaSubField("perRuleCoverage"))) {
+    return stampSentinel(current, steps);
+  }
+  if (tryStep("meta_scannedBuildArtifacts_dropped", dropMetaSubField("scannedBuildArtifacts"))) {
+    return stampSentinel(current, steps);
+  }
+  // Tier 5: drop plan rollups.
+  if (tryStep("plan_rollups_dropped", dropPlanRollups)) {
+    return stampSentinel(current, steps);
+  }
+  // Out of tiers. Ship what we have — failing loud (over-budget slim)
+  // beats failing silent (no envelope reaches the agent). Per the
+  // OversizeEnvelopeInput.buildSlim doctrine.
+  return stampSentinel(current, steps);
+}
+
+/**
+ * Stamps the second-pass sentinel onto the narrowed response so an
+ * agent reading the envelope sees the chain of trims the helper
+ * applied. Mirrors the `truncated: true` / `filesArrayDropped: true`
+ * sentinels the first-pass slim already emits.
+ */
+function stampSentinel(
+  response: Record<string, unknown>,
+  steps: readonly string[],
+): Record<string, unknown> {
+  return {
+    ...response,
+    postFallbackNarrowed: true as const,
+    postFallbackNarrowSteps: steps,
+  };
+}
+
+function stripSlimTruncationsDetail(
+  response: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const details = response["warningsDetails"];
+  if (details === undefined || details === null || typeof details !== "object") return undefined;
+  const detailsObj = details as Record<string, unknown>;
+  const payload = detailsObj["response_dropped_files_oversize"];
+  if (payload === undefined || payload === null || typeof payload !== "object") return undefined;
+  const payloadObj = payload as Record<string, unknown>;
+  const arr = payloadObj["slimTruncations"];
+  if (!Array.isArray(arr) || arr.length === 0) return undefined;
+  const { slimTruncations: _dropped, ...payloadRest } = payloadObj;
+  return {
+    ...response,
+    warningsDetails: {
+      ...detailsObj,
+      response_dropped_files_oversize: {
+        ...payloadRest,
+        slimTruncationsCount: arr.length,
+      },
+    },
+  };
+}
+
+function stripMetaFieldsDroppedDetail(
+  response: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const details = response["warningsDetails"];
+  if (details === undefined || details === null || typeof details !== "object") return undefined;
+  const detailsObj = details as Record<string, unknown>;
+  const payload = detailsObj["response_dropped_files_oversize"];
+  if (payload === undefined || payload === null || typeof payload !== "object") return undefined;
+  const payloadObj = payload as Record<string, unknown>;
+  const arr = payloadObj["metaFieldsDropped"];
+  if (!Array.isArray(arr) || arr.length === 0) return undefined;
+  const { metaFieldsDropped: _dropped, ...payloadRest } = payloadObj;
+  return {
+    ...response,
+    warningsDetails: {
+      ...detailsObj,
+      response_dropped_files_oversize: {
+        ...payloadRest,
+        metaFieldsDroppedCount: arr.length,
+      },
+    },
+  };
+}
+
+/**
+ * Walks every `warningsDetails[<code>]` payload and head-slices any
+ * `files: string[]` sub-array beyond {@link NARROW_DETAIL_FILES_CAP}.
+ * Stamps `truncated: true` + `totalCount` / `shownCount` on the
+ * trimmed payload so the agent sees the absence-of-rest in-payload
+ * (mirrors `DetailArraySlot.embedInlineSentinel` on the first-pass
+ * slim path in `scan-project-budget.ts`).
+ *
+ * Returns `undefined` when no payload carried a `files[]` over-cap —
+ * the tier has nothing to do.
+ */
+function trimWarningsDetailsFileArrays(
+  response: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const details = response["warningsDetails"];
+  if (details === undefined || details === null || typeof details !== "object") return undefined;
+  const detailsObj = details as Record<string, unknown>;
+  let trimmedAny = false;
+  const nextDetails: Record<string, unknown> = {};
+  for (const [code, payload] of Object.entries(detailsObj)) {
+    if (payload === undefined || payload === null || typeof payload !== "object") {
+      nextDetails[code] = payload;
+      continue;
+    }
+    const payloadObj = payload as Record<string, unknown>;
+    const files = payloadObj["files"];
+    if (!Array.isArray(files) || files.length <= NARROW_DETAIL_FILES_CAP) {
+      nextDetails[code] = payload;
+      continue;
+    }
+    const trimmed = files.slice(0, NARROW_DETAIL_FILES_CAP);
+    nextDetails[code] = {
+      ...payloadObj,
+      files: trimmed,
+      truncated: true as const,
+      totalCount: files.length,
+      shownCount: trimmed.length,
+    };
+    trimmedAny = true;
+  }
+  if (!trimmedAny) return undefined;
+  return { ...response, warningsDetails: nextDetails };
+}
+
+/**
+ * Sorts `warningsDetails` entries by serialized size ascending and
+ * keeps the smallest cap-N payloads (always preserving
+ * `response_dropped_files_oversize`, the load-bearing channel for
+ * this fallback's byte arithmetic). The bare warning codes still
+ * ship in `warnings[]` (callers need not touch that field — only the
+ * per-code payload entries on `warningsDetails` drop).
+ *
+ * Returns `undefined` when `warningsDetails` has <= cap entries —
+ * the tier has nothing to do.
+ */
+function dropLargestWarningsDetailsPayloads(
+  response: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const details = response["warningsDetails"];
+  if (details === undefined || details === null || typeof details !== "object") return undefined;
+  const detailsObj = details as Record<string, unknown>;
+  const entries = Object.entries(detailsObj);
+  if (entries.length <= NARROW_DETAIL_PAYLOADS_CAP) return undefined;
+  const sized = entries.map(([k, v]) => ({ code: k, value: v, size: serializeLength(v) }));
+  sized.sort((a, b) => a.size - b.size);
+  const keptCodes = new Set<string>();
+  for (const entry of sized) {
+    if (keptCodes.size >= NARROW_DETAIL_PAYLOADS_CAP) break;
+    keptCodes.add(entry.code);
+  }
+  keptCodes.add("response_dropped_files_oversize");
+  const nextDetails: Record<string, unknown> = {};
+  for (const [k, v] of entries) {
+    if (keptCodes.has(k)) nextDetails[k] = v;
+  }
+  // Stamp the count of dropped payloads on the oversize warning so
+  // the agent reading the channel sees the gap.
+  const oversize = nextDetails["response_dropped_files_oversize"];
+  if (oversize !== undefined && oversize !== null && typeof oversize === "object") {
+    nextDetails["response_dropped_files_oversize"] = {
+      ...(oversize as Record<string, unknown>),
+      warningsDetailsPayloadsDroppedCount: entries.length - keptCodes.size,
+    };
+  }
+  return { ...response, warningsDetails: nextDetails };
+}
+
+/**
+ * Drops a named sub-field off `response.meta`. Returns `undefined`
+ * when the field is absent (tier has nothing to do).
+ */
+function dropMetaSubField(subFieldName: string): NarrowStep {
+  return (response) => {
+    const meta = response["meta"];
+    if (meta === undefined || meta === null || typeof meta !== "object") return undefined;
+    const metaObj = meta as Record<string, unknown>;
+    if (!(subFieldName in metaObj)) return undefined;
+    const { [subFieldName]: _dropped, ...metaRest } = metaObj;
+    return { ...response, meta: metaRest };
+  };
+}
+
+/**
+ * Drops the verbose plan rollups (`topRules`, `findingsByFile`,
+ * `topDirectories`, `findingsByRule`) off `response.plan`. Leaves the
+ * scalar counters / summary intact — those are load-bearing routing
+ * channels the agent budgets against. Stamps an inline sentinel so
+ * the agent sees the discard.
+ *
+ * Returns `undefined` when none of the named rollups are present
+ * (tier has nothing to do).
+ */
+function dropPlanRollups(response: Record<string, unknown>): Record<string, unknown> | undefined {
+  const plan = response["plan"];
+  if (plan === undefined || plan === null || typeof plan !== "object") return undefined;
+  const planObj = plan as Record<string, unknown>;
+  const rollups = ["topRules", "findingsByFile", "topDirectories", "findingsByRule"];
+  const present = rollups.filter((k) => k in planObj);
+  if (present.length === 0) return undefined;
+  const nextPlan: Record<string, unknown> = { ...planObj };
+  for (const k of present) {
+    delete nextPlan[k];
+  }
+  nextPlan["rollupsDroppedByPostFallbackNarrow"] = present;
+  return { ...response, plan: nextPlan };
 }
 
 /**

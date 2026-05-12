@@ -158,7 +158,14 @@ function buildOversizeScanFileResponse(): Record<string, unknown> {
   };
 }
 
-const HARD_CEILING = 1000;
+// Synthetic ceiling chosen so the first-pass slim fits without
+// triggering the second-pass `narrowSlimEnvelopeIfStillOver` narrow
+// (which converts `metaFieldsDropped: string[]` to
+// `metaFieldsDroppedCount: number` once the first-pass slim itself
+// crosses the host ceiling). This suite pins the first-pass slim's
+// warning-channel reconcile shape; the second-pass narrow is exercised
+// by the unit tests on `tests/unit/mcp/oversize-envelope.test.ts`.
+const HARD_CEILING = 2000;
 
 describe("truncation reporters reconcile across warnings (Q13)", () => {
   it("coverage slim envelope ships no standalone third-reporter scalar (metaFieldDropped removed)", () => {

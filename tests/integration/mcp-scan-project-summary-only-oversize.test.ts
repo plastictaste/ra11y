@@ -115,21 +115,21 @@ describe("scan_project summaryOnly — oversize-envelope guard", () => {
     // Force the slim path with a synthetic ceiling well below the
     // synthetic response size. Same override pattern as
     // `oversize-envelope-cross-surface.test.ts`.
-    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 500 });
+    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 3000 });
     expect(result.truncated).toBe(true);
     const warnings = (result.response["warnings"] as readonly string[]) ?? [];
     expect(warnings).toContain("response_dropped_files_oversize");
     const details = result.response["warningsDetails"] as Record<string, unknown>;
     const payload = details["response_dropped_files_oversize"] as SlimWarningPayload;
     expect(payload).toBeDefined();
-    expect(payload.preDropBytes).toBeGreaterThan(500);
-    expect(payload.hardCeilingBytes).toBe(500);
+    expect(payload.preDropBytes).toBeGreaterThan(3000);
+    expect(payload.hardCeilingBytes).toBe(3000);
     expect(payload.totalFilesWithFindings).toBe(4936);
   });
 
   it("retains the summaryOnly + filesArrayDropped discriminator pair on the slim path", () => {
     const original = buildLargeSummaryResponse();
-    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 500 });
+    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 3000 });
     expect(result.truncated).toBe(true);
     // Discriminator pair MUST survive the slim path so the agent
     // reading the response can still tell summary-only mode from a
@@ -143,7 +143,7 @@ describe("scan_project summaryOnly — oversize-envelope guard", () => {
 
   it("trims verbose plan arrays and reports them in slimTruncations", () => {
     const original = buildLargeSummaryResponse();
-    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 500 });
+    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 3000 });
     expect(result.truncated).toBe(true);
     const plan = result.response["plan"] as Record<string, unknown>;
     // findingsByRule on the input had 80 entries — the slim path
@@ -169,7 +169,7 @@ describe("scan_project summaryOnly — oversize-envelope guard", () => {
       ...buildLargeSummaryResponse(),
       warnings: ["scanned_build_artifacts_present"],
     };
-    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 500 });
+    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 3000 });
     expect(result.truncated).toBe(true);
     const warnings = (result.response["warnings"] as readonly string[]) ?? [];
     expect(warnings).toContain("scanned_build_artifacts_present");
@@ -178,7 +178,7 @@ describe("scan_project summaryOnly — oversize-envelope guard", () => {
 
   it("rewrites nextStep to recommend narrower scope on the slim path", () => {
     const original = buildLargeSummaryResponse();
-    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 500 });
+    const result = applySummaryOnlyBudget({ response: original, hardCeilingChars: 3000 });
     expect(result.truncated).toBe(true);
     // Per "NextStep handoffs must terminate at a narrowing tool" —
     // when the summary envelope itself was over the ceiling, the

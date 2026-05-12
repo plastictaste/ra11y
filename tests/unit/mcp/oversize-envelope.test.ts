@@ -21,6 +21,7 @@ import { describe, expect, it } from "bun:test";
 import {
   guardOversizeEnvelope,
   MINIMUM_ENVELOPE_TARGET_CHARS,
+  narrowSlimEnvelopeIfStillOver,
   type OversizeEnvelopeReason,
   oversizeEnvelopeWarningsField,
   RESPONSE_OVERSIZE_HARD_CEILING_CHARS,
@@ -202,5 +203,326 @@ describe("oversizeEnvelopeWarningsField", () => {
     expect(fragment.warningsDetails.response_token_budget_truncated).toBeDefined();
     expect(fragment.warningsDetails.response_dropped_files_oversize).toBeDefined();
     expect(fragment.warningsDetails.response_dropped_files_oversize?.preDropBytes).toBe(472_000);
+  });
+});
+
+/**
+ * Post-fallback second-pass narrow. When the first-pass slim envelope
+ * itself crosses the host ceiling (canonical regression: a 4966-file
+ * vendor catalog produced a 161 645-char slim against a 96 000-char
+ * `hardCeilingBytes`), the helper drops progressively more disposable
+ * fields until the envelope clears or no further trim path remains.
+ * Per AI-first doctrine "Oversize-success is ambiguous failure" — the
+ * slim envelope is the canonical recovery; if IT transport-fails, the
+ * caller still gets an even-slimmer routable payload rather than the
+ * host dropping the response entirely.
+ */
+describe("narrowSlimEnvelopeIfStillOver — second-pass narrow under ceiling", () => {
+  /**
+   * Builds a synthetic slim envelope sized like the bulk-vendor
+   * catalog regression. The shape mirrors the first-pass slim a
+   * `scan_project` / `checklist` / `coverage` / `summaryOnly` call
+   * would produce on a 4966-file vendor catalog — `plan` rollups
+   * head-sliced, `warningsDetails` payloads carrying per-file
+   * arrays of vendor paths, slim audit fields populated. The
+   * synthetic version serializes to ~160KB so a 96KB ceiling
+   * forces the second-pass narrow.
+   */
+  function buildBulkVendorSlim(): Record<string, unknown> {
+    return {
+      plan: {
+        topRules: Array.from({ length: 10 }, (_, i) => ({
+          ruleId: `rule/cat-${String(i).padStart(2, "0")}`,
+          count: 100 - i,
+        })),
+        findingsByFile: Array.from({ length: 20 }, (_, i) => ({
+          path: `templates/site-${String(i).padStart(3, "0")}/index.html`,
+          count: 20 - i,
+        })),
+        findingsByRule: Object.fromEntries(
+          Array.from({ length: 80 }, (_, i) => [`rule/cat-${String(i).padStart(2, "0")}`, 80 - i]),
+        ),
+        fixesByClass: {
+          mechanical: 266,
+          guidance: 50,
+          runtimeOnly: 0,
+          verifyInSource: 0,
+          suppressRecommended: 343,
+        },
+        summary: { totalFindings: 40_000 },
+      },
+      files: [],
+      truncated: true,
+      totalFilesWithFindings: 4966,
+      filesArrayDropped: true,
+      warnings: [
+        "bulk_catalog_detected",
+        "scanned_minified_file",
+        "scss_unresolved_variables",
+        "vendor_css_dominates_findings",
+        "response_dropped_files_oversize",
+        "response_token_budget_truncated",
+        "parser_bailed_on_non_jsx_in_tsx_route",
+        "scanned_build_artifacts_present",
+      ],
+      warningsDetails: {
+        response_dropped_files_oversize: {
+          preDropBytes: 472_000,
+          hardCeilingBytes: 96_000,
+          droppedFileCountFromRequestedLimit: 4936,
+          totalFilesWithFindings: 4966,
+          slimTruncations: Array.from({ length: 8 }, (_, i) => ({
+            fieldPath: `plan.fan-${i}`,
+            shown: 3,
+            total: 50,
+          })),
+          metaFieldsDropped: Array.from(
+            { length: 20 },
+            (_, i) => `meta_field_${String(i).padStart(2, "0")}`,
+          ),
+        },
+        scanned_minified_file: {
+          files: Array.from(
+            { length: 3000 },
+            (_, i) => `vendor/min/very/long/nested/path-${i}.min.js`,
+          ),
+        },
+        scss_unresolved_variables: {
+          files: Array.from({ length: 500 }, (_, i) => `vendor/scss/path-${i}.scss`),
+        },
+        bulk_catalog_detected: {
+          trigger: "bulk_and_vendor_heavy",
+          durationMs: 5000,
+          filesScanned: 4966,
+          buildArtifactsCount: 4000,
+          suggestedExcludes: ["vendor/**", "dist/**", "node_modules/**", "build/**", "public/**"],
+        },
+        vendor_css_dominates_findings: {
+          count: 3000,
+          topVendorFile: "vendor/big/css.min.css",
+        },
+        parser_bailed_on_non_jsx_in_tsx_route: {
+          files: Array.from({ length: 40 }, (_, i) => `src/legacy/${i}.tsx`),
+        },
+        scanned_build_artifacts_present: { count: 4000 },
+        response_token_budget_truncated: {
+          requestedLimit: 50,
+          effectiveLimit: 1,
+          reason: "token_density",
+          sortOrder: "alphabetical-by-path",
+        },
+      },
+      nextStep: "Scope down further before re-calling.",
+      nextStepStructured: { tool: "propose_config", args: {} },
+      meta: {
+        tool: "scan_project",
+        version: "0.1.0",
+        standards: ["wcag22"],
+        level: "AA",
+        filesScanned: 4966,
+        durationMs: 5500,
+        configSource: null,
+        scanned: { kind: "project", root: "/tmp/x" },
+        rootSource: "cwd",
+        scanMode: "project",
+      },
+    };
+  }
+
+  it("brings a bulk-vendor slim envelope under the host hard ceiling", () => {
+    // Canonical regression — 4966-file vendor catalog where the
+    // first-pass slim envelope itself was 161 645 chars against the
+    // 96 000-char `hardCeilingBytes`. Without the second-pass narrow
+    // the agent would receive only a host transport error, indistinguishable
+    // from "tool never ran." Per AI-first doctrine "Oversize-success
+    // is ambiguous failure," the helper drops progressively more
+    // disposable fields until the envelope clears.
+    const slim = buildBulkVendorSlim();
+    const slimSize = JSON.stringify(slim).length;
+    expect(slimSize).toBeGreaterThan(RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    const narrowed = narrowSlimEnvelopeIfStillOver(slim, RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    const narrowedSize = JSON.stringify(narrowed).length;
+    expect(narrowedSize).toBeLessThanOrEqual(RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    expect(narrowed["postFallbackNarrowed"]).toBe(true);
+    const steps = narrowed["postFallbackNarrowSteps"];
+    expect(Array.isArray(steps)).toBe(true);
+    expect((steps as readonly string[]).length).toBeGreaterThan(0);
+  });
+
+  it("strips slimTruncations detail before dropping payloads (tier 1 cheaper than tier 3)", () => {
+    // Tier ordering invariant: cheaper signal losses (count sentinel
+    // replacing a verbose audit array) come before more aggressive
+    // drops (whole `warningsDetails` payloads). Confirms the doctrine-
+    // aligned "Surface, don't suppress" preference for keeping
+    // load-bearing channels intact when a cheaper trim already fits.
+    const slim = buildBulkVendorSlim();
+    // Real-world ceiling — forces every tier that contributes signal
+    // loss in priority order. Tier 1 (slimTruncations -> count) must
+    // fire BEFORE tier 3 (payload drops), so the steps list orders
+    // slimTruncations_to_count before warningsDetails_payloads_dropped_beyond_top_n
+    // when both fire.
+    const narrowed = narrowSlimEnvelopeIfStillOver(slim, RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    const details = narrowed["warningsDetails"] as Record<string, unknown>;
+    const payload = details["response_dropped_files_oversize"] as Record<string, unknown>;
+    // `slimTruncations` array dropped, replaced by `slimTruncationsCount`.
+    expect(payload).not.toHaveProperty("slimTruncations");
+    expect(payload["slimTruncationsCount"]).toBe(8);
+    const steps = narrowed["postFallbackNarrowSteps"] as readonly string[];
+    expect(steps).toContain("slimTruncations_to_count");
+    // Tier 1 fires before any tier 3 (payload-drop) step.
+    const tier1Index = steps.indexOf("slimTruncations_to_count");
+    const tier3Index = steps.indexOf("warningsDetails_payloads_dropped_beyond_top_n");
+    if (tier3Index !== -1) {
+      expect(tier1Index).toBeLessThan(tier3Index);
+    }
+  });
+
+  it("emits postFallbackNarrowed sentinel pair so agents can branch on second-pass fallback", () => {
+    // Sentinel pair per "Truncated containers must rename or sentinel,
+    // not retain" — the first-pass slim already ships `truncated: true`
+    // + `filesArrayDropped: true` to distinguish density-cap from
+    // clean; the second-pass narrow adds `postFallbackNarrowed: true`
+    // + `postFallbackNarrowSteps[]` so an agent reading the envelope
+    // can tell first-pass-was-enough from second-pass-was-needed and
+    // see exactly which tiers fired.
+    const slim = buildBulkVendorSlim();
+    const narrowed = narrowSlimEnvelopeIfStillOver(slim, 50_000);
+    expect(narrowed["postFallbackNarrowed"]).toBe(true);
+    const steps = narrowed["postFallbackNarrowSteps"];
+    expect(Array.isArray(steps)).toBe(true);
+    // Stable identifier vocabulary so downstream consumers can grep.
+    // Tokens are mixedCase_snake_case (`slimTruncations_to_count`) —
+    // not strictly snake_case because the source-of-truth field paths
+    // they echo (e.g. `slimTruncations` on warningsDetails) are
+    // already camelCase per the wire-shape contract.
+    for (const step of steps as readonly string[]) {
+      expect(typeof step).toBe("string");
+      expect(step).toMatch(/^[a-zA-Z][a-zA-Z0-9_]+$/);
+    }
+  });
+
+  it("trims warningsDetails files[] arrays beyond a small head-slice cap (tier 2)", () => {
+    // `scanned_minified_file.files` carries 3000 vendor paths in the
+    // synthetic fixture — ~120KB by itself. The tier-2 trim head-
+    // slices to a small deterministic prefix with an inline
+    // `truncated: true` + `totalCount` / `shownCount` sentinel so the
+    // agent reading the payload directly sees the absence-of-rest.
+    const slim = buildBulkVendorSlim();
+    const narrowed = narrowSlimEnvelopeIfStillOver(slim, RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    const details = narrowed["warningsDetails"] as Record<string, unknown>;
+    const payload = details["scanned_minified_file"] as Record<string, unknown> | undefined;
+    if (payload !== undefined) {
+      const files = payload["files"];
+      expect(Array.isArray(files)).toBe(true);
+      // Head-sliced — original was 3000 entries.
+      expect((files as readonly string[]).length).toBeLessThan(3000);
+      if (payload["truncated"] === true) {
+        expect(payload["totalCount"]).toBe(3000);
+      }
+    }
+  });
+
+  it("returns the input unchanged when already under ceiling (defensive direct-caller path)", () => {
+    // Direct-caller guard: the canonical entry through
+    // `guardOversizeEnvelope` only reaches this helper when the slim
+    // already crossed the ceiling, but the function is exported so
+    // callers can drive it directly. When the input fits, return
+    // unchanged — no `postFallbackNarrowed` sentinel (narrow didn't
+    // fire).
+    const small = { plan: {}, files: [], meta: { tool: "scan_project" } };
+    const result = narrowSlimEnvelopeIfStillOver(small, 10_000);
+    expect(result).toBe(small);
+    expect(result).not.toHaveProperty("postFallbackNarrowed");
+  });
+
+  it("does not mutate the input slim envelope", () => {
+    const slim = buildBulkVendorSlim();
+    const snapshot = JSON.stringify(slim);
+    narrowSlimEnvelopeIfStillOver(slim, RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
+    expect(JSON.stringify(slim)).toBe(snapshot);
+  });
+});
+
+/**
+ * Pin the integration: `guardOversizeEnvelope` re-measures the slim
+ * envelope and routes through the second-pass narrow when the slim
+ * itself is over the ceiling. Closes Q20-MIN-ENVELOPE-OVERSIZE: per
+ * AI-first doctrine "Oversize-success is ambiguous failure" the slim
+ * path's own transport-fail is the same silent-miss as the original
+ * envelope's; the second-pass narrow keeps the response routable.
+ */
+describe("guardOversizeEnvelope — second-pass narrow when slim itself is over", () => {
+  it("activates the narrow when slim builder returns an over-ceiling envelope", () => {
+    const original = {
+      plan: { foo: "bar" },
+      files: Array.from({ length: 100 }, (_, i) => ({
+        path: `f-${i}`,
+        findings: [{ message: "x".repeat(500) }],
+      })),
+    };
+    // Slim builder returns an envelope that's STILL over the ceiling
+    // — simulates the bulk-vendor regression where the slim shape
+    // can't fit under the host wall on its own.
+    const overSlim = {
+      plan: { topRules: Array.from({ length: 10 }, (_, i) => ({ ruleId: `r/${i}`, count: i })) },
+      warningsDetails: {
+        response_dropped_files_oversize: {
+          preDropBytes: 100_000,
+          hardCeilingBytes: 1000,
+          droppedFileCountFromRequestedLimit: 100,
+          totalFilesWithFindings: 100,
+          slimTruncations: Array.from({ length: 8 }, (_, i) => ({
+            fieldPath: `f-${i}`,
+            shown: 3,
+            total: 50,
+          })),
+          metaFieldsDropped: Array.from({ length: 20 }, (_, i) => `m_${i}`),
+        },
+        bloat: { files: Array.from({ length: 200 }, (_, i) => `vendor/very/long/path/${i}.min.js`) },
+      },
+      meta: { tool: "scan_project" },
+    };
+    const overSlimSize = JSON.stringify(overSlim).length;
+    expect(overSlimSize).toBeGreaterThan(1000);
+    const result = guardOversizeEnvelope({
+      original,
+      hardCeilingChars: 1000,
+      totalFilesWithFindings: 100,
+      buildSlim: () => overSlim,
+    });
+    expect(result.triggered).toBe(true);
+    expect(result.narrowed).toBe(true);
+    const finalSize = JSON.stringify(result.response).length;
+    expect(finalSize).toBeLessThanOrEqual(1000);
+    expect((result.response as { postFallbackNarrowed?: boolean }).postFallbackNarrowed).toBe(true);
+  });
+
+  it("skips the second-pass narrow when the first-pass slim already fits", () => {
+    // When the slim builder returns an under-ceiling envelope, the
+    // helper passes it through without invoking the second-pass
+    // narrow. `narrowed` stays `undefined` on the result so consumers
+    // can branch on `triggered && !narrowed` for "slim fired but no
+    // second pass needed."
+    const original = {
+      plan: { foo: "bar" },
+      files: Array.from({ length: 100 }, (_, i) => ({
+        path: `f-${i}`,
+        findings: [{ message: "x".repeat(500) }],
+      })),
+    };
+    const tinySlim = {
+      plan: {},
+      files: [],
+      meta: { tool: "scan_project" },
+    };
+    const result = guardOversizeEnvelope({
+      original,
+      hardCeilingChars: 1000,
+      totalFilesWithFindings: 100,
+      buildSlim: () => tinySlim,
+    });
+    expect(result.triggered).toBe(true);
+    expect(result.narrowed).toBeUndefined();
+    expect(result.response).toBe(tinySlim);
   });
 });
