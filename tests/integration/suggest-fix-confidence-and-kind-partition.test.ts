@@ -210,12 +210,15 @@ describe("suggest_fix.kind partitions into the rule's fixClass lane", () => {
       // Triggers `navigation/href-empty-fragment` (verify-in-source,
       // prose-only → kind: guidance).
       '  <a href="">Forgot password?</a>',
-      // Triggers `semantics/heading-hierarchy` missing-h1 emit with
+      // Triggers `semantics/heading-hierarchy` `reportMissingH1`
+      // (partial-shape conceded-N/A branch — primary sentence opens
+      // with "A document without an <h1>…", no positive-edit verb):
       // suppress-flavored prose → fixClass: suppress-recommended,
-      // kind: suppress-recommended.
-      "  <div>one</div>",
-      "  <div>two</div>",
-      "  <div>three</div>",
+      // kind: suppress-recommended. Single non-h1 heading, no
+      // landmark / list / body-script ensures `isFullPageBody`
+      // returns false so the rule routes through the conceded path,
+      // not `reportMissingH1OnFullPage` ("Insert an <h1>…").
+      "  <h2>section</h2>",
       "</body>",
       "</html>",
     ].join("\n"),

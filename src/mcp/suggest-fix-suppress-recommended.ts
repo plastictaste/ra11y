@@ -23,16 +23,24 @@
  * "guidance"` gives the agent a structural lever it can branch on
  * without parsing English.
  *
- * Detection predicate:
- *   The suggestion prose mentions `ra11y-disable` (the canonical pragma
- *   token) OR includes the cue phrase "suppress with" — both signals
- *   the rule itself emits when its evidence model concedes the
- *   criterion may not apply on this substrate. We deliberately do NOT
- *   match generic phrases like "verify" / "if this is" because those
- *   ride on plenty of legitimate `kind: "guidance"` returns where the
- *   recommended fix is a real edit, just one the agent has to verify
- *   first. The token `ra11y-disable` is provable from rule emission
- *   sites and never fires accidentally.
+ * Detection predicate (two-leg AND):
+ *   (a) The suggestion prose mentions `ra11y-disable` or the cue
+ *       phrase "suppress with" — necessary signal that the rule
+ *       itself names the source-level disable pragma.
+ *   (b) The suggestion's primary sentence does NOT lead with a
+ *       positive-edit verb (`Add`, `Insert`, `Drop`, `Set`,
+ *       `Change`, `Replace`, etc.). When the primary advice IS a
+ *       concrete edit and the pragma reference is only a trailing
+ *       fallback ("Add aria-haspopup… If this control is not
+ *       actually a dropdown trigger, suppress with…"), the
+ *       declared lane is honest — the rule advanced a real
+ *       remediation. The historical bug: the predicate was leg (a)
+ *       alone, so positive-edit suggestions with pragma fallbacks
+ *       misrouted to `kind: "suppress-recommended"` and the
+ *       per-class plan tally lied about the per-call shape.
+ *   The full string predicate lives in
+ *   `src/utils/suppression-flavored-suggestion.ts`; this module
+ *   re-exports it for the per-call routing site.
  *
  * Pure functions, no I/O. Lives in its own file so
  * `tool-suggest-fix-routing.ts` and `tool-suggest-fix-fixpaths.ts` can

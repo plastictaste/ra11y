@@ -158,8 +158,13 @@ describe("suggest_fix kind: 'guidance' does not ship boilerplate pragma alternat
     // the legitimate suppress-recommended channel.
     const sr: FileSpec = {
       filePath: "/suppress-recommended-fixture.html",
-      source:
-        '<!doctype html><html lang="en"><body><div>one</div><div>two</div><div>three</div></body></html>',
+      // Body with one non-h1 heading, no landmark / list /
+      // body-script — fails every `looksLikeFullPage` branch, so
+      // `heading-hierarchy` routes through `reportMissingH1` (the
+      // partial-shape conceded-N/A path) whose suggestion does NOT
+      // lead with a positive-edit verb. The tightened
+      // suppress-recommended predicate fires.
+      source: '<!doctype html><html lang="en"><body><h2>section</h2></body></html>',
     };
     const built = { filePath: sr.filePath, ...parseFile(sr) };
     const { result } = runScan({

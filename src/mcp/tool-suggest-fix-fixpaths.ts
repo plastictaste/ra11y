@@ -246,10 +246,13 @@ export function buildFixPathsOutcome(inputs: BuildFixPathsOutcomeInputs): Record
   const guidanceAlternatives =
     buildGuidanceAlternatives(alternatives) ??
     buildPerCallEnrichmentAlternatives(match.location.filePath, match.location.line);
-  // When the rule's suggestion text concedes via "suppress with …
-  // ra11y-disable …" prose, the honest discriminator is
-  // `kind: "suppress-recommended"` — same parity as the prose-only
-  // fallback lane in `tool-suggest-fix-routing.ts`. The caveat field
+  // When the rule's suggestion text genuinely concedes via
+  // "suppress with … ra11y-disable …" prose AND the primary
+  // sentence does NOT lead with a positive-edit verb, the honest
+  // discriminator is `kind: "suppress-recommended"` — same parity
+  // as the prose-only fallback lane in `tool-suggest-fix-routing.ts`.
+  // A primary sentence leading "Add aria-haspopup…" with a trailing
+  // pragma fallback stays on its declared lane. The caveat field
   // (template-directive poison drop, widen-anchor non-unique) still
   // rides since both signals are independent of the suppress framing.
   if (isSuppressionFlavoredSuggestion(explanation)) {

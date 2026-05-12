@@ -46,22 +46,25 @@ function parseFile(spec: FileSpec): { source: string; ast: Ast } {
 }
 
 describe("suggest_fix: kind: 'suppress-recommended' discriminator", () => {
-  // The `semantics/heading-hierarchy` rule's missing-h1 emit on a
-  // headingless body adds an "If this page is a fragment …, suppress
-  // with <!-- ra11y-disable wcag22:1.3.1 -->" tail to its suggestion
-  // prose. That's the canonical shape the new discriminator partitions
-  // away from generic `kind: "guidance"`: the rule conceded the
-  // criterion may not apply on this substrate and points the agent
-  // at the source-level disable.
+  // The `semantics/heading-hierarchy` rule's `reportMissingH1` emit
+  // (the partial-shape / no-full-page branch) opens with prose that
+  // does NOT lead with a positive-edit verb — "A document without an
+  // <h1> loses the single top-of-document landmark AT relies on;
+  // verify… If this page is a fragment or layout intentionally
+  // rendered inside a parent with its own <h1>, suppress with
+  // <!-- ra11y-disable wcag22:1.3.1 -->." That's the canonical
+  // conceded-N/A shape the discriminator partitions away from
+  // generic `kind: "guidance"`: the rule's evidence model can't
+  // honestly establish whether the page owns the document envelope,
+  // so the dismissal path is the source-level disable.
   const file: FileSpec = {
     filePath: "/page.html",
-    // Page-shape: ≥3 visible descendants under <body> with no
-    // headings and no landmark — `looksLikeFullPage` returns true via
-    // the empty-structural-shell branch and `heading-hierarchy` emits
-    // its missing-h1-on-full-page variant whose suggestion text
-    // names the source-level disable pragma.
-    source:
-      '<!doctype html><html lang="en"><body><div>one</div><div>two</div><div>three</div></body></html>',
+    // Body shape: one non-h1 heading and no landmark / list /
+    // body-level script. Fails every `looksLikeFullPage` branch, so
+    // `fullPageMissingH1` stays false and the rule routes through
+    // `reportMissingH1` (the partial-shape branch) — the canonical
+    // conceded-N/A suggestion.
+    source: '<!doctype html><html lang="en"><body><h2>section</h2></body></html>',
   };
 
   function findHeadingHierarchyViolation(): Violation {
@@ -142,5 +145,99 @@ describe("suggest_fix: kind: 'suppress-recommended' discriminator", () => {
     // explanation prose so the agent can verify the reason for the
     // discriminator at a glance.
     expect(primary.explanation).toContain("ra11y-disable");
+  });
+});
+
+describe("suggest_fix: kind discriminator does NOT route positive-edit suggestions to suppress-recommended", () => {
+  // Doctrine — `docs/kb/architecture/ai-first-consumer.md`
+  // "Suppress-recommended is a distinct discriminator from guidance":
+  // the predicate must require BOTH (a) the prose names the pragma
+  // token AND (b) the primary sentence does NOT lead with a
+  // positive-edit verb. Rules whose suggestion text leads with an
+  // imperative edit ("Add aria-haspopup…", "Insert an <h1>…",
+  // "Drop the redundant role") but trails with a pragma fallback
+  // ("If this control is not actually a dropdown trigger, suppress
+  // with…") must stay on their declared lane — the primary advice
+  // is the edit, not the dismissal. The historical loose predicate
+  // mis-routed these suggestions to `kind: "suppress-recommended"`
+  // and made the per-class plan tally lie about the per-call shape.
+
+  // `semantics/heading-hierarchy` `reportMissingH1OnFullPage` —
+  // body has ≥3 visible descendants with no headings → page-shape
+  // routes through the empty-structural-shell branch and the rule
+  // emits "Insert an <h1> at the top of <body>… If this page is
+  // rendered inside a parent layout that supplies the title,
+  // suppress with <!-- ra11y-disable wcag22:1.3.1 -->." First
+  // sentence leads with "Insert" → positive edit verb → must NOT
+  // be suppress-recommended.
+  it("`heading-hierarchy` 'Insert an <h1>…' (with pragma fallback) routes to guidance, not suppress-recommended", () => {
+    const fileSpec: FileSpec = {
+      filePath: "/page.html",
+      source:
+        '<!doctype html><html lang="en"><body><div>one</div><div>two</div><div>three</div></body></html>',
+    };
+    const built = { filePath: fileSpec.filePath, ...parseFile(fileSpec) };
+    const { result } = runScan({
+      standards: BUILTIN_STANDARDS,
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files: [built],
+    });
+    const match = result.violations.find(
+      (v) => v.ruleId === "semantics/heading-hierarchy" && /^Insert /.test(v.suggestion ?? ""),
+    );
+    if (!match) {
+      throw new Error("expected a heading-hierarchy violation with 'Insert an <h1>…' suggestion");
+    }
+    expect(match.suggestion).toContain("ra11y-disable");
+    expect(match.suggestion).toMatch(/^Insert /);
+    const payload = buildSuggestFixPayload({
+      ruleId: match.ruleId,
+      line: match.location.line,
+      match: match as Violation,
+      sourceContext: fileSpec.source,
+      source: fileSpec.source,
+      filePath: fileSpec.filePath,
+    });
+    expect(payload["kind"]).not.toBe("suppress-recommended");
+  });
+
+  // `aria/dropdown-toggle-triple-aria-missing` — Bootstrap-style
+  // toggle missing aria-haspopup + aria-controls. Suggestion leads
+  // with "Add aria-haspopup=\"menu\" and aria-controls=\"<menu-id>\""
+  // and trails with "If this control is not actually a dropdown
+  // trigger, suppress with <!-- ra11y-disable
+  // aria/dropdown-toggle-triple-aria-missing -->". The primary
+  // advice IS a real attribute edit; only the fallback names the
+  // pragma. Must NOT route to suppress-recommended.
+  it("`aria/dropdown-toggle-triple-aria-missing` 'Add aria-haspopup…' routes to guidance lane, not suppress-recommended", () => {
+    const fileSpec: FileSpec = {
+      filePath: "/toggle.html",
+      source: '<button data-toggle="dropdown">Menu</button>',
+    };
+    const built = { filePath: fileSpec.filePath, ...parseFile(fileSpec) };
+    const { result } = runScan({
+      standards: BUILTIN_STANDARDS,
+      rules: BUILTIN_RULES,
+      enabled: ["wcag22"],
+      files: [built],
+    });
+    const match = result.violations.find(
+      (v) => v.ruleId === "aria/dropdown-toggle-triple-aria-missing",
+    );
+    if (!match) throw new Error("expected an aria/dropdown-toggle-triple-aria-missing violation");
+    // Sanity: rule's suggestion really does carry both a leading
+    // positive-edit verb AND a pragma fallback.
+    expect(match.suggestion).toMatch(/^Add /);
+    expect(match.suggestion).toContain("ra11y-disable");
+    const payload = buildSuggestFixPayload({
+      ruleId: match.ruleId,
+      line: match.location.line,
+      match: match as Violation,
+      sourceContext: fileSpec.source,
+      source: fileSpec.source,
+      filePath: fileSpec.filePath,
+    });
+    expect(payload["kind"]).not.toBe("suppress-recommended");
   });
 });

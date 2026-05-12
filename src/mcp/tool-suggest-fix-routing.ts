@@ -185,7 +185,11 @@ function routeMatchedFallback(args: {
   // disable pragma ("suppress with <!-- ra11y-disable wcag22:1.3.1 -->"),
   // the honest discriminator is `kind: "suppress-recommended"` — not
   // `kind: "guidance"` (which advertises a real fix direction). The
-  // detection fires on the literal `ra11y-disable` token; see
+  // tightened predicate requires BOTH the pragma token AND a primary
+  // sentence that does NOT lead with a positive-edit verb, so rules
+  // whose suggestion leads "Add aria-haspopup… If this control is
+  // not actually a dropdown trigger, suppress with…" stay on their
+  // declared lane (the primary advice is the edit). See
   // `suggest-fix-suppress-recommended.ts` for the predicate doctrine.
   if (isSuppressionFlavoredSuggestion(explanation)) {
     return buildSuppressRecommendedOutcome({

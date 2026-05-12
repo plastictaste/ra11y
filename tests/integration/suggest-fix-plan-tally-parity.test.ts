@@ -205,8 +205,13 @@ describe("suggest_fix per-call shape vs plan.fixesByClass.mechanical tally", () 
       readonly withInlineEdit?: true;
     }): string {
       const baseSource = '<button role="button">Save</button>';
+      // The suppression-flavored probe must clear the tightened
+      // predicate: pragma token present AND primary sentence does NOT
+      // lead with a positive-edit verb. "A document without…verify…
+      // If this is X, suppress with…" mirrors the canonical
+      // `heading-hierarchy` `reportMissingH1` conceded-N/A shape.
       const suggestion = args.suppressionFlavored
-        ? "Drop the redundant role. If this page is rendered inside a parent layout, suppress with <!-- ra11y-disable wcag22:1.3.1 -->"
+        ? "A document without an <h1> loses the single top-of-document landmark; verify the page has a designated main heading. If this page is a fragment, suppress with <!-- ra11y-disable wcag22:1.3.1 -->."
         : "Adapt the surrounding code per the rule's guidance.";
       const violation: Violation = {
         ruleId: "test/probe",

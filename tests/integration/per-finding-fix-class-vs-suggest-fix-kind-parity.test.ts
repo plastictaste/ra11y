@@ -52,16 +52,21 @@ function parseFile(spec: FileSpec): { source: string; ast: Ast } {
 }
 
 describe("per-finding fixClass agrees with suggest_fix.kind on (rule, file, line)", () => {
-  // The `semantics/heading-hierarchy` rule's missing-h1 emit on a
-  // headingless body adds an "If this page is a fragment …, suppress
-  // with <!-- ra11y-disable wcag22:1.3.1 -->" tail to its suggestion
-  // prose. That's the canonical case where the per-call shape returns
-  // `kind: "suppress-recommended"` and the per-finding `fixClass`
-  // must match.
+  // The `semantics/heading-hierarchy` rule's `reportMissingH1`
+  // (partial-shape branch) opens with "A document without an <h1>
+  // loses the single top-of-document landmark; verify… If this page
+  // is a fragment or layout intentionally rendered inside a parent
+  // with its own <h1>, suppress with <!-- ra11y-disable wcag22:1.3.1 -->."
+  // No positive-edit verb leads the primary sentence → the tightened
+  // suppress-recommended predicate fires and `kind:
+  // "suppress-recommended"` rides with `fixClass: "suppress-recommended"`.
   const file: FileSpec = {
     filePath: "/page.html",
-    source:
-      '<!doctype html><html lang="en"><body><div>one</div><div>two</div><div>three</div></body></html>',
+    // Body with a single non-h1 heading and no landmark / list /
+    // body-script — fails every `looksLikeFullPage` branch, so the
+    // rule routes through `reportMissingH1` rather than the
+    // `reportMissingH1OnFullPage` "Insert an <h1>…" branch.
+    source: '<!doctype html><html lang="en"><body><h2>section</h2></body></html>',
   };
 
   it("a suppression-flavored finding stamps fixClass: 'suppress-recommended' AND suggest_fix.kind: 'suppress-recommended'", () => {

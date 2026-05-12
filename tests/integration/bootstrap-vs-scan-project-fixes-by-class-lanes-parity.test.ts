@@ -97,12 +97,17 @@ describe("bootstrap vs scan_project: fixesByClass lane-key set parity", () => {
   it("every lane key in scan_project.plan.fixesByClass is present in bootstrap.scan.fixesByClass on identical cwd", async () => {
     await withScratch(async (dir) => {
       // Page-shape that triggers the heading-hierarchy
-      // missing-h1-on-full-page variant — the suggestion prose names
-      // the `ra11y-disable` pragma, which routes the finding into the
-      // suppress-recommended lane (the lane the regression dropped).
+      // `reportMissingH1` (partial-shape conceded-N/A branch — body
+      // with one non-h1 heading and no landmark / list / body-script
+      // fails every `looksLikeFullPage` branch). The suggestion's
+      // primary sentence opens with "A document without an <h1>…"
+      // and names the `ra11y-disable` pragma, so the tightened
+      // suppress-recommended predicate fires and the finding routes
+      // into the suppress-recommended lane (the lane the regression
+      // dropped).
       await writeFile(
         posixJoin(dir, "page.html"),
-        '<!doctype html><html lang="en"><body><div>one</div><div>two</div><div>three</div></body></html>\n',
+        '<!doctype html><html lang="en"><body><h2>section</h2></body></html>\n',
       );
       const scanRes = await callScanProject(dir);
       const bootRes = await callBootstrap(dir);
