@@ -1,0 +1,103 @@
+// Synthetic SCSS mirroring the Bootstrap `_placeholders.scss` shape
+// (multi-block sibling preamble, a sibling-`@include` and nested-`&`
+// preamble, then a `.placeholder-glow { .placeholder { ... } }` block
+// whose nested selector hosts the `animation` declaration).
+//
+// Captures the multi-block-sibling-preamble parser shape that
+// produced line-drift on more than one CSS-rule-emitting rule —
+// the line counter / `walkCssRules` traversal was shared, so a
+// regression in the parser would propagate to every rule that
+// emits at `cssRule.loc.start.line`. The fix that landed the
+// preserve-source-line-position pass for the SCSS flatten phase
+// should propagate to `motion/pause-stop-hide` on this shape; this
+// fixture pins that property so a future parser change cannot
+// silently drift the cited line again.
+
+@mixin gradient-bg($color) {
+  background-color: $color;
+}
+
+.foo-up {
+  .foo-menu[data-popper] {
+    top: auto;
+    bottom: 100%;
+  }
+  .foo-toggle {
+    @include caret(up);
+  }
+}
+
+.foo-end {
+  .foo-menu[data-popper] {
+    top: 0;
+    right: auto;
+    left: 100%;
+  }
+  .foo-toggle {
+    @include caret(end);
+    &::after {
+      vertical-align: 0;
+    }
+  }
+}
+
+.foo-start {
+  .foo-menu[data-popper] {
+    top: 0;
+    right: 100%;
+    left: auto;
+  }
+  .foo-toggle {
+    @include caret(start);
+    &::before {
+      vertical-align: 0;
+    }
+  }
+}
+
+.foo-item {
+  color: red;
+  &:hover,
+  &:focus {
+    color: blue;
+  }
+
+  &.active,
+  &:active {
+    color: green;
+  }
+}
+
+.placeholder {
+  position: relative;
+  display: inline-block;
+  min-height: 1em;
+  vertical-align: middle;
+  cursor: wait;
+  background-color: currentcolor;
+  opacity: 0.5;
+}
+
+.placeholder-wave {
+  -webkit-mask-image: linear-gradient(130deg, #000 55%, rgba(0, 0, 0, 0.8) 75%, #000 95%);
+  -webkit-animation: placeholder-wave 2s linear infinite;
+  animation: placeholder-wave 2s linear infinite;
+}
+
+@keyframes placeholder-wave {
+  100% {
+    -webkit-mask-position: -200% 0%;
+  }
+}
+
+.placeholder-glow {
+  .placeholder {
+    animation: placeholder-glow 2s ease-in-out infinite;
+  }
+}
+
+@keyframes placeholder-glow {
+  50% {
+    opacity: 0.2;
+  }
+}
