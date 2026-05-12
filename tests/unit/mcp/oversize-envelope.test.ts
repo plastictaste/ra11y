@@ -478,7 +478,9 @@ describe("guardOversizeEnvelope — second-pass narrow when slim itself is over"
           })),
           metaFieldsDropped: Array.from({ length: 20 }, (_, i) => `m_${i}`),
         },
-        bloat: { files: Array.from({ length: 200 }, (_, i) => `vendor/very/long/path/${i}.min.js`) },
+        bloat: {
+          files: Array.from({ length: 200 }, (_, i) => `vendor/very/long/path/${i}.min.js`),
+        },
       },
       meta: { tool: "scan_project" },
     };
