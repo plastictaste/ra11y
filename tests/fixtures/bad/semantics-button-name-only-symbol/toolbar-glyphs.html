@@ -1,0 +1,20 @@
+<!--
+  Bad: a toolbar where each control is a single glyph button — common
+  shape on media players, photo editors, kanban boards. AT announces
+  each as the codepoint's Unicode-category name ("plus sign", "hyphen
+  minus", "question mark") or skips them entirely; sighted users see
+  Add / Remove / Help icons, AT users hear "button button button".
+  Expect: rule semantics/button-name-only-symbol fires once per glyph
+  button (4 violations total).
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <div role="toolbar" aria-label="Item actions">
+      <button type="button">+</button>
+      <button type="button">-</button>
+      <button type="button">?</button>
+      <button type="button">…</button>
+    </div>
+  </body>
+</html>

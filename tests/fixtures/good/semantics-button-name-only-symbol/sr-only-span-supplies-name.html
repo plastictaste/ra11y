@@ -1,0 +1,20 @@
+<!--
+  Good: close button where the glyph stays as visible decoration but a
+  visually-hidden span carries the real accessible name ("Close"). AT
+  walks the subtree, finds "Close" in the visible-to-AT text, and the
+  button-name-only-symbol predicate exits because the visible name now
+  contains a real word (the aria-hidden glyph contributes nothing).
+  Expect: rule semantics/button-name-only-symbol stays silent.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <div role="dialog" aria-labelledby="dialog-title">
+      <h2 id="dialog-title">Confirm</h2>
+      <button type="button" class="close">
+        <span aria-hidden="true">×</span>
+        <span class="sr-only">Close</span>
+      </button>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+<!--
+  Good: media-player control buttons carrying glyphs visually but with
+  aria-label attributes that supply the real accessible name. AT reads
+  the aria-label ("Play" / "Pause" / "Skip back" / "Skip forward") and
+  the user knows what each button does; the glyph is sighted decoration.
+  Expect: rule semantics/button-name-only-symbol stays silent on every
+  button.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <div role="toolbar" aria-label="Playback">
+      <button type="button" aria-label="Skip back">⏮</button>
+      <button type="button" aria-label="Play">⏵</button>
+      <button type="button" aria-label="Pause">⏸</button>
+      <button type="button" aria-label="Skip forward">⏭</button>
+    </div>
+  </body>
+</html>

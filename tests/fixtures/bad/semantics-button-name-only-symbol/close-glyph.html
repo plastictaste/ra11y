@@ -1,0 +1,18 @@
+<!--
+  Bad: a "close" button whose accessible name is the multiplication sign
+  (×, U+00D7) used as a sighted-only convention for dismissal. AT
+  announces "multiplication sign" or skips it; the button carries no
+  usable action cue. Common in modal headers, toast dismissals, tag chips.
+  Expect: rule semantics/button-name-only-symbol fires once at severity
+  "warning"; suggestion text mentions Close as the canonical aria-label.
+-->
+<!doctype html>
+<html lang="en">
+  <body>
+    <div role="dialog" aria-labelledby="dialog-title">
+      <h2 id="dialog-title">Confirm action</h2>
+      <button type="button" class="close">×</button>
+      <p>Are you sure you want to proceed?</p>
+    </div>
+  </body>
+</html>

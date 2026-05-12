@@ -100,6 +100,7 @@ import { rule as draggableNoKeyboardAlt } from "./pointer/draggable-no-keyboard-
 import { rule as stretchedLinkMultipleInContainer } from "./pointer/stretched-link-multiple-in-container.ts";
 import { rule as targetSize } from "./pointer/target-size.ts";
 import { rule as targetSizeEnhanced } from "./pointer/target-size-enhanced.ts";
+import { rule as buttonNameOnlySymbol } from "./semantics/button-name-only-symbol.ts";
 import { rule as buttonName } from "./semantics/button-name.ts";
 import { rule as duplicateLandmarkUnlabeled } from "./semantics/duplicate-landmark-unlabeled.ts";
 import { rule as emptyHeading } from "./semantics/empty-heading.ts";
@@ -135,6 +136,7 @@ export const BUILTIN_RULES: readonly Rule[] = [
   autocompleteMissing,
   autoplaySound,
   buttonName,
+  buttonNameOnlySymbol,
   cancellation,
   characterShortcuts,
   charsetFirst1024Bytes,
@@ -253,6 +255,7 @@ export {
   autocompleteMissing,
   autoplaySound,
   buttonName,
+  buttonNameOnlySymbol,
   cancellation,
   characterShortcuts,
   charsetFirst1024Bytes,
