@@ -288,13 +288,26 @@ describe("narrowSlimEnvelopeIfStillOver — second-pass narrow under ceiling", (
           ),
         },
         scanned_minified_file: {
-          files: Array.from(
-            { length: 3000 },
+          // Default-trim envelope: `count` is honest about the full
+          // 3000-file population; `top` is the 10-entry head-slice
+          // mirror of `scanned_build_artifacts_present`.
+          count: 3000,
+          topPath: "vendor/min/very/long/nested/path-0.min.js",
+          top: Array.from(
+            { length: 10 },
             (_, i) => `vendor/min/very/long/nested/path-${i}.min.js`,
           ),
         },
         scss_unresolved_variables: {
-          files: Array.from({ length: 500 }, (_, i) => `vendor/scss/path-${i}.scss`),
+          // 4000 vendor SCSS paths — ~210KB by itself; this is the
+          // load-bearing fan-out the second-pass narrow needs to
+          // trigger now that `scanned_minified_file`'s default
+          // envelope ships a 10-entry `top` head-slice rather than
+          // a linear `files` array.
+          files: Array.from(
+            { length: 4000 },
+            (_, i) => `vendor/scss/very/long/nested/path-${i}.scss`,
+          ),
         },
         bulk_catalog_detected: {
           trigger: "bulk_and_vendor_heavy",
@@ -407,24 +420,29 @@ describe("narrowSlimEnvelopeIfStillOver — second-pass narrow under ceiling", (
     }
   });
 
-  it("trims warningsDetails files[] arrays beyond a small head-slice cap (tier 2)", () => {
-    // `scanned_minified_file.files` carries 3000 vendor paths in the
-    // synthetic fixture — ~120KB by itself. The tier-2 trim head-
-    // slices to a small deterministic prefix with an inline
-    // `truncated: true` + `totalCount` / `shownCount` sentinel so the
-    // agent reading the payload directly sees the absence-of-rest.
+  it("preserves the default-trimmed scanned_minified_file payload across the tier-2 narrow", () => {
+    // The default-trim envelope ships `{ count, topPath, top: [10] }`
+    // — same shape `scanned_build_artifacts_present` uses. The tier-2
+    // narrow does not touch this payload (no linear-growth `files`
+    // array exists on the slot); the `count` stays honest about the
+    // full population regardless of how many entries the original
+    // scan classified. Closes the ship-policy drift between the
+    // paired warnings (the broader code trimmed to 10 inline, the
+    // narrower code shipped the full list).
     const slim = buildBulkVendorSlim();
     const narrowed = narrowSlimEnvelopeIfStillOver(slim, RESPONSE_OVERSIZE_HARD_CEILING_CHARS);
     const details = narrowed["warningsDetails"] as Record<string, unknown>;
     const payload = details["scanned_minified_file"] as Record<string, unknown> | undefined;
+    expect(payload).toBeDefined();
     if (payload !== undefined) {
-      const files = payload["files"];
-      expect(Array.isArray(files)).toBe(true);
-      // Head-sliced — original was 3000 entries.
-      expect((files as readonly string[]).length).toBeLessThan(3000);
-      if (payload["truncated"] === true) {
-        expect(payload["totalCount"]).toBe(3000);
-      }
+      expect(payload["count"]).toBe(3000);
+      expect(typeof payload["topPath"]).toBe("string");
+      const top = payload["top"];
+      expect(Array.isArray(top)).toBe(true);
+      expect((top as readonly string[]).length).toBeLessThanOrEqual(10);
+      // No legacy `files` field — the trimmed envelope never carries
+      // the linear-growth array.
+      expect(payload).not.toHaveProperty("files");
     }
   });
 

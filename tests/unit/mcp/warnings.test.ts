@@ -4153,28 +4153,70 @@ describe("computeScanWarnings — scss_unresolved_variables", () => {
   });
 });
 
-// parallel coverage for the
-// `scanned_minified_file` code's `warningsDetails` payload + the
-// payload-vs-binary contract. Mirrors the `scss_unresolved_variables`
-// pattern because both codes carry the same shape (`{ files: string[] }`)
-// and the same emission predicate ("non-empty caller-supplied list").
+// Parallel coverage for the `scanned_minified_file` code's
+// `warningsDetails` payload + the payload-vs-binary contract. The
+// payload is the trimmed `{ count, topPath, top: [10] }` envelope —
+// same shape the larger-population sibling
+// `scanned_build_artifacts_present` ships — so the two paired warnings
+// stay in lockstep regardless of input size. The predicate gate stays
+// on `scannedMinifiedFiles.length > 0`; the payload reads off the
+// companion `scannedMinifiedFilesSummary` input the caller computes
+// alongside.
 describe("computeScanWarnings — scanned_minified_file payload + warningsField wiring", () => {
-  it("emits the file list under warningsDetails.scanned_minified_file (sorted alphabetically for deterministic wire output)", () => {
+  it("emits the trimmed summary under warningsDetails.scanned_minified_file (count + topPath + top: [10])", () => {
     const fields = warningsField({
       filesScanned: 5,
       rootSource: "explicit",
       configSource: "/proj/ra11y.config.ts",
       analysisCoverage: undefined,
       filesByExtension: { ".css": 3 },
-      // Intentionally unsorted on input so the test locks the
-      // call-site sort that keeps the wire shape stable across
-      // discovery-order changes.
-      scannedMinifiedFiles: ["dist/jquery.min.js", "dist/bootstrap.min.css"],
+      scannedMinifiedFiles: ["dist/bootstrap.min.css", "dist/jquery.min.js"],
+      scannedMinifiedFilesSummary: {
+        count: 2,
+        topPath: "dist/bootstrap.min.css",
+        top: ["dist/bootstrap.min.css", "dist/jquery.min.js"],
+      },
     });
     expect(fields.warnings).toContain("scanned_minified_file");
     expect(fields.warningsDetails?.scanned_minified_file).toEqual({
-      files: ["dist/bootstrap.min.css", "dist/jquery.min.js"],
+      count: 2,
+      topPath: "dist/bootstrap.min.css",
+      top: ["dist/bootstrap.min.css", "dist/jquery.min.js"],
     });
+  });
+
+  it("trims the `top` head-slice to 10 paths regardless of input size (mirrors scanned_build_artifacts_present envelope)", () => {
+    // Build a 767-file scenario like the canonical bulk-vendor corpus
+    // — the closure's load-bearing case. The summary the caller threads
+    // already carries the head-slice; the warnings module ships it
+    // verbatim. The wire payload stays under 1.5KB regardless of input
+    // count because `top` is capped at the same SCANNED_BUILD_ARTIFACTS_TOP_CAP
+    // value (10) the sibling code uses.
+    const allFiles = Array.from({ length: 767 }, (_, i) => `vendor/${String(i).padStart(3, "0")}.min.js`);
+    const top10 = allFiles.slice(0, 10);
+    const fields = warningsField({
+      filesScanned: 800,
+      rootSource: "explicit",
+      configSource: "/proj/ra11y.config.ts",
+      analysisCoverage: undefined,
+      filesByExtension: { ".js": 767 },
+      scannedMinifiedFiles: allFiles,
+      scannedMinifiedFilesSummary: {
+        count: 767,
+        topPath: allFiles[0],
+        top: top10,
+      },
+    });
+    expect(fields.warnings).toContain("scanned_minified_file");
+    const payload = fields.warningsDetails?.scanned_minified_file as
+      | { count: number; topPath?: string; top?: readonly string[] }
+      | undefined;
+    expect(payload?.count).toBe(767);
+    expect(payload?.topPath).toBe("vendor/000.min.js");
+    expect(payload?.top?.length).toBe(10);
+    // The full identity surface is NOT inline — agents read
+    // meta.scannedBuildArtifacts.classified[] for the long-tail.
+    expect(payload as Record<string, unknown>).not.toHaveProperty("files");
   });
 
   it("omits warningsDetails.scanned_minified_file when the code did not fire (payload-vs-binary contract)", () => {
@@ -4194,10 +4236,10 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
     // Closes the payload-bearing codes whose summarizer falls
     // through on degenerate input get the truncation sentinel
     // rather than the binary `{}` marker. `scanned_minified_file`
-    // is typed as payload-bearing; an empty `scannedMinifiedFiles`
-    // array is still a degenerate input from the summarizer's
-    // perspective (it returns `undefined`) — the sentinel stamp is
-    // the honest disambiguation.
+    // is typed as payload-bearing; an empty / undefined
+    // `scannedMinifiedFilesSummary` is still a degenerate input from
+    // the summarizer's perspective (it returns `undefined`) — the
+    // sentinel stamp is the honest disambiguation.
     const details = computeScanWarningDetails(["scanned_minified_file"], {
       filesScanned: 5,
       rootSource: "explicit",
@@ -4206,7 +4248,6 @@ describe("computeScanWarnings — scanned_minified_file payload + warningsField 
       filesByExtension: undefined,
       scannedMinifiedFiles: [],
     });
-    // Read through `Record<string, unknown>` so the assertion
     // Read through `Record<string, unknown>` so the assertion
     // accepts the truncation-sentinel shape that the dispatch's
     // fall-through path stamps for payload-bearing codes whose

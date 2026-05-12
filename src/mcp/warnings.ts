@@ -1330,8 +1330,49 @@ export interface WarningInputs {
    * unreliable). Omit (or pass `undefined`) when no scanned file
    * matched. Empty array is treated identically to `undefined` —
    * neither fires the code.
+   *
+   * Drives the predicate only — the wire payload is built off the
+   * companion {@link scannedMinifiedFilesSummary} input so the
+   * `warningsDetails.scanned_minified_file` slot ships the trimmed
+   * `{ count, topPath, top }` shape regardless of input size. Without
+   * the summary, the bare code still fires off this list but the
+   * payload falls through to the schema-discipline sentinel.
    */
   readonly scannedMinifiedFiles?: readonly string[];
+  /**
+   * Optional summary of the minified-file subset for the
+   * `warningsDetails.scanned_minified_file` payload. Mirrors the
+   * shape of {@link scannedBuildArtifactsSummary} so the two paired
+   * codes ship structurally aligned payloads — a 767-file minified
+   * subset on a bulk-vendor corpus trims to `{ count: 767, topPath,
+   * top: [10 paths] }` at default verbosity rather than a flat
+   * 767-path inline list (~72KB). The agent reads the `count` for
+   * scope, `topPath` for the first triage pivot, and the head-slice
+   * `top` for the dismissal-pattern read; full per-file identity for
+   * agent-decided per-file scoping lives on
+   * `meta.scannedBuildArtifacts.classified[]` (filtered by the two
+   * minified-shaped `BuildArtifactClassification` variants —
+   * `definite-min-infix` and `likely-minified-by-line-stats`).
+   *
+   * Closes the cross-warning ship-policy drift the larger-population
+   * sibling `scanned_build_artifacts_present` already addressed
+   * (1199-file corpus trims to `top: [10]` ~1.4KB) — both paired
+   * codes now mirror the same envelope shape.
+   *
+   * `count` is the total minified-file count; `topPath` (when
+   * present) names the lexicographically-first file the agent uses
+   * as a first triage pivot; `top` (when present) is the head-slice
+   * of up to {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP} paths. Omit
+   * (pass `undefined`) when the caller did not run the detector —
+   * the bare code still fires off
+   * {@link scannedMinifiedFiles}.length > 0 but the payload falls
+   * through to the schema-discipline sentinel.
+   */
+  readonly scannedMinifiedFilesSummary?: {
+    readonly count: number;
+    readonly topPath?: string;
+    readonly top?: readonly string[];
+  };
   /**
    * Q-SHARED-META-ARRAY-BUDGET-CAP: dotted field paths of every sibling
    * meta array (`scannedBuildArtifacts.classified`,
@@ -2591,44 +2632,39 @@ export interface ScanWarningDetails {
     readonly files: readonly string[];
   };
   /**
-   * payload for
-   * `scanned_minified_file`. Carries the deterministic-sorted list of
-   * scanned files classified with one of the two minified-shaped
+   * payload for `scanned_minified_file`. Carries the trimmed summary
+   * of scanned files classified with one of the two minified-shaped
    * `BuildArtifactClassification` variants (`definite-min-infix` or
-   * `likely-minified-by-line-stats`) so an agent can
-   * branch on identity (which files? how many?) without re-running the
-   * build-artifact classifier or descending into
-   * `meta.scannedBuildArtifacts` to filter by reason. The list is the
-   * full identity surface — same pattern as `scss_unresolved_variables`
-   * — because the per-file decision (skip findings? widen scope?
-   * suppress? raise an exclude?) needs the path. Pairs with the broader
+   * `likely-minified-by-line-stats`). Mirrors the shape of
+   * `scanned_build_artifacts_present` so the two paired codes ship
+   * structurally aligned payloads at default verbosity — `count`
+   * names the dominant-noise scope, `topPath` names the first triage
+   * pivot, `top` is a head-slice of up to
+   * {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP} `string` paths the agent
+   * reads to recognize the dismissal pattern in one pass without
+   * descending into `meta.scannedBuildArtifacts`. The long-tail
+   * identity (>10 paths) rides on
+   * `meta.scannedBuildArtifacts.classified[]` filtered by the two
+   * minified-shaped classifications — same agent-side join already
+   * documented on the broader `scanned_build_artifacts_present` code.
+   *
+   * The previous shape shipped a flat `files: readonly string[]` that
+   * grew linearly with input (~72KB / 767 paths on a bulk-vendor
+   * corpus) while the larger-population sibling
+   * `scanned_build_artifacts_present` trimmed to 10. The closure
+   * unifies the ship policy: both codes trim to `count + topPath +
+   * top: [10]` at default verbosity. Pairs with the broader
    * `scanned_build_artifacts_present` payload's `count` + `topPath`:
    * the broader code reports total artifact mass, this narrower code
    * names the minified subset whose findings are nearly always
-   * unreliable.
-   *
-   * Inline truncation sentinel: when the slim envelope head-slices
-   * `files` to its deterministic prefix (see
-   * {@link import("./scan-project-budget.ts").SLIM_FILE_LIST_CAP}), the
-   * trimmed payload carries `truncated: true` + `totalCount` +
-   * `shownCount` at the same depth as `files` so the agent reading the
-   * array directly sees the absence-of-rest without cross-referencing
-   * `warningsDetails.response_dropped_files_oversize.slimTruncations`.
-   * Closes the "Truncated containers must rename or sentinel, not retain"
-   * doctrine bullet at the per-payload depth — `slimTruncations` is the
-   * canonical envelope-level reporter, the inline sentinel is the
-   * per-payload echo (per "Truncation reporters must reconcile across
-   * warnings": multiple channels are fine when they reconcile by
-   * reference rather than by independent enumeration; the agent reading
-   * either depth gets the same totals). All three sentinel fields are
-   * present-when-meaningful: omitted via conditional spread when the
-   * `files` array shipped untrimmed (under-cap or non-slim path).
+   * unreliable. `count` always carries; `topPath` and `top` are
+   * present-when-meaningful (omitted via conditional spread when the
+   * caller did not thread a summary).
    */
   readonly scanned_minified_file?: {
-    readonly files: readonly string[];
-    readonly truncated?: true;
-    readonly totalCount?: number;
-    readonly shownCount?: number;
+    readonly count: number;
+    readonly topPath?: string;
+    readonly top?: readonly string[];
   };
   /**
    * payload for
@@ -5436,6 +5472,7 @@ type ScanMetaWarningArgs = {
   readonly metaArrayTruncatedFields?: readonly string[];
   readonly scssUnresolvedVariableFiles?: readonly string[];
   readonly scannedMinifiedFiles?: readonly string[];
+  readonly scannedMinifiedFilesSummary?: WarningInputs["scannedMinifiedFilesSummary"];
   readonly bulkCatalogDetection?: import("./bulk-catalog.ts").BulkCatalogDetection;
   readonly animationLibraryGuardCandidates?: WarningInputs["animationLibraryGuardCandidates"];
   /**
@@ -5565,6 +5602,7 @@ const PASSTHROUGH_OPTIONAL_KEYS = [
   "metaArrayTruncatedFields",
   "scssUnresolvedVariableFiles",
   "scannedMinifiedFiles",
+  "scannedMinifiedFilesSummary",
   "bulkCatalogDetection",
   "animationLibraryGuardCandidates",
   "scannedBuildArtifactsAllFiles",
@@ -5689,7 +5727,7 @@ function buildScanWarningDetailsDispatch(
     },
     {
       code: "scanned_minified_file",
-      summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFiles),
+      summarize: () => summarizeScannedMinifiedFiles(inputs.scannedMinifiedFilesSummary),
     },
     ...templateLiteralDispatchRows(inputs),
     {
@@ -6264,19 +6302,32 @@ function summarizeScssUnresolvedVariables(
 
 /**
  * Builds the `scanned_minified_file` payload from the caller-supplied
- * file list. Returns `undefined` when the list is missing or empty so
- * the dispatch table conditional-spreads the entry away
- * (payload-vs-binary
- * contract). The list is sorted alphabetically here so the wire shape
- * stays deterministic across runs even if the call-site iteration
- * order changes (the build-artifact pipeline emits in discovery order,
- * which is not guaranteed stable across filesystems).
+ * summary. Returns `undefined` when the summary is omitted (caller
+ * didn't run the minified-subset summarizer — the bare code can still
+ * fire off {@link WarningInputs.scannedMinifiedFiles} being non-empty
+ * when a downstream tool only knows the predicate) or when `count`
+ * is zero (defensive — if `count` is zero the predicate that fires
+ * the code shouldn't have triggered, so the payload would be a
+ * degenerate shape).
+ *
+ * Mirrors {@link summarizeScannedBuildArtifacts} so the two paired
+ * codes ship structurally aligned payloads at default verbosity:
+ * `count` always rides, `topPath` and `top` are present-when-
+ * meaningful via conditional spread. The caller is responsible for
+ * computing the head-slice (cap at {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP})
+ * and the lexicographic sort — this helper is a pure shape-builder
+ * with no decisions of its own.
  */
 function summarizeScannedMinifiedFiles(
-  files: WarningInputs["scannedMinifiedFiles"],
+  summary: WarningInputs["scannedMinifiedFilesSummary"],
 ): NonNullable<ScanWarningDetails["scanned_minified_file"]> | undefined {
-  if (files === undefined || files.length === 0) return undefined;
-  return { files: [...files].sort() };
+  if (summary === undefined) return undefined;
+  if (summary.count <= 0) return undefined;
+  return {
+    count: summary.count,
+    ...(summary.topPath === undefined ? {} : { topPath: summary.topPath }),
+    ...(summary.top === undefined || summary.top.length === 0 ? {} : { top: summary.top }),
+  };
 }
 
 /**

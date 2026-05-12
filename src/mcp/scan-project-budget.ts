@@ -604,9 +604,13 @@ function buildSlimScanProjectEnvelope(args: {
   //     entries (~60–120 chars/entry → 2.4KB).
   //   - `warningsDetails.bulk_catalog_detected.suggestedExcludes`
   //     carries scanner-derived globs, one per top vendor basename.
-  //   - `warningsDetails.scanned_minified_file.files` and
-  //     `warningsDetails.scss_unresolved_variables.files` carry full
-  //     identity arrays (one path per qualifying file).
+  //   - `warningsDetails.scss_unresolved_variables.files` carries the
+  //     full identity array (one path per qualifying file). The
+  //     paired `scanned_minified_file` warning was previously here
+  //     too on a `files: string[]` slot; that warning's default
+  //     payload now ships a build-artifact-mirrored
+  //     `{ count, topPath, top: [10] }` envelope that doesn't grow
+  //     linearly with input, so the slim head-slice was retired.
   // Each gets head-sliced to a small deterministic prefix; the
   // pre-trim length lands in
   // `warningsDetails.response_dropped_files_oversize.slimTruncations`
@@ -839,13 +843,18 @@ const SLIM_SUGGESTED_EXCLUDES_CAP = 5;
 
 /**
  * Head-slice cap for verbose-string-list payloads on warning details
- * (e.g. `scanned_minified_file.files`, `scss_unresolved_variables.files`)
- * on the slim envelope. These arrays grow linearly with input — one
- * entry per qualifying file — and cross the slim budget on the same
- * bulk-vendor corpora that triggered the slim path in the first place.
- * The top 3 paths give the agent a deterministic head-slice as a
- * pivot ("scope the next call around these files") while the
- * `slimTruncations` payload names the original size.
+ * (e.g. `scss_unresolved_variables.files`) on the slim envelope. These
+ * arrays grow linearly with input — one entry per qualifying file —
+ * and cross the slim budget on the same bulk-vendor corpora that
+ * triggered the slim path in the first place. The top 3 paths give
+ * the agent a deterministic head-slice as a pivot ("scope the next
+ * call around these files") while the `slimTruncations` payload names
+ * the original size. The previous companion slot
+ * `scanned_minified_file.files` was retired once that warning's
+ * default envelope shape switched to a build-artifact-mirrored
+ * `{ count, topPath, top: [10] }` payload that subsumes the slim
+ * head-slice; see the `SLIM_DETAIL_SLOTS` docstring for the
+ * rationale.
  */
 const SLIM_FILE_LIST_CAP = 3;
 
@@ -900,14 +909,17 @@ function slimPlanForSlimEnvelope(plan: Record<string, unknown>): {
 
 /**
  * Head-slices verbose string arrays on `warningsDetails` payloads. The
- * three known offenders today —
+ * remaining offenders today —
  * `bulk_catalog_detected.suggestedExcludes`,
- * `scanned_minified_file.files`,
- * `scss_unresolved_variables.files` — all carry one entry per
+ * `scss_unresolved_variables.files` — each carry one entry per
  * qualifying file/glob and grow linearly with input on bulk-vendor
  * corpora. Each gets head-sliced to a small deterministic prefix; the
  * original length lands in the returned `truncations` so the agent
- * sees the gap.
+ * sees the gap. The previous companion slot
+ * `scanned_minified_file.files` was retired once that warning's
+ * default envelope shape switched to a build-artifact-mirrored
+ * `{ count, topPath, top: [10] }` payload — the default trim subsumes
+ * the slim head-slice that lived here previously.
  *
  * Pure: returns a new details object only when at least one array was
  * trimmed; otherwise the input reference rides through and
@@ -939,26 +951,6 @@ interface DetailArraySlot {
   readonly arrayKey: string;
   readonly cap: number;
   readonly fieldPath: string;
-  /**
-   * When `true`, the slim trim embeds an inline truncation sentinel
-   * (`truncated: true`, `totalCount`, `shownCount`) at the same depth as
-   * the trimmed array so an agent reading the payload directly sees the
-   * absence-of-rest without cross-referencing the envelope-level
-   * `slimTruncations` channel. Pairs with the canonical `slimTruncations`
-   * reporter rather than replacing it (per the AI-first doctrine
-   * "Truncation reporters must reconcile across warnings"). The two
-   * channels reconcile by reference: `slimTruncations.shown/total`
-   * mirror the inline `shownCount/totalCount` for the same field path.
-   *
-   * Today set only on `scanned_minified_file` — the canonical regression
-   * the inline sentinel was added to close (a bulk-vendor scan shipping
-   * 3 of 767 minified file paths under `files` with no inline marker).
-   * `bulk_catalog_detected.suggestedExcludes` and
-   * `scss_unresolved_variables.files` keep envelope-level reporting only
-   * pending separate doctrine review — opt-in rather than blanket
-   * rollout to keep the wire shape change narrow.
-   */
-  readonly embedInlineSentinel?: true;
 }
 
 /**
@@ -968,6 +960,15 @@ interface DetailArraySlot {
  * names the dotted `fieldPath` that lands in `slimTruncations` so the
  * agent reading the warning channel can find the trimmed array
  * unambiguously.
+ *
+ * The `scanned_minified_file` slot was retired once the warnings
+ * module started shipping a default-trimmed `{ count, topPath,
+ * top: [10] }` envelope (mirroring the larger-population sibling
+ * `scanned_build_artifacts_present`) rather than a linear-growth
+ * `files: readonly string[]` array. The default trim subsumes the
+ * slim-only head-slice that lived here previously — no per-payload
+ * inline sentinel is needed because the wire shape never carries
+ * the long-tail array on this slot in the first place.
  */
 const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
   {
@@ -975,13 +976,6 @@ const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
     arrayKey: "suggestedExcludes",
     cap: SLIM_SUGGESTED_EXCLUDES_CAP,
     fieldPath: "warningsDetails.bulk_catalog_detected.suggestedExcludes",
-  },
-  {
-    code: "scanned_minified_file",
-    arrayKey: "files",
-    cap: SLIM_FILE_LIST_CAP,
-    fieldPath: "warningsDetails.scanned_minified_file.files",
-    embedInlineSentinel: true,
   },
   {
     code: "scss_unresolved_variables",
@@ -997,14 +991,10 @@ const SLIM_DETAIL_SLOTS: readonly DetailArraySlot[] = [
  * summary when the cap fired, `undefined` when the array was absent or
  * already under-cap. Defensive narrowing on every step — the input
  * payload shapes are union-typed and may legitimately omit either the
- * outer code or the inner array.
- *
- * When `slot.embedInlineSentinel === true`, the trimmed payload also
- * carries `truncated: true` + `totalCount` + `shownCount` at the same
- * depth as the trimmed array — see {@link DetailArraySlot.embedInlineSentinel}
- * for the rationale. Sentinel fields ride alongside the existing
- * `slimTruncations` envelope-level summary; the two channels reconcile
- * by reference (same shown/total pair).
+ * outer code or the inner array. The envelope-level `slimTruncations`
+ * is the canonical reporter; per-payload inline sentinels are no longer
+ * used here because the default-trim envelope already covers the
+ * load-bearing case (see the `SLIM_DETAIL_SLOTS` docstring).
  */
 function trimStringArrayOnDetailSlot(
   next: Record<string, unknown>,
@@ -1018,9 +1008,6 @@ function trimStringArrayOnDetailSlot(
   const trimmedPayload: Record<string, unknown> = {
     ...(payload as Record<string, unknown>),
     [slot.arrayKey]: trimmed,
-    ...(slot.embedInlineSentinel === true
-      ? { truncated: true as const, totalCount: arr.length, shownCount: trimmed.length }
-      : {}),
   };
   next[slot.code] = trimmedPayload;
   return { fieldPath: slot.fieldPath, shown: trimmed.length, total: arr.length };

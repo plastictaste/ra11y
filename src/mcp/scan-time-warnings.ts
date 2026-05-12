@@ -263,6 +263,7 @@ interface DerivedBuildArtifactSignals {
   readonly perFileFindings: readonly PerFileFindings[];
   readonly vendorCssNoise: WarningInputs["vendorCssNoise"] | undefined;
   readonly scannedMinifiedFiles: readonly string[];
+  readonly scannedMinifiedFilesSummary: WarningInputs["scannedMinifiedFilesSummary"];
   readonly animationLibraryGuardCandidates: ReturnType<
     typeof computeAnimationLibraryGuardCandidates
   >;
@@ -329,6 +330,15 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
         e.classification === "likely-minified-by-line-stats",
     )
     .map((e) => e.path);
+  // Trim the minified subset to `{ count, topPath, top: [10] }` for the
+  // `warningsDetails.scanned_minified_file` wire payload — same envelope
+  // shape the larger-population sibling `scanned_build_artifacts_present`
+  // already trims to (see `scannedBuildArtifactsSummary` below). The full
+  // identity surface for per-file decisions lives on
+  // `meta.scannedBuildArtifacts.classified[]` filtered by the two
+  // minified-shaped classifications, so the agent retains the path-by-path
+  // surface without inflating the warnings channel.
+  const scannedMinifiedFilesSummary = buildScannedMinifiedFilesSummary(scannedMinifiedFiles);
 
   const animationLibraryGuardCandidates = computeAnimationLibraryGuardCandidates({
     vendorLibraries,
@@ -470,6 +480,7 @@ function deriveBuildArtifactSignals(inputs: ScanTimeWarningInputs): DerivedBuild
     perFileFindings,
     vendorCssNoise,
     scannedMinifiedFiles,
+    scannedMinifiedFilesSummary,
     animationLibraryGuardCandidates,
     scannedBuildArtifactsSummary,
     scannedBuildArtifactsAllFiles,
@@ -716,6 +727,9 @@ function buildWarningsFieldInputs(
     ...(derived.scannedMinifiedFiles.length === 0
       ? {}
       : { scannedMinifiedFiles: derived.scannedMinifiedFiles }),
+    ...(derived.scannedMinifiedFilesSummary === undefined
+      ? {}
+      : { scannedMinifiedFilesSummary: derived.scannedMinifiedFilesSummary }),
     ...(derived.bulkCatalogDetection === undefined
       ? {}
       : { bulkCatalogDetection: derived.bulkCatalogDetection }),
@@ -965,4 +979,44 @@ function animationLibraryGuardSuggestion(args: {
     return `Wrap the \`${args.library}\` import (e.g. \`@import\`, \`<link rel="stylesheet">\`, or a bundler-side import) in \`@media (prefers-reduced-motion: no-preference) { ... }\`. One wrap addresses all ${args.findingCount} \`${args.ruleId}\` findings on this file.`;
   }
   return `Consider adding the \`${args.library}\` distribution to the \`exclude\` glob in \`ra11y.config.ts\`, or scoping it under a source-level disable pragma. One change addresses all ${args.findingCount} \`${args.ruleId}\` findings on this file.`;
+}
+
+/**
+ * Builds the `scannedMinifiedFilesSummary` summary surfaced on
+ * `warningsDetails.scanned_minified_file` from the deterministic-sorted
+ * list of minified-classified scanned paths. Mirrors the trim shape
+ * already used for the larger-population sibling
+ * `scanned_build_artifacts_present` (`count` + `topPath` + `top: [10]`)
+ * so the two paired warning payloads ship structurally aligned envelopes
+ * at default verbosity. Without this trim, a bulk-vendor corpus's
+ * minified subset (767+ paths) inflates the warnings channel by ~72KB
+ * relative to the 1.4KB the broader artifact code ships on a larger
+ * 1199-file population.
+ *
+ * `count` is the total minified-file count; `topPath` (when defined)
+ * is the lexicographically-first path the agent uses as a first triage
+ * pivot; `top` (when non-empty) is the head-slice of up to
+ * {@link SCANNED_BUILD_ARTIFACTS_TOP_CAP} paths. Returns `undefined`
+ * when the input list is empty so the `warningsField` summarizer falls
+ * through to the schema-discipline sentinel (the bare code may still
+ * fire if a downstream tool threaded `scannedMinifiedFiles` without the
+ * summary, but the predicate gate elsewhere ensures both inputs come
+ * from the same caller).
+ *
+ * The sort runs here once so callers don't need to pre-sort. The
+ * build-artifact pipeline emits in discovery order, which is not
+ * guaranteed stable across filesystems — the sort ensures the wire
+ * shape stays deterministic across runs.
+ */
+export function buildScannedMinifiedFilesSummary(
+  files: readonly string[],
+): WarningInputs["scannedMinifiedFilesSummary"] {
+  if (files.length === 0) return undefined;
+  const sorted = [...files].sort();
+  const top = sorted.slice(0, SCANNED_BUILD_ARTIFACTS_TOP_CAP);
+  return {
+    count: sorted.length,
+    ...(sorted[0] === undefined ? {} : { topPath: sorted[0] }),
+    ...(top.length === 0 ? {} : { top }),
+  };
 }

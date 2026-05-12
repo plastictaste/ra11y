@@ -79,6 +79,7 @@ import {
 } from "./scan-project-review-candidates.ts";
 import { buildSummaryOnlyResponse } from "./scan-project-summary-only.ts";
 import {
+  buildScannedMinifiedFilesSummary,
   combineTemplateLiteralFiles,
   computeAnimationLibraryGuardCandidates,
   computeVendorCssNoise,
@@ -1246,6 +1247,17 @@ function buildBaseWarningsForScanProject(args: {
         e.classification === "likely-minified-by-line-stats",
     )
     .map((e) => e.path);
+  // Trim the minified subset to the same `count + topPath + top: [10]`
+  // envelope shape the larger-population sibling
+  // `scanned_build_artifacts_present` already trims to. Without this
+  // trim, a bulk-vendor corpus's minified subset (767+ paths) would
+  // inflate the warnings channel by ~72KB relative to the 1.4KB the
+  // broader artifact code ships on a larger 1199-file population —
+  // an inconsistent ship policy across paired warnings. The full
+  // identity surface for per-file decisions lives on
+  // `meta.scannedBuildArtifacts.classified[]` filtered by the two
+  // minified-shaped `BuildArtifactClassification` variants.
+  const scannedMinifiedFilesSummary = buildScannedMinifiedFilesSummary(scannedMinifiedFiles);
   // cross-reference the
   // banner-detected vendor libraries with per-rule per-file finding
   // counts. Empty when no vendor library was identified OR no
@@ -1341,6 +1353,7 @@ function buildBaseWarningsForScanProject(args: {
     ...(vendorCssNoise === undefined ? {} : { vendorCssNoise }),
     ...(scssUnresolvedVariableFiles.length === 0 ? {} : { scssUnresolvedVariableFiles }),
     ...(scannedMinifiedFiles.length === 0 ? {} : { scannedMinifiedFiles }),
+    ...(scannedMinifiedFilesSummary === undefined ? {} : { scannedMinifiedFilesSummary }),
     // detector ran upstream at the
     // call site (it needs `meta.durationMs` + `meta.filesScanned` +
     // the build-artifact entries) and resolved to either an

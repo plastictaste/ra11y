@@ -164,13 +164,16 @@ describe("scan_project: violations split by scan kind", () => {
   });
 
   // end-to-end confirmation
-  // that scan_project emits the new `scanned_minified_file` warning
-  // code (and its paired `warningsDetails.scanned_minified_file:
-  // { files: [paths] }` payload) when at least one classified-minified
-  // file is in the scan set. Pairs with `scanned_build_artifacts_present`
-  // — that label fires for any artifact reason; this finer label names
-  // the minified subset specifically so an agent can triage findings on
-  // minified bytes without rereading every flagged file. The fixture
+  // that scan_project emits the `scanned_minified_file` warning code
+  // (and its paired `warningsDetails.scanned_minified_file:
+  // { count, topPath, top: [10] }` summary payload) when at least one
+  // classified-minified file is in the scan set. Pairs with
+  // `scanned_build_artifacts_present` — that label fires for any
+  // artifact reason; this finer label names the minified subset
+  // specifically so an agent can triage findings on minified bytes
+  // without rereading every flagged file. The payload trims to the
+  // same envelope shape the broader sibling already used so both
+  // warnings stay in lockstep regardless of corpus size. The fixture
   // here uses a `.min.` infix (path-deterministic minified marker) so
   // the assertion locks against the cheaper of the two minified
   // predicate paths in `classifyBuildArtifact`.
@@ -197,18 +200,29 @@ describe("scan_project: violations split by scan kind", () => {
       // The new code fires alongside the broader presence label.
       expect(warnings).toContain("scanned_minified_file");
       expect(warnings).toContain("scanned_build_artifacts_present");
-      // The paired payload carries the file identity so the agent can
-      // act on the per-file decision without descending into
-      // `meta.scannedBuildArtifacts`.
+      // The paired payload carries the trimmed `{ count, topPath,
+      // top: [10] }` summary (mirrors `scanned_build_artifacts_present`)
+      // so the agent reads the dismissal pivot without descending into
+      // `meta.scannedBuildArtifacts`. The full per-file identity for
+      // per-file decisions remains on
+      // `meta.scannedBuildArtifacts.classified[]` filtered by the
+      // minified-shaped classifications.
       const details = body["warningsDetails"] as
-        | { scanned_minified_file?: { files: readonly string[] } }
+        | {
+            scanned_minified_file?: {
+              count: number;
+              topPath?: string;
+              top?: readonly string[];
+            };
+          }
         | undefined;
       expect(details?.scanned_minified_file).toBeDefined();
-      const files = details?.scanned_minified_file?.files ?? [];
-      expect(files.length).toBeGreaterThan(0);
+      const payload = details?.scanned_minified_file;
+      expect(payload?.count).toBeGreaterThan(0);
       // Path is repo-relative POSIX (the build-artifact pipeline
       // emits the same path shape the rest of the response uses).
-      expect(files.some((p) => p.endsWith("vendor.min.css"))).toBe(true);
+      expect(payload?.topPath?.endsWith("vendor.min.css")).toBe(true);
+      expect(payload?.top?.some((p) => p.endsWith("vendor.min.css"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
