@@ -70,6 +70,12 @@ import { defineCandidateFinder } from "../../api/plugin.ts";
 import { getHtmlAttribute, hasHtmlAttribute, walkHtmlElements } from "../../engine/ast-helpers.ts";
 import type { HtmlDocument, HtmlElement } from "../../types/ast.ts";
 import type { ProjectFile, ReviewCandidate } from "../../types/review.ts";
+import {
+  collectJsIgnoredRanges,
+  isOffsetInJsIgnoredRange,
+  type JsIgnoredRange,
+  regexHasExecutableMatch,
+} from "../../utils/js-source-ranges.ts";
 
 const CRITERION_IDS = ["wcag22:2.1.1", "wcag21:2.1.1", "wcag22:4.1.2", "wcag21:4.1.2"] as const;
 
@@ -159,13 +165,26 @@ function collectCandidatesForJsFile(
   htmlFiles: readonly ProjectFile[],
   out: ReviewCandidate[],
 ): void {
-  const sites = collectClickAttachments(jsFile);
+  const ignoredRanges = collectJsIgnoredRanges(jsFile.source);
+  const sites = collectClickAttachments(jsFile, ignoredRanges);
   for (const site of sites) {
-    if (hasSiblingKeyboardListener(site.source, site.target)) continue;
-    if (wasBoundFromNativeInteractiveCreateElement(site.source, site.target, site.offset)) {
+    if (hasSiblingKeyboardListener(site.source, site.target, ignoredRanges)) continue;
+    if (
+      wasBoundFromNativeInteractiveCreateElement(
+        site.source,
+        site.target,
+        site.offset,
+        ignoredRanges,
+      )
+    ) {
       continue;
     }
-    const resolution = resolveSelectorForVariable(site.source, site.target, site.offset);
+    const resolution = resolveSelectorForVariable(
+      site.source,
+      site.target,
+      site.offset,
+      ignoredRanges,
+    );
     if (resolution === null) continue;
     const matches = findHtmlMatches(htmlFiles, resolution);
     if (matches.length === 0) continue;
@@ -182,14 +201,21 @@ function collectCandidatesForJsFile(
  * shortcuts handled by SC 2.1.4 and would never resolve via
  * `document.querySelector` to a single element anyway.
  */
-function collectClickAttachments(jsFile: ProjectFile): readonly ClickAttachSite[] {
+function collectClickAttachments(
+  jsFile: ProjectFile,
+  ignoredRanges: readonly JsIgnoredRange[],
+): readonly ClickAttachSite[] {
   const out: ClickAttachSite[] = [];
   const source = jsFile.source;
   ADD_EVENT_LISTENER_CLICK.lastIndex = 0;
   let m = ADD_EVENT_LISTENER_CLICK.exec(source);
   while (m !== null) {
     const target = m[1];
-    if (target !== undefined && !isLikelyGlobalWindow(target)) {
+    if (
+      target !== undefined &&
+      !isLikelyGlobalWindow(target) &&
+      !isOffsetInJsIgnoredRange(ignoredRanges, m.index)
+    ) {
       out.push({
         filePath: jsFile.filePath,
         source,
@@ -204,7 +230,11 @@ function collectClickAttachments(jsFile: ProjectFile): readonly ClickAttachSite[
   let n = ONCLICK_ASSIGNMENT.exec(source);
   while (n !== null) {
     const target = n[1];
-    if (target !== undefined && !isLikelyGlobalWindow(target)) {
+    if (
+      target !== undefined &&
+      !isLikelyGlobalWindow(target) &&
+      !isOffsetInJsIgnoredRange(ignoredRanges, n.index)
+    ) {
       out.push({
         filePath: jsFile.filePath,
         source,
@@ -222,16 +252,22 @@ function isLikelyGlobalWindow(target: string): boolean {
   return target === "window" || target === "document" || target === "globalThis";
 }
 
-function hasSiblingKeyboardListener(source: string, target: string): boolean {
+function hasSiblingKeyboardListener(
+  source: string,
+  target: string,
+  ignoredRanges: readonly JsIgnoredRange[],
+): boolean {
   const escaped = escapeForRegex(target);
   const listenerPattern = new RegExp(
     `\\b${escaped}\\s*\\.\\s*addEventListener\\s*\\(\\s*["'\`](?:keydown|keyup|keypress)["'\`]`,
+    "g",
   );
-  if (listenerPattern.test(source)) return true;
+  if (regexHasExecutableMatch(listenerPattern, source, ignoredRanges)) return true;
   const assignPattern = new RegExp(
     `\\b${escaped}\\s*\\.\\s*(?:onkeydown|onkeyup|onkeypress)\\s*=(?!=)`,
+    "g",
   );
-  return assignPattern.test(source);
+  return regexHasExecutableMatch(assignPattern, source, ignoredRanges);
 }
 
 /**
@@ -252,6 +288,7 @@ function wasBoundFromNativeInteractiveCreateElement(
   source: string,
   target: string,
   beforeOffset: number,
+  ignoredRanges: readonly JsIgnoredRange[],
 ): boolean {
   const escaped = escapeForRegex(target);
   const declPattern = new RegExp(
@@ -262,6 +299,10 @@ function wasBoundFromNativeInteractiveCreateElement(
   let match = declPattern.exec(source);
   while (match !== null) {
     if (match.index >= beforeOffset) break;
+    if (isOffsetInJsIgnoredRange(ignoredRanges, match.index)) {
+      match = declPattern.exec(source);
+      continue;
+    }
     const tag = match[1];
     if (tag !== undefined && NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS.has(tag.toLowerCase())) {
       return true;
@@ -292,6 +333,7 @@ function resolveSelectorForVariable(
   source: string,
   target: string,
   beforeOffset: number,
+  ignoredRanges: readonly JsIgnoredRange[],
 ): SelectorResolution | null {
   const escaped = escapeForRegex(target);
   const declPattern = new RegExp(
@@ -304,6 +346,10 @@ function resolveSelectorForVariable(
   let m = declPattern.exec(source);
   while (m !== null) {
     if (m.index >= beforeOffset) break;
+    if (isOffsetInJsIgnoredRange(ignoredRanges, m.index)) {
+      m = declPattern.exec(source);
+      continue;
+    }
     const method = m[1];
     const argument = m[2];
     if (method === undefined || argument === undefined) {

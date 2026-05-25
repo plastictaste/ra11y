@@ -5,7 +5,7 @@ audience: users (teams using ra11y via an agent host)
 
 # Set up the ra11y MCP server
 
-ra11y ships a Model Context Protocol server out of the box. Any MCP host — Claude Code, Cursor, Zed, Continue — can connect to it over stdio and get 12 accessibility-specific tools in the agent's toolbox.
+ra11y ships a Model Context Protocol server out of the box. Any MCP host — Claude Code, Cursor, Zed, Continue — can connect to it over stdio and get 34 accessibility-specific tools in the agent's toolbox.
 
 This page is the 60-second setup. For the tool reference, see [`tool-reference.md`](./tool-reference.md). For architecture, see [`docs/kb/architecture/mcp-server.md`](../kb/architecture/mcp-server.md).
 
@@ -18,11 +18,13 @@ Add ra11y to your project's `.mcp.json` at the repo root:
   "mcpServers": {
     "ra11y": {
       "command": "npx",
-      "args": ["@ra11y/core", "--mcp"]
+      "args": ["-y", "--package=@ra11y/core", "ra11y", "--mcp"]
     }
   }
 }
 ```
+
+The explicit `--package=@ra11y/core ra11y` form is required because the package name (`@ra11y/core`) does not match the bin name (`ra11y`).
 
 Or if you've installed ra11y globally / at the workspace level:
 
@@ -53,7 +55,7 @@ Zed reads MCP servers from `settings.json`:
     "ra11y": {
       "command": {
         "path": "npx",
-        "args": ["@ra11y/core", "--mcp"]
+        "args": ["-y", "--package=@ra11y/core", "ra11y", "--mcp"]
       }
     }
   }
@@ -66,7 +68,7 @@ From any connected host, ask the agent to:
 
 > List the ra11y tools available to you.
 
-You should see a list of 12: `scan`, `scan_project`, `scan_file`, `detect_native_wrappers`, `explain_rule`, `explain_standard`, `suggest_fix`, `coverage`, `checklist`, `review_candidates`, `list_rules`, `sessionConfigure`.
+You should see 34 tools: `scan`, `scan_project`, `scan_file`, `scan_diff`, `scan_process`, `detect_native_wrappers`, `wrapper_introspect`, `explain_rule`, `explain_standard`, `suggest_fix`, `apply_fix`, `get_finding`, `findings_by_rule`, `coverage`, `checklist`, `conformance_statement`, `review_candidates`, `verdict_candidate`, `draft_vpat_narrative`, `audit`, `audit_rule_coverage`, `baseline`, `bootstrap`, `list_rules`, `list_finders`, `list_suppressions`, `suppress`, `attest`, `list_attestations`, `vpat`, `propose_config`, `propose_baseline`, `sessionConfigure`, `session_inspect`.
 
 If the list is missing, check your host's MCP logs. The ra11y server exits cleanly with a diagnostic on stderr if invoked incorrectly.
 

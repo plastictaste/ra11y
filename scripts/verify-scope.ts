@@ -41,7 +41,7 @@ export const hasDocsMdChange = (c: ReadonlySet<string>): boolean =>
   anyMatch(c, (p) => p.startsWith("docs/") && p.endsWith(".md"));
 
 export const hasApiChange = (c: ReadonlySet<string>): boolean =>
-  anyMatch(c, (p) => p.startsWith("src/api/") && isTs(p));
+  anyMatch(c, (p) => p === "src/index.ts" || (p.startsWith("src/api/") && isTs(p)));
 
 export const hasDepsChange = (c: ReadonlySet<string>): boolean =>
   anyMatch(c, (p) => p === "package.json" || p === "bun.lock" || p === "bun.lockb");

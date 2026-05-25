@@ -176,6 +176,13 @@ const CHECKS: readonly Check[] = [
     affectedBy: hasApiChange,
   },
   {
+    name: "api-docs-drift",
+    cmd: ["bun", "scripts/check-api-docs-drift.ts"],
+    precommit: true,
+    full: true,
+    affectedBy: (changed) => hasApiChange(changed) || hasDocsMdChange(changed),
+  },
+  {
     name: "mermaid",
     cmd: ["bun", "scripts/check-mermaid.ts"],
     precommit: true,

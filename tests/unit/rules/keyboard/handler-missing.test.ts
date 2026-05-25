@@ -557,9 +557,36 @@ export function Comp() {
       expect(v).toHaveLength(1);
       expect(v[0]?.message).toContain("addEventListener('click'");
     });
+
+    it("does not treat a commented keydown listener as a sibling keyboard path", () => {
+      const source = `const btn = document.querySelector('#save');
+btn.addEventListener('click', click);
+// btn.addEventListener('keydown', keydown);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
+
+    it("still sees handlers after regex literals containing quotes", () => {
+      const source = `const re = /'/;
+const btn = document.querySelector('#save');
+btn.addEventListener('click', click);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
   });
 
   describe("external JS: does NOT fire when", () => {
+    it("ignores click-looking code inside comments and strings", () => {
+      const source = `/**
+ * btn.addEventListener('click', click);
+ * btn.onclick = click;
+ */
+const example = "btn.addEventListener('click', click)";
+// btn.onclick = click;`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(0);
+    });
+
     it("sibling keydown addEventListener on the same variable is present", () => {
       const source = `const btn = document.querySelector('#x');
 btn.addEventListener('click', click);
