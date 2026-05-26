@@ -573,6 +573,16 @@ btn.addEventListener('click', click);`;
       const v = runRule(rule, source, { filePath: "app.js" });
       expect(v).toHaveLength(1);
     });
+
+    it("still sees handlers when a doc regex follows a return/throw/typeof keyword", () => {
+      const source = `function describe() {
+  return /Use el\\.addEventListener\\("keydown", fn\\)/;
+}
+const btn = document.querySelector('#save');
+btn.addEventListener('click', click);`;
+      const v = runRule(rule, source, { filePath: "app.js" });
+      expect(v).toHaveLength(1);
+    });
   });
 
   describe("external JS: does NOT fire when", () => {

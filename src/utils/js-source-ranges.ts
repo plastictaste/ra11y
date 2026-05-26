@@ -136,9 +136,19 @@ function skipRegexFlags(source: string, start: number): number {
 }
 
 function isRegexLiteralStart(source: string, start: number): boolean {
-  const prev = previousTokenChar(source, start);
-  if (prev === null) return true;
-  return REGEX_PREFIX_CHARS.has(prev);
+  const prevEnd = previousTokenEnd(source, start);
+  if (prevEnd === -1) return true;
+  const prev = source[prevEnd] ?? "";
+  if (REGEX_PREFIX_CHARS.has(prev)) return true;
+  // Keyword followed by `/` — e.g. `return /foo/`, `throw /x/`,
+  // `typeof /y/`. Without this, the regex body is scanned as code and
+  // tokens like `addEventListener("keydown"…)` inside a doc regex
+  // would suppress real findings on later lines.
+  if (isIdentifierChar(prev)) {
+    const wordStart = readWordStart(source, prevEnd);
+    if (REGEX_PREFIX_KEYWORDS.has(source.slice(wordStart, prevEnd + 1))) return true;
+  }
+  return false;
 }
 
 const REGEX_PREFIX_CHARS: ReadonlySet<string> = new Set([
@@ -163,12 +173,45 @@ const REGEX_PREFIX_CHARS: ReadonlySet<string> = new Set([
   ">",
 ]);
 
-function previousTokenChar(source: string, start: number): string | null {
+const REGEX_PREFIX_KEYWORDS: ReadonlySet<string> = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "delete",
+  "void",
+  "throw",
+  "new",
+  "do",
+  "else",
+  "case",
+  "yield",
+  "await",
+]);
+
+function previousTokenEnd(source: string, start: number): number {
   let i = start - 1;
   while (i >= 0) {
     const c = source[i];
-    if (c !== " " && c !== "\t" && c !== "\n" && c !== "\r") return c ?? null;
+    if (c !== " " && c !== "\t" && c !== "\n" && c !== "\r") return i;
     i -= 1;
   }
-  return null;
+  return -1;
+}
+
+function isIdentifierChar(c: string): boolean {
+  return (
+    (c >= "a" && c <= "z") ||
+    (c >= "A" && c <= "Z") ||
+    (c >= "0" && c <= "9") ||
+    c === "_" ||
+    c === "$"
+  );
+}
+
+function readWordStart(source: string, end: number): number {
+  let i = end;
+  while (i > 0 && isIdentifierChar(source[i - 1] ?? "")) i -= 1;
+  return i;
 }
