@@ -26,6 +26,7 @@ import type { PerRuleCoverage, Violation } from "../types/violation.ts";
 import { stampFingerprintOccurrences } from "./file-fingerprint-stamp.ts";
 import { detectApplicability } from "./manual-applicability.ts";
 import { tallyManualCriteria } from "./manual-criteria-tally.ts";
+import { enrichViolationsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import type { McpSession } from "./session.ts";
 import { type SuppressionAuditEntry, suppressionAudit } from "./suppression-audit.ts";
 import {
@@ -144,6 +145,7 @@ export interface RunScanAndCollectArgs {
    * dedupe is lossless.
    */
   readonly fingerprintDuplicates?: ReadonlyMap<string, readonly string[]>;
+  readonly codeDemoPropMatches?: import("./warnings.ts").WarningInputs["codeDemoPropMatches"];
 }
 
 /**
@@ -163,6 +165,7 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
     skipCriteria,
     processes,
     fingerprintDuplicates,
+    codeDemoPropMatches,
   } = args;
   const effective = ruleSettings ?? session.config.rules;
   const activeRules = applyRuleSettings(session.registry.rules, effective);
@@ -206,7 +209,10 @@ export async function runScanAndCollect(args: RunScanAndCollectArgs): Promise<Sc
   // dishonest shape).
   const result = {
     ...rawResult,
-    violations: coupleSeverityToVerifyTokens(rawResult.violations),
+    violations: enrichViolationsWithCodeDemoPropMatch(
+      coupleSeverityToVerifyTokens(rawResult.violations),
+      codeDemoPropMatches,
+    ),
   };
   const { violations: withoutWrapperNoise } = dropWrapperNoise(
     result.violations,

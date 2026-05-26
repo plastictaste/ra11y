@@ -338,6 +338,7 @@ export const scanProjectTool: McpTool = {
       // + the response-level `text_source_skipped` /
       // `binary_assets_skipped` warnings.
       discoveryDiagnostics,
+      codeDemoPropMatches,
     );
     // Per-finding propagation for the MDX code-demo prop axis. When a
     // finding's `(filePath, line)` falls inside a recorded

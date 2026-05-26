@@ -73,7 +73,7 @@ import {
   enrichFindingsBeyondPartialParseBoundary,
 } from "./per-finding-beyond-parse-boundary.ts";
 import { enrichFindingsWithBuildArtifactPath } from "./per-finding-build-artifact-confidence.ts";
-import { enrichFindingsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
+import { enrichViolationsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import {
   buildPerRuleLimitationMap,
   buildSubstrateFiles,
@@ -761,6 +761,8 @@ export function assembleScanFamilyResponse(
   // surfaces (which always pass through `runScan` directly without
   // filters) stay aligned.
   const parseErrorViolations = rawViolations ?? violations;
+  // biome-ignore format: keep call on one line for the file effective-line budget.
+  const responseViolations = enrichViolationsWithCodeDemoPropMatch(violations, input.codeDemoPropMatches);
 
   // (1) Group + build per-file findings. Thread the per-file source
   // text through so `buildAgentFinding` can run the same
@@ -776,11 +778,11 @@ export function assembleScanFamilyResponse(
   const entriesByPath = new Map<string, SourceEntry>(
     parsedFiles.map((f) => [f.filePath, { source: f.source, language: f.ast.language }]),
   );
-  let fileEntries: readonly AssembledFile[] = groupByFile(violations, entriesByPath);
+  let fileEntries: readonly AssembledFile[] = groupByFile(responseViolations, entriesByPath);
 
   // (2) Split notes from non-notes; tally fixes.
-  const nonNote = violations.filter((v) => v.severity !== "info");
-  const notes = violations.filter((v) => v.severity === "info");
+  const nonNote = responseViolations.filter((v) => v.severity !== "info");
+  const notes = responseViolations.filter((v) => v.severity === "info");
   const { editsWithInlineFixPath, proseOnlySuggestions } = countFixes(nonNote);
   const violationsWithoutAnyFix = nonNote.length - editsWithInlineFixPath - proseOnlySuggestions;
   const fixesByClass = countFixesByClass(nonNote);
@@ -942,22 +944,6 @@ export function assembleScanFamilyResponse(
     fileEntries,
     buildParsedThroughLineMap(parsedFiles),
   );
-  // Per-finding propagation for the per-LOCATION axis: a finding's
-  // `(filePath, line)` falls inside a recorded MDX code-demo prop's
-  // template-literal body the parser descended into. Companion to the
-  // corpus-level `jsx_code_demo_prop_parsed_as_live_dom` warning so
-  // the per-finding channel and the warning channel ship consistent
-  // attention-budget signals. Appends the
-  // `template_literal_in_code_demo_prop` reason AND downgrades
-  // `severity` to `"info"` + `confidence` to `"low"` so the per-finding
-  // attention-budget channel agrees with the conceded uncertainty per
-  // AI-first doctrine "Reason text and severity must agree" — the
-  // finding stays on the wire (no suppression), the agent reads it
-  // through the verify-in-source manual-criteria lane rather than the
-  // deterministic-failure lane. No-op fast path when the matches map
-  // is empty (object identity stable on the common case — non-MDX
-  // repos pay no walk).
-  fileEntries = enrichFindingsWithCodeDemoPropMatch(fileEntries, input.codeDemoPropMatches);
   // Per-finding propagation for the per-FILE axis on corpus-level
   // warnings whose evidence carries a file list. Generalized companion
   // to the per-LINE pass above: where the line-range gate tags only
@@ -1017,7 +1003,7 @@ export function assembleScanFamilyResponse(
   // adjusted rows so the derivative's `confidentlyClean` /
   // `lowConfidenceClean` split matches what `meta.perRuleCoverage`
   // surfaces.
-  const ruleCoverage = buildRuleCoverageDerivative(adjustedPerRuleCoverage, violations);
+  const ruleCoverage = buildRuleCoverageDerivative(adjustedPerRuleCoverage, responseViolations);
 
   // (7) Review candidates — opt-in dedupe at the single-file level.
   // Threading happens inside {@link maybeDedupeReviewCandidates} so the
@@ -1059,7 +1045,7 @@ export function assembleScanFamilyResponse(
     detectLinkedStylesheetsNotResolvedForContrast(parsedFiles);
   const warnFields = buildAssemblerWarningsField({
     meta,
-    violations,
+    violations: responseViolations,
     parsedFiles,
     rootSource,
     configSource,

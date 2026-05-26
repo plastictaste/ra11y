@@ -24,6 +24,7 @@
 
 import { describe, expect, it } from "bun:test";
 import type { ParsedFile } from "../../../src/engine/scanner.ts";
+import { CODE_DEMO_PROP_REASON_CODE } from "../../../src/input/parsers/mdx-example-extractor.ts";
 import {
   assembleScanFamilyResponse,
   buildDerivativeScanWarnings,
@@ -290,6 +291,36 @@ describe("assembleScanFamilyResponse", () => {
       laneSum(lanes["runtimeOnly"]) +
       laneSum(lanes["verifyInSource"]);
     expect(errorWarningTotal).toBe(1);
+  });
+
+  it("applies code-demo prop downgrades before deriving plan tallies", () => {
+    const v = violation("docs/forms.mdx", 15);
+    const r = assembleScanFamilyResponse(
+      baseInput({
+        violations: [v],
+        parsedFiles: [parsedFile("docs/forms.mdx")],
+        codeDemoPropMatches: new Map([
+          [
+            "docs/forms.mdx",
+            [
+              {
+                propName: "code",
+                tagName: "Example",
+                propLine: 12,
+                bodyStartLine: 12,
+                bodyEndLine: 18,
+              },
+            ],
+          ],
+        ]),
+      }),
+    );
+    const finding = r.files[0]?.findings[0];
+    expect(finding?.couldBeWrongBecause).toContain(CODE_DEMO_PROP_REASON_CODE);
+    expect(finding?.severity).toBe("info");
+    expect(finding?.confidence).toBe("low");
+    expect(r.plan["infoSeverityFindings"]).toBe(1);
+    expect(r.plan["fixesByClass"]).toBeUndefined();
   });
 
   it("omits reviewCandidates when includeReviewCandidates is not set", () => {
