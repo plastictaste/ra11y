@@ -96,7 +96,7 @@ export type Emit = (v: {
    * across files." Omitted on the `<marquee>` element-level emit
    * where the dedup question is per-element, not per-declaration.
    */
-  cssFingerprint?: import("../../utils/css-pattern-id.ts").CssFingerprintInputs;
+  cssFingerprint?: import("../../types/rule.ts").CssFingerprintInputs;
 }) => void;
 
 export interface PositionOffset {

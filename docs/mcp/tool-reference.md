@@ -29,6 +29,12 @@ Takes a `standardId` (e.g. `wcag22`) and optional `level`. Returns the standard'
 
 **Use when:** drafting a VPAT, comparing coverage across standards, or picking criteria for a manual-review pass.
 
+### `list_finders`
+
+Returns the assisted manual-review finder catalog.
+
+**Use when:** the agent needs to know what candidate finders can surface for checklist or review workflows.
+
 ## Scanning
 
 ### `scan`
@@ -58,6 +64,18 @@ Single-file re-scan using the cached AST. Fast — skips parsing when mtime is u
 
 **Use when:** the fix-verify loop after editing one file.
 
+### `scan_diff`
+
+Scans changed lines or hunks relative to git state.
+
+**Use when:** CI or PR review should focus on the diff instead of the whole project.
+
+### `scan_process`
+
+Scans a configured process/page-set.
+
+**Use when:** conformance work is organized around user journeys or product areas instead of raw directories.
+
 ## Triage
 
 ### `detect_native_wrappers`
@@ -66,11 +84,35 @@ Heuristic tool for onboarding. Scans the codebase for PascalCase React component
 
 **Use when:** first-time setup on a React codebase. Populates the config knob that quiets false positives from `keyboard/handler-missing` on design-system wrappers.
 
+### `wrapper_introspect`
+
+Inspects a named component wrapper and reports whether it appears to render a native interactive element.
+
+**Use when:** validating a `nativeWrappers` entry before committing it to config.
+
 ### `suggest_fix`
 
 Takes a finding; returns a structured fix where one exists. Confidence is `"high"` when the rule has a deterministic fix (e.g. adding a missing `alt=""` on a decorative image) and `"low"` when the fix is prose guidance (the agent has to tailor it).
 
 **Use when:** about to edit a file to resolve a violation.
+
+### `apply_fix`
+
+Applies a deterministic fix when the selected finding has a safe edit path and the session has write access enabled.
+
+**Use when:** the agent has already reviewed the finding and wants the tool to perform a mechanical source edit.
+
+### `get_finding`
+
+Looks up a finding by id from recent scan state.
+
+**Use when:** a later step needs the exact finding record without re-running the full scan.
+
+### `findings_by_rule`
+
+Filters recent findings by `ruleId`.
+
+**Use when:** batching one rule family, checking repeated instances, or applying the same remediation pattern across files.
 
 ## Coverage & review
 
@@ -91,6 +133,42 @@ Manual-review criteria grouped by section, with review prompts and candidate loc
 The programmatic counterpart to `checklist`. Returns tier-1 candidates as a flat list with source snippets and the finder's exact `reviewPrompt`.
 
 **Use when:** the agent wants to iterate candidates one-by-one, reading source + answering pass/fail per item.
+
+### `conformance_statement`
+
+Builds a signed conformance statement from the current scan, attestations, criteria, and config fingerprint.
+
+**Use when:** a release, audit, or procurement process needs an explicit pass/fail conformance artifact.
+
+### `verdict_candidate`
+
+Records or structures an agent verdict for a manual-review candidate.
+
+**Use when:** turning source-reading evidence into conformance evidence for a checklist item.
+
+### `draft_vpat_narrative`
+
+Drafts procurement-ready narrative text for VPAT remarks.
+
+**Use when:** converting structured scan/conformance evidence into human-facing VPAT language.
+
+### `audit`
+
+Runs an audit-oriented workflow over a project scan.
+
+**Use when:** the user asks for a broader accessibility audit rather than a narrow file scan.
+
+### `audit_rule_coverage`
+
+Reports how rule coverage maps across criteria.
+
+**Use when:** evaluating scanner coverage gaps or planning manual-review work.
+
+### `baseline`
+
+Creates, checks, or updates a findings baseline.
+
+**Use when:** adopting ra11y on an existing project without blocking on all pre-existing findings.
 
 ### `vpat`
 
@@ -133,6 +211,42 @@ The pragma is inserted on its own line directly above the target, with indentati
 
 **Use when:** an agent has read the finding, determined it's a false positive or intentional exception, and wants a durable source-level dismissal (so the next scan passes without the agent re-justifying it).
 
+### `bootstrap`
+
+Generates initial project setup guidance and starter config.
+
+**Use when:** onboarding ra11y into a new repository.
+
+### `list_suppressions`
+
+Lists source-level suppressions in the project.
+
+**Use when:** auditing whether ignored findings still have valid reasons.
+
+### `attest`
+
+Writes durable evidence for a manual-review verdict.
+
+**Use when:** a criterion or candidate was manually verified and should count in later conformance runs.
+
+### `list_attestations`
+
+Lists durable attestations.
+
+**Use when:** reviewing evidence freshness, scope, or drift.
+
+### `propose_config`
+
+Suggests a `ra11y.config.ts` shape from observed scan data.
+
+**Use when:** adding native wrappers, excludes, or other durable scanner settings after an initial scan.
+
+### `propose_baseline`
+
+Suggests a baseline for existing findings.
+
+**Use when:** preparing adoption work where legacy findings need explicit tracking before new regressions are blocked.
+
 ## Session
 
 ### `sessionConfigure`
@@ -142,6 +256,12 @@ Sets session-level config: `standard`, `level`, `exclude`, `rules` (per-rule sev
 **Use when:** the user adjusts scope mid-session ("also run Section 508", "downgrade `contrast/enhanced` to info").
 
 Pass `cwd` alongside `nativeWrappers` to anchor the session wrappers to a specific project root. Session state is connection-wide, so later `scan_project` / `list_suppressions` calls against a different `cwd` will still see the wrappers — but the response will carry a `session_wrappers_configured_for_different_cwd` warning so an agent that switches targets sees the cross-cwd drift. Re-call `sessionConfigure` with the new project's `cwd` to re-anchor.
+
+### `session_inspect`
+
+Returns current MCP session configuration and cached scan state.
+
+**Use when:** debugging why later tool calls are using a particular cwd, standard, level, wrapper set, or write-access setting.
 
 ## Reading the output
 

@@ -15,6 +15,15 @@
  * are not yet implemented. See `.claude/backlog.md` for current phase.
  */
 
+import { readFile } from "node:fs/promises";
+import { relative } from "node:path";
+import { parseFor } from "./cli/parse-for.ts";
+import { DEFAULT_CONFIG } from "./config/defaults.ts";
+import { parseInlineDisablesDetailed } from "./config/inline-disables.ts";
+import { createBuiltinRegistry } from "./engine/registry/registry.ts";
+import { type ParsedFile, runScan } from "./engine/scanner.ts";
+import { discoverFiles } from "./input/discover.ts";
+
 /**
  * Defines a ra11y user config with full type inference. Re-exported
  * from `@ra11y/core/plugin` so that `import { defineConfig } from
@@ -57,9 +66,21 @@ export type {
  * const result = await scan({ paths: ["src/"], standards: ["wcag22"] });
  * ```
  */
-// biome-ignore lint/suspicious/useAwait: stub throws synchronously; the real implementation will await file discovery and parsing
-export async function scan(_options: ScanOptions): Promise<import("./types/index.ts").ScanResult> {
-  throw new Error("ra11y scan() is not implemented yet");
+export async function scan(options: ScanOptions): Promise<import("./types/index.ts").ScanResult> {
+  const cwd = process.cwd();
+  const registry = createBuiltinRegistry();
+  const discovered = await discoverFiles(options.paths);
+  const files = await parseDiscoveredFiles(discovered, cwd);
+  const { result } = runScan({
+    standards: registry.standards,
+    rules: registry.rules,
+    enabled: options.standards ?? DEFAULT_CONFIG.standards,
+    files,
+    finders: registry.finders,
+    isTTY: false,
+    level: options.level ?? DEFAULT_CONFIG.level,
+  });
+  return result;
 }
 
 /**
@@ -72,4 +93,25 @@ export interface ScanOptions {
   readonly paths: readonly string[];
   readonly standards?: readonly string[];
   readonly level?: "A" | "AA" | "AAA";
+}
+
+async function parseDiscoveredFiles(
+  discovered: readonly string[],
+  cwd: string,
+): Promise<readonly ParsedFile[]> {
+  const parsed: ParsedFile[] = [];
+  for (const filePath of discovered) {
+    const source = await readFile(filePath, "utf8");
+    const ast = parseFor(filePath, source);
+    if (ast === null) continue;
+    const { disableMap, declarations } = parseInlineDisablesDetailed(source);
+    parsed.push({
+      filePath: relative(cwd, filePath),
+      source,
+      ast,
+      disableMap,
+      declarations,
+    });
+  }
+  return parsed;
 }

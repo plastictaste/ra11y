@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { VERIFY_IN_SOURCE_TOKENS } from "../../../../src/mcp/manual-criteria-tally.ts";
 import { rule } from "../../../../src/rules/document/page-titled.ts";
 import { runRule } from "../../../helpers/run-rule.ts";
 
@@ -406,6 +407,7 @@ describe("rule document/page-titled", () => {
     expect(v[0]?.message).toContain("template-injected title directive");
     expect(v[0]?.message).toContain("{% seo %}");
     expect(v[0]?.couldBeWrongBecause).toContain("template_directive_provides_title");
+    expect(VERIFY_IN_SOURCE_TOKENS.has("template_directive_provides_title")).toBe(true);
   });
 
   it("downgrades missing-<title> to info when {% seo title=false %} is in the source (parameterized seo)", () => {

@@ -310,6 +310,32 @@ export interface ProjectContext {
 }
 
 /**
+ * Structured CSS-declaration fingerprint inputs the engine hashes into
+ * the final `Violation.cssPatternId`. Owned by the shipped rule type
+ * surface because {@link EmittedViolation.cssFingerprint} is part of the
+ * public declaration graph; the hashing implementation lives in
+ * `src/utils/css-pattern-id.ts`.
+ */
+export interface CssFingerprintInputs {
+  /**
+   * Selector text the CSS rule applied to. Canonicalization will
+   * lowercase, whitespace-normalize, and replace unique-id numeric
+   * tokens with `#`; pass the raw selector verbatim.
+   */
+  readonly selectorFamily: string;
+  /**
+   * CSS property name, or a composite token like `"color+background"`
+   * when the predicate is a property pair.
+   */
+  readonly propertyFamily: string;
+  /**
+   * Declaration-value shape, already reduced by the emitting rule to the
+   * axis that matters for dedupe.
+   */
+  readonly valueShape: string;
+}
+
+/**
  * What a rule returns via `ctx.emit()`. The engine owns `ruleId`,
  * `criteria`, `findingId`, `findingGroupId`, `groupKey`, and `fixClass`
  * — rules don't know those. `findingId` is derived from the stamped
@@ -356,5 +382,5 @@ export type EmittedViolation = Omit<
    *
    * See `src/utils/css-pattern-id.ts` for the canonicalization recipe.
    */
-  readonly cssFingerprint?: import("../utils/css-pattern-id.ts").CssFingerprintInputs;
+  readonly cssFingerprint?: CssFingerprintInputs;
 };

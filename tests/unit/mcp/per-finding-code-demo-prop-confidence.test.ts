@@ -24,8 +24,13 @@
 
 import { describe, expect, it } from "bun:test";
 import { CODE_DEMO_PROP_REASON_CODE } from "../../../src/input/parsers/mdx-example-extractor.ts";
-import { enrichFindingsWithCodeDemoPropMatch } from "../../../src/mcp/per-finding-code-demo-prop-confidence.ts";
+import { collectVerifyTokenViolationCriteria } from "../../../src/mcp/manual-criteria-tally.ts";
+import {
+  enrichFindingsWithCodeDemoPropMatch,
+  enrichViolationsWithCodeDemoPropMatch,
+} from "../../../src/mcp/per-finding-code-demo-prop-confidence.ts";
 import type { AgentFinding } from "../../../src/output/agent-response/types.ts";
+import type { Violation } from "../../../src/types/violation.ts";
 
 function fakeFinding(line: number, extra: Partial<AgentFinding> = {}): AgentFinding {
   return {
@@ -38,6 +43,20 @@ function fakeFinding(line: number, extra: Partial<AgentFinding> = {}): AgentFind
     criteria: ["wcag22:1.1.1"],
     ...extra,
   } as AgentFinding;
+}
+
+function fakeViolation(line: number, extra: Partial<Violation> = {}): Violation {
+  return {
+    ruleId: "alt/missing",
+    fixClass: "mechanical",
+    criteria: ["wcag22:1.1.1"],
+    severity: "error",
+    location: { filePath: "docs/forms.mdx", line, column: 1 },
+    message: "<img> missing alt attribute",
+    findingId: `docs/forms.mdx:${line}:alt/missing`,
+    groupKey: "alt/missing:group",
+    ...extra,
+  } as Violation;
 }
 
 describe("enrichFindingsWithCodeDemoPropMatch", () => {
@@ -352,5 +371,53 @@ describe("enrichFindingsWithCodeDemoPropMatch", () => {
     expect(out).toBe(fileEntries);
     expect(out[0]?.findings[0]?.severity).toBe("info");
     expect(out[0]?.findings[0]?.confidence).toBe("low");
+  });
+});
+
+describe("enrichViolationsWithCodeDemoPropMatch", () => {
+  it("downgrades raw violations before plan/manual-review tallies consume them", () => {
+    const violations = [fakeViolation(15)];
+    const matches = new Map([
+      [
+        "docs/forms.mdx",
+        [
+          {
+            propName: "code",
+            tagName: "Example",
+            propLine: 12,
+            bodyStartLine: 12,
+            bodyEndLine: 18,
+          },
+        ],
+      ],
+    ]);
+    const out = enrichViolationsWithCodeDemoPropMatch(violations, matches);
+    expect(out[0]?.couldBeWrongBecause).toEqual([CODE_DEMO_PROP_REASON_CODE]);
+    expect(out[0]?.severity).toBe("info");
+    expect(out[0]?.confidence).toBe("low");
+    expect([
+      ...collectVerifyTokenViolationCriteria(out, new Set(["wcag22:1.1.1"]), undefined),
+    ]).toEqual(["wcag22:1.1.1"]);
+  });
+
+  it("preserves raw violation identity outside recorded body ranges", () => {
+    const violations = [fakeViolation(4)];
+    const matches = new Map([
+      [
+        "docs/forms.mdx",
+        [
+          {
+            propName: "code",
+            tagName: "Example",
+            propLine: 12,
+            bodyStartLine: 12,
+            bodyEndLine: 18,
+          },
+        ],
+      ],
+    ]);
+    const out = enrichViolationsWithCodeDemoPropMatch(violations, matches);
+    expect(out).toBe(violations);
+    expect(out[0]).toBe(violations[0]);
   });
 });

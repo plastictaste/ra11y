@@ -50,6 +50,14 @@ describe("verify-scope predicates", () => {
     expect(hasTestOrSrcChange(c)).toBe(true);
   });
 
+  test("root public entry edit fires hasApiChange — API docs drift must run", () => {
+    const c = set("src/index.ts");
+    expect(hasApiChange(c)).toBe(true);
+    expect(hasSrcTsChange(c)).toBe(true);
+    expect(hasAnyTsChange(c)).toBe(true);
+    expect(hasTestOrSrcChange(c)).toBe(true);
+  });
+
   test("tests-only edit fires test-or-src and any-ts, but not src-ts or api", () => {
     const c = set("tests/unit/rules/forms/non-empty-label.test.ts");
     expect(hasTestOrSrcChange(c)).toBe(true);

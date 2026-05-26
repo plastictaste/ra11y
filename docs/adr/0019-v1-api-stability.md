@@ -37,7 +37,7 @@ The public surface for `@ra11y/core` v1.0 is frozen at the exact set of named ex
 Notes on this entry:
 
 - The six type re-exports pass through `./types/index.ts`. Their authoring definitions live in `src/types/standard.ts` (`Criterion`, `Standard`), `src/types/violation.ts` (`ReportData`, `ScanResult`, `Severity`, `Violation`).
-- `scan` currently throws `"not implemented yet"` — v1.0 preserves the existing signature so that when the implementation lands post-v1.0 the signature addition is drop-in. The signature (`(options: ScanOptions) => Promise<ScanResult>`) is part of the freeze.
+- `scan` discovers, parses, and scans the requested paths with the built-in registry. The signature (`(options: ScanOptions) => Promise<ScanResult>`) is part of the freeze.
 - `ScanOptions` has three fields today (`paths`, `standards?`, `level?`). Adding a new optional field is minor. Removing or renaming any existing field is major.
 - `defineConfig` is re-exported here from `./api/plugin.ts` so that `import { defineConfig } from "@ra11y/core"` — the form the docs and bootstrap-class tools emit in suggested config — resolves to the same identity helper plugin authors reach via `@ra11y/core/plugin`. Listed in both entry-point tables; one symbol, two reachable names.
 
@@ -82,4 +82,4 @@ The following are frequently asked about and are explicitly **not** part of the 
 - `scripts/check-tsdoc.ts` stays the mechanical guard for TSDoc presence; it runs in `verify:precommit`.
 - `scripts/check-api-docs-drift.ts` stays the mechanical guard against the public-symbol list drifting out of sync with `docs/api/`. Any addition to the tables above requires a matching `docs/api/<symbol>.md` page.
 - Types deliberately held internal (`NativeWrapperMap`, `FixClass`, `ReviewConfidence`, `PolymorphicResolution`, etc.) remain free to evolve. Elevating one of them to the public surface is a semver-minor addition, not a breaking change — it only adds a named export.
-- The `scan` stub in `src/index.ts` is now officially part of the v1.0 contract at the signature level. The throwing body is replaceable without a breaking change; the signature is not.
+- The `scan` implementation in `src/index.ts` is now officially part of the v1.0 contract at the signature level. Runtime behavior can be expanded through optional `ScanOptions` fields without a breaking change; the existing signature is not.

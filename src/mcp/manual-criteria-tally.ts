@@ -132,11 +132,12 @@ export const VERIFY_IN_SOURCE_TOKENS: ReadonlySet<string> = new Set<string>([
   // document envelope needed to confirm sibling-landmark duplication
   // is real.
   "partial_input_duplicate_landmark_in_fragment",
-  // document/page-titled — title text is template-interpolated or
-  // matches a scaffold default; runtime substitution may carry the
-  // real title.
+  // document/page-titled — title text is template-interpolated, a
+  // title-providing directive is present, or the text matches a
+  // scaffold default; runtime substitution may carry the real title.
   "title_may_be_template_injected",
   "title_is_template_interpolated",
+  "template_directive_provides_title",
   "title_looks_like_scaffold_default",
   // document/lang-attribute — `lang` attribute lives only inside an IE
   // conditional comment; modern browsers may see no lang.

@@ -66,7 +66,7 @@ function collectExports(file: string, out: Set<string>): void {
   const declRe =
     /^\s*export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|var|function\*?|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm;
   for (const m of src.matchAll(declRe)) out.add(m[1] ?? "");
-  const listRe = /^\s*export\s*\{([^}]*)\}/gm;
+  const listRe = /^\s*export\s+(?:type\s+)?\{([^}]*)\}/gm;
   for (const m of src.matchAll(listRe)) {
     for (const raw of (m[1] ?? "").split(",")) {
       const part = raw.replace(/^\s*type\s+/, "").trim();

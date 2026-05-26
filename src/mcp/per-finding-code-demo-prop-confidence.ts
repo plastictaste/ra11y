@@ -55,7 +55,7 @@
 
 import { CODE_DEMO_PROP_REASON_CODE } from "../input/parsers/mdx-example-extractor.ts";
 import type { AgentFinding, Confidence } from "../output/agent-response/types.ts";
-import type { Severity } from "../types/violation.ts";
+import type { Severity, Violation } from "../types/violation.ts";
 import type { FindingBucket } from "./per-finding-confidence-parity.ts";
 import type { WarningInputs } from "./warnings.ts";
 
@@ -109,6 +109,29 @@ export function enrichFindingsWithCodeDemoPropMatch<T extends FindingBucket>(
 }
 
 /**
+ * Raw-violation sibling of {@link enrichFindingsWithCodeDemoPropMatch}.
+ * Call this before plan/manual-review tallies fork off the violation
+ * stream so the counters budget code-demo findings at the same
+ * `info`/`low` severity and confidence shown in `files[].findings[]`.
+ */
+export function enrichViolationsWithCodeDemoPropMatch(
+  violations: readonly Violation[],
+  matches: WarningInputs["codeDemoPropMatches"],
+): readonly Violation[] {
+  if (matches === undefined || matches.size === 0) return violations;
+  let mutatedAny = false;
+  const out = violations.map((violation) => {
+    const perFile = matches.get(violation.location.filePath);
+    if (perFile === undefined || perFile.length === 0) return violation;
+    if (!findingFallsInsideAnyMatch(violation.location.line, perFile)) return violation;
+    const next = applyCodeDemoPropToViolation(violation);
+    if (next !== violation) mutatedAny = true;
+    return next;
+  });
+  return mutatedAny ? out : violations;
+}
+
+/**
  * Per-finding adjuster. Returns the input `finding` reference unchanged
  * when the propagated code is already present AND severity is already
  * at-or-below `"info"` AND confidence is already at-or-below `"low"` —
@@ -138,6 +161,30 @@ function applyCodeDemoPropToFinding(finding: AgentFinding): AgentFinding {
       : [...existing, CODE_DEMO_PROP_REASON_CODE];
   return {
     ...finding,
+    ...(nextCouldBeWrongBecause === undefined
+      ? {}
+      : { couldBeWrongBecause: nextCouldBeWrongBecause }),
+    ...(needsSeverityDowngrade ? { severity: "info" as const } : {}),
+    ...(needsConfidenceDowngrade ? { confidence: "low" as const } : {}),
+  };
+}
+
+function applyCodeDemoPropToViolation(violation: Violation): Violation {
+  const existing = violation.couldBeWrongBecause;
+  const codeAlreadyPresent = existing?.includes(CODE_DEMO_PROP_REASON_CODE) === true;
+  const currentConfidence = violation.confidence ?? confidenceForSeverity(violation.severity);
+  const needsSeverityDowngrade = severityRank(violation.severity) > severityRank("info");
+  const needsConfidenceDowngrade = confidenceRank(currentConfidence) > confidenceRank("low");
+  if (codeAlreadyPresent && !needsSeverityDowngrade && !needsConfidenceDowngrade) {
+    return violation;
+  }
+  const nextCouldBeWrongBecause = codeAlreadyPresent
+    ? existing
+    : existing === undefined || existing.length === 0
+      ? [CODE_DEMO_PROP_REASON_CODE]
+      : [...existing, CODE_DEMO_PROP_REASON_CODE];
+  return {
+    ...violation,
     ...(nextCouldBeWrongBecause === undefined
       ? {}
       : { couldBeWrongBecause: nextCouldBeWrongBecause }),
@@ -178,6 +225,12 @@ function severityRank(s: Severity): number {
   if (s === "error") return 3;
   if (s === "warning") return 2;
   return 1;
+}
+
+function confidenceForSeverity(s: Severity): Confidence {
+  if (s === "error") return "high";
+  if (s === "warning") return "medium";
+  return "low";
 }
 
 /**

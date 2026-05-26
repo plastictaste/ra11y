@@ -77,6 +77,13 @@ function body<T>(resp: JsonRpcResponse): T {
 }
 
 interface ScanProjectBody {
+  readonly plan: {
+    readonly infoSeverityFindings: number;
+    readonly actionableManualItemsBySource: {
+      readonly source: number;
+      readonly buildArtifact: number;
+    };
+  };
   readonly warnings?: readonly string[];
   readonly warningsDetails?: {
     readonly jsx_code_demo_prop_parsed_as_live_dom?: {
@@ -176,5 +183,10 @@ describe("scan_project — jsx_code_demo_prop_parsed_as_live_dom warning + per-f
       expect(f.severity).toBe("info");
       expect(f.confidence).toBe("low");
     }
+    expect(result.plan.infoSeverityFindings).toBeGreaterThanOrEqual(inBodyFindings.length);
+    expect(
+      result.plan.actionableManualItemsBySource.source +
+        result.plan.actionableManualItemsBySource.buildArtifact,
+    ).toBeGreaterThan(0);
   }, 30000);
 });

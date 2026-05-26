@@ -303,13 +303,10 @@ After addressing each blocker, re-call `conformance_statement`. Repeat until `co
 
 ## Signature verification
 
-A previously-emitted statement carries a `signature` block — a SHA-256 digest over the commit hash, attestation ledger, in-scope criteria, and config fingerprint. Use `verifyConformanceBundle` (programmatic API) to check it:
+A previously-emitted statement carries a `signature` block — a SHA-256 digest over the commit hash, attestation ledger, in-scope criteria, and config fingerprint. Use the CLI verifier to check it against the current tree:
 
-```ts
-import { verifyConformanceBundle } from "@ra11y/core";
-
-const result = verifyConformanceBundle(statement.signature, currentInput);
-// { valid: true } or { valid: false, reason: "commit-drift" | "attestation-set-mismatch" | ... }
+```bash
+ra11y conformance --verify statement.json
 ```
 
 Drift reasons and what they mean:

@@ -38,6 +38,7 @@ import { fingerprintParsedFiles, stampFingerprintOccurrences } from "./file-fing
 import { detectApplicability, isLikelyIrrelevant } from "./manual-applicability.ts";
 import { defaultActionableManualLane, tallyManualCriteria } from "./manual-criteria-tally.ts";
 import { enrichFindingsWithFullPerFileSubstrate } from "./per-finding-beyond-parse-boundary.ts";
+import { enrichViolationsWithCodeDemoPropMatch } from "./per-finding-code-demo-prop-confidence.ts";
 import { buildReferenceGuide } from "./reference-guide.ts";
 import { buildRuleCoverageDerivative } from "./rule-coverage-derivative.ts";
 import { applyRuleSettings } from "./rules-evaluated.ts";
@@ -575,6 +576,7 @@ export async function runScanAndFormat(
   // — the scan_file tool takes explicit paths and has no silent-miss
   // axis to report on.
   discoveryDiagnostics?: DiscoveryDiagnostics,
+  codeDemoPropMatches?: import("./warnings.ts").WarningInputs["codeDemoPropMatches"],
 ): Promise<{
   readonly formatted: ScanFormatted;
   readonly durationMs: number;
@@ -643,7 +645,13 @@ export async function runScanAndFormat(
   // Couple severity to verify-in-source tokens upstream of tally /
   // AgentFinding / response-assembler. Doctrine: see
   // `src/mcp/violation-severity-coupling.ts`.
-  const result = { ...rawResult, violations: coupleSeverityToVerifyTokens(rawResult.violations) };
+  const result = {
+    ...rawResult,
+    violations: enrichViolationsWithCodeDemoPropMatch(
+      coupleSeverityToVerifyTokens(rawResult.violations),
+      codeDemoPropMatches,
+    ),
+  };
   const { violations: withoutWrapperNoise } = dropWrapperNoise(result.violations, wrappers);
   const unusedWrappers = await resolveUnusedWrappers(wrappers, files, cwd);
   const severityFiltered = filterBySeverity(withoutWrapperNoise, minSeverity);

@@ -148,6 +148,28 @@ d.addEventListener('click', handle);`,
     expect(out.length).toBe(4);
     expect(out[0]?.reason).toContain("<div>");
   });
+
+  it("does not treat a commented keydown listener as a sibling keyboard path", () => {
+    const html = htmlFile("/p/index.html", `<html><body><div id="x">x</div></body></html>`);
+    const js = jsFile(
+      "/p/app.js",
+      `const b = document.querySelector('#x');
+b.addEventListener('click', handle);
+// b.addEventListener('keydown', handle);`,
+    );
+    expect(runWith([html, js])).toHaveLength(4);
+  });
+
+  it("still sees handlers after regex literals containing quotes", () => {
+    const html = htmlFile("/p/index.html", `<html><body><div id="x">x</div></body></html>`);
+    const js = jsFile(
+      "/p/app.js",
+      `const re = /'/;
+const b = document.querySelector('#x');
+b.addEventListener('click', handle);`,
+    );
+    expect(runWith([html, js])).toHaveLength(4);
+  });
 });
 
 describe("review/cross-file-click-handler — negative: keyboard pathway present", () => {
@@ -274,6 +296,20 @@ b.addEventListener('click', handle);`,
 b.addEventListener('click', handle);`,
     );
     expect(runWith([js])).toEqual([]);
+  });
+
+  it("ignores click-looking code inside comments and strings", () => {
+    const html = htmlFile("/p/index.html", `<html><body><div id="x">x</div></body></html>`);
+    const js = jsFile(
+      "/p/app.js",
+      `const b = document.querySelector('#x');
+/**
+ * b.addEventListener('click', handle);
+ */
+const sample = "b.addEventListener('click', handle)";
+// b.onclick = handle;`,
+    );
+    expect(runWith([html, js])).toEqual([]);
   });
 
   it("emits no candidate when the binding is not visible same-file", () => {

@@ -50,6 +50,13 @@
  * scripts/check-limits.ts file budget.
  */
 
+import {
+  collectJsIgnoredRanges,
+  isOffsetInJsIgnoredRange,
+  type JsIgnoredRange,
+  regexHasExecutableMatch,
+} from "../../utils/js-source-ranges.ts";
+
 export interface JsFinding {
   readonly line: number;
   readonly column: number;
@@ -114,8 +121,9 @@ const NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS: ReadonlySet<string> = new Set([
  */
 export function findExternalJsHandlerMissing(source: string): readonly JsFinding[] {
   const out: JsFinding[] = [];
-  for (const site of collectClickAttachments(source)) {
-    if (hasSiblingKeyboardListener(source, site.target)) continue;
+  const ignoredRanges = collectJsIgnoredRanges(source);
+  for (const site of collectClickAttachments(source, ignoredRanges)) {
+    if (hasSiblingKeyboardListener(source, site.target, ignoredRanges)) continue;
     // Same-file backward resolution: when the target variable was bound
     // from `document.createElement('button'|'a'|'input'|...)`, the
     // receiver IS a native interactive element — buttons/anchors/inputs
@@ -123,9 +131,9 @@ export function findExternalJsHandlerMissing(source: string): readonly JsFinding
     // missing keyboard sibling is not a finding. The lookup is bounded
     // to declarators preceding the click-attach site in the same file;
     // cross-file resolution stays off-table per the doctrine note above.
-    const createdTag = findCreateElementBoundTag(source, site.target, site.offset);
+    const createdTag = findCreateElementBoundTag(source, site.target, site.offset, ignoredRanges);
     if (createdTag !== null && NATIVE_INTERACTIVE_CREATE_ELEMENT_TAGS.has(createdTag)) continue;
-    const selector = resolveSelectorForVariable(source, site.target, site.offset);
+    const selector = resolveSelectorForVariable(source, site.target, site.offset, ignoredRanges);
     // Q9 dynamic-creation extension: when the bound tag is a
     // non-interactive native element (`div`, `span`, `li`, `section`,
     // …), the receiver's kind is provable from this file with no
@@ -144,13 +152,20 @@ interface ClickSite {
   readonly shape: "addEventListener" | "onclick";
 }
 
-function collectClickAttachments(source: string): readonly ClickSite[] {
+function collectClickAttachments(
+  source: string,
+  ignoredRanges: readonly JsIgnoredRange[],
+): readonly ClickSite[] {
   const sites: ClickSite[] = [];
   ADD_EVENT_LISTENER_CLICK.lastIndex = 0;
   let m = ADD_EVENT_LISTENER_CLICK.exec(source);
   while (m !== null) {
     const target = m[1];
-    if (target !== undefined && !isLikelyGlobalWindow(target)) {
+    if (
+      target !== undefined &&
+      !isLikelyGlobalWindow(target) &&
+      !isOffsetInJsIgnoredRange(ignoredRanges, m.index)
+    ) {
       sites.push({ target, offset: m.index, shape: "addEventListener" });
     }
     m = ADD_EVENT_LISTENER_CLICK.exec(source);
@@ -159,7 +174,11 @@ function collectClickAttachments(source: string): readonly ClickSite[] {
   let n = ONCLICK_ASSIGNMENT.exec(source);
   while (n !== null) {
     const target = n[1];
-    if (target !== undefined && !isLikelyGlobalWindow(target)) {
+    if (
+      target !== undefined &&
+      !isLikelyGlobalWindow(target) &&
+      !isOffsetInJsIgnoredRange(ignoredRanges, n.index)
+    ) {
       sites.push({ target, offset: n.index, shape: "onclick" });
     }
     n = ONCLICK_ASSIGNMENT.exec(source);
@@ -186,16 +205,22 @@ function isLikelyGlobalWindow(target: string): boolean {
  * authors typically attach all handlers on a selected element in the
  * same initialization block.
  */
-function hasSiblingKeyboardListener(source: string, target: string): boolean {
+function hasSiblingKeyboardListener(
+  source: string,
+  target: string,
+  ignoredRanges: readonly JsIgnoredRange[],
+): boolean {
   const escaped = escapeForRegex(target);
   const listenerPattern = new RegExp(
     `\\b${escaped}\\s*\\.\\s*addEventListener\\s*\\(\\s*["'\`](?:keydown|keyup|keypress)["'\`]`,
+    "g",
   );
-  if (listenerPattern.test(source)) return true;
+  if (regexHasExecutableMatch(listenerPattern, source, ignoredRanges)) return true;
   const assignPattern = new RegExp(
     `\\b${escaped}\\s*\\.\\s*(?:onkeydown|onkeyup|onkeypress)\\s*=(?!=)`,
+    "g",
   );
-  return assignPattern.test(source);
+  return regexHasExecutableMatch(assignPattern, source, ignoredRanges);
 }
 
 /**
@@ -215,6 +240,7 @@ function resolveSelectorForVariable(
   source: string,
   target: string,
   beforeOffset: number,
+  ignoredRanges: readonly JsIgnoredRange[],
 ): { readonly method: string; readonly argument: string } | null {
   const escaped = escapeForRegex(target);
   // Examples matched:
@@ -231,6 +257,10 @@ function resolveSelectorForVariable(
   let m = declPattern.exec(source);
   while (m !== null) {
     if (m.index >= beforeOffset) break;
+    if (isOffsetInJsIgnoredRange(ignoredRanges, m.index)) {
+      m = declPattern.exec(source);
+      continue;
+    }
     const method = m[1];
     const argument = m[2];
     if (method !== undefined && argument !== undefined) {
@@ -268,6 +298,7 @@ function findCreateElementBoundTag(
   source: string,
   target: string,
   beforeOffset: number,
+  ignoredRanges: readonly JsIgnoredRange[],
 ): string | null {
   const escaped = escapeForRegex(target);
   // Examples matched:
@@ -283,6 +314,10 @@ function findCreateElementBoundTag(
   let match = declPattern.exec(source);
   while (match !== null) {
     if (match.index >= beforeOffset) break;
+    if (isOffsetInJsIgnoredRange(ignoredRanges, match.index)) {
+      match = declPattern.exec(source);
+      continue;
+    }
     const tag = match[1];
     if (tag !== undefined) {
       best = tag.toLowerCase();
