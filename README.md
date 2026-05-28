@@ -123,12 +123,6 @@ coverage      →  conformance scorecard
 
 Full setup guide: [`docs/mcp/server-setup.md`](./docs/mcp/server-setup.md). Architecture: [`docs/kb/architecture/mcp-server.md`](./docs/kb/architecture/mcp-server.md).
 
-## Agent skill
-
-ra11y also ships a portable agent skill at [`skills/ra11y/SKILL.md`](./skills/ra11y/SKILL.md). It packages the deterministic MCP workflow for Codex, Claude Code, and other skill-compatible hosts.
-
-Install and MCP setup notes live in [`skills/ra11y/references/install.md`](./skills/ra11y/references/install.md). The step-by-step scan and fix loop lives in [`skills/ra11y/references/workflow.md`](./skills/ra11y/references/workflow.md).
-
 **First-run flags** (for an agent meeting a new codebase):
 
 ```jsonc

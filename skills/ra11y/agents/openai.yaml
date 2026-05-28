@@ -1,4 +1,0 @@
-interface:
-  display_name: "ra11y"
-  short_description: "Run ra11y audits and fix accessibility findings"
-  default_prompt: "Use $ra11y to audit this repo for accessibility and walk me through the actionable fixes."
