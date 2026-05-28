@@ -1,8 +1,11 @@
 # Install ra11y as a skill
 
-This skill is portable. Copy the `skills/ra11y` folder into the host-specific skill directory or upload the folder in products that support skill uploads.
+This skill is portable. Copy the `ra11y` skill folder into the host-specific skill directory or upload the folder in products that support skill uploads.
 
-If you installed `@ra11y/core` locally, the same folder is also available at `node_modules/@ra11y/core/skills/ra11y`.
+Use one of these source paths:
+
+- Inside the ra11y repository: `skills/ra11y`
+- From an installed npm package: `node_modules/@ra11y/core/skills/ra11y`
 
 The skill is most useful with the ra11y MCP server connected. Without MCP, you can still run the CLI for one-off scans, but you lose the structured tool flow (`suggest_fix`, `checklist`, `verdict_candidate`, MCP prompts, and related artifacts).
 
@@ -21,15 +24,17 @@ Do not use `npx @ra11y/core --mcp`. The package name (`@ra11y/core`) and bin nam
 Install the skill:
 
 ```sh
+RA11Y_SKILL_SRC="node_modules/@ra11y/core/skills/ra11y"   # or skills/ra11y inside this repo
 mkdir -p .claude/skills
-cp -R skills/ra11y .claude/skills/ra11y
+cp -R "$RA11Y_SKILL_SRC" .claude/skills/ra11y
 ```
 
 Or install it for every project:
 
 ```sh
+RA11Y_SKILL_SRC="node_modules/@ra11y/core/skills/ra11y"   # or skills/ra11y inside this repo
 mkdir -p ~/.claude/skills
-cp -R skills/ra11y ~/.claude/skills/ra11y
+cp -R "$RA11Y_SKILL_SRC" ~/.claude/skills/ra11y
 ```
 
 Connect the MCP server at project scope:
@@ -61,19 +66,16 @@ Verify:
 
 ## Codex
 
-Install the skill for the current repository:
+Install the skill into the directory Codex actually scans:
 
 ```sh
-mkdir -p .agents/skills
-cp -R skills/ra11y .agents/skills/ra11y
+RA11Y_SKILL_SRC="node_modules/@ra11y/core/skills/ra11y"   # or skills/ra11y inside this repo
+CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
+mkdir -p "$CODEX_SKILLS_DIR"
+cp -R "$RA11Y_SKILL_SRC" "$CODEX_SKILLS_DIR/ra11y"
 ```
 
-Or install it for every project:
-
-```sh
-mkdir -p ~/.agents/skills
-cp -R skills/ra11y ~/.agents/skills/ra11y
-```
+Codex does not use `.agents/skills` or `~/.agents/skills` for skill discovery.
 
 Connect the MCP server:
 
